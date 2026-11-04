@@ -1,6 +1,7 @@
 param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [ValidateSet('x64', 'ARM64')][string]$Architecture = 'x64',
+    [ValidateRange(1,8)][int]$CompilerJobs = 2,
     [switch]$CoreOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -35,7 +36,7 @@ if ($LASTEXITCODE) { throw 'Terminal screen tests failed.' }
 if ($LASTEXITCODE) { throw 'Scheduler tests failed.' }
 
 if (!$CoreOnly) {
-    & $msbuild (Join-Path $root 'App\Coincide.vcxproj') /restore /m /verbosity:minimal "/p:Configuration=$Configuration" "/p:Platform=$Architecture"
+    & $msbuild (Join-Path $root 'App\Coincide.vcxproj') /restore /m /verbosity:minimal "/p:Configuration=$Configuration" "/p:Platform=$Architecture" "/p:CoincideCompilerJobs=$CompilerJobs"
     if ($LASTEXITCODE) { throw 'The WinUI application build failed.' }
     $executable = Join-Path $root "build\$Architecture\$Configuration\Coincide.exe"
     if (!(Test-Path $executable)) { throw 'MSBuild returned successfully but no Windows application was produced.' }
@@ -45,7 +46,7 @@ if (!$CoreOnly) {
     Copy-Item (Join-Path $root 'Notices\T3-Code-LICENSE.txt') $notices
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence', 'background-host', 'browser-tool', 'credentials-controller', 'hosted-conversation-reducer', 'native-host-factory', 'code-hosting', 'git-repository-identity', 'repository-lease')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence', 'background-host', 'browser-tool', 'credentials-controller', 'hosted-conversation-reducer', 'native-host-factory', 'code-hosting', 'git-repository-identity', 'repository-lease', 'browser-library', 'browser-history-sqlite', 'hosted-client-state', 'native-background-host', 'opencode-account-scope', 'instruction-git-sync', 'native-host-entrypoint', 'hosted-app-bootstrap')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
@@ -98,4 +99,16 @@ if (!$CoreOnly -and $Architecture -eq 'x64') {
     if(!$process.WaitForExit(60000)){$process.Kill();throw 'Windows host tool-context tests timed out.'}
     if(Test-Path $report){Get-Content $report}
     if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows host tool-context tests failed.'}
+    foreach($case in @(
+        @{suite='native-host-connection'; fixture='CoincideBackgroundHostFixture.exe'},
+        @{suite='hosted-agent-session'; fixture='CoincideHostedAgentFixture.exe'}
+    )){
+        $report=Join-Path $root "build\$($case.suite)-test-result.txt"
+        Remove-Item $report -ErrorAction SilentlyContinue
+        $fixture=Join-Path $coreBuild "$Configuration\$($case.fixture)"
+        $process=Start-Process -FilePath $executable -ArgumentList @("--$($case.suite)-tests", "`"$report`"", "`"$fixture`"") -PassThru
+        if(!$process.WaitForExit(60000)){$process.Kill();throw "Windows $($case.suite) tests timed out."}
+        if(Test-Path $report){Get-Content $report}
+        if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw "Windows $($case.suite) tests failed."}
+    }
 }

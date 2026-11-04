@@ -13,6 +13,7 @@ private:
         std::string direct_delivery,active_delivery;
         bool stopped{},review{};
         std::map<std::string,std::size_t> reserved;
+        std::optional<Ledger::Facts> published;
     };
     std::shared_ptr<Scope> scope_;HostLease lease_;Ledger ledger_;Factory factory_;
     std::map<std::string,Live> live_;mutable std::mutex gate_;
@@ -27,15 +28,24 @@ private:
     static std::string digest(const Command& value){auto object=encode(value);object.Remove(L"id");return local_file::sha256(winrt::to_string(object.Stringify()));}
     static Object answer(std::string_view status){Object value;put(value,L"status",status);return value;}
     static void update_info(Object record,const SessionInfo& value){for(const auto& field:encode(value))record.SetNamedValue(field.Key(),field.Value());}
-    void commit(Object next){try{ledger_.commit(std::move(next));}catch(...){blocked_=true;for(auto& [name,live]:live_){(void)name;live.review=true;live.runtime->interrupt();}throw;}}
-    void mark_review(const std::string& name)noexcept{blocked_=true;const auto live=live_.find(name);if(live!=live_.end())live->second.review=true;try{auto next=ledger_.copy();auto entry=sessions(next).GetNamedObject(winrt::to_hstring(name));auto state=info(entry);state.review=true;update_info(entry,state);ledger_.commit(std::move(next));}catch(...){} }
+    // Published facts follow durable metadata only. If a narrow cache read fails after
+    // commit, invalidate it without turning an already-persisted event into a retry.
+    void remember_published()noexcept{for(auto& [name,live]:live_)try{live.published=ledger_.facts(name);}catch(...){live.published.reset();}}
+    void commit(Object next){try{ledger_.commit(std::move(next));remember_published();}catch(...){blocked_=true;for(auto& [name,live]:live_){(void)name;live.review=true;live.runtime->interrupt();}throw;}}
+    void mark_review(const std::string& name)noexcept{blocked_=true;const auto live=live_.find(name);if(live!=live_.end())live->second.review=true;try{auto next=ledger_.copy();auto entry=sessions(next).GetNamedObject(winrt::to_hstring(name));auto state=info(entry);state.review=true;update_info(entry,state);ledger_.commit(std::move(next));remember_published();}catch(...){} }
     static void snapshot_queue(SessionInfo& state,const Live& live){state.queued=live.runtime->queued();state.queued_count=state.queued.size();state.queue_paused=live.stopped||live.runtime->queue_paused();state.snapshots_included=true;}
     void drain(){
         for(auto& [name,live]:live_){
-            if(live.pending.empty())live.pending=live.runtime->take_events();
-            auto next=ledger_.copy();auto entry=sessions(next).GetNamedObject(winrt::to_hstring(name));auto state=info(entry);const auto previous=encode(state).Stringify();auto events=entry.GetNamedArray(L"events",Array{});
-            auto direct=live.direct_delivery,active=live.active_delivery;auto reserved=live.reserved;
             try{
+                if(live.pending.empty())live.pending=live.runtime->take_events();
+                // Keep listening for events; cheap facts only gate the expensive transaction.
+                // Durable prompts count as activity even when the native busy flag clears.
+                if(live.pending.empty()&&live.published){
+                    auto current=*live.published;current.live=!live.stopped;current.busy=current.live&&(live.runtime->busy()||current.has_prompts);current.queue_paused=live.stopped||live.runtime->queue_paused();current.queued_count=live.runtime->queued_count();current.review=current.review||live.review;
+                    if(current==*live.published)continue;
+                }
+                auto next=ledger_.copy();auto entry=sessions(next).GetNamedObject(winrt::to_hstring(name));auto state=info(entry);const auto previous=encode(state).Stringify();auto events=entry.GetNamedArray(L"events",Array{});
+                auto direct=live.direct_delivery,active=live.active_delivery;auto reserved=live.reserved;
                 snapshot_queue(state,live);state.review=state.review||live.review;
                 for(const auto& event:live.pending){
                     if(event.kind==SessionEvent::Kind::queue_changed&&(event.detail==stopped_queue_resolution_detail||event.detail==stopped_input_resolution_detail))throw std::runtime_error("A native runtime cannot forge an owner saved-work resolution");
@@ -69,7 +79,7 @@ private:
         for(const auto& item:sessions(next)){const auto entry=item.Value().GetObject();const auto state=info(entry);for(const auto& raw:entry.GetNamedArray(L"events",Array{})){const auto receipt=logged(raw.GetObject());if(receipt.value.kind!=SessionEvent::Kind::queue_changed||(receipt.value.detail!=stopped_queue_resolution_detail&&receipt.value.detail!=stopped_input_resolution_detail))continue;if(!next.HasKey(L"owner_resolutions"))throw std::runtime_error("Administrative receipt is missing its durable owner proof");const auto history=next.GetNamedObject(L"owner_resolutions");const auto identity=winrt::to_hstring(resolution_key(state.key,state.epoch,receipt.delivery_id));if(!history.HasKey(identity)||encode(logged(history.GetNamedObject(identity).GetNamedObject(L"receipt"))).Stringify()!=encode(receipt).Stringify())throw std::runtime_error("Administrative receipt does not match its atomic owner proof");}}
         if(changed)commit(std::move(next));
     }
-    Object poll(const Command& value){const auto entry=record(ledger_.copy(),value.key,value.epoch);auto state=info(entry);if(value.sequence<state.acknowledged||value.sequence>state.last)throw std::runtime_error("Use the host's durable cursor before replaying events");Array batch;std::size_t bytes{};for(const auto& raw:entry.GetNamedArray(L"events",Array{})){const auto event=raw.GetObject();if(integer(event,L"sequence")<=value.sequence)continue;const auto size=winrt::to_string(event.Stringify()).size();if(batch.Size()>=128||bytes+size>3*1024*1024)break;batch.Append(event);bytes+=size;}if(blocked_)state.review=true;auto result=answer("ok");result.SetNamedValue(L"session",encode(summary(std::move(state))));result.SetNamedValue(L"events",batch);return result;}
+    Object poll(const Command& value){auto batch=ledger_.poll(value.key,value.epoch,value.sequence);if(blocked_)batch.session.review=true;auto result=answer("ok");result.SetNamedValue(L"session",encode(batch.session));result.SetNamedValue(L"events",batch.events);return result;}
     Object acknowledge(const Command& value){auto next=ledger_.copy();auto entry=record(next,value.key,value.epoch);auto state=info(entry);if(value.sequence>state.last)throw std::invalid_argument("Cannot acknowledge an event the host has not persisted");if(value.sequence<=state.acknowledged)return answer("ok");Array retained;for(const auto& raw:entry.GetNamedArray(L"events",Array{}))if(integer(raw.GetObject(),L"sequence")>value.sequence)retained.Append(raw);state.acknowledged=value.sequence;update_info(entry,state);entry.SetNamedValue(L"events",retained);commit(std::move(next));if(blocked_){try{drain();blocked_=false;}catch(...){}}return answer("ok");}
     static bool all_applied(const Object& document){for(const auto& item:sessions(document)){const auto state=info(item.Value().GetObject());if(state.last!=state.acknowledged)return false;}return true;}
     Object shutdown_host(const Command& value){
@@ -117,8 +127,8 @@ public:
         if(value.operation==Operation::cancel_stopped_queue||value.operation==Operation::resolve_stopped_input)return resolve_stopped(value);
         if(value.operation==Operation::command_status){static_cast<void>(record(ledger_.copy(),value.key,value.epoch));const auto all=commands(ledger_.copy());const auto identity=winrt::to_hstring("command:"+value.target_command_id);if(!all.HasKey(identity))return answer("unknown");const auto old=all.GetNamedObject(identity);if(text(old,L"epoch",38)!=value.epoch||text(old,L"thread",38)!=value.key.thread||text(old,L"provider",32)!=value.key.provider||text(old,L"digest",64)!=value.expected_delivery_digest)throw std::runtime_error("The original control status does not match this exact command/key/epoch/digest");return answer(text(old,L"status",32));}
         if(value.operation==Operation::delivery_status){const auto all=commands(ledger_.copy());const auto id=winrt::to_hstring("delivery:"+value.epoch+":"+value.delivery_id);if(!all.HasKey(id))return answer("unknown");const auto entry=all.GetNamedObject(id);if(text(entry,L"epoch",38)!=value.epoch||text(entry,L"thread",38)!=value.key.thread||text(entry,L"provider",32)!=value.key.provider)throw std::runtime_error("Delivery status belongs to another hosted session");auto result=answer(text(entry,L"status",32));put(result,L"command_digest",text(entry,L"digest",64));return result;}
-        if(value.operation==Operation::list){auto result=answer("ok");Array all;for(const auto& item:sessions(ledger_.copy())){auto state=info(item.Value().GetObject());if(blocked_)state.review=true;all.Append(encode(summary(std::move(state))));}result.SetNamedValue(L"sessions",all);result.SetNamedValue(L"blocked",Value::CreateBooleanValue(blocked_));return result;}
-        if(value.operation==Operation::status){if(!blocked_)try{drain();}catch(...){}auto state=info(record(ledger_.copy(),value.key,value.epoch));if(blocked_)state.review=true;auto result=answer("ok");result.SetNamedValue(L"session",encode(state));return result;}
+        if(value.operation==Operation::list){auto result=answer("ok");Array all;for(auto state:ledger_.summaries()){if(blocked_)state.review=true;all.Append(encode(state));}result.SetNamedValue(L"sessions",all);result.SetNamedValue(L"blocked",Value::CreateBooleanValue(blocked_));return result;}
+        if(value.operation==Operation::status){if(!blocked_)try{drain();}catch(...){}auto state=ledger_.session(value.key,value.epoch);if(blocked_)state.review=true;auto result=answer("ok");result.SetNamedValue(L"session",encode(state));return result;}
         if(value.operation==Operation::retire){retire_=true;return answer("ok");}
         if(blocked_&&(value.operation==Operation::interrupt||value.operation==Operation::shutdown)){const auto at=live_.find(value.key.name());if(at!=live_.end()){static_cast<void>(record(ledger_.copy(),value.key,value.epoch));at->second.runtime->interrupt();if(value.operation==Operation::shutdown){at->second.runtime->shutdown();at->second.stopped=true;}try{drain();auto next=ledger_.copy();auto entry=record(next,value.key,value.epoch);auto state=info(entry);state.review=true;state.busy=false;if(value.operation==Operation::shutdown){state.live=false;state.prompts.clear();}update_info(entry,state);commit(std::move(next));if(value.operation==Operation::shutdown)live_.erase(at);blocked_=false;}catch(...){}return answer("uncertain");}}
         if(blocked_||quitting_)throw std::runtime_error("Host storage, review or owner shutdown pauses new runtime work");drain();auto next=ledger_.copy();auto all=sessions(next);const auto name=winrt::to_hstring(value.key.name());
@@ -155,10 +165,11 @@ public:
                 }
             }
             auto durable=ledger_.copy();auto entry=record(durable,value.key,value.epoch);auto state=info(entry);auto& live=live_.at(value.key.name());state.live=!live.stopped;if(!state.live)state.prompts.clear();state.busy=state.live&&live.runtime->busy();snapshot_queue(state,live);update_info(entry,state);put(commands(durable).GetNamedObject(identity),L"status",accepted?"accepted":"rejected");commit(std::move(durable));drain();if(value.operation==Operation::shutdown)live_.erase(value.key.name());auto result=answer(accepted?"accepted":"rejected");result.SetNamedValue(L"session",encode(info(record(ledger_.copy(),value.key,value.epoch))));return result;
-        }catch(...){if(invoked){for(auto& [key,live]:live_){(void)key;live.runtime->interrupt();}mark_review(value.key.name());try{auto durable=ledger_.copy();put(commands(durable).GetNamedObject(identity),L"status","uncertain");ledger_.commit(std::move(durable));}catch(...){}return answer("uncertain");}throw;}
+        }catch(...){if(invoked){for(auto& [key,live]:live_){(void)key;live.runtime->interrupt();}mark_review(value.key.name());try{auto durable=ledger_.copy();put(commands(durable).GetNamedObject(identity),L"status","uncertain");ledger_.commit(std::move(durable));remember_published();}catch(...){}return answer("uncertain");}throw;}
     }
     void pump(){std::lock_guard lock(gate_);if(!blocked_)drain();}
-    bool busy()const{std::lock_guard lock(gate_);if(blocked_)return true;for(const auto& [name,live]:live_){(void)name;if(!live.stopped&&live.runtime->busy())return true;}for(const auto& item:sessions(ledger_.copy()))if(!info(item.Value().GetObject()).prompts.empty())return true;return false;}
+    bool busy()const{std::lock_guard lock(gate_);if(blocked_)return true;for(const auto& [name,live]:live_){(void)name;if(!live.stopped&&live.runtime->busy())return true;}return ledger_.has_pending_prompts();}
+    Ledger::Activity ledger_activity()const{std::lock_guard lock(gate_);return ledger_.activity();}
     bool retire_requested()const{std::lock_guard lock(gate_);return retire_;}bool blocked()const{std::lock_guard lock(gate_);return blocked_;}
     ~Core(){
         try{std::lock_guard lock(gate_);for(auto& [name,live]:live_){const bool uncertain=blocked_||live.runtime->busy();live.runtime->shutdown();live.stopped=true;if(uncertain){auto next=ledger_.copy();auto entry=sessions(next).GetNamedObject(winrt::to_hstring(name));auto state=info(entry);state.review=true;update_info(entry,state);ledger_.commit(std::move(next));}}drain();auto next=ledger_.copy();for(const auto& item:sessions(next)){auto entry=item.Value().GetObject();auto state=info(entry);state.live=false;state.busy=false;state.queue_paused=true;update_info(entry,state);}ledger_.commit(std::move(next));}catch(...){for(auto& [name,live]:live_){(void)name;live.runtime->shutdown();}}

@@ -51,6 +51,9 @@
   <data name="Dismiss" xml:space="preserve">
     <value>Dismiss</value>
   </data>
+  <data name="EndSession" xml:space="preserve">
+    <value>End session</value>
+  </data>
   <data name="Git" xml:space="preserve">
     <value>Git</value>
   </data>
@@ -261,6 +264,9 @@
   <data name="Text_11326fd2590f4e5e" xml:space="preserve">
     <value>Default</value>
   </data>
+  <data name="Text_11fb54d70f2e16aa" xml:space="preserve">
+    <value>Bookmark This Page</value>
+  </data>
   <data name="Text_12851f11f274a7fb" xml:space="preserve">
     <value>Selected conversation</value>
   </data>
@@ -282,8 +288,14 @@
   <data name="Text_16db387578b99689" xml:space="preserve">
     <value>Allow full access by default in new chats</value>
   </data>
+  <data name="Text_16f09b6d340e9f85" xml:space="preserve">
+    <value>Session ended. The next message can start a fresh verified session.</value>
+  </data>
   <data name="Text_17b5c0061baf42a4" xml:space="preserve">
     <value>Default reasoning effort</value>
+  </data>
+  <data name="Text_181d8c50dd577ce6" xml:space="preserve">
+    <value>Remove Selected</value>
   </data>
   <data name="Text_199f5853f4e718f7" xml:space="preserve">
     <value>Projects</value>
@@ -303,6 +315,9 @@
   <data name="Text_1ee35c64166b9bec" xml:space="preserve">
     <value>Choose a profile, then check its status. Existing CLI logins are preserved.</value>
   </data>
+  <data name="Text_1f7698c061c208c9" xml:space="preserve">
+    <value>Open</value>
+  </data>
   <data name="Text_200678f33346fc6e" xml:space="preserve">
     <value>Inserted into draft</value>
   </data>
@@ -311,6 +326,9 @@
   </data>
   <data name="Text_232f88877550dfa9" xml:space="preserve">
     <value>Microphone</value>
+  </data>
+  <data name="Text_236af47b384b6ef4" xml:space="preserve">
+    <value>Review setup</value>
   </data>
   <data name="Text_23999f07a784c4f4" xml:space="preserve">
     <value>Ready. Record starts the microphone only after you choose it.</value>
@@ -342,6 +360,9 @@
   <data name="Text_2d05099c8b47e2f0" xml:space="preserve">
     <value>Read and Write Files</value>
   </data>
+  <data name="Text_2d230d2f96a02db5" xml:space="preserve">
+    <value>The browser library action could not be completed.</value>
+  </data>
   <data name="Text_2d4f0968dc0883f8" xml:space="preserve">
     <value>Provider accounts</value>
   </data>
@@ -356,6 +377,12 @@
   </data>
   <data name="Text_2ee366cbb0141712" xml:space="preserve">
     <value>Allow</value>
+  </data>
+  <data name="Text_2f029efdf7291184" xml:space="preserve">
+    <value>The instruction workspace could not be reserved.</value>
+  </data>
+  <data name="Text_2f826a07716be31f" xml:space="preserve">
+    <value>Select metadata rows to import first.</value>
   </data>
   <data name="Text_30edcc4e98194755" xml:space="preserve">
     <value>Windows did not release the microphone cleanly. Restart Coincide before recording again.</value>
@@ -486,6 +513,9 @@
   <data name="Text_46a3d392a61a63f0" xml:space="preserve">
     <value>Open Coincide from its tray icon. Quit stops its agents and terminals; interrupted schedules require review after relaunch.</value>
   </data>
+  <data name="Text_46bd91cf9ae909f5" xml:space="preserve">
+    <value>Selected metadata file</value>
+  </data>
   <data name="Text_47a9f592c61daa59" xml:space="preserve">
     <value>Voice</value>
   </data>
@@ -528,11 +558,20 @@
   <data name="Text_4ed0f8cd13bc52ab" xml:space="preserve">
     <value>Delete schedule</value>
   </data>
+  <data name="Text_4f8eb0976f1c0f5f" xml:space="preserve">
+    <value>Approve reviewed action</value>
+  </data>
   <data name="Text_4f97b1ac351cdf90" xml:space="preserve">
     <value>Enter sends; Shift+Enter inserts a line break</value>
   </data>
+  <data name="Text_4fb1215f3f1f4cea" xml:space="preserve">
+    <value>Mark this original stopped session reviewed after reading its saved conversation and resolved inputs? Earlier uncertain delivery and model outcomes remain uncertain. This starts no provider and replays no input. End Hosted Session can then retire this generation.</value>
+  </data>
   <data name="Text_5160ee9161a47fed" xml:space="preserve">
     <value>Reported cost: </value>
+  </data>
+  <data name="Text_5225bc94eed346a8" xml:space="preserve">
+    <value>The selected browser metadata file could not be opened.</value>
   </data>
   <data name="Text_53543c9d8520bd07" xml:space="preserve">
     <value>Token totals unavailable</value>
@@ -567,6 +606,9 @@
   <data name="Text_57adf424d57c8a0f" xml:space="preserve">
     <value>Send</value>
   </data>
+  <data name="Text_57b81a835c9cc2de" xml:space="preserve">
+    <value>Bookmarks</value>
+  </data>
   <data name="Text_5825d709ca961b07" xml:space="preserve">
     <value>Preparing microphone…</value>
   </data>
@@ -575,6 +617,9 @@
   </data>
   <data name="Text_586fe03d90a0a5f2" xml:space="preserve">
     <value>Search sessions</value>
+  </data>
+  <data name="Text_58c754018ec47b5f" xml:space="preserve">
+    <value>History</value>
   </data>
   <data name="Text_5908d0912f71510e" xml:space="preserve">
     <value>Full Access</value>
@@ -599,6 +644,9 @@
   </data>
   <data name="Text_5be3c6d61cd9182f" xml:space="preserve">
     <value>Notifications</value>
+  </data>
+  <data name="Text_5cf3a3cabd49f456" xml:space="preserve">
+    <value>Clone address or private GitHub owner/name</value>
   </data>
   <data name="Text_5d929ff1619ac0c9" xml:space="preserve">
     <value>Search</value>
@@ -648,6 +696,12 @@
   <data name="Text_661045907dd942bc" xml:space="preserve">
     <value>Commit</value>
   </data>
+  <data name="Text_66242229134ba7c5" xml:space="preserve">
+    <value>Saving conversations and stopping background work…</value>
+  </data>
+  <data name="Text_6673f9a868c4c0b4" xml:space="preserve">
+    <value>Import Browser Data</value>
+  </data>
   <data name="Text_669b18c6d2d9c95b" xml:space="preserve">
     <value>None</value>
   </data>
@@ -656,6 +710,9 @@
   </data>
   <data name="Text_671dbe01f42f297a" xml:space="preserve">
     <value>Next runs</value>
+  </data>
+  <data name="Text_67facd659d1004bb" xml:space="preserve">
+    <value>This address cannot be saved as a bookmark.</value>
   </data>
   <data name="Text_6849e258b7827aa4" xml:space="preserve">
     <value>Local profile created. Sign in only when you are ready to approve the provider's browser page.</value>
@@ -668,6 +725,9 @@
   </data>
   <data name="Text_69f800801812a5f0" xml:space="preserve">
     <value>files</value>
+  </data>
+  <data name="Text_6a7b371e36f1089b" xml:space="preserve">
+    <value>Preview is read only. Git synchronization changes require a separate review and approval.</value>
   </data>
   <data name="Text_6b641f165101ea5e" xml:space="preserve">
     <value>Connect password managers through their existing Windows command-line tools. Managers start off. Opening Settings does not read a vault, sign in or unlock an account.</value>
@@ -693,8 +753,14 @@
   <data name="Text_6d23f05ce0b214c5" xml:space="preserve">
     <value>Save Bot</value>
   </data>
+  <data name="Text_6d902e023d4de304" xml:space="preserve">
+    <value>Select an instruction file to configure its Git copy.</value>
+  </data>
   <data name="Text_6dbd35f7b7fe2484" xml:space="preserve">
     <value>Preview a Claude Code or Codex conversation before importing. The original file stays unchanged; imported threads start in approval mode.</value>
+  </data>
+  <data name="Text_6e177256a2e13332" xml:space="preserve">
+    <value>End session</value>
   </data>
   <data name="Text_6f4c2c96b3efcd2a" xml:space="preserve">
     <value>Check this profile's current compatible account before using it.</value>
@@ -759,8 +825,14 @@
   <data name="Text_7a07940a2b62f185" xml:space="preserve">
     <value>Branch</value>
   </data>
+  <data name="Text_7a853b4c14e7dc55" xml:space="preserve">
+    <value>Import Selected</value>
+  </data>
   <data name="Text_7ab739b86be86ef4" xml:space="preserve">
     <value>Password settings could not be loaded. Managers remain off; the original file was preserved.</value>
+  </data>
+  <data name="Text_7ac990562fe96c90" xml:space="preserve">
+    <value>I reviewed this destination and these instruction changes</value>
   </data>
   <data name="Text_7b7163270e57e8b4" xml:space="preserve">
     <value>Refresh</value>
@@ -774,6 +846,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_7d24125b454a4d47" xml:space="preserve">
     <value>Manager is locked. Open its own app to unlock it.</value>
+  </data>
+  <data name="Text_7d2cce0f1781764c" xml:space="preserve">
+    <value>Review stopped input</value>
   </data>
   <data name="Text_7d736af6cd8199c8" xml:space="preserve">
     <value>Open a terminal for this conversation.</value>
@@ -850,6 +925,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_8c12d8939e4e4834" xml:space="preserve">
     <value>Unstage</value>
   </data>
+  <data name="Text_8c48717a0ecf96af" xml:space="preserve">
+    <value>Checking instruction synchronization…</value>
+  </data>
   <data name="Text_8c6779721edd93a9" xml:space="preserve">
     <value>Hidden model IDs, one per line</value>
   </data>
@@ -873,6 +951,12 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_91f1aa7348ed337e" xml:space="preserve">
     <value>Allow sign-in to </value>
+  </data>
+  <data name="Text_9225f60f05e0cd91" xml:space="preserve">
+    <value>Search bookmarks and history</value>
+  </data>
+  <data name="Text_924b6af1b3308707" xml:space="preserve">
+    <value>Include instruction-only pushes in automatic sync</value>
   </data>
   <data name="Text_92b5f7e86bacd038" xml:space="preserve">
     <value>First run date</value>
@@ -907,11 +991,11 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_965c503c3e42fdfe" xml:space="preserve">
     <value>Enabled</value>
   </data>
-  <data name="Text_96a5da285a9e2fe5" xml:space="preserve">
-    <value>Preview only. Instruction files are not executed or changed.</value>
-  </data>
   <data name="Text_970d041a28d1067d" xml:space="preserve">
     <value>Push</value>
+  </data>
+  <data name="Text_972f543862d4d8fd" xml:space="preserve">
+    <value>Git copy filename</value>
   </data>
   <data name="Text_9777d224c8fab6f1" xml:space="preserve">
     <value>No future runs</value>
@@ -979,11 +1063,17 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_a36aef46efe431eb" xml:space="preserve">
     <value>Models</value>
   </data>
+  <data name="Text_a394602078145344" xml:space="preserve">
+    <value>Review stopped session</value>
+  </data>
   <data name="Text_a3a27a128ad87f31" xml:space="preserve">
     <value>Passwords</value>
   </data>
   <data name="Text_a3b9964327605427" xml:space="preserve">
     <value>Enter an HTTP or HTTPS address without a username or password.</value>
+  </data>
+  <data name="Text_a459f8877eb03e1b" xml:space="preserve">
+    <value>Repository folder</value>
   </data>
   <data name="Text_a45a194b58837e4f" xml:space="preserve">
     <value>Active</value>
@@ -1051,6 +1141,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_b3d4f79d9d8b71e5" xml:space="preserve">
     <value>Submit</value>
   </data>
+  <data name="Text_b41d16492dcf7c90" xml:space="preserve">
+    <value>Repository setup</value>
+  </data>
   <data name="Text_b46d3613edb66558" xml:space="preserve">
     <value>Interval</value>
   </data>
@@ -1081,6 +1174,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_b76b3aa54cc8a601" xml:space="preserve">
     <value>Add or select a local provider profile.</value>
   </data>
+  <data name="Text_b86ddcac0696aa7f" xml:space="preserve">
+    <value>Git synchronization</value>
+  </data>
   <data name="Text_b879392543a89272" xml:space="preserve">
     <value>Reset keyboard shortcuts</value>
   </data>
@@ -1099,6 +1195,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_bb96e9629185582e" xml:space="preserve">
     <value>The master switch is saved. Conversation permissions last only in this app session and must be granted again after disabling Computer Use or restarting Coincide. Opening these settings never inspects a window or starts the helper.</value>
   </data>
+  <data name="Text_bcfe28fd459857ba" xml:space="preserve">
+    <value>Automatic instruction sync is waiting for valid settings and available workspaces.</value>
+  </data>
   <data name="Text_be9a2afda356a007" xml:space="preserve">
     <value>Read Clipboard</value>
   </data>
@@ -1108,8 +1207,14 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_bf9c9810624e0c87" xml:space="preserve">
     <value>Submit Review</value>
   </data>
+  <data name="Text_c0ca59b445c8e250" xml:space="preserve">
+    <value>Wait for work in the affected repositories to finish before changing instructions or Git references.</value>
+  </data>
   <data name="Text_c0f4254f45363d61" xml:space="preserve">
     <value>Worktrees</value>
+  </data>
+  <data name="Text_c2c9910c3206ce2f" xml:space="preserve">
+    <value>Choose a bookmark HTML/JSON export or supported browser metadata file. Preview and select rows before importing. Cookies, passwords and sign-ins are excluded.</value>
   </data>
   <data name="Text_c3ac225273c8316b" xml:space="preserve">
     <value>General</value>
@@ -1162,6 +1267,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_cbfd70a8bcc150ba" xml:space="preserve">
     <value>Review message</value>
   </data>
+  <data name="Text_ccac3b05d6709b74" xml:space="preserve">
+    <value>Choose repository folder…</value>
+  </data>
   <data name="Text_cd104d19b5a0ef92" xml:space="preserve">
     <value>Plan</value>
   </data>
@@ -1189,6 +1297,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_d1bb1f13cc349256" xml:space="preserve">
     <value>Steer</value>
   </data>
+  <data name="Text_d31c12afb0700a40" xml:space="preserve">
+    <value>The repository folder could not be selected.</value>
+  </data>
   <data name="Text_d32d5436ebcdb941" xml:space="preserve">
     <value>Remove Conversations</value>
   </data>
@@ -1209,6 +1320,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d70e957037f58cd3" xml:space="preserve">
     <value>Allow terminal status, output and interrupt</value>
+  </data>
+  <data name="Text_d77161a4e928fdfd" xml:space="preserve">
+    <value>Retain input and resolve</value>
   </data>
   <data name="Text_d8bbc6ae6b1e90b8" xml:space="preserve">
     <value>1 week</value>
@@ -1330,6 +1444,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_ea654a4dc5fd0d5b" xml:space="preserve">
     <value>Could not submit the answer. Try again.</value>
   </data>
+  <data name="Text_eaa716b54ca20f71" xml:space="preserve">
+    <value>Keep a Git copy while the local instructions and their links stay in place. Review each manual change. Automatic sync is off until explicitly approved.</value>
+  </data>
   <data name="Text_eb14831998868b6b" xml:space="preserve">
     <value>Git</value>
   </data>
@@ -1363,6 +1480,12 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_efcf950b3cc4fc3b" xml:space="preserve">
     <value>Language</value>
   </data>
+  <data name="Text_f00d4ba89be99c25" xml:space="preserve">
+    <value>Mark reviewed</value>
+  </data>
+  <data name="Text_f04fdae057270487" xml:space="preserve">
+    <value>Link an instruction Git copy before using synchronization actions.</value>
+  </data>
   <data name="Text_f0cab2483f66aa2e" xml:space="preserve">
     <value>Custom</value>
   </data>
@@ -1371,6 +1494,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_f0e6f67c08e8527e" xml:space="preserve">
     <value>Could not save browser tabs.</value>
+  </data>
+  <data name="Text_f26586dbd448082e" xml:space="preserve">
+    <value>Clear History</value>
   </data>
   <data name="Text_f2d616b20d62240d" xml:space="preserve">
     <value>Schedules</value>
@@ -1423,6 +1549,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_fc755793d4eaeca7" xml:space="preserve">
     <value>The password export picker could not open. No logins were imported.</value>
   </data>
+  <data name="Text_fc81af00a9886564" xml:space="preserve">
+    <value>The library was saved, but its browser view could not be refreshed.</value>
+  </data>
   <data name="Text_fda3e4a519cfc5ba" xml:space="preserve">
     <value>Settled</value>
   </data>
@@ -1431,6 +1560,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_feae03c8b61454b4" xml:space="preserve">
     <value>Voice is off until you enable it. No model or speech engine is downloaded automatically.</value>
+  </data>
+  <data name="Text_ffe937fcb36c0286" xml:space="preserve">
+    <value>Refresh status</value>
   </data>
   <data name="ThreadActions" xml:space="preserve">
     <value>Thread actions</value>

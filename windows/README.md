@@ -19,21 +19,19 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
-On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol, 42 subprocess connection,
-32 Codex session lifecycle, and one cached-property binding regression check.
-The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**, run
-`./windows/Tests/PreviewSmoke.ps1` for native long-thread switching, drafts, and Codex composer checks. It seeds two
-isolated 1,500-message conversations and uses an explicitly labeled subprocess fixture to exercise Send, Unicode
-streaming, command/file approval denial, questions, and Stop. It records UI evidence, closes its own process, and
-removes its temporary conversation data. It does not use real conversations or a provider account.
+The latest frozen candidate passed **3,378 automated checks across 64 suites** on the physical Windows laptop.
+Native acceptance also passed **19 panels / 499 checks** and **18 app flows**. Its hosted variant passed the same
+18 flows plus orderly Quit, and six actual UI-crash/relaunch checks with unchanged host/provider identities,
+no duplicate input commands, exact transcript/index/ACK convergence and final scoped process exit. Exact-revision
+CI, real-service acceptance and the remaining parity work are separate gates.
 
-On the physical Windows laptop, all 202 automated checks and eleven native UI checks pass. The UI suite covers
-long histories, saved drafts, streaming/final-text reconciliation, repeated identical replies, duplicate chat titles,
-command/file approval denial, typed question answers, and Stop. Distinct view-model identities keep equal visible text
-from confusing WinUI's item lookup and accessibility traversal. Cached binding properties read their supplied target,
-so reused containers display the current streamed text. Check exact-head CI separately from these local results.
-The composer remains busy until completion has reached the UI and the transcript has been saved, preventing a fast
-subprocess from enabling another turn before the final reply is applied.
+The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**,
+`./windows/Tests/PreviewSmoke.ps1` exercises native long-thread switching, drafts, Send/Unicode/final-text reconciliation,
+command/file approval denial, questions, Stop, schedules, bots, usage and tool panels. It uses isolated conversations and
+explicit local protocol fixtures, not real provider accounts. The new `-HostedRuntime` variant targets the candidate
+background-host integration and has owned full-app acceptance. `HostedRecoverySmoke.ps1 -RunInteractive` tests
+accepted queued work, blocked local saves, UI-only crash/relaunch and exact receipt recovery. The script records evidence, closes its owned
+processes and cleans only its synthetic state; uncertain hosted shutdown retains that fixture state for review.
 
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
@@ -42,25 +40,39 @@ replaced. Files are written through a unique temporary file, flushed, and atomic
 
 ## Current scope
 
-Implemented in the development source: native window, folder picking, local projects and projectless chats,
-per-thread saved drafts, archive/undo/redo, provider selection, provider-scoped session bookkeeping, and a virtualized
-plain-text transcript. Codex sessions now connect to the native Windows CLI, persist and resume their thread identity,
-stream replies, show explicit command/file approvals and questions, and support Stop. Send uses the button or Ctrl+Enter.
-Other providers and the rest of the parity checklist remain pending. No public release or full-parity claim is made.
+The native development source includes projects/projectless chats, lazy transcripts, per-thread drafts/outbox,
+attachments, metadata history/undo/redo, rich Markdown/code/media rendering, approvals/questions and model controls.
+It also includes Git/worktrees/checkpoints, a GitHub PR workspace, ConPTY terminal tabs/splits, scheduling, bots, local
+usage, native preferences, instructions/imports, browser tools, credentials, offline voice and Computer Use foundations.
+Each feature's verified scope and remaining work are listed in [the parity audit](../docs/windows-port.md).
 
-Install the native Windows Codex CLI and sign in with `codex login` before using a real conversation. The app searches
-for `codex.exe` on PATH and the per-user Codex/WinGet locations; `COINCIDE_CODEX_EXE` can select an explicit executable.
+The accepted feature foundations include:
+
+- Browser history/bookmarks and explicit selected metadata import pass **33 store/import + 12 system-SQLite + 35 native
+  UI/WebView2 checks**, with the prior 43 browser-agent engine checks still passing. Imports exclude cookies, credentials
+  and sign-ins. Capture currently requires an already visible browser pane/target; hidden capture and passkey parity remain pending.
+- Instruction Git sync passes **72 backend and 18 native panel checks**. Local/project
+  instruction handling is in scope; **iCloud instruction sync is deferred for this phase**.
+- Separate authenticated background host/adoption, durable acknowledgment, accepted-work crash replay and orderly
+  Quit pass owned full-app acceptance. Explicit recovery of crash-stranded definite non-delivery records is a newer
+  candidate; real provider/account lifetime remains unverified.
+
+Codex and Claude default-account paths and verified separate Cursor profiles are wired. Named Codex/Claude profiles,
+production Grok/Antigravity account identity, and OpenCode's current CLI/account/host compatibility remain incomplete.
+OpenCode's new off-default credential-continuity foundation is not production eligibility. **Real signed-in provider
+conversations have not been verified.** Existing native CLIs and the correct verified account are required; opening a
+panel does not sign in, start a model turn or invent provider output.
+
 Project chats use their project folder; projectless chats use an isolated workspace under the preview data directory.
-Switching threads preserves active work and unanswered requests. Closing the window stops its owned agent processes;
-a persistent background host is not implemented. A normal launch with the native CLI correctly reports missing sign-in
-without fabricating output. Unattended OAuth reached required phone verification; a real account conversation remains unverified.
+Provider runtimes launch explicit executables, keep pipe work off the UI thread and retain separate account/session
+bindings. Synthetic fixtures exercise startup, streaming, request routing, failures, cancellation and persistence without
+spending account quota. They do not establish live provider compatibility or owner acceptance.
 
-The runtime foundation starts an explicit executable without a shell, confines its descendants to an owned job,
-frames UTF-8 JSONL, and keeps pipe reads/writes off the UI thread. Protocol fixtures verify initialization, streamed
-notifications, explicit approval decisions, deadlines, and shutdown even when stdin is blocked. These checks do not
-sign in, run a model turn, or spend account quota. Session fixtures additionally exercise failed authentication/resume,
-turn identity, stream reconciliation, request routing, early completion, startup cancellation, and ignored interrupts.
-Fixture output is available only under the explicitly labeled test flag; ordinary launches require the real CLI.
+Remaining parity includes composer suggestions and selection context, message/project/terminal search, remote/mobile
+pairing and CLI, phone alerts, actual notification/Computer Use/voice acceptance, browser sign-in migration and passkeys,
+full localization/accessibility/DPI validation, signed distribution and updates. Offline voice currently uses a local
+whisper CLI/model and draft-only insertion; no actual microphone recognition has been validated. No public release or
+full-parity claim is made.
 
 Shared labels reuse the existing Mac string catalog in all its languages:
 

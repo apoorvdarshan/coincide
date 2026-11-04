@@ -154,6 +154,17 @@ public:
             if (!known_provider(t.provider)) throw std::runtime_error("Unknown provider");
             if (t.project_id) (void)workspace.project(*t.project_id);
             (void)workspace_text::label(t.title, 4096); Workspace::validate_thread_metadata(t);
+            if(!t.host_cursors.empty()){
+                // A metadata action can run between streamed transcript saves. Never let
+                // its index mirror claim an event prefix that this store has not saved/read.
+                // Untouched lazy conversations use their existing index prefix without
+                // loading the full transcript; changed prefixes need its durable snapshot.
+                const auto saved=transcript_originals_.find(t.id),indexed=index_originals_.find(t.id);
+                const auto durable=saved!=transcript_originals_.end()?read_host_cursors(optional_array(saved->second,L"hostEventCursors"))
+                    :indexed!=index_originals_.end()?read_host_cursors(optional_array(indexed->second,L"hostEventCursors")):std::vector<HostEventCursor>{};
+                for(const auto& desired:t.host_cursors){const auto at=std::find_if(durable.begin(),durable.end(),[&](const auto& cursor){return cursor.provider==desired.provider;});
+                    if(at==durable.end()||at->epoch!=desired.epoch||at->sequence<desired.sequence)throw std::runtime_error("Save the hosted transcript and its event prefix before updating the workspace index.");}
+            }
         }
         auto root = original_ ? json::JsonObject::Parse(original_.Stringify()) : json::JsonObject{};
         auto project_originals=clone_objects(project_originals_),index_originals=clone_objects(index_originals_);

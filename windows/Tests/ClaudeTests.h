@@ -1,6 +1,7 @@
 #pragma once
 #include "../Runtime/ClaudeSession.h"
 #include "ProcessTests.h"
+#include "FixturePrompt.h"
 #include <fstream>
 
 namespace coincide {
@@ -64,9 +65,11 @@ inline int claude_session_fixture(std::wstring_view mode) {
         if (!previous.empty()) result(true, previous);
         Object lifecycle; put(lifecycle, L"type", "command_lifecycle"); put(lifecycle, L"command_uuid", current); put(lifecycle, L"state", "started"); write(lifecycle);
         if(mode==L"context"){
-            const auto boundary=prompt.find("</coincide_current_tools>\n\n");const auto original=boundary==std::string::npos?prompt:prompt.substr(boundary+27);
+            const auto original=fixture_prompt::user_text(prompt);
             if(original=="wait")return;answer(prompt);return;
         }
+        // Normal fixture controls inspect only the original user text; context mode echoes wire.
+        prompt=std::string(fixture_prompt::user_text(prompt));
         if (prompt == "wait") return;
         if(mode==L"usage"){
             if(previous_assistant)write(previous_assistant);Object malformed,bad_message;put(malformed,L"type","assistant");put(malformed,L"session_id",session);put(bad_message,L"id","invalid-metric");bad_message.SetNamedValue(L"content",Array{});bad_message.SetNamedValue(L"usage",Object::Parse(LR"({"input_tokens":-1})"));malformed.SetNamedValue(L"message",bad_message);write(malformed);answer("usage reply");return;
@@ -172,6 +175,17 @@ inline int claude_tests(const std::filesystem::path& report) {
             auto unreviewed=launch();unreviewed.fixture_account_reviewed=false;ClaudeSession missing_gate(unreviewed);missing_gate.send(input());const auto rejected=finished(missing_gate);check(has(rejected,Kind::error)&&!has(rejected,Kind::started),"Claude's synthetic account review opt-in must never be assumed automatically");
             auto hung=launch(L"account-hang");hung.request_timeout=10s;ClaudeSession cancellable(hung);cancellable.send(input());Sleep(100);const auto start=std::chrono::steady_clock::now();cancellable.interrupt();const auto cancelled=finished(cancellable);check(combined(cancelled,Kind::completed)=="interrupted"&&std::chrono::steady_clock::now()-start<2s,"A stalled metadata-only auth check must stay cancellable before any user conversation begins");
             const auto api=ClaudeProtocol::Object::Parse(LR"({"loggedIn":true,"authMethod":"api_key","email":"fixture@example.invalid"})");check(AgentAccountBinding::claude_subject(api).empty(),"API-key credentials without nonsecret provider ownership metadata must not impersonate an OAuth account scope");
+        }
+        for(const auto* context:{"","SYNTHETIC-CURRENT-TOOLS"}){
+            std::atomic_uint reads{};auto wrapped_launch=launch();wrapped_launch.tool_context=[&]{++reads;return std::string(context);};ClaudeSession wrapped(wrapped_launch);
+            check(wrapped.send(input("approval")),"A normal owned Claude fixture must accept its approval input with current tool context");const auto pending=until(wrapped,[&](const auto& values){return has(values,Kind::prompt);});const auto request=std::find_if(pending.begin(),pending.end(),[](const auto& event){return event.kind==Kind::prompt;});
+            check(wrapped.busy()&&!has(pending,Kind::completed)&&!has(pending,Kind::error),"Current tool context must preserve the normal Claude explicit approval barrier");
+            wrapped.respond(request->id,"{\"decision\":\"decline\"}");const auto denied=finished(wrapped);
+            check(has(denied,Kind::resolved)&&combined(denied,Kind::text_complete)=="deny"&&!has(denied,Kind::error),"A wrapped Claude normal approval must honor the owner's decline");
+            check(wrapped.send(input("wait")),"A wrapped Claude wait control must remain interruptible");until(wrapped,[&](const auto& values){return has(values,Kind::started);});
+            check(wrapped.queue(input("wrapped original queued draft"),"wrapped-claude-queue")&&wrapped.queued().front().turn.text=="wrapped original queued draft","Claude queued records must retain only the user's original text");wrapped.interrupt();
+            check(combined(finished(wrapped),Kind::completed)=="interrupted"&&wrapped.queue_paused(),"Wrapped Claude Stop must retain and pause the original queued draft");check(wrapped.resume_queue(),"The wrapped Claude retained queue still requires explicit resume");const auto wrapped_resumed=finished(wrapped);
+            check(!has(wrapped_resumed,Kind::error)&&reads==3&&std::any_of(wrapped_resumed.begin(),wrapped_resumed.end(),[](const auto& event){return event.kind==Kind::input&&event.id=="wrapped-claude-queue"&&event.text=="wrapped original queued draft";}),"Wrapped Claude resume must evaluate current context at delivery while preserving original input identity");
         }
         std::ofstream output(report); output << "PASS: " << checks << " Claude stream-json checks\n"; return output ? 0 : 2;
     } catch (const winrt::hresult_error& error) {std::ofstream(report) << "FAIL: " << winrt::to_string(error.message()) << '\n';}

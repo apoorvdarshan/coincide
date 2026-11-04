@@ -3,6 +3,7 @@
 #include "BrowserToolEngine.h"
 #include "BrowserPrivateText.h"
 #include "BrowserToolCapture.h"
+#include "BrowserLibraryPanel.h"
 #include "../Runtime/AppToolBridgeFiles.h"
 #include "NativeStrings.h"
 #include <windows.h>
@@ -62,6 +63,16 @@ public:
     void set_agent_control_callback(AgentControlCallback value){agent_control_changed_=std::move(value);}
     void set_show_callback(ShowCallback value){show_=std::move(value);}
     void set_search_resolver(std::function<std::string(const std::string&)> value){search_=std::move(value);}
+    void set_owner(HWND owner){browser_owner_=owner;}
+    void set_library_confirmation(BrowserLibraryPanel::Confirm value){library_confirm_=std::move(value);}
+    bool library_idle()const{return library_operations_.load()==0&&history_pending_.empty()&&(!library_panel_||!library_panel_->saving());}
+    winrt::Windows::Foundation::IAsyncAction flush_library(bool finishing=false){const auto lifetime=shared_from_this();if(finishing)library_finishing_=true;const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);const winrt::apartment_context ui_thread;while(!library_idle()){if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Browser library is still saving; its previous atomic snapshot remains intact");if(!history_pending_.empty()&&!history_writing_)drain_history();co_await winrt::resume_after(std::chrono::milliseconds(10));try{co_await ui_thread;}catch(...){co_return;}}}
+    void show_library(bool show=true){
+        if(closed_)return;if(!show){if(library_host_)library_host_.Visibility(browser_xaml::Visibility::Collapsed);return;}
+        const auto key=isolate_thread_profiles_?selected_thread_:std::string{"Default"};if(key.empty())throw std::runtime_error("Open a conversation before its browser library");
+        if(!library_panel_||library_key_!=key){if(library_panel_)library_panel_->close();library_key_=key;const auto weak=weak_from_this();const auto directory=library_directory(selected_thread_);library_panel_=BrowserLibraryPanel::create(directory,[weak](const std::string& url){if(const auto self=weak.lock();self&&!self->closed_){self->navigate(url);}},library_confirm_,browser_owner_,[weak]{if(const auto self=weak.lock())self->refresh_bookmark();},[weak,directory]{if(const auto self=weak.lock();self&&!self->closed_){for(auto& [thread,state]:self->threads_)if(self->library_directory(thread)==directory)for(const auto& tab:state.tabs)if(!tab->private_mode)tab->omit_restore=true;self->save_state();}});library_host_.Child(library_panel_->view());}else if(!library_panel_->busy())library_panel_->refresh();library_host_.Visibility(browser_xaml::Visibility::Visible);
+    }
+    std::filesystem::path library_directory(const std::string& thread)const{if(isolate_thread_profiles_&&!browser_thread_id_allowed(thread))throw std::invalid_argument("Choose a browser profile before opening its library");return profiles_/L"library"/winrt::to_hstring(isolate_thread_profiles_?thread:std::string{"Default"}).c_str();}
     bool agent_control(const std::string& thread)const{const auto found=agent_grants_.find(thread);return !closed_&&found!=agent_grants_.end()&&found->second->valid;}
     void set_agent_control(const std::string& thread,bool enabled);
     static std::string tool_schema(){return browser_tool::Request::schema();}
@@ -77,6 +88,7 @@ public:
     void select_thread(std::string id) {
         if (!browser_thread_id_allowed(id)) throw std::invalid_argument("Invalid browser conversation identity");
         selected_thread_ = std::move(id);
+        if(isolate_thread_profiles_&&library_panel_&&library_key_!=selected_thread_){library_panel_->close();library_panel_.reset();library_host_.Child(nullptr);library_host_.Visibility(browser_xaml::Visibility::Collapsed);library_key_.clear();}
         auto& state = threads_[selected_thread_];
         if (state.tabs.empty()) {new_tab(); return;}
         for (const auto& tab : state.tabs) create_page(tab);
@@ -132,6 +144,7 @@ public:
     void close() noexcept {
         if (closed_) return;
         closed_ = true;
+        if(library_panel_)library_panel_->close();history_pending_.clear();
         for(auto& [thread,grant]:agent_grants_){grant->valid=false;if(agent_control_changed_)try{agent_control_changed_(thread,false);}catch(...){}}
         try {save_timer_.Stop(); save_state();} catch (...) { }
         for (auto& [id, state] : threads_) {
@@ -144,7 +157,7 @@ private:
     friend struct BrowserCredentialBridge;
     struct Tab {
         std::string id, thread_id, url{"about:blank"}, title, error, fixture_html;
-        bool private_mode{}, loading{}, ready{}, initializing{}, closed{}, fixture_navigation{}, credential_private{};
+        bool private_mode{}, loading{}, ready{}, initializing{}, closed{}, fixture_navigation{}, credential_private{},omit_restore{};
         std::uint64_t navigation_id{},document_generation{};
         browser_controls::WebView2 page{nullptr};
         browser_core::CoreWebView2Environment environment{nullptr};
@@ -181,8 +194,10 @@ private:
     browser_controls::ComboBox tab_selector_{nullptr};
     browser_controls::TextBox address_{nullptr};
     browser_controls::TextBlock status_{nullptr};
-    browser_controls::Button back_{nullptr}, forward_{nullptr};
+    browser_controls::Button back_{nullptr}, forward_{nullptr},bookmark_{nullptr};
     browser_controls::ListView download_list_{nullptr};
+    browser_controls::Border library_host_{nullptr};std::shared_ptr<BrowserLibraryPanel> library_panel_;std::string library_key_;HWND browser_owner_{};BrowserLibraryPanel::Confirm library_confirm_;
+    struct HistoryRecord{std::filesystem::path directory;std::string url,title;std::int64_t at{};std::shared_ptr<browser_library::Store> store;};std::vector<HistoryRecord> history_pending_;bool history_writing_{},library_finishing_{};std::atomic_uint library_operations_{};std::uint64_t bookmark_generation_{};std::map<std::filesystem::path,std::shared_ptr<browser_library::Store>> library_stores_;
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer save_timer_{nullptr};
     std::function<void()> changed_;
     std::function<void(const std::string&)> navigation_changed_;
@@ -197,6 +212,19 @@ private:
     void wire_agent_events(const std::shared_ptr<Tab>& tab,const browser_core::CoreWebView2& core);
     void start_agent_download(std::shared_ptr<Tab> tab,browser_core::CoreWebView2DownloadStartingEventArgs args);
     browser_json::JsonObject agent_metadata(const std::shared_ptr<Tab>& tab)const;
+    std::shared_ptr<browser_library::Store> library_store(const std::filesystem::path& directory){auto& store=library_stores_[directory];if(!store)store=std::make_shared<browser_library::Store>(directory);return store;}
+    void record_history(const std::shared_ptr<Tab>& tab){
+        if(closed_||library_finishing_||tab->private_mode||tab->credential_private)return;const auto url=browser_library::address(tab->url);if(url.empty()||tab->private_text.text(url)!=url)return;auto title=tab->title;if(tab->ready)try{title=winrt::to_string(tab->page.CoreWebView2().DocumentTitle());}catch(...){}if(tab->private_text.text(title)!=title||url!=tab->url)title.clear();if(history_pending_.size()>=64)history_pending_.erase(history_pending_.begin());const auto directory=library_directory(tab->thread_id);history_pending_.push_back({directory,url,browser_library::bounded(std::move(title),2000),browser_library::now(),library_store(directory)});drain_history();
+    }
+    winrt::fire_and_forget refresh_bookmark(){const auto lifetime=shared_from_this();if(closed_||library_finishing_||!bookmark_)co_return;const auto generation=++bookmark_generation_;const auto tab=active_tab();const auto url=tab?browser_library::address(tab->url):std::string{};bookmark_.IsEnabled(!url.empty());bookmark_.Content(winrt::box_value(L"☆"));browser_xaml::Automation::AutomationProperties::SetName(bookmark_,ui_text(L"Bookmark This Page"));if(url.empty())co_return;const auto directory=library_directory(tab->thread_id);const auto store=library_store(directory);++library_operations_;struct Pending{std::atomic_uint& count;~Pending(){--count;}} pending{library_operations_};const winrt::apartment_context ui_thread;bool marked{};co_await winrt::resume_background();try{const auto snapshot=store->open();marked=std::any_of(snapshot.contents.bookmarks.begin(),snapshot.contents.bookmarks.end(),[&](const auto& entry){return entry.url==url;});}catch(...){}try{co_await ui_thread;}catch(...){co_return;}if(closed_||generation!=bookmark_generation_)co_return;bookmark_.Content(winrt::box_value(marked?L"★":L"☆"));browser_xaml::Automation::AutomationProperties::SetName(bookmark_,ui_text(marked?L"Remove Bookmark":L"Bookmark This Page"));}
+    winrt::fire_and_forget drain_history(){
+        const auto lifetime=shared_from_this();if(history_writing_||closed_)co_return;history_writing_=true;++library_operations_;struct Pending{std::atomic_uint& count;~Pending(){--count;}} pending{library_operations_};const winrt::apartment_context ui_thread;
+        while(!closed_&&!history_pending_.empty()){auto records=std::exchange(history_pending_,{});std::string error;co_await winrt::resume_background();try{std::map<std::filesystem::path,std::vector<HistoryRecord>> groups;for(auto& record:records)groups[record.directory].push_back(std::move(record));for(const auto& [directory,items]:groups){static_cast<void>(directory);items.front().store->update([&](auto& contents){for(const auto& row:items)browser_library::Store::visit(contents,row.url,row.title,row.at);});}}catch(const std::exception& failure){error=failure.what();}catch(const winrt::hresult_error&){error="Could not save browser history safely.";}try{co_await ui_thread;}catch(...){co_return;}if(closed_)break;if(!error.empty())status_.Text(winrt::to_hstring(error));if(library_panel_&&!library_panel_->busy())library_panel_->refresh();}
+        history_writing_=false;
+    }
+    winrt::fire_and_forget toggle_bookmark(){
+        const auto lifetime=shared_from_this();const auto tab=active_tab();if(closed_||library_finishing_||!tab)co_return;const auto url=browser_library::address(tab->url);if(url.empty()||tab->private_text.text(url)!=url){status_.Text(ui_text(L"This address cannot be saved as a bookmark."));co_return;}auto title=tab->title;if(tab->private_text.text(title)!=title||url!=tab->url||tab->credential_private)title.clear();const auto directory=library_directory(tab->thread_id);const auto store=library_store(directory);++library_operations_;struct Pending{std::atomic_uint& count;~Pending(){--count;}} pending{library_operations_};const winrt::apartment_context ui_thread;std::string error;bool removed{};co_await winrt::resume_background();try{store->update([&](auto& contents){removed=std::any_of(contents.bookmarks.begin(),contents.bookmarks.end(),[&](const auto& item){return item.url==url;});if(removed)std::erase_if(contents.bookmarks,[&](const auto& item){return item.url==url;});else browser_library::Store::bookmark(contents,url,title);});}catch(const std::exception& failure){error=failure.what();}catch(const winrt::hresult_error&){error="Could not save the browser bookmark safely.";}try{co_await ui_thread;}catch(...){co_return;}if(closed_)co_return;status_.Text(error.empty()?ui_text(removed?L"Bookmark removed.":L"Bookmark saved."):winrt::to_hstring(error));if(library_panel_&&!library_panel_->busy())library_panel_->refresh();refresh_bookmark();
+    }
 
 
     BrowserPanel(std::filesystem::path profiles, std::filesystem::path downloads, bool fixture, bool isolate_threads)
@@ -226,7 +254,7 @@ private:
         root_ = browser_controls::Grid{}; dispatcher_=root_.DispatcherQueue(); identify(root_, L"BrowserPanel"); root_.RowSpacing(8);
         for (const auto height : {browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto},
                 browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Star},
-                browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}}) {
+                browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}}) {
             browser_controls::RowDefinition row; row.Height(height); root_.RowDefinitions().Append(row);
         }
         browser_controls::StackPanel tabs_bar;tabs_bar.Spacing(6);browser_controls::Grid tab_row;tab_row.ColumnSpacing(6);for(int column=0;column<3;++column){browser_controls::ColumnDefinition value;value.Width({1,column==0?browser_xaml::GridUnitType::Star:browser_xaml::GridUnitType::Auto});tab_row.ColumnDefinitions().Append(value);}
@@ -242,7 +270,7 @@ private:
         tab_row.Children().Append(tab_selector_);auto close_tab_button=make_button(L"Close Tab",L"BrowserCloseTab",[](auto& self){if(const auto tab=self.active_tab())self.close_tab(tab->id);});browser_controls::Grid::SetColumn(close_tab_button,1);tab_row.Children().Append(close_tab_button);
         agent_toggle_=browser_controls::ToggleSwitch{};agent_toggle_.Header(winrt::box_value(ui_text(L"Agent Control")));identify(agent_toggle_,L"BrowserAgentControl");
         agent_toggle_.Toggled([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->refreshing_&&!self->selected_thread_.empty())try{self->set_agent_control(self->selected_thread_,self->agent_toggle_.IsOn());}catch(...){const bool refreshing=self->refreshing_;self->refreshing_=true;self->agent_toggle_.IsOn(self->agent_control(self->selected_thread_));self->refreshing_=refreshing;self->status_.Text(ui_text(L"Browser agent control could not be changed."));}});browser_controls::Grid::SetColumn(agent_toggle_,2);tab_row.Children().Append(agent_toggle_);tabs_bar.Children().Append(tab_row);
-        browser_controls::StackPanel new_tabs;new_tabs.Orientation(browser_controls::Orientation::Horizontal);new_tabs.Spacing(8);new_tabs.Children().Append(make_button(L"New Tab",L"BrowserNewTab",[](auto& self){self.new_tab();}));new_tabs.Children().Append(make_button(L"New Private Tab",L"BrowserNewPrivateTab",[](auto& self){self.new_tab("about:blank",true);}));tabs_bar.Children().Append(new_tabs);
+        browser_controls::StackPanel new_tabs;new_tabs.Orientation(browser_controls::Orientation::Horizontal);new_tabs.Spacing(8);new_tabs.Children().Append(make_button(L"New Tab",L"BrowserNewTab",[](auto& self){self.new_tab();}));new_tabs.Children().Append(make_button(L"New Private Tab",L"BrowserNewPrivateTab",[](auto& self){self.new_tab("about:blank",true);}));tabs_bar.Children().Append(new_tabs);browser_controls::StackPanel library_actions;library_actions.Orientation(browser_controls::Orientation::Horizontal);library_actions.Spacing(8);bookmark_=make_button(L"☆",L"BrowserBookmark",[](auto& self){self.toggle_bookmark();});browser_xaml::Automation::AutomationProperties::SetName(bookmark_,ui_text(L"Bookmark This Page"));library_actions.Children().Append(bookmark_);library_actions.Children().Append(make_button(L"Bookmarks and History",L"BrowserLibrary",[](auto& self){self.show_library(!self.library_host_||self.library_host_.Visibility()!=browser_xaml::Visibility::Visible);}));tabs_bar.Children().Append(library_actions);
         root_.Children().Append(tabs_bar);
         browser_controls::Grid navigation; navigation.ColumnSpacing(6);
         for (int i = 0; i < 5; ++i) {browser_controls::ColumnDefinition column; column.Width({1, i == 3 ? browser_xaml::GridUnitType::Star : browser_xaml::GridUnitType::Auto}); navigation.ColumnDefinitions().Append(column);}
@@ -262,6 +290,7 @@ private:
         pages_ = browser_controls::Grid{}; pages_.MinHeight(250); browser_controls::Grid::SetRow(pages_, 2); root_.Children().Append(pages_);
         status_ = browser_controls::TextBlock{}; status_.TextWrapping(browser_xaml::TextWrapping::Wrap); identify(status_, L"BrowserStatus"); browser_controls::Grid::SetRow(status_, 3); root_.Children().Append(status_);
         download_list_ = browser_controls::ListView{}; download_list_.MaxHeight(120); identify(download_list_, L"BrowserDownloads"); browser_controls::Grid::SetRow(download_list_, 4); root_.Children().Append(download_list_);
+        library_host_=browser_controls::Border{};library_host_.MaxHeight(320);library_host_.Visibility(browser_xaml::Visibility::Collapsed);identify(library_host_,L"BrowserLibraryHost");browser_controls::Grid::SetRow(library_host_,5);root_.Children().Append(library_host_);
         save_timer_ = root_.DispatcherQueue().CreateTimer(); save_timer_.IsRepeating(false); save_timer_.Interval(std::chrono::milliseconds(400));
         save_timer_.Tick([weak = weak_from_this()](const auto&, const auto&) {if (const auto self = weak.lock()) try {self->save_state();} catch (...) {self->status_.Text(ui_text(L"Could not save browser tabs."));}});
         set_visible(false); refresh_navigation();
@@ -335,7 +364,7 @@ private:
                 if (!browser_url_allowed(uri) && !inline_fixture) {
                     args.Cancel(true); value->error = winrt::to_string(ui_text(L"This navigation is blocked."));
                     if (self->fixture_mode_) {const auto colon = uri.find(':'); value->error += " (scheme=" + (colon != std::string::npos && colon < 16 ? uri.substr(0, colon) : "none") + ", length=" + std::to_string(uri.size()) + ")";}
-                } else {self->complete_agent_dialog(*value);self->invalidate_agent_frames(*value);value->navigation_id = args.NavigationId(); value->loading = true; value->error.clear(); value->url = inline_fixture ? "about:blank" : uri;}
+                } else {self->complete_agent_dialog(*value);self->invalidate_agent_frames(*value);value->navigation_id = args.NavigationId(); value->loading = true;value->omit_restore=false; value->error.clear(); value->url = inline_fixture ? "about:blank" : uri;}
                 self->refresh_navigation(); self->notify();
             }
         });
@@ -343,6 +372,8 @@ private:
             if (const auto self = weak.lock()) if (const auto value = item.lock()) {
                 if (args.NavigationId() != value->navigation_id) return;
                 value->loading = false; value->upload_lifetimes.clear(); if (!args.IsSuccess() && value->error.empty()) value->error = winrt::to_string(ui_text(L"Navigation failed."));
+                if(args.IsSuccess())self->record_history(value);
+                self->refresh_bookmark();
                 self->refresh_navigation(); self->schedule_save(); self->notify();
             }
         });
@@ -481,7 +512,7 @@ private:
         const auto active = active_tab();
         for (const auto& [id, state] : threads_) {(void)id; for (const auto& tab : state.tabs) if (tab->page) tab->page.Visibility(tab == active ? browser_xaml::Visibility::Visible : browser_xaml::Visibility::Collapsed);}
         address_.Text(active ? winrt::to_hstring(active->url) : L"");
-        refresh_navigation(); refresh_downloads();
+        refresh_navigation(); refresh_downloads();refresh_bookmark();
     }
     void refresh_navigation() {
         if (!status_) return;
@@ -523,7 +554,7 @@ private:
         for (const auto& [thread, value] : threads_) for (const auto& tab : value.tabs) if (!tab->private_mode && !tab->closed) {
             auto item = tab->original ? tab->original : browser_json::JsonObject{};
             item.SetNamedValue(L"thread", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(thread))); item.SetNamedValue(L"id", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(tab->id)));
-            auto restored=browser_restore_url(tab->url);if(tab->private_text.text(restored)!=restored)restored="about:blank";item.SetNamedValue(L"url", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(restored))); item.SetNamedValue(L"selected", browser_json::JsonValue::CreateBooleanValue(value.selected == tab->id)); tabs.Append(item);
+            auto restored=browser_restore_url(tab->url);if(tab->omit_restore||tab->private_text.text(restored)!=restored)restored="about:blank";item.SetNamedValue(L"url", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(restored))); item.SetNamedValue(L"selected", browser_json::JsonValue::CreateBooleanValue(value.selected == tab->id)); tabs.Append(item);
         }
         state.SetNamedValue(L"tabs", tabs); const auto bytes = winrt::to_string(state.Stringify());
         if (bytes.size() > 1024 * 1024) throw std::runtime_error("Browser tabs exceed the save limit; existing data was left unchanged");

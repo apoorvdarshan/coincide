@@ -20,7 +20,11 @@ inline int host_persistence_tests(const std::filesystem::path& report){
         WorkspaceStore recovered(directory);auto interrupted=recovered.open();recovered.load_thread(interrupted.thread(thread.id));
         check(interrupted.thread(thread.id).host_cursors.front().sequence==7&&interrupted.thread(thread.id).messages.front().text=="Durable prefix","A transcript ahead of its index must restore its exact applied event prefix without replaying deltas");
         recovered.save_index(interrupted);const auto consistent=read(index).Stringify();
-        auto& owned=interrupted.thread(thread.id);owned.host_cursors.front().sequence=9;recovered.save_index(interrupted);
+        auto& owned=interrupted.thread(thread.id);owned.host_cursors.front().sequence=9;
+        rejects([&]{recovered.save_index(interrupted);},"Metadata updates must refuse to mirror a hosted prefix whose transcript was not saved");
+        check(read(index).Stringify()==consistent,"A refused index-ahead update must preserve the previous durable index");
+        // Inject malformed external data directly to retain recovery coverage too.
+        auto ahead=json::JsonObject::Parse(consistent);ahead.GetNamedArray(L"threads").GetAt(0).GetObject().GetNamedArray(L"hostEventCursors").GetAt(0).GetObject().SetNamedValue(L"sequence",json::JsonValue::CreateNumberValue(9));write(index,ahead);
         rejects([&]{WorkspaceStore next(directory);auto invalid=next.open();next.load_thread(invalid.thread(thread.id));},"An index ahead of its transcript must stop adoption instead of acknowledging unapplied events");
         check(read(transcript).GetNamedArray(L"messages").Size()==1,"A mismatched receipt must leave the saved history unchanged");
         write(index,json::JsonObject::Parse(consistent));

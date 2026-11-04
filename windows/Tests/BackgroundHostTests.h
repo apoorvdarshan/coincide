@@ -1,6 +1,8 @@
 #pragma once
 #include "BackgroundHostFixtureRuntime.h"
 #include "StoppedInputResolutionTests.h"
+#include "BackgroundHostIdleTests.h"
+#include "BackgroundHostReadTests.h"
 #include <fstream>
 
 namespace coincide {
@@ -33,6 +35,8 @@ inline int background_host_tests(const std::filesystem::path& report){using name
         const auto native_id_root=root/L"native-id-correlation";std::filesystem::create_directories(native_id_root);auto native_id_scope=std::make_shared<Scope>(native_id_root);auto native_id_state=std::make_shared<fixture::State>();native_id_state->input_id=new_guid();native_id_state->emit_started=true;Core native_id_core(native_id_scope,[&](const Key&,const Launch&){return std::make_unique<fixture::Session>(native_id_state);});auto native_start=fixture::start(native_id_root);native_id_core.perform(native_start);auto local_delivery=fixture::input(native_start);native_id_core.perform(local_delivery);Command native_poll;native_poll.operation=Operation::poll;native_poll.key=native_start.key;native_poll.epoch=native_start.epoch;const auto native_events=native_id_core.perform(native_poll).GetNamedArray(L"events");check(native_events.Size()==4&&logged(native_events.GetObjectAt(1)).value.id==native_id_state->input_id,"Provider-generated input IDs must remain untouched in persisted native events");bool delivery_matches=true;for(const auto& raw:native_events)if(logged(raw.GetObject()).delivery_id!=local_delivery.delivery_id)delivery_matches=false;check(delivery_matches,"A provider-generated GUID must never replace the separate stable local delivery ID across started/input/completion events");
         native_id_state->early_failure=true;auto failed_delivery=fixture::input(native_start);check(text(native_id_core.perform(failed_delivery),L"status")=="accepted","A native asynchronous setup failure must retain its accepted local delivery intent without replay");native_poll.sequence=4;const auto failure_events=native_id_core.perform(native_poll).GetNamedArray(L"events");check(failure_events.Size()==2&&logged(failure_events.GetObjectAt(0)).value.kind==SessionEvent::Kind::error&&logged(failure_events.GetObjectAt(0)).delivery_id==failed_delivery.delivery_id&&logged(failure_events.GetObjectAt(1)).delivery_id==failed_delivery.delivery_id,"Early setup error/completion before started/input must retain the pending local delivery ID without altering native event content");
         stopped_input_resolution_checks(root,check,rejects);
+        background_host_idle_checks(root,check,rejects);
+        background_host_read_checks(root,check,rejects);
         std::ofstream(report)<<"PASS: "<<checks<<" background-host core/ledger checks (synthetic runtime only)\n";return 0;
     }catch(const winrt::hresult_error& error){std::ofstream(report)<<"FAIL after "<<checks<<": "<<winrt::to_string(error.message())<<'\n';}catch(const std::exception& error){std::ofstream(report)<<"FAIL after "<<checks<<": "<<error.what()<<'\n';}return 1;
 }

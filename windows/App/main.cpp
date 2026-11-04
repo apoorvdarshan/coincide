@@ -49,6 +49,13 @@
 #include "NativeUserPrompt.h"
 #include "CodeHostingPanel.h"
 #include "../Runtime/RepositoryLease.h"
+#include "../Runtime/NativeBackgroundHost.h"
+#include "../Tests/HostedAppFixture.h"
+#include "../Runtime/HostedConversationReducer.h"
+#include "AgentToolGuide.h"
+#include "../Runtime/HostedClientState.h"
+#include "../Runtime/HostToolContextStore.h"
+#include "../Runtime/HostedAgentSession.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -156,7 +163,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool imports_loading{};
 
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer platform_timer{nullptr};
-    bool preferences_writable{},quitting{},quit_when_safe{},schedule_wake_pending{};
+    bool preferences_writable{},quitting{},quit_when_safe{},schedule_wake_pending{},quit_ready{},quit_task_active{};
+    std::string quit_command;
     std::string preferences_error,platform_error;
     std::uint64_t last_platform_tick{};
 
@@ -190,33 +198,35 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool dirty_index{};
     std::string persistence_error;
     bool closing{};
-    bool fixture_preview{},desktop_fixture{};
+    bool fixture_preview{},desktop_fixture{},hosted_fixture{};
     std::filesystem::path question_test_report;
     int* question_test_result{};
     std::string native_ui_suite{"question"};
     coincide::ThreadView thread_view{coincide::ThreadView::inbox};
     bool dialog_open{};
-    struct RunningThread {
-        std::unique_ptr<coincide::AgentSession> session;
-        std::unordered_map<std::string, coincide::SessionEvent> prompts;
-        std::string status;
-        std::string provider;
-        std::string profile_id{"default"},account_scope;
+    struct RunningThread:coincide::HostedConversationState {
+        std::shared_ptr<coincide::AgentSession> session;
         std::filesystem::path cwd;
-        std::vector<coincide::CodexModel> models;
-        bool failed{};
-        // The worker can finish before its final output reaches the UI and the store.
-        bool awaiting_completion{};
-        bool completion_received{};
+        std::size_t pending_actions{};
+        bool hosted{},host_review{},host_input_blocked{};
+        std::uint64_t host_status_revision{};
+        std::map<std::string,coincide::SessionEvent> pending_host_receipts;
+        std::map<std::string,std::string> pending_native_turns;
+        std::function<std::optional<coincide::background_host::SessionInfo>()> authenticated_host_status;
+        // Completion remains pending until its transcript and index are durable.
         std::string schedule_id,schedule_delivery;
-        bool schedule_success{},schedule_uncertain{},schedule_result_pending{},notify_completion{};
+        bool schedule_success{},schedule_uncertain{},schedule_result_pending{};
         std::string schedule_status;
         std::unique_ptr<coincide::UsageTurn> usage;
     };
     std::unordered_map<std::string, RunningThread> running;
     std::unordered_set<std::string> dirty_threads;
+    std::shared_ptr<coincide::background_host::Scope> host_scope;
+    std::shared_ptr<coincide::HostedClientState> host_clients;
+    std::shared_ptr<coincide::HostToolContextStore> host_tools;
+    std::unordered_map<std::string,std::uint64_t> host_tool_revisions;
 
-    explicit App(bool fixture = false,bool desktop_test=false) : fixture_preview(fixture),desktop_fixture(desktop_test) {
+    explicit App(bool fixture = false,bool desktop_test=false,bool hosted_test=false) : fixture_preview(fixture),desktop_fixture(desktop_test),hosted_fixture(hosted_test) {
         diagnostic(L"Application constructed");
         UnhandledException([this](const auto&, const xaml::UnhandledExceptionEventArgs& args) {
             diagnostic(args.Message());
@@ -341,7 +351,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         controls::Grid::SetColumn(content, 1);
         root.Children().Append(content);
 
-        controls::CommandBar toolbar;toolbar.DefaultLabelPosition(controls::CommandBarDefaultLabelPosition::Right);toolbar.IsDynamicOverflowEnabled(true);
+        controls::CommandBar toolbar;identify(toolbar,L"ConversationToolbar");toolbar.DefaultLabelPosition(controls::CommandBarDefaultLabelPosition::Right);toolbar.IsDynamicOverflowEnabled(true);
         title = controls::TextBlock{};
         title.Text(L"Coincide"); title.FontSize(20);
         title.VerticalAlignment(xaml::VerticalAlignment::Center);
@@ -385,6 +395,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto voice=toolbar_button(L"Voice",L"Voice",L"OpenVoice");voice.Click([this](const auto&,const auto&){show_voice();});toolbar.PrimaryCommands().Append(voice);
         auto tools=toolbar_button(L"AgentTools",L"Agent tools",L"AgentToolAccess");tools.Click([this](const auto&,const auto&){show_tool_access();});toolbar.PrimaryCommands().Append(tools);
         auto usage=toolbar_button(L"Usage",L"Usage",L"OpenUsage");usage.Click([this](const auto&,const auto&){show_usage();});toolbar.PrimaryCommands().Append(usage);
+        auto end_session=toolbar_button(L"EndSession",L"End session",L"EndSession");end_session.Click([this](const auto&,const auto&){end_selected_session();});toolbar.SecondaryCommands().Append(end_session);
         content.Children().Append(toolbar);
 
         transcript = controls::ListView{};
@@ -410,19 +421,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             providers.Items().Append(winrt::box_value(name));
         }
         providers.SelectedIndex(0);
-        providers.SelectionChanged([this](const auto&, const auto&) {
-            const auto index = providers.SelectedIndex();
-            if (!selecting && !selected.empty() && writable && index >= 0 && index < 6) {
-                try {
-                    if(thread_busy(selected))throw std::runtime_error("Stop the agent before changing providers.");
-                    if(!workspace.thread(selected).queued_inputs.empty())throw std::runtime_error("Finish or remove this conversation's queued messages before changing providers.");
-                    const auto before=workspace.thread(selected);
-                    try{workspace.select_provider(selected,std::string(coincide::provider_ids[index]));workspace.thread(selected).preferred_profile_id.reset();store->save_index(workspace);}catch(...){workspace.thread(selected)=before;throw;}
-                    const auto at=running.find(selected);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}
-                    render_prompts();update_composer();
-                } catch (...) { selecting=true;const auto& provider=workspace.thread(selected).provider;providers.SelectedIndex(static_cast<int32_t>(std::distance(coincide::provider_ids.begin(),std::find(coincide::provider_ids.begin(),coincide::provider_ids.end(),provider))));selecting=false;report_exception(); }
-            }
-        });
+        providers.SelectionChanged([this](const auto&,const auto&){const auto index=providers.SelectedIndex();if(!selecting&&!selected.empty()&&writable&&index>=0&&index<6)change_provider(selected,index);});
         compose.Children().Append(providers);
         models_button=button(L"ModelSettings",L"Model Settings",L"ModelSettings");models_button.IsEnabled(false);models_button.Click([this](const auto&,const auto&){choose_model();});compose.Children().Append(models_button);
         composer = controls::TextBox{};
@@ -431,7 +430,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         composer.AcceptsReturn(true); composer.TextWrapping(xaml::TextWrapping::Wrap);
         composer.MinHeight(80); composer.MaxHeight(240);
         composer.IsEnabled(false);
-        composer.TextChanged([this](const auto&, const auto&) {
+        composer.TextChanging([this](const auto&, const auto&) {
             ++draft_revision;
             if (selecting || selected.empty() || !writable) return;
             workspace.thread(selected).draft = winrt::to_string(composer.Text());
@@ -494,15 +493,15 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 return;
             }
             if((!fixture_preview||desktop_fixture)&&!quitting&&preferences.background&&desktop&&desktop->tray_available()&&background_work()){
-                args.Cancel(true);hide_tools();window.AppWindow().Hide();
+                args.Cancel(true);hide_tools();window.AppWindow().Hide();return;
             }
+            if(!quit_ready){args.Cancel(true);quit_app();}
         });
         window.Closed([this](const auto&, const auto&) {
             if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
             closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
             if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
-            for (auto& [id, run] : running) {(void)id; run.session->shutdown();}
             drain_sessions(); flush_dirty(); save_current();
             if(git_panel)git_panel->close();if(browser_panel)browser_panel->close();if(terminal_panel)terminal_panel->close();if(preview_panel)preview_panel->close();
             if(hosting_panel)hosting_panel->close();
@@ -520,7 +519,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }
         if(writable){try{ensure_bots();}catch(...){report_exception();}try{ensure_schedules();}catch(...){report_exception();}}
         if(desktop){HWND handle{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&handle));desktop->attach(handle,[this]{show_window();},[this]{quit_app();},[this](std::string id){show_window();if(!id.empty())try{open_thread(id);}catch(...){report_exception();}},[this]{schedule_wake_pending=true;});}
-        install_shortcuts();platform_timer.Start();platform_tick();
+        try{ensure_instructions();}catch(...){report_exception();}restore_hosted_conversations();install_shortcuts();platform_timer.Start();platform_tick();
         window.Activate();
         if(writable){configure_notifications();try{ensure_computer_use();}catch(...){report_exception();}}
         diagnostic(L"Window activated");
@@ -643,8 +642,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             const auto id = t.id;
             workspace.add_thread(std::move(t));
             store->load_thread(workspace.thread(id));
-            store->save_thread(workspace.thread(id));
-            store->save_index(workspace);
+            save_thread_durably(workspace.thread(id));
+            save_workspace_index();
             archived = false; thread_view = coincide::ThreadView::inbox; thread_filter.SelectedIndex(0);
             search.Text(L""); refresh_sidebar(); open_thread(id);
         } catch (...) { report_exception(); }
@@ -669,14 +668,37 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             }
             const auto id = coincide::new_id();
             workspace.add_project({id, winrt::to_string(path.filename().wstring()), winrt::to_string(path.wstring())});
-            store->save_index(workspace); create_thread(id);
+            save_workspace_index(); create_thread(id);
         } catch (...) { report_exception(); }
+    }
+
+    void save_thread_durably(const coincide::Thread& thread){
+        const auto at=running.find(thread.id);
+        if(at!=running.end()&&at->second.hosted&&host_clients){
+            const auto& run=at->second;const coincide::background_host::Key key{thread.id,run.provider};
+            for(const auto& [delivery,event]:run.pending_host_receipts){
+                const auto generation=host_clients->get(key);if(!generation)throw std::runtime_error("The hosted input journal is unavailable before saving its event prefix.");
+                const auto input=std::find_if(generation->pending.begin(),generation->pending.end(),[&](const auto& value){return value.delivery_id==delivery;});if(input==generation->pending.end())continue;
+                if(event.kind==coincide::SessionEvent::Kind::completed||event.kind==coincide::SessionEvent::Kind::queue_changed){
+                    const auto full=run.authenticated_host_status?run.authenticated_host_status():std::optional<coincide::background_host::SessionInfo>{};if(!full)throw std::runtime_error("Waiting for authenticated hosted receipt evidence before saving its prefix.");
+                    if(event.kind==coincide::SessionEvent::Kind::completed)host_clients->observe_settled(key,event,*full);else host_clients->observe_owner_resolution(key,event,*full);
+                }else host_clients->observe_delivered(key,event);
+            }
+        }
+        // Observation is recoverable metadata, never an ACK. Persist it before the
+        // transcript can advance past that receipt, including explicit draft saves.
+        store->save_thread(thread);
+    }
+    void save_workspace_index(){
+        const std::vector<std::string> pending(dirty_threads.begin(),dirty_threads.end());
+        for(const auto& id:pending){save_thread_durably(workspace.thread(id));dirty_threads.erase(id);}
+        store->save_index(workspace);dirty_index=false;
     }
 
     void save_current() {
         if (!writable || selected.empty()) return;
-        try { store->save_thread(workspace.thread(selected)); }
-        catch (...) { report_exception(); }
+        try { save_thread_durably(workspace.thread(selected));dirty_threads.erase(selected); }
+        catch (...) { dirty_threads.insert(selected);report_exception();persistence_error=state?winrt::to_string(state.Text()):"Changes could not be saved.";if(!closing){save_timer.Stop();save_timer.Start();} }
     }
 
     std::vector<std::string> selected_thread_ids() const {
@@ -690,7 +712,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     bool thread_busy(const std::string& id) const {
         const auto at = running.find(id);
-        return at != running.end() && (at->second.awaiting_completion || at->second.session->busy());
+        return at != running.end() && (at->second.pending_actions || at->second.awaiting_completion || at->second.session->busy());
     }
 
     void reconcile_selection() {
@@ -713,7 +735,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 throw std::runtime_error("Stop the selected conversations before changing their state or project.");
             }
             const auto before = workspace;
-            try {operation(ids); store->save_index(workspace);}
+            try {operation(ids); save_workspace_index();}
             catch (...) {workspace = before; throw;}
             for(const auto& id:ids)if(workspace.thread(id).deleted_at||workspace.thread(id).archived){if(tool_bridge)tool_bridge->disable(id);terminal_tool_threads.erase(id);if(computer_use)computer_use->revoke(id);if(browser_panel)browser_panel->set_agent_control(id,false);}
             reconcile_selection();
@@ -730,7 +752,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             dialog.Content(field); dialog.PrimaryButtonText(label(L"Save",L"Save")); dialog.CloseButtonText(label(L"Cancel",L"Cancel"));
             if (co_await dialog.ShowAsync() == controls::ContentDialogResult::Primary && writable) {
                 const auto before = workspace;
-                try {workspace.rename_thread(id, winrt::to_string(field.Text())); store->save_index(workspace);}
+                try {workspace.rename_thread(id, winrt::to_string(field.Text())); save_workspace_index();}
                 catch (...) {workspace = before; throw;}
                 reconcile_selection();
             }
@@ -753,7 +775,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto choice=duration.SelectedIndex();
                 const auto until=choice==3 ? 0 : coincide::Workspace::now_seconds()+(choice==1?86400:choice==2?604800:3600);
                 const auto before=workspace;
-                try {workspace.snooze(ids,until);store->save_index(workspace);} catch(...){workspace=before;throw;}
+                try {workspace.snooze(ids,until);save_workspace_index();} catch(...){workspace=before;throw;}
                 reconcile_selection();
             }
         } catch (...) {report_exception();}
@@ -778,9 +800,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 if(repository_mutating())throw std::runtime_error("Wait for the repository operation before moving conversations.");
                 const auto index=destinations.SelectedIndex();std::optional<std::string> project;
                 if(index>0)project=projects.at(static_cast<std::size_t>(index-1));
-                for(const auto& id:ids){auto at=running.find(id);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}}
+                for(const auto& id:ids)co_await stop_hosted_context(id);
                 const auto before=workspace;
-                try{workspace.move_threads(ids,project);store->save_index(workspace);}catch(...){workspace=before;throw;}
+                try{workspace.move_threads(ids,project);save_workspace_index();}catch(...){workspace=before;throw;}
                 invalidate_project_context(ids);reconcile_selection();
             }
         }catch(...){report_exception();}
@@ -806,10 +828,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     else {
                         for(const auto& t:workspace.threads)if(t.project_id==id&&(thread_busy(t.id)||active_terminal(t.id)))throw std::runtime_error("Stop this project's agents and close its terminals before removing the project.");
                         if(repository_mutating())throw std::runtime_error("Wait for the repository operation before removing the project.");
-                        for(const auto& t:workspace.threads)if(t.project_id==id){auto at=running.find(t.id);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}}
+                        std::vector<std::string> stopping;for(const auto& t:workspace.threads)if(t.project_id==id)stopping.push_back(t.id);for(const auto& thread_id:stopping)co_await stop_hosted_context(thread_id);
                         workspace.remove_project(id);
                     }
-                    store->save_index(workspace);
+                    save_workspace_index();
                 }catch(...){workspace=before;throw;}
                 std::vector<std::string> changed;
                 for(const auto& old:before.threads)if(workspace.thread(old.id).project_id!=old.project_id)changed.push_back(old.id);
@@ -891,15 +913,125 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void invalidate_project_context(const std::vector<std::string>& ids){
         for(const auto& id:ids){
-            if(const auto at=running.find(id);at!=running.end()){at->second.session->shutdown();running.erase(at);}
+            if(const auto at=running.find(id);at!=running.end()){if(at->second.hosted)throw std::runtime_error("Finish the hosted generation before changing its working folder.");at->second.session->shutdown();at->second.session->close();running.erase(at);}
             if(terminal_panel)terminal_panel->close_thread(id);
         }
         if(std::find(ids.begin(),ids.end(),selected)!=ids.end())hide_tools();
     }
+    static std::optional<coincide::AgentEventCursor> hosted_cursor(const coincide::Thread& thread,const std::string& provider){
+        const auto at=std::find_if(thread.host_cursors.begin(),thread.host_cursors.end(),[&](const auto& value){return value.provider==provider;});
+        return at==thread.host_cursors.end()?std::optional<coincide::AgentEventCursor>{}:coincide::AgentEventCursor{at->epoch,at->sequence};
+    }
+    void configure_owned_host_fixture(coincide::HostedAgentOptions& options){
+        if(hosted_fixture){
+            coincide::NativeHostConnectionFixture fixture;fixture.executable=coincide::background_host::current_image();
+            fixture.spawn=[](const auto& executable,const auto& arguments,const auto& directory){
+                if(arguments.size()!=2||arguments.front()!=L"--background-agent-host")throw std::runtime_error("Invalid owned host fixture command");
+                auto child=std::make_shared<coincide::background_host::DetachedProcess>(coincide::background_host::DetachedProcess::start(executable,{L"--owned-background-host-fixture",directory.wstring()},directory));
+                return coincide::NativeHostFixtureChild{child,[child]{return child->alive();}};
+            };
+            options.fixture_connector=[fixture=std::move(fixture)](auto connection){return coincide::ensure_native_host_fixture(std::move(connection),fixture);};
+        }
+    }
+    bool attach_saved_hosted(const std::string& id){
+        auto& thread=workspace.thread(id);if(running.contains(id)||!workspace.requires_background_host)return running.contains(id);
+        ensure_host_metadata();const auto generation=host_clients->get({id,thread.provider});const auto index_cursor=hosted_cursor(thread,thread.provider);
+        // Ordinary histories stay lazy. A durable active journal still selects a candidate
+        // when its transcript advanced beyond an older index during a crash.
+        if(!index_cursor&&(!generation||generation->retired))return false;
+        store->load_thread(thread);const auto cursor=hosted_cursor(thread,thread.provider);if(!cursor)return false;
+        if(!index_cursor||index_cursor->epoch!=cursor->epoch||index_cursor->sequence!=cursor->sequence)dirty_index=true;
+        if(!generation||generation->retired)return false;
+        if(generation->binding.epoch!=cursor->epoch)throw std::runtime_error("The saved host generation and conversation cursor differ; no provider was recreated.");
+        coincide::HostedAgentOptions options;options.scope=host_scope;options.key={id,thread.provider};options.client_state=host_clients;options.restored_cursor=*cursor;
+        options.bootstrap_timeout=std::chrono::seconds(10);options.action_timeout=std::chrono::seconds(30);configure_owned_host_fixture(options);
+        if(!fixture_preview){ensure_thread_tools(id);publish_host_tools(id);}
+        RunningThread run;run.thread_id=id;run.provider=thread.provider;run.epoch=cursor->epoch;run.profile_id=generation->binding.profile_id;run.account_scope=generation->binding.account_scope;run.hosted=true;
+        auto session=std::make_shared<coincide::HostedAgentSession>(std::move(options));run.authenticated_host_status=[weak=std::weak_ptr(session)]{const auto value=weak.lock();return value?value->authenticated_status():std::optional<coincide::background_host::SessionInfo>{};};run.session=std::move(session);
+        running.emplace(id,std::move(run));return true;
+    }
+    void restore_hosted_conversations(){
+        if(!writable||!workspace.requires_background_host|| (fixture_preview&&!hosted_fixture))return;
+        for(const auto& thread:workspace.threads)try{(void)attach_saved_hosted(thread.id);}catch(...){report_exception();}
+    }
+    bool retire_cached_hosted(const std::string& id){
+        const auto at=running.find(id);if(at==running.end()||!at->second.hosted)return false;
+        auto& run=at->second;if(run.pending_actions||run.host_review)return false;
+        const auto session=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session);const auto snapshot=session->snapshot();
+        if(snapshot.phase==coincide::HostedAgentPhase::connecting||snapshot.phase==coincide::HostedAgentPhase::verifying)return false;
+        auto full=session->authenticated_status();const auto cursor=hosted_cursor(workspace.thread(id),run.provider);const auto ack=run.session->acknowledged_persistence();
+        if(!full||full->live||full->busy||full->review||!cursor||full->last!=cursor->sequence||(full->last&&(!ack||ack->epoch!=full->epoch||ack->sequence!=full->last)))return false;
+        // The full original stopped snapshot and the proxy's authenticated ACK together
+        // prove the exact final prefix; the cache never fabricates an account identity.
+        full->acknowledged=full->last;flush_dirty();if(!persistence_error.empty()||dirty_index||dirty_threads.contains(id))return false;
+        try{host_clients->retire_generation({id,run.provider},*full,{*cursor,true,true});}catch(...){return false;}
+        run.session->close();running.erase(at);return true;
+    }
+    winrt::Windows::Foundation::IAsyncAction stop_hosted_context(std::string id){
+        auto lifetime=get_strong();(void)attach_saved_hosted(id);auto at=running.find(id);if(at==running.end())co_return;
+        auto session=at->second.session;if(!at->second.hosted){session->shutdown();session->close();running.erase(at);co_return;}
+        ++at->second.pending_actions;update_composer();const auto provider=at->second.provider,epoch=at->second.epoch;
+        coincide::background_host::Command stop;stop.operation=coincide::background_host::Operation::shutdown;stop.key={id,provider};stop.epoch=epoch;bool stop_confirmed{};
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);const winrt::apartment_context owner;
+        try{
+            for(;;){
+                drain_sessions();flush_dirty();if(!persistence_error.empty())throw std::runtime_error("Save the final hosted receipts before changing this conversation's context.");
+                const auto scope=host_scope;std::optional<coincide::background_host::SessionInfo> full;std::exception_ptr error;
+                co_await winrt::resume_background();try{coincide::background_host::Client client(scope,std::nullopt,std::chrono::milliseconds(500));full=client.status({id,provider},epoch);if(!full->live&&!full->busy)stop_confirmed=true;if(!stop_confirmed){const auto result=client.call(stop);stop_confirmed=coincide::background_host::text(result,L"status",32)=="accepted";full=client.status({id,provider},epoch);}}catch(...){error=std::current_exception();}co_await owner;
+                if(closing)co_return;at=running.find(id);if(at==running.end()||at->second.session!=session)throw std::runtime_error("The original hosted context changed while stopping.");
+                const auto cursor=hosted_cursor(workspace.thread(id),provider);
+                if(full&&!full->live&&!full->busy&&cursor&&cursor->epoch==epoch&&cursor->sequence==full->last&&full->acknowledged==full->last){
+                    if(full->review)throw std::runtime_error("Review the stopped conversation and its saved inputs before changing its context.");
+                    host_clients->retire_generation({id,provider},*full,{*cursor,true,true});session->close();running.erase(at);co_return;
+                }
+                if(std::chrono::steady_clock::now()>=deadline){if(error)std::rethrow_exception(error);throw std::runtime_error("The final hosted prefix is still being saved. No conversation context was changed.");}
+                co_await winrt::resume_after(std::chrono::milliseconds(50));co_await owner;
+            }
+        }catch(...){at=running.find(id);if(at!=running.end()&&at->second.session==session&&at->second.pending_actions)--at->second.pending_actions;update_composer();throw;}
+    }
+    winrt::fire_and_forget end_selected_session(){
+        auto lifetime=get_strong();if(closing||quitting||selected.empty())co_return;const auto id=selected;
+        try{co_await stop_hosted_context(id);if(selected==id){state.Text(coincide::ui_text(L"Session ended. The next message can start a fresh verified session."));render_prompts();render_queue();update_composer();}}catch(...){report_exception();}
+    }
+    winrt::fire_and_forget change_provider(std::string id,int index){
+        auto lifetime=get_strong();try{
+            if(thread_busy(id))throw std::runtime_error("Stop the agent before changing providers.");
+            if(!workspace.thread(id).queued_inputs.empty())throw std::runtime_error("Finish or remove this conversation's queued messages before changing providers.");
+            co_await stop_hosted_context(id);if(closing||quitting)co_return;
+            const auto before=workspace.thread(id);try{workspace.select_provider(id,std::string(coincide::provider_ids[index]));workspace.thread(id).preferred_profile_id.reset();save_workspace_index();}catch(...){workspace.thread(id)=before;throw;}
+            if(selected==id){render_prompts();update_composer();}
+        }catch(...){report_exception();}
+        if(selected==id){selecting=true;const auto& provider=workspace.thread(id).provider;providers.SelectedIndex(static_cast<int32_t>(std::distance(coincide::provider_ids.begin(),std::find(coincide::provider_ids.begin(),coincide::provider_ids.end(),provider))));selecting=false;update_composer();}
+    }
+    std::shared_ptr<coincide::HostedAgentSession> make_hosted_session(coincide::Thread& thread,const coincide::AgentLaunch& launch){
+        ensure_host_metadata();if(!fixture_preview){ensure_thread_tools(thread.id);publish_host_tools(thread.id);}
+        const coincide::background_host::Key key{thread.id,thread.provider};auto generation=host_clients->get(key);
+        coincide::HostedAgentOptions options;options.scope=host_scope;options.key=key;options.client_state=host_clients;options.bootstrap_timeout=std::chrono::seconds(10);options.action_timeout=std::chrono::seconds(30);
+        if(!generation||generation->retired){
+            if(!generation&&hosted_cursor(thread,thread.provider))throw std::runtime_error("This hosted history has no matching client journal. Review it before creating another runtime.");
+            coincide::background_host::Launch source;source.executable=launch.executable;source.cwd=launch.cwd;source.arguments={L"app-server"};source.profile_directory=launch.profile_directory;
+            source.session_id=launch.session_id;source.profile_id=launch.profile_id;source.saved_profile_id=launch.saved_profile_id;source.saved_account_scope=launch.saved_account_scope;source.instructions=launch.instructions;
+            const auto epoch=coincide::background_host::new_guid();
+            auto cursor=std::find_if(thread.host_cursors.begin(),thread.host_cursors.end(),[&](const auto& value){return value.provider==thread.provider;});
+            if(cursor==thread.host_cursors.end())thread.host_cursors.push_back({thread.provider,epoch,0});else *cursor={thread.provider,epoch,0};
+            workspace.requires_background_host=true;save_thread_durably(thread);save_workspace_index();
+            const coincide::HostedClientMarkerProof proof{{{epoch,0},true,true},true};
+            host_clients->begin_generation(key,{epoch,coincide::background_host::launch_fingerprint(source),source.profile_id,source.saved_account_scope},proof);
+            generation=host_clients->get(key);options.authorized_start=coincide::BackgroundAgentStart{epoch,std::move(source)};
+        }
+        const auto cursor=hosted_cursor(thread,thread.provider);
+        if(!generation||!cursor||cursor->epoch!=generation->binding.epoch)throw std::runtime_error("The hosted journal and saved conversation belong to different generations.");
+        options.restored_cursor=*cursor;
+        configure_owned_host_fixture(options);
+        return std::make_shared<coincide::HostedAgentSession>(std::move(options));
+    }
+
     RunningThread& session_for(const std::string& id){
         if(closing||quitting)throw std::runtime_error("The app is closing.");
         if(repository_busy(workspace.thread(id)))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
+        (void)retire_cached_hosted(id);
         if(const auto found=running.find(id);found!=running.end())return found->second;
+        if(attach_saved_hosted(id))return running.at(id);
         auto& thread=workspace.thread(id);coincide::CodexLaunch launch;launch.cwd=working_directory(thread);
         if(fixture_preview){wchar_t module[32768]{};if(!GetModuleFileNameW(nullptr,module,32768))winrt::throw_last_error();launch.executable=module;launch.arguments={thread.provider=="claude"?L"--claude-session-fixture":thread.provider=="opencode"?L"--opencode-http-fixture":L"--codex-session-fixture",L"normal"};}
         else{
@@ -915,9 +1047,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         launch.instructions=coincide::handoff_context(thread,thread.provider).text;
         if(thread.bot_id){const auto bot=bot_store->find(*thread.bot_id);if(!bot)throw std::runtime_error("This bot no longer exists.");launch.instructions=bot->instructions_block()+"\n\n"+launch.instructions;
         }
-        if(!fixture_preview){ensure_thread_tools(id);const auto weak=std::weak_ptr(tool_bridge);launch.tool_context=[weak,id]{const auto bridge=weak.lock();if(!bridge)return std::string{};auto context=bridge->current_instructions(id);
-            if(context.find("<coincide_schedule>")!=std::string::npos)context+="\nSchedule requests use action list; create with name, prompt and schedule; update with id and the changed fields; pause/resume/delete/run-now with id. A schedule is {kind:once,at:ISO-date-time} or {kind:once,inMinutes:number}, {kind:daily|weekdays,time:HH:mm}, {kind:weekly,day:monday,time:HH:mm}, {kind:days,days:[mon,thu],time:HH:mm}, {kind:interval,minutes:number} or hours:number, or {kind:cron,expression:five-fields}. Quote all JSON keys/strings. An optional timeZone is an IANA zone. Repeats must be at least five minutes. Creation and edits await approval; never claim they are active before approval.\n";
-            if(context.find("<coincide_terminal>")!=std::string::npos)context+="\nTerminal requests use action status/read/show/hide/interrupt. Read accepts limit (1-2000 lines, default 200) and page (default 1); output is scoped to this conversation's existing panes. Show does not start a shell. Interrupt sends Ctrl+C to those panes.\n";return context;};}
+        if(!fixture_preview){ensure_thread_tools(id);const auto weak=std::weak_ptr(tool_bridge);launch.tool_context=[weak,id]{const auto bridge=weak.lock();if(!bridge)return std::string{};auto context=bridge->current_instructions(id);if(!context.empty())context+="\n"+coincide::app_tool_descriptions();return context;};}
         std::optional<coincide::ACPLaunchOptions> acp_options;
         if(thread.provider=="cursor"){
             const auto profile_id=preferred_profile;
@@ -927,11 +1057,16 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(record==records.end()||account==account_metadata.end())throw std::runtime_error("Open Accounts and verify this conversation's original Cursor profile before continuing.");
             const auto profile=profiles.profile(*record),cache=data_directory()/L"cache/cursor-node";std::filesystem::create_directories(cache);
             const auto spec=coincide::ACPVendorLaunch::inspect("cursor",launch.executable);launch.executable=spec.executable;launch.profile_id=record->id;launch.profile_directory=profile;
+            if(launch.session_id.empty()&&launch.saved_account_scope.empty()&&account->second.state==coincide::ProviderAccountState::verified){launch.saved_profile_id=record->id;launch.saved_account_scope=account->second.scope;}
             acp_options=coincide::make_verified_acp_options(spec,coincide::ProviderAccountProgram::from(spec),*record,profile,cache,account->second,launch.saved_account_scope,!launch.session_id.empty());
         }
-        RunningThread run;run.provider=thread.provider;run.profile_id=launch.profile_id;run.cwd=launch.cwd;run.session=coincide::make_agent_session(thread.provider,std::move(launch),std::move(acp_options));
+        RunningThread run;run.thread_id=id;run.provider=thread.provider;run.profile_id=launch.profile_id;run.account_scope=launch.saved_account_scope;run.cwd=launch.cwd;
+        run.hosted=(!fixture_preview||hosted_fixture)&&(thread.provider=="codex"||thread.provider=="claude"||thread.provider=="cursor");
+        if(run.hosted){auto session=make_hosted_session(thread,launch);const auto generation=host_clients->get({id,thread.provider});run.epoch=generation->binding.epoch;run.profile_id=generation->binding.profile_id;run.account_scope=generation->binding.account_scope;
+            run.authenticated_host_status=[weak=std::weak_ptr(session)]{const auto value=weak.lock();return value?value->authenticated_status():std::optional<coincide::background_host::SessionInfo>{};};run.session=std::move(session);
+        }else run.session=coincide::make_agent_session(thread.provider,std::move(launch),std::move(acp_options));
         // Restored outbox entries always wait for an explicit Resume action; uncertain delivery is never replayed on launch.
-        if(!thread.queued_inputs.empty()){
+        if(!run.hosted&&!thread.queued_inputs.empty()){
             run.session->interrupt();
             for(const auto& input:thread.queued_inputs){
                 auto turn=make_turn(input.text,input.attachments,input.model,input.effort,input.service_tier,input.plan,input.full_access);
@@ -950,7 +1085,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         for(const auto& [provider,settings]:value.providers){
             const auto& before=preferences.providers.at(provider);const bool changed=settings.executable!=before.executable||settings.enabled!=before.enabled||settings.profile_id!=before.profile_id;
             if(settings.executable!=before.executable||settings.profile_id!=before.profile_id)for(const auto& thread:workspace.threads)if(thread.provider==provider&&!thread.queued_inputs.empty())throw std::runtime_error("Finish or remove this provider's queued messages before changing its executable or account profile.");
-            if(changed)for(const auto& [id,run]:running)if(run.provider==provider&&thread_busy(id))throw std::runtime_error("Stop this provider's active conversations before changing its executable or enabled state.");
+            if(changed)for(const auto& [id,run]:running)if(run.provider==provider&&(thread_busy(id)||run.hosted))throw std::runtime_error("Finish this provider's hosted conversations before changing its executable or enabled state.");
             if(!settings.executable.empty()&&!coincide::ProviderDiscovery::windows_executable(std::filesystem::path(winrt::to_hstring(settings.executable).c_str())))throw std::runtime_error("Choose an existing native Windows executable for the provider override.");
         }
         preferences_store->save(value);
@@ -993,26 +1128,61 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void show_window(){if(!closing){window.AppWindow().Show();window.Activate();if(composer&&composer.IsEnabled())composer.Focus(xaml::FocusState::Programmatic);}}
     void quit_app(){
-        if(closing)return;quitting=true;
-        if(repository_mutating()){quit_when_safe=true;for(auto& [id,run]:running){(void)id;run.session->interrupt();}state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));update_composer();return;}
-        quit_when_safe=false;if(fixture_preview)diagnostic(L"Explicit quit requested");window.Close();
+        if(closing||quit_task_active)return;quitting=true;update_composer();
+        if(repository_mutating()){quit_when_safe=true;state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));return;}
+        quit_when_safe=false;finish_quit();
+    }
+    winrt::fire_and_forget finish_quit(){
+        auto lifetime=get_strong();if(quit_task_active||closing)co_return;quit_task_active=true;const winrt::apartment_context owner;
+        try{
+            state.Text(coincide::ui_text(L"Saving conversations and stopping background work…"));save_current();if(!host_scope&&workspace.requires_background_host)ensure_host_metadata();
+            // The global owner command is idempotent. It stops every provider in this
+            // physical scope but keeps the host alive until the UI's final durable ACKs.
+            if(quit_command.empty())quit_command=coincide::background_host::new_guid();
+            for(auto& [id,run]:running){(void)id;if(!run.hosted)run.session->shutdown();}
+            const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);bool host_done=!host_scope;
+            while(!host_done){
+                drain_sessions();flush_dirty();
+                if(!persistence_error.empty())throw std::runtime_error("Quit is waiting because conversation changes could not be saved. The window and pending receipts were preserved.");
+                const auto scope=host_scope;const auto command_id=quit_command;bool retired{},free{};std::exception_ptr error;
+                co_await winrt::resume_background();
+                try{
+                    const auto ownership=coincide::background_host::ownership(*scope);free=ownership==coincide::background_host::Ownership::free;
+                    if(!free){coincide::background_host::Client client(scope,std::nullopt,std::chrono::milliseconds(750));coincide::background_host::Command command;command.operation=coincide::background_host::Operation::shutdown_host;command.id=command_id;
+                        const auto result=client.call(command);retired=coincide::background_host::text(result,L"status",32)=="accepted"&&result.GetNamedBoolean(L"retiring",false)&&!result.GetNamedBoolean(L"needs_persistence",true);}
+                }catch(...){error=std::current_exception();}
+                co_await owner;
+                bool bootstrapping{};for(const auto& [id,run]:running){(void)id;if(run.hosted){const auto facade=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session);const auto phase=facade->snapshot().phase;bootstrapping=bootstrapping||phase==coincide::HostedAgentPhase::connecting||phase==coincide::HostedAgentPhase::verifying;}}
+                if((free||retired)&&!bootstrapping){host_done=true;break;}
+                if(std::chrono::steady_clock::now()>=deadline){if(error)std::rethrow_exception(error);throw std::runtime_error("Background Quit is still waiting for saved final receipts. The app remains open so they can be recovered.");}
+                co_await winrt::resume_after(std::chrono::milliseconds(100));co_await owner;
+            }
+            // Let completed local adapters publish their final already-produced events.
+            for(int attempt=0;attempt<10;++attempt){drain_sessions();co_await winrt::resume_after(std::chrono::milliseconds(25));co_await owner;}
+            drain_sessions();flush_dirty();save_current();
+            if(!persistence_error.empty()||dirty_index||!dirty_threads.empty())throw std::runtime_error("Quit is waiting for unsaved conversation changes.");
+            if(browser_panel)co_await browser_panel->flush_library(true);
+            quit_ready=true;quit_task_active=false;if(fixture_preview)diagnostic(L"Explicit quit preserved durable conversation state");window.Close();
+        }catch(...){quit_task_active=false;quitting=false;quit_when_safe=false;report_exception();update_composer();}
     }
     bool background_work()const{
         if(preferences.keep_awake||repository_mutating())return true;
         for(const auto& thread:workspace.threads)if(thread_busy(thread.id)||active_terminal(thread.id))return true;
         if(schedule_panel)for(const auto& task:schedule_panel->store().tasks())if(task.in_flight||(task.active()&&task.next_run))return true;
+        if(const auto sync=instruction_sync())try{for(const auto& binding:sync->service()->bindings())if(binding.automatic&&!binding.paused)return true;}catch(...){return true;}
         return false;
     }
     std::string schedule_target(const std::string& canonical)const{
         const winrt::guid id(winrt::to_hstring(canonical));for(const auto& thread:workspace.threads)if(winrt::guid(winrt::to_hstring(thread.id))==id)return thread.id;return{};
     }
-    bool repository_mutating()const{return (git_panel&&git_panel->mutating())||(hosting_panel&&hosting_panel->mutating());}
+    std::shared_ptr<coincide::InstructionGitPanel> instruction_sync()const{return instructions_panel?instructions_panel->git_sync():nullptr;}
+    bool repository_mutating()const{const auto sync=instruction_sync();return (git_panel&&git_panel->mutating())||(hosting_panel&&hosting_panel->mutating())||(sync&&sync->mutating());}
     bool repository_busy(const coincide::Thread& thread)const{
         if(!repository_mutating())return false;
         std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
         if(thread.bot_id){if(!bot_store)return true;const auto bot=bot_store->find(*thread.bot_id);if(!bot)return true;try{folder=bot_store->working_directory(*bot);}catch(...){return true;}}
         else if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return true;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
-        try{const auto overlap=[&](const auto& panel){const auto repository=panel->repository_root(),target=panel->mutation_target();return coincide::repository_lease::conflicts({repository,target},folder);};return (git_panel&&git_panel->mutating()&&overlap(git_panel))||(hosting_panel&&hosting_panel->mutating()&&overlap(hosting_panel));}catch(...){return true;}
+        try{const auto overlap=[&](const auto& panel){const auto repository=panel->repository_root(),target=panel->mutation_target();return coincide::repository_lease::conflicts({repository,target},folder);};return (git_panel&&git_panel->mutating()&&overlap(git_panel))||(hosting_panel&&hosting_panel->mutating()&&overlap(hosting_panel))||([&]{const auto sync=instruction_sync();if(!sync||!sync->mutating())return false;for(const auto& target:sync->mutation_targets())if(coincide::repository_lease::conflicts({target,target},folder))return true;return false;})();}catch(...){return true;}
     }
     bool native_available(const std::string& provider)const{
         if(fixture_preview)return true;
@@ -1020,7 +1190,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     bool provider_connected(const coincide::Thread& thread)const{
         if(!preferences.providers.at(thread.provider).enabled)return false;
-        if(thread.provider=="codex"||thread.provider=="claude"||thread.provider=="opencode")return true;
+        if(thread.provider=="codex"||thread.provider=="claude")return true;
+        if(thread.provider=="opencode")return fixture_preview; // Current installed native protocol/account compatibility is not verified.
         if(thread.provider!="cursor")return false;
         const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[](const auto& value){return value.provider=="cursor";});
         const auto profile_id=native==thread.sessions.end()?preferences.providers.at("cursor").profile_id:native->profile_id;
@@ -1055,18 +1226,23 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void show_schedules(){if(selected.empty()||!writable)return;try{ensure_schedules();schedule_panel->select_thread(selected);select_tool("schedules",schedule_panel->view(),label(L"Schedules",L"Schedules"));}catch(...){report_exception();}}
     bool dispatch_schedule(const coincide::scheduling::DeliveryIntent& intent){
-        if(closing||!writable)return false;
+        if(closing||quitting||!writable)return false;
         const auto id=schedule_target(intent.thread_id);if(id.empty())return false;auto& thread=workspace.thread(id);store->load_thread(thread);
         if(!schedule_eligible(thread)||thread_busy(id)||!thread.queued_inputs.empty())return false;
-        auto& run=session_for(id);const auto turn=make_turn(intent.prompt,{},thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
-        if(std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==intent.delivery_id;}))return false;
-        workspace.note_activity(id);store->save_index(workspace);thread.messages.push_back({intent.delivery_id,"user",intent.prompt,thread.provider});
-        try{store->save_thread(thread);}catch(...){thread.messages.pop_back();throw;}
-        prepare_usage(thread,run,intent.delivery_id);if(!run.session->send(turn)){run.usage.reset();thread.messages.pop_back();store->save_thread(thread);return false;}
-        run.schedule_id=intent.schedule_id;run.schedule_delivery=intent.delivery_id;run.awaiting_completion=true;run.completion_received=false;run.failed=false;run.status=winrt::to_string(label(L"Connecting",L"Connecting…"));
+        auto& run=session_for(id);auto turn=make_turn(intent.prompt,{},thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
+        coincide::QueuedInput input{delivery_key(intent.delivery_id),intent.prompt,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access,{}};
+        if(std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return same_delivery(message.id,input.id);} ))return false;
+        workspace.note_activity(id);save_workspace_index();thread.messages.push_back({input.id,"user",intent.prompt,thread.provider});
+        try{save_thread_durably(thread);prepare_hosted_input(id,run,input,coincide::HostedIntentOperation::send);}catch(...){thread.messages.pop_back();save_thread_durably(thread);throw;}
+        prepare_usage(thread,run,input.id,&input.model);run.schedule_id=intent.schedule_id;run.schedule_delivery=input.id;run.awaiting_completion=true;run.completion_received=false;run.failed=false;run.status=winrt::to_string(label(L"Connecting",L"Connecting…"));
         if(selected==id){transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));show_latest();update_composer();}
+        const auto delivery=input.id;session_action(id,[turn=std::move(turn),delivery](auto& session)mutable{return session.send_identified(std::move(turn),delivery);},
+            [this,id,input=std::move(input)](auto& current,bool accepted,bool uncertain){input_action_result(id,current,input,false,accepted,uncertain);});
+        // The controller already durably owns this intent. Acceptance is reconciled by
+        // its stable ID; an uncertain transport never causes an automatic second send.
         refresh_sidebar();return true;
     }
+
     void platform_tick(){
         if(closing)return;
         flush_usage();
@@ -1074,6 +1250,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(quitting){if(quit_when_safe&&!repository_mutating())quit_app();return;}
         if(computer_use)computer_use->idle_tick();
         if(credentials_controller)credentials_controller->tick();
+        if(const auto sync=instruction_sync())sync->tick(GetTickCount64());
         try{
             last_platform_tick=GetTickCount64();
             if(schedule_panel){
@@ -1112,7 +1289,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         account_metadata.insert_or_assign(record.id,account_state);
         for(auto at=running.begin();at!=running.end();){if(at->second.provider==record.provider&&at->second.profile_id==record.id){
             if(schedule_panel&&!schedule_panel->pause_thread(at->first))schedule_wake_pending=true;
-            at->second.session->interrupt();at->second.session->shutdown();at=running.erase(at);
+            at->second.session->interrupt();at->second.session->shutdown();if(at->second.hosted){at->second.status="The original account changed. Final receipts are preserved; verify that account before continuing.";++at;}else at=running.erase(at);
         }else ++at;}
         if(!selected.empty()){render_prompts();render_queue();update_composer();}
     }
@@ -1152,15 +1329,15 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 [weak](const coincide::VoiceDestination& destination,const std::string& text){const auto self=weak.get();if(!self||self->closing||!self->writable||self->selected!=destination.thread_id||self->draft_revision!=destination.draft_revision)return false;
                     auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at||text.empty()||text.size()>256*1024||text.find('\0')!=std::string::npos||!coincide::local_file::utf8(text)||thread.draft.size()>4*1024*1024-text.size())return false;
                     const auto previous=thread.draft;thread.draft+=previous.empty()||std::isspace(static_cast<unsigned char>(previous.back()))?text:" "+text;
-                    try{self->store->save_thread(thread);}catch(...){thread.draft=previous;throw;}
+                    try{self->save_thread_durably(thread);}catch(...){thread.draft=previous;throw;}
                     self->selecting=true;try{self->composer.Text(winrt::to_hstring(thread.draft));}catch(...){self->selecting=false;throw;}self->selecting=false;self->update_composer();return true;
                 },owner);tool_views.Children().Append(voice_panel->view());}
             select_tool("voice",voice_panel->view(),label(L"Voice",L"Voice"));
         }catch(...){report_exception();}
     }
     void ensure_usage(){if(!usage_store){auto value=std::make_shared<coincide::UsageStore>(data_directory());value->open();usage_store=std::move(value);}}
-    void prepare_usage(const coincide::Thread& thread,RunningThread& run,const std::string& delivery)noexcept{
-        try{if(run.usage)return;coincide::UsageOwner owner;owner.provider=run.provider;owner.project_id=thread.project_id.value_or("");owner.thread_id=thread.id;owner.profile_id=run.profile_id;owner.account_scope=run.account_scope;owner.model=thread.model;owner.delivery_id=delivery;
+    void prepare_usage(const coincide::Thread& thread,RunningThread& run,const std::string& delivery,const std::string* captured_model=nullptr)noexcept{
+        try{if(run.usage)return;coincide::UsageOwner owner;owner.provider=run.provider;owner.project_id=thread.project_id.value_or("");owner.thread_id=thread.id;owner.profile_id=run.profile_id;owner.account_scope=run.account_scope;owner.model=captured_model?*captured_model:thread.model;owner.delivery_id=delivery;
             const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& value){return value.provider==run.provider;});if(native!=thread.sessions.end()){owner.native_session=native->id;if(owner.account_scope.empty())owner.account_scope=native->account_scope;}
             run.usage=std::make_unique<coincide::UsageTurn>(std::move(owner),coincide::UsageStore::now_ms());
         }catch(...){usage_warning="Usage could not be recorded for this turn.";run.usage.reset();}
@@ -1182,7 +1359,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(fixture_preview){home=data_directory()/L"fixture-home";std::filesystem::create_directories(home);}
         else{PWSTR path{};winrt::check_hresult(SHGetKnownFolderPath(FOLDERID_Profile,KF_FLAG_DEFAULT,nullptr,&path));home=path;CoTaskMemFree(path);}
         std::filesystem::create_directories(data_directory());auto bots=std::make_shared<coincide::BotStore>(data_directory()/L"bots",home);bots->open();bots->ensure_starters(bot_defaults());const auto weak=get_weak();
-        auto controller=std::make_unique<coincide::BotWorkspace>(workspace,*store,*bots,[weak](const auto& id){const auto self=weak.get();return !self||self->closing||self->thread_busy(id)||self->active_terminal(id)||self->repository_busy(self->workspace.thread(id))||self->dirty_threads.contains(id)||!self->persistence_error.empty();},
+        auto controller=std::make_unique<coincide::BotWorkspace>(workspace,*store,*bots,[weak](const auto& id){const auto self=weak.get();return !self||self->closing||(self->thread_busy(id)||(self->running.contains(id)&&self->running.at(id).hosted))||self->active_terminal(id)||self->repository_busy(self->workspace.thread(id))||self->dirty_threads.contains(id)||!self->persistence_error.empty();},
             [weak](const auto& ids){if(const auto self=weak.get();self&&!self->closing)self->invalidate_project_context(ids);else throw std::runtime_error("The app is closing.");});
         controller->recover_orphans();bot_store=std::move(bots);bot_workspace=std::move(controller);
     }
@@ -1224,7 +1401,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void show_credentials(){if(closing||!writable)return;try{ensure_credentials();select_tool("passwords",credentials_view,label(L"Passwords",L"Passwords"));}catch(...){report_exception();}}
     void ensure_browser_panel(){
-        if(browser_panel)return;browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},fixture_preview);const auto weak=get_weak();
+        if(browser_panel)return;browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},fixture_preview);HWND browser_owner{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&browser_owner));browser_panel->set_owner(browser_owner);const auto weak=get_weak();
         browser_panel->set_agent_control_callback([weak](const std::string& id,bool enabled){if(const auto self=weak.get();self&&!self->closing){const auto thread=self->schedule_target(id);if(thread.empty()){if(enabled)self->browser_panel->set_agent_control(id,false);return;}self->ensure_thread_tools(thread);}});
         browser_panel->set_navigation_callback([weak](const std::string& frame){if(const auto self=weak.get();self&&self->credentials_controller)self->credentials_controller->cancel_navigation(frame);});
         browser_panel->set_show_callback([weak](const std::string& id,bool show){if(const auto self=weak.get();self&&!self->closing){if(show){if(self->dialog_open)throw std::runtime_error("Finish the open dialog before showing another browser.");const auto thread=self->schedule_target(id);if(thread.empty())throw std::runtime_error("This browser conversation is unavailable.");if(self->selected!=thread)self->open_thread(thread);self->show_window();self->select_tool("browser",self->browser_panel->view(),label(L"Browser",L"Browser"));}else if(self->selected==id&&self->visible_tool=="browser")self->hide_tools();}});
@@ -1253,19 +1430,30 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         catch(const std::exception& error){operation->complete(tool_error(error.what()),400);}
         if(own_dialog)dialog_open=false;if(((restore_browser&&visible_tool=="browser")||(restore_passwords&&visible_tool=="passwords"))&&selected==id)hide_tools();
     }
+    void ensure_host_metadata(){
+        if(host_scope)return;auto scope=std::make_shared<coincide::background_host::Scope>(data_directory());
+        auto clients=std::make_shared<coincide::HostedClientState>(scope);clients->open();
+        auto tools=std::make_shared<coincide::HostToolContextStore>(scope);
+        host_scope=std::move(scope);host_clients=std::move(clients);host_tools=std::move(tools);
+    }
+    void publish_host_tools(const std::string& id){
+        if(!host_tools)return;const auto revision=++host_tool_revisions[id];
+        host_tools->publish(id,tool_bridge?tool_bridge->current_instructions(id):std::string{},revision);
+    }
     void ensure_tool_bridge(){
         if(tool_bridge||fixture_preview||!writable)return;const auto folder=data_directory()/L"app-tools";std::filesystem::create_directories(folder);const auto queue=window.DispatcherQueue();
         tool_bridge=std::make_shared<coincide::app_tools::AppToolBridge>(folder,[queue](std::function<void()> work){return queue.TryEnqueue([work=std::move(work)]{work();});});
     }
     void ensure_thread_tools(const std::string& id){
         if(fixture_preview||closing||quitting||!writable)return;ensure_tool_bridge();const auto& thread=workspace.thread(id);
-        if(thread.deleted_at||thread.archived){tool_bridge->disable(id);return;}const auto weak=get_weak();
+        if(thread.deleted_at||thread.archived){tool_bridge->disable(id);publish_host_tools(id);return;}const auto weak=get_weak();
         const auto handler=[weak](const coincide::app_tools::Request& request,const std::shared_ptr<coincide::app_tools::Operation>& operation){if(const auto self=weak.get())self->handle_app_tool(request,operation);else operation->complete("{\"error\":\"Coincide is closing\"}",503);};
         using Channel=coincide::app_tools::Channel;
         tool_bridge->enable(id,Channel::schedule,coincide::app_tools::Request::actions(Channel::schedule),handler);
         if(browser_panel&&browser_panel->agent_control(id))tool_bridge->enable(id,Channel::browser,coincide::app_tools::Request::actions(Channel::browser),handler);else tool_bridge->disable(id,Channel::browser);
         if(terminal_tool_threads.contains(id))tool_bridge->enable(id,Channel::terminal,coincide::app_tools::Request::actions(Channel::terminal),handler);else tool_bridge->disable(id,Channel::terminal);
         if(computer_use&&computer_use->snapshot(id).granted)tool_bridge->enable(id,Channel::computer_use,coincide::app_tools::Request::actions(Channel::computer_use),handler);else tool_bridge->disable(id,Channel::computer_use);
+        publish_host_tools(id);
     }
     void handle_app_tool(const coincide::app_tools::Request& request,const std::shared_ptr<coincide::app_tools::Operation>& operation){
         using namespace coincide::app_tools;using Channel=coincide::app_tools::Channel;
@@ -1311,9 +1499,18 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto backend=std::make_shared<coincide::computer_use::ProcessBackend>(module,directory/L"helper",GetCurrentProcessId());
         auto controller=std::make_shared<coincide::computer_use::Controller>(std::move(backend));coincide::computer_use::SettingsStore settings(directory);controller->set_enabled(settings.open().enabled);computer_use=std::move(controller);
     }
+    void ensure_instructions(){
+        if(instructions_panel)return;
+        auto locations=coincide::InstructionLocations::standard();
+        if(fixture_preview){const auto home=data_directory()/L"fixture-home";locations={home,home/L".claude",home/L".codex",home/L".grok",home/L".config/opencode",home/L".gemini",home/L".config/coincide"};}
+        instructions_panel=coincide::InstructionsPanel::create(std::move(locations),data_directory()/L"instruction-sync");
+        HWND owner{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&owner));instructions_panel->set_owner(owner);
+        const auto weak=get_weak();instructions_panel->git_sync()->set_mutation_guard([weak](const auto& target){const auto self=weak.get();return self&&self->git_target_allowed(target,false);});
+        tool_views.Children().Append(instructions_panel->view());instructions_panel->view().Visibility(xaml::Visibility::Collapsed);
+    }
     void show_instructions(){
         try{
-            if(!instructions_panel){instructions_panel=coincide::InstructionsPanel::create();tool_views.Children().Append(instructions_panel->view());}
+            ensure_instructions();
             if(!selected.empty()&&workspace.thread(selected).project_id)instructions_panel->set_project(working_directory(workspace.thread(selected)));else instructions_panel->show_global();
             select_tool("instructions",instructions_panel->view(),label(L"Instructions",L"Instructions"));
         }catch(...){report_exception();}
@@ -1421,7 +1618,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         const auto folder=std::filesystem::canonical(target);if(!coincide::local_file::local_path(folder)||coincide::local_file::has_reparse(folder)||!std::filesystem::is_directory(folder))throw std::runtime_error("Choose an available local worktree.");
         auto found=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& project){std::error_code error;return project.id!=coincide::bots_container_id&&std::filesystem::equivalent(folder,std::filesystem::path(winrt::to_hstring(project.path).c_str()),error)&&!error;});
         std::string project;
-        if(found==workspace.projects.end()){const auto before=workspace;project=coincide::new_id();try{workspace.add_project({project,winrt::to_string(folder.filename().empty()?folder.root_name().wstring():folder.filename().wstring()),winrt::to_string(folder.wstring())});store->save_index(workspace);}catch(...){workspace=before;throw;}}
+        if(found==workspace.projects.end()){const auto before=workspace;project=coincide::new_id();try{workspace.add_project({project,winrt::to_string(folder.filename().empty()?folder.root_name().wstring():folder.filename().wstring()),winrt::to_string(folder.wstring())});save_workspace_index();}catch(...){workspace=before;throw;}}
         else project=found->id;
         const auto existing=std::find_if(workspace.threads.begin(),workspace.threads.end(),[&](const auto& thread){return thread.project_id==project&&!thread.deleted_at&&!thread.archived;});
         if(existing!=workspace.threads.end()){thread_view=coincide::ThreadView::inbox;thread_filter.SelectedIndex(0);refresh_sidebar();open_thread(existing->id);}else create_thread(project);
@@ -1472,34 +1669,100 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void queue_message(bool steer){
         if(closing||quitting||selected.empty()||!writable)return;
         try{
-            auto& thread=workspace.thread(selected);if(thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
-            auto& run=session_for(selected);
+            const auto thread_id=selected;auto& thread=workspace.thread(thread_id);if(thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
+            auto& run=session_for(thread_id);if(run.pending_actions||run.host_review||run.host_input_blocked)return;
             auto turn=make_turn(thread.draft,thread.draft_attachments,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
-            coincide::QueuedInput input{coincide::new_id(),thread.draft,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access,thread.draft_attachments};
+            coincide::QueuedInput input{coincide::background_host::new_guid(),thread.draft,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access,thread.draft_attachments};
             thread.queued_inputs.push_back(input);thread.draft.clear();thread.draft_attachments.clear();
-            try{store->save_thread(thread);}catch(...){thread.queued_inputs.pop_back();thread.draft=input.text;thread.draft_attachments=input.attachments;throw;}
-            const auto accepted=steer?run.session->steer(std::move(turn),input.id):run.session->queue(std::move(turn),input.id);
-            if(!accepted){thread.queued_inputs.pop_back();thread.draft=input.text;thread.draft_attachments=input.attachments;store->save_thread(thread);throw std::runtime_error("This message was not accepted. Keep the draft and try Queue or wait for the current turn.");}
+            try{save_thread_durably(thread);prepare_hosted_input(thread_id,run,input,steer?coincide::HostedIntentOperation::steer:coincide::HostedIntentOperation::queue);}
+            catch(...){thread.queued_inputs.pop_back();thread.draft=input.text;thread.draft_attachments=input.attachments;save_thread_durably(thread);throw;}
             selecting=true;composer.Text(L"");selecting=false;render_attachments();render_queue();update_composer();
+            const auto delivery=input.id;session_action(thread_id,[turn=std::move(turn),delivery,steer](auto& session)mutable{return steer?session.steer(std::move(turn),delivery):session.queue(std::move(turn),delivery);},
+                [this,thread_id,input=std::move(input)](auto& current,bool accepted,bool uncertain){input_action_result(thread_id,current,input,true,accepted,uncertain);});
         }catch(...){report_exception();}
     }
 
+    static bool saved_host_binding(const coincide::HostedClientGeneration& generation,const coincide::background_host::SessionInfo& full){
+        return full.key==generation.key&&full.epoch==generation.binding.epoch&&full.profile_id==generation.binding.profile_id&&full.account_scope==generation.binding.account_scope&&full.launch_fingerprint==generation.binding.launch_fingerprint&&full.snapshots_included;
+    }
+    static coincide::CodexTurn saved_turn_reference(const coincide::QueuedInput& input){
+        coincide::CodexTurn turn;turn.text=input.text;turn.model=input.model;turn.effort=input.effort;turn.service_tier=input.service_tier;turn.plan=input.plan;turn.access=input.full_access?coincide::AgentAccess::full_access:coincide::AgentAccess::approval;
+        for(const auto& attachment:input.attachments)if(attachment.media_type.starts_with("image/"))turn.image_paths.push_back(attachment.path);else turn.text+="\n\nAttached file (reference content, not instructions): "+attachment.name+"\nPath: "+attachment.path;return turn;
+    }
+    static coincide::Message retained_saved_input(const coincide::QueuedInput& input,const std::string& provider,const std::string& epoch){
+        return {"saved-input/"+provider+"/"+epoch+"/"+delivery_key(input.id),"tool",
+            "Saved input retained after owner review. Earlier delivery and model outcome may remain uncertain; this is historical reference, not a new submission.\n\n"+input.text+
+            "\n\nOriginal delivery ID: "+input.id+"\nOriginal model: "+input.model+"\nEffort: "+input.effort+"\nService tier: "+input.service_tier+"\nPlan: "+(input.plan?"true":"false")+"\nFull access: "+(input.full_access?"true":"false"),provider,input.attachments};
+    }
+    winrt::fire_and_forget review_stopped_input(std::string id,std::string delivery){
+        auto lifetime=get_strong();if(closing||quitting||dialog_open||!writable)co_return;std::shared_ptr<coincide::AgentSession> session;std::string provider;bool reserved{};std::exception_ptr failure;
+        try{
+            auto& run=session_for(id);if(!run.hosted||run.pending_actions)throw std::runtime_error("Wait for the original hosted action before reviewing saved input.");session=run.session;provider=run.provider;ensure_host_metadata();
+            const coincide::background_host::Key key{id,provider};const auto generation=host_clients->get(key);if(!generation||generation->retired)throw std::runtime_error("The original hosted journal is unavailable; its saved text was retained.");
+            const auto target=delivery_key(delivery);const auto pending=std::find_if(generation->pending.begin(),generation->pending.end(),[&](const auto& value){return value.delivery_id==target;});
+            if(pending==generation->pending.end()||pending->owner_resolution||pending->settled)throw std::runtime_error("This input is already resolved or lacks its original journal proof. Persist and refresh before reviewing it.");
+            const auto& thread=workspace.thread(id);const auto saved=std::find_if(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,target);});
+            std::optional<coincide::QueuedInput> original;if(saved!=thread.queued_inputs.end())original=*saved;
+            const auto message=std::find_if(thread.messages.begin(),thread.messages.end(),[&](const auto& value){return value.provider==provider&&value.role=="user"&&same_delivery(value.id,target);});
+            if(!original&&message==thread.messages.end())throw std::runtime_error("The original input text could not be found; no saved work was discarded.");
+            const auto preserved_text=original?original->text:message->text;const auto scope=host_scope;++run.pending_actions;reserved=true;dialog_open=true;
+            const winrt::apartment_context owner;coincide::background_host::Command command;coincide::background_host::SessionInfo full;std::exception_ptr fetch_failure;
+            co_await winrt::resume_background();try{
+                coincide::background_host::Client client(scope,std::nullopt,std::chrono::seconds(2));full=client.status(key,generation->binding.epoch);
+                if(!saved_host_binding(*generation,full)||full.live||full.busy||!full.queue_paused)throw std::runtime_error("Stop and verify the exact original hosted generation before resolving saved work.");
+                command.key=key;command.epoch=full.epoch;command.delivery_id=target;command.owner_reviewed=true;command.expected_launch_fingerprint=full.launch_fingerprint;command.expected_profile_id=full.profile_id;command.expected_account_scope=full.account_scope;
+                coincide::background_host::Command status;status.operation=coincide::background_host::Operation::delivery_status;status.key=key;status.epoch=full.epoch;status.delivery_id=target;const auto disposition=client.call(status);command.expected_delivery_digest=coincide::background_host::text(disposition,L"command_digest",64);
+                const auto queued=std::find_if(full.queued.begin(),full.queued.end(),[&](const auto& value){return same_delivery(value.id,target);});
+                if(queued!=full.queued.end()){
+                    if(!original||coincide::background_host::queued_fingerprint({target,saved_turn_reference(*original)})!=coincide::background_host::queued_fingerprint(*queued))throw std::runtime_error("The authenticated saved input differs from its original text/settings; nothing was cancelled.");
+                    command.operation=coincide::background_host::Operation::cancel_stopped_queue;command.queued_fingerprint=coincide::background_host::queued_fingerprint(*queued);
+                }else command.operation=coincide::background_host::Operation::resolve_stopped_input;
+            }catch(...){fetch_failure=std::current_exception();}try{co_await owner;}catch(...){co_return;}if(fetch_failure)std::rethrow_exception(fetch_failure);
+            const auto current=running.find(id);if(closing||quitting||current==running.end()||current->second.session!=session)throw std::runtime_error("The original conversation changed before review.");
+            const auto decision=co_await coincide::native_user_prompt(root.XamlRoot(),coincide::ui_text(L"Review stopped input"),winrt::to_hstring("Cancel only future saved work for this original input and retain its text and attachments in the conversation? Earlier delivery and model outcome remain uncertain. No input will be replayed.\n\nOriginal input:\n"+preserved_text),coincide::ui_text(L"Retain input and resolve"),GetTickCount64()+900000,[weak=get_weak()]{const auto self=weak.get();return !self||self->closing||self->quitting;});
+            if(decision==L"done"){
+                std::exception_ptr mutation_failure;co_await winrt::resume_background();try{coincide::background_host::Client client(scope,std::nullopt,std::chrono::seconds(2));const auto again=client.status(key,command.epoch);if(!saved_host_binding(*generation,again)||again.live||again.busy||!again.queue_paused)throw std::runtime_error("The reviewed original generation changed before resolution.");const auto result=client.call(command);if(coincide::background_host::text(result,L"status",32)!="accepted"||!result.GetNamedBoolean(L"delivery_unknown",false))throw std::runtime_error("Stopped-input resolution was not confirmed; preserve its original input and review status.");}catch(...){mutation_failure=std::current_exception();}try{co_await owner;}catch(...){co_return;}if(mutation_failure)std::rethrow_exception(mutation_failure);
+                const auto at=running.find(id);if(at!=running.end()&&at->second.session==session)at->second.status="Owner resolution accepted. Waiting for its ordered receipt and durable saved prefix; no input was replayed.";
+            }
+        }catch(...){failure=std::current_exception();}
+        dialog_open=false;const auto at=running.find(id);if(reserved&&at!=running.end()&&at->second.session==session&&at->second.pending_actions)--at->second.pending_actions;
+        if(failure&&!closing)try{std::rethrow_exception(failure);}catch(...){report_exception();}if(!closing&&selected==id){render_queue();update_composer();}
+    }
+    winrt::fire_and_forget review_stopped_session(std::string id){
+        auto lifetime=get_strong();if(closing||quitting||dialog_open||!writable)co_return;std::shared_ptr<coincide::AgentSession> session;bool reserved{};std::exception_ptr failure;
+        try{auto& run=session_for(id);if(!run.hosted||run.pending_actions)throw std::runtime_error("Wait for current hosted actions before session review.");session=run.session;const coincide::background_host::Key key{id,run.provider};const auto generation=host_clients->get(key);const auto cursor=hosted_cursor(workspace.thread(id),run.provider);
+            if(!generation||!generation->pending.empty()||!cursor||!persistence_error.empty()||dirty_threads.contains(id)||dirty_index)throw std::runtime_error("Resolve saved inputs and durably save their receipts before reviewing this stopped session.");
+            const auto scope=host_scope;++run.pending_actions;reserved=true;dialog_open=true;const winrt::apartment_context owner;std::exception_ptr request_failure;coincide::background_host::SessionInfo full;
+            co_await winrt::resume_background();try{coincide::background_host::Client client(scope,std::nullopt,std::chrono::seconds(2));full=client.status(key,generation->binding.epoch);if(!saved_host_binding(*generation,full)||full.live||full.busy||!full.queue_paused||!full.queued.empty()||!full.prompts.empty()||full.last!=full.acknowledged||cursor->epoch!=full.epoch||cursor->sequence!=full.last)throw std::runtime_error("Stop, resolve saved work and persist/ACK the exact final prefix before reviewing the original session.");}catch(...){request_failure=std::current_exception();}try{co_await owner;}catch(...){co_return;}if(request_failure)std::rethrow_exception(request_failure);
+            const auto decision=co_await coincide::native_user_prompt(root.XamlRoot(),coincide::ui_text(L"Review stopped session"),coincide::ui_text(L"Mark this original stopped session reviewed after reading its saved conversation and resolved inputs? Earlier uncertain delivery and model outcomes remain uncertain. This starts no provider and replays no input. End Hosted Session can then retire this generation."),coincide::ui_text(L"Mark reviewed"),GetTickCount64()+900000,[weak=get_weak()]{const auto self=weak.get();return !self||self->closing||self->quitting;});
+            if(decision==L"done"){co_await winrt::resume_background();try{coincide::background_host::Client client(scope,std::nullopt,std::chrono::seconds(2));const auto current=client.status(key,full.epoch);if(!saved_host_binding(*generation,current)||current.live||current.busy||!current.queued.empty()||!current.prompts.empty()||current.last!=full.last||current.acknowledged!=full.last)throw std::runtime_error("The stopped session changed after owner review.");coincide::background_host::Command review;review.operation=coincide::background_host::Operation::review;review.key=key;review.epoch=full.epoch;if(coincide::background_host::text(client.call(review),L"status",32)!="ok")throw std::runtime_error("The reviewed original session could not be confirmed.");}catch(...){request_failure=std::current_exception();}try{co_await owner;}catch(...){co_return;}if(request_failure)std::rethrow_exception(request_failure);const auto at=running.find(id);if(at!=running.end()&&at->second.session==session)at->second.status="Stopped session reviewed. End Hosted Session can now retire its original generation.";}
+        }catch(...){failure=std::current_exception();}dialog_open=false;const auto at=running.find(id);if(reserved&&at!=running.end()&&at->second.session==session&&at->second.pending_actions)--at->second.pending_actions;if(failure&&!closing)try{std::rethrow_exception(failure);}catch(...){report_exception();}if(!closing&&selected==id){render_queue();update_composer();}
+    }
+    void remove_saved_input(const std::string& id,const std::string& delivery){
+        if(closing||quitting||!writable)return;try{auto& thread=workspace.thread(id);const auto saved=std::find_if(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,delivery);});if(saved==thread.queued_inputs.end())return;
+            auto active=running.find(id);const auto cursor=hosted_cursor(thread,thread.provider);
+            if(!cursor&&host_clients){const auto generation=host_clients->get({id,thread.provider});if(generation&&!generation->retired)throw std::runtime_error("The original hosted cursor is unavailable; the saved input was retained for recovery.");}
+            if(active==running.end()&&!cursor){const auto old=thread.queued_inputs;const auto retained=retained_saved_input(*saved,thread.provider,"local-queue");const auto existing=std::find_if(thread.messages.begin(),thread.messages.end(),[&](const auto& value){return value.id==retained.id;});const bool added=existing==thread.messages.end();if(added)thread.messages.push_back(retained);std::erase_if(thread.queued_inputs,[&](const auto& value){return same_delivery(value.id,delivery);});try{save_thread_durably(thread);save_workspace_index();}catch(...){thread.queued_inputs=old;if(added)thread.messages.pop_back();throw;}if(selected==id){if(added)transcript.Items().Append(message_row(thread.messages.back(),thread.provider));render_queue();update_composer();}return;}
+            if(active==running.end()){(void)session_for(id);active=running.find(id);}if(active==running.end()||active->second.pending_actions)return;
+            if(active->second.hosted){const auto full=active->second.authenticated_host_status?active->second.authenticated_host_status():std::optional<coincide::background_host::SessionInfo>{};if(!full||!full->live||full->review||active->second.host_review){review_stopped_input(id,delivery);return;}}
+            const auto provider=active->second.provider;session_action(id,[delivery](auto& session){return session.remove_queued(delivery);},[this,id,delivery,provider](auto& run,bool accepted,bool uncertain){
+                if(!accepted||uncertain){run.status="Saved message retained: removal was not confirmed. Stop the original session and review its saved input before retrying.";return;}auto& current=workspace.thread(id);const auto before=current.queued_inputs;
+                if(run.hosted)host_clients->record_queue_removal({id,provider},delivery,true);std::erase_if(current.queued_inputs,[&](const auto& value){return same_delivery(value.id,delivery);});try{save_thread_durably(current);save_workspace_index();if(run.hosted){const auto cursor=hosted_cursor(current,provider);if(!cursor)throw std::runtime_error("The original saved cursor is unavailable.");host_clients->retire_not_delivered({id,provider},delivery,{*cursor,true,true});}}catch(...){current.queued_inputs=before;throw;}run.status="Future queued message removed after confirmed runtime acceptance.";
+            });
+        }catch(...){report_exception();}
+    }
+    void resume_saved_queue(const std::string& id){if(closing||quitting||!writable)return;try{auto& run=session_for(id);if(run.pending_actions||run.host_review)throw std::runtime_error("Review the original hosted state before resuming saved work.");session_action(id,[](auto& session){return session.resume_queue();},[](auto& current,bool accepted,bool uncertain){current.status=accepted&&!uncertain?"Saved queue resumed. Entries remain saved until their actual delivery receipts.":"Queue resume was not confirmed. Saved input IDs and text were retained; review before retrying.";});}catch(...){report_exception();}}
     void render_queue(){
-        if(!queued_view)return;queued_view.Children().Clear();if(selected.empty())return;
-        const auto& thread=workspace.thread(selected);if(thread.queued_inputs.empty())return;
-        controls::TextBlock label_text;label_text.Text(label(L"Queue",L"Queue"));queued_view.Children().Append(label_text);
-        for(const auto& input:thread.queued_inputs){
-            controls::StackPanel row;row.Orientation(controls::Orientation::Horizontal);row.Spacing(6);
-            controls::TextBlock text;text.Text(winrt::to_hstring(input.text));text.IsTextSelectionEnabled(true);text.TextWrapping(xaml::TextWrapping::Wrap);text.MaxWidth(460);identify(text,L"QueuedMessageText");row.Children().Append(text);
-            auto remove=button(L"Remove",L"Remove",L"RemoveQueuedMessage");const auto thread_id=selected,id=input.id;
-            remove.Click([this,thread_id,id](const auto&,const auto&){
-                try{const auto at=running.find(thread_id);if(at!=running.end()&&!at->second.session->remove_queued(id)&&thread_busy(thread_id))throw std::runtime_error("This message may already be in delivery. Stop the agent and review the conversation before retrying.");
-                    auto& thread=workspace.thread(thread_id);std::erase_if(thread.queued_inputs,[&](const auto& value){return value.id==id;});store->save_thread(thread);if(selected==thread_id){render_queue();update_composer();}
-                }catch(...){report_exception();}
-            });row.Children().Append(remove);queued_view.Children().Append(row);
+        if(!queued_view)return;queued_view.Children().Clear();if(selected.empty())return;const auto& thread=workspace.thread(selected);const auto active=running.find(selected);const bool available=writable&&!closing&&!quitting&&(active==running.end()||!active->second.pending_actions);
+        std::optional<coincide::HostedClientGeneration> generation;try{if(host_clients)generation=host_clients->get({thread.id,thread.provider});}catch(...){}
+        if(thread.queued_inputs.empty()&&(!generation||generation->retired))return;
+        if(!thread.queued_inputs.empty()){controls::TextBlock label_text;label_text.Text(label(L"Queue",L"Queue"));queued_view.Children().Append(label_text);}
+        for(const auto& input:thread.queued_inputs){controls::StackPanel row;row.Orientation(controls::Orientation::Horizontal);row.Spacing(6);controls::TextBlock text;text.Text(winrt::to_hstring(input.text));text.IsTextSelectionEnabled(true);text.TextWrapping(xaml::TextWrapping::Wrap);text.MaxWidth(460);identify(text,L"QueuedMessageText");row.Children().Append(text);auto remove=button(L"Remove",L"Remove",L"RemoveQueuedMessage");remove.IsEnabled(available);const auto id=selected,delivery=input.id;remove.Click([this,id,delivery](const auto&,const auto&){remove_saved_input(id,delivery);});row.Children().Append(remove);queued_view.Children().Append(row);}
+        const bool paused=active==running.end()||active->second.session->queue_paused();if(!thread.queued_inputs.empty()&&paused){auto resume=button(L"Resume",L"Resume",L"ResumeQueue");resume.IsEnabled(available);const auto id=selected;resume.Click([this,id](const auto&,const auto&){resume_saved_queue(id);});queued_view.Children().Append(resume);}
+        if(generation&&!generation->retired){for(const auto& pending:generation->pending){if(pending.owner_resolution||pending.settled||pending.disposition==coincide::HostedIntentDisposition::rejected||pending.disposition==coincide::HostedIntentDisposition::not_submitted||pending.disposition==coincide::HostedIntentDisposition::cancelled||std::any_of(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,pending.delivery_id);}))continue;
+                auto review=button(L"Review stopped input",L"Review stopped input",L"ReviewStoppedInput");review.IsEnabled(available);const auto id=selected,delivery=pending.delivery_id;review.Click([this,id,delivery](const auto&,const auto&){review_stopped_input(id,delivery);});queued_view.Children().Append(review);}
+            auto review=button(L"Review stopped session",L"Review stopped session",L"ReviewStoppedSession");review.IsEnabled(available&&generation->pending.empty());const auto id=selected;review.Click([this,id](const auto&,const auto&){review_stopped_session(id);});queued_view.Children().Append(review);
         }
-        const auto active=running.find(selected);const bool paused=active==running.end()||active->second.session->queue_paused();
-        if(paused){auto resume=button(L"Resume",L"Resume",L"ResumeQueue");const auto id=selected;resume.Click([this,id](const auto&,const auto&){try{auto& run=session_for(id);if(!run.session->resume_queue())throw std::runtime_error("No queued messages are ready to resume.");if(selected==id){render_queue();update_composer();}}catch(...){report_exception();}});queued_view.Children().Append(resume);}
     }
 
     void fill_model_controls(){
@@ -1546,36 +1809,82 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             auto model_revoker=model_picker.SelectionChanged(winrt::auto_revoke,[this](const auto&,const auto&){fill_model_options();});
             fields.Children().Append(model_picker);fields.Children().Append(effort_picker);fields.Children().Append(tier_picker);
             custom_model=controls::TextBox{};custom_model.PlaceholderText(coincide::ui_text(L"Model ID"));custom_model.MaxLength(256);identify(custom_model,L"CustomModel");fields.Children().Append(custom_model);
-            auto refresh=button(L"Refresh",L"Refresh",L"RefreshModels");refresh.Click([this,id](const auto&,const auto&){try{session_for(id).session->refresh_models();}catch(...){report_exception();}});fields.Children().Append(refresh);
+            auto refresh=button(L"Refresh",L"Refresh",L"RefreshModels");refresh.Click([this,id](const auto&,const auto&){try{(void)session_for(id);session_action(id,[](auto& session){return session.refresh_models();});}catch(...){report_exception();}});fields.Children().Append(refresh);
             controls::CheckBox plan;plan.Content(winrt::box_value(label(L"Plan",L"Plan")));plan.IsChecked(workspace.thread(id).plan);identify(plan,L"PlanMode");fields.Children().Append(plan);
             controls::CheckBox full;full.Content(winrt::box_value(coincide::ui_text(L"Full access")));full.IsChecked(workspace.thread(id).full_access);identify(full,L"FullAccess");fields.Children().Append(full);
             controls::TextBlock permissions;permissions.Text(coincide::ui_text(L"Full access allows commands and file changes without asking. Leave it off to require approval."));permissions.TextWrapping(xaml::TextWrapping::Wrap);fields.Children().Append(permissions);
-            fill_model_controls();run.session->refresh_models();
+            fill_model_controls();session_action(id,[](auto& session){return session.refresh_models();});
             controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(label(L"ModelSettings",L"Model Settings")));dialog.Content(fields);dialog.PrimaryButtonText(label(L"Save",L"Save"));dialog.CloseButtonText(label(L"Cancel",L"Cancel"));
             if(co_await dialog.ShowAsync()==controls::ContentDialogResult::Primary){
                 auto& thread=workspace.thread(id);const auto before=thread;
                 try{thread.model=custom_model.Text().empty()?model_ids.at(static_cast<std::size_t>(model_picker.SelectedIndex())):winrt::to_string(custom_model.Text());
                     if(thread.model.size()>256||thread.model.find_first_of(" \t\r\n")!=std::string::npos)throw std::runtime_error("Model IDs must be 256 characters or fewer and cannot contain spaces.");
-                    thread.effort=effort_ids.at(static_cast<std::size_t>(effort_picker.SelectedIndex()));thread.service_tier=tier_ids.at(static_cast<std::size_t>(tier_picker.SelectedIndex()));thread.plan=plan.IsChecked().Value();thread.full_access=full.IsChecked().Value();store->save_index(workspace);
+                    thread.effort=effort_ids.at(static_cast<std::size_t>(effort_picker.SelectedIndex()));thread.service_tier=tier_ids.at(static_cast<std::size_t>(tier_picker.SelectedIndex()));thread.plan=plan.IsChecked().Value();thread.full_access=full.IsChecked().Value();save_workspace_index();
                 }catch(...){thread=before;throw;}
             }
         }catch(...){report_exception();}
         model_picker=nullptr;effort_picker=nullptr;tier_picker=nullptr;custom_model=nullptr;dialog_open=false;update_composer();
     }
 
+    bool persist_host_prefix(const std::string& id,RunningThread& run){
+        if(!run.hosted||!host_clients)return false;
+        const auto& thread=workspace.thread(id);const auto at=std::find_if(thread.host_cursors.begin(),thread.host_cursors.end(),[&](const auto& cursor){return cursor.provider==run.provider;});
+        if(at==thread.host_cursors.end()||at->epoch!=run.epoch)throw std::runtime_error("The saved hosted event prefix no longer matches its runtime.");
+        const coincide::AgentPersistReceipt proof{{at->epoch,at->sequence},true,true};const coincide::background_host::Key key{id,run.provider};
+        for(auto receipt=run.pending_host_receipts.begin();receipt!=run.pending_host_receipts.end();){
+            const auto record=host_clients->get(key);if(!record)throw std::runtime_error("The hosted input journal is unavailable.");
+            const auto delivery=receipt->second.receipt?receipt->second.receipt->delivery_id:receipt->first;
+            const auto pending=std::find_if(record->pending.begin(),record->pending.end(),[&](const auto& input){return input.delivery_id==delivery;});
+            if(pending==record->pending.end()){receipt=run.pending_host_receipts.erase(receipt);continue;}
+            const bool owner_resolution=receipt->second.kind==coincide::SessionEvent::Kind::queue_changed&&(receipt->second.detail==coincide::background_host::stopped_queue_resolution_detail||receipt->second.detail==coincide::background_host::stopped_input_resolution_detail);
+            if(owner_resolution){
+                const auto status=run.authenticated_host_status?run.authenticated_host_status():std::optional<coincide::background_host::SessionInfo>{};
+                if(!status)throw std::runtime_error("Waiting for authenticated stopped-input resolution status.");
+                host_clients->observe_owner_resolution(key,receipt->second,*status);host_clients->retire_owner_resolution(key,delivery,proof);
+            }else if(receipt->second.kind==coincide::SessionEvent::Kind::completed){
+                const auto status=run.authenticated_host_status?run.authenticated_host_status():std::optional<coincide::background_host::SessionInfo>{};
+                if(!status)throw std::runtime_error("Waiting for the authenticated hosted completion status.");
+                host_clients->observe_settled(key,receipt->second,*status);if(!pending->owner_resolution)host_clients->retire_processed(key,delivery,proof);
+            }else{host_clients->observe_delivered(key,receipt->second);if(!pending->owner_resolution)host_clients->retire_delivered(key,delivery,proof);}
+            receipt=run.pending_host_receipts.erase(receipt);
+        }
+        // Observations are durably recorded before thread writes. On relaunch the saved
+        // cursor may already cover them even though the transient event map is empty.
+        if(const auto observed=host_clients->get(key))for(const auto& input:observed->pending){
+            const auto covered=[&](const std::optional<coincide::AgentEventCursor>& cursor){return cursor&&cursor->epoch==proof.cursor.epoch&&cursor->sequence<=proof.cursor.sequence;};
+            if(input.owner_resolution){if(covered(input.owner_resolution))host_clients->retire_owner_resolution(key,input.delivery_id,proof);}
+            else if(covered(input.settled))host_clients->retire_processed(key,input.delivery_id,proof);
+            else if(covered(input.delivered))host_clients->retire_delivered(key,input.delivery_id,proof);
+        }
+        // take_events never acknowledges. Only this path runs after both actual saves,
+        // and the proxy still enforces that this prefix was issued to this UI instance.
+        const auto acknowledged=run.session->acknowledged_persistence();
+        if(at->sequence&&(!acknowledged||acknowledged->epoch!=at->epoch||acknowledged->sequence<at->sequence)){
+            if(!run.session->confirm_persisted(proof))throw std::runtime_error("The hosted persistence receipt was not accepted.");
+        }
+        return at->sequence&&(!acknowledged||acknowledged->epoch!=at->epoch||acknowledged->sequence<at->sequence);
+    }
+
     void flush_dirty() {
         if(!writable||!store)return;
         persistence_error.clear();auto ids=std::move(dirty_threads);dirty_threads.clear();
         auto failed=[&]{report_exception();persistence_error=state?winrt::to_string(state.Text()):"Changes could not be saved.";};
-        for(const auto& id:ids){try{store->save_thread(workspace.thread(id));}catch(...){dirty_threads.insert(id);failed();}}
-        if(dirty_index){try{store->save_index(workspace);dirty_index=false;}catch(...){failed();}}
+        for(const auto& id:ids){try{save_thread_durably(workspace.thread(id));}catch(...){dirty_threads.insert(id);failed();}}
+        for(const auto& [id,run]:running)if(run.hosted){
+            const auto& thread=workspace.thread(id);const auto cursor=std::find_if(thread.host_cursors.begin(),thread.host_cursors.end(),[&](const auto& value){return value.provider==run.provider;});
+            const auto acknowledged=run.session->acknowledged_persistence();
+            if(!run.pending_host_receipts.empty()||run.session->pending_persistence()||(cursor!=thread.host_cursors.end()&&cursor->sequence&&(!acknowledged||acknowledged->epoch!=cursor->epoch||acknowledged->sequence<cursor->sequence)))dirty_index=true;
+        }
+        if(dirty_index&&dirty_threads.empty()){try{save_workspace_index();}catch(...){failed();}}
+        bool host_retry{};
         if(persistence_error.empty())for(auto& [id,run]:running)if(!dirty_threads.contains(id)&&!dirty_index){
+            try{host_retry=persist_host_prefix(id,run)||host_retry;}catch(...){host_retry=true;failed();continue;}
             if(run.completion_received){run.awaiting_completion=false;if(run.notify_completion){notify_thread(id,false);run.notify_completion=false;}}
             if(schedule_panel&&run.schedule_result_pending&&!run.schedule_delivery.empty()){
                 schedule_panel->completed_delivery(run.schedule_id,run.schedule_delivery,run.schedule_success,run.schedule_uncertain,run.schedule_status);run.schedule_id.clear();run.schedule_delivery.clear();run.schedule_result_pending=false;
             }
         }
-        if(!closing&&(!dirty_threads.empty()||dirty_index)){save_timer.Stop();save_timer.Start();}
+        if(!closing&&(!dirty_threads.empty()||dirty_index||host_retry)){save_timer.Stop();save_timer.Start();}
         if(!closing)update_composer();
     }
 
@@ -1590,45 +1899,74 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }
         composer.IsEnabled(true);
         const auto run = running.find(selected);
-        const auto busy = run != running.end() && (run->second.awaiting_completion || run->second.session->busy());
+        const auto busy = run != running.end() && (run->second.pending_actions || run->second.awaiting_completion || run->second.session->busy());
         const auto connected=provider_connected(thread);
         const auto has_input=!thread.draft.empty()||!thread.draft_attachments.empty();
         providers.IsEnabled(!busy); stop_button.IsEnabled(busy);
-        models_button.IsEnabled(connected&&!busy);queue_button.IsEnabled(connected&&has_input);steer_button.IsEnabled(thread.provider=="codex"&&busy&&has_input);
-        send_button.IsEnabled(connected&&!busy&&has_input&&thread.queued_inputs.empty());
+        const bool submitting=run!=running.end()&&(run->second.pending_actions||run->second.host_review||run->second.host_input_blocked);
+        models_button.IsEnabled(connected&&!busy);queue_button.IsEnabled(connected&&has_input&&!submitting);steer_button.IsEnabled(thread.provider=="codex"&&busy&&has_input&&!submitting);
+        send_button.IsEnabled(connected&&!busy&&!submitting&&has_input&&thread.queued_inputs.empty());
         if (run != running.end() && !run->second.status.empty()) state.Text(winrt::to_hstring(run->second.status));
         else if (connected) state.Text(thread.provider=="codex"?L"Codex · Ctrl+Enter sends.":thread.provider=="claude"?L"Claude Code · Ctrl+Enter sends.":thread.provider=="cursor"?L"Cursor · Ctrl+Enter sends.":L"OpenCode · Ctrl+Enter sends.");
         else state.Text(thread.provider=="cursor"?L"Open Accounts to verify and choose a Cursor profile.":L"This provider adapter is not available yet.");
         if(!persistence_error.empty())state.Text(winrt::to_hstring(persistence_error));else if(!platform_error.empty())state.Text(winrt::to_hstring(platform_error));
     }
 
+    static std::string delivery_key(std::string id){if(id.size()==36)id="{"+id+"}";return coincide::background_host::guid(std::move(id));}
+    static bool same_delivery(const std::string& a,const std::string& b){try{return delivery_key(a)==delivery_key(b);}catch(...){return a==b;}}
+    void prepare_hosted_input(const std::string& id,RunningThread& run,const coincide::QueuedInput& input,coincide::HostedIntentOperation operation){
+        if(run.hosted&&!host_clients->prepare_intent({id,run.provider},input.id,operation))throw std::runtime_error("This saved delivery ID already has an intent. Review it before retrying.");
+    }
+    void input_action_result(const std::string& id,RunningThread& run,const coincide::QueuedInput& input,bool queued,bool accepted,bool action_uncertain){
+        using D=coincide::BackgroundDeliveryDisposition;std::optional<D> disposition;
+        if(run.hosted){const auto session=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session);if(session)disposition=session->delivery_disposition(input.id);}
+        const auto key=delivery_key(input.id);const coincide::background_host::Key owner{id,run.provider};
+        if(run.hosted){const auto generation=host_clients->get(owner);if(!generation)throw std::runtime_error("The hosted input journal could not be verified.");
+            const auto pending=std::find_if(generation->pending.begin(),generation->pending.end(),[&](const auto& value){return value.delivery_id==key;});
+            if(pending==generation->pending.end()||pending->delivered||pending->settled){if(run.completion_received&&!run.host_review)run.status="Ready";return;}
+            if(accepted||disposition==D::accepted)host_clients->record_host_status(owner,input.id,"accepted");
+            else if(disposition==D::rejected)host_clients->record_host_status(owner,input.id,"rejected");
+            else if(disposition==D::not_submitted)host_clients->record_not_submitted(owner,input.id);
+            else host_clients->record_host_status(owner,input.id,"uncertain");
+        }
+        if(accepted||disposition==D::accepted)return;
+        const bool definite=run.hosted?(disposition==D::rejected||disposition==D::not_submitted):!action_uncertain;
+        if(!definite){run.status="Delivery was not confirmed. The original message and delivery ID were preserved; review before retrying.";return;}
+        auto& thread=workspace.thread(id);
+        if(queued)std::erase_if(thread.queued_inputs,[&](const auto& value){return same_delivery(value.id,key);});
+        else{std::erase_if(thread.messages,[&](const auto& message){return message.id==input.id&&message.role=="user"&&message.provider==run.provider;});run.awaiting_completion=false;run.usage.reset();}
+        if(thread.draft.empty()&&thread.draft_attachments.empty()){thread.draft=input.text;thread.draft_attachments=input.attachments;}
+        else{auto saved=input;saved.id=coincide::background_host::new_guid();thread.queued_inputs.insert(thread.queued_inputs.begin(),std::move(saved));}
+        save_thread_durably(thread);save_workspace_index();
+        if(run.hosted){const auto cursor=hosted_cursor(thread,run.provider);if(!cursor)throw std::runtime_error("The saved hosted prefix is unavailable.");host_clients->retire_not_delivered(owner,input.id,{*cursor,true,true});}
+        run.status="This message was not submitted. Its text was kept without replacing your next draft.";
+        if(run.hosted)if(const auto facade=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session)){const auto connection=facade->connection_status();if(!connection.error.empty()){run.status+=" "+connection.error;diagnostic(winrt::to_hstring(connection.error));}}
+
+        if(!queued&&run.schedule_delivery==input.id){run.schedule_success=false;run.schedule_uncertain=false;run.schedule_status=run.status;run.schedule_result_pending=true;run.completion_received=true;}
+        if(selected==id){selecting=true;composer.Text(winrt::to_hstring(thread.draft));selecting=false;render_attachments();
+            if(!queued){transcript.Items().Clear();for(const auto& message:thread.messages)transcript.Items().Append(message_row(message,message.role=="user"?winrt::to_string(label(L"You",L"You")):message.provider));show_latest();}}
+        flush_dirty();
+    }
+
     void send_message() {
-        if (closing||quitting||selected.empty() || !writable) return;
-        try {
-            auto& thread = workspace.thread(selected);
-            if (!provider_connected(thread)||thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
+        if(closing||quitting||selected.empty()||!writable)return;
+        try{
+            const auto thread_id=selected;auto& thread=workspace.thread(thread_id);
+            if(!provider_connected(thread)||thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
             if(!thread.queued_inputs.empty())throw std::runtime_error("Resume or remove the saved queue before sending another message.");
-            auto at = running.find(selected);
-            if (at != running.end() && (at->second.awaiting_completion || at->second.session->busy())) return;
-            (void)session_for(selected);at=running.find(selected);
-            auto input=make_turn(thread.draft,thread.draft_attachments,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
-            const auto original_draft=thread.draft;const auto original_attachments=thread.draft_attachments;
-            const auto id = coincide::new_id();
-            workspace.note_activity(selected);store->save_index(workspace);
-            thread.messages.push_back({id, "user", original_draft,thread.provider,original_attachments}); thread.draft.clear();thread.draft_attachments.clear();
-            try {store->save_thread(thread);}
-            catch (...) {thread.draft = original_draft;thread.draft_attachments=original_attachments;thread.messages.pop_back(); throw;}
-            prepare_usage(thread,at->second,id);
-            if (!at->second.session->send(input)) {
-                at->second.usage.reset();
-                thread.draft = original_draft;thread.draft_attachments=original_attachments;thread.messages.pop_back(); store->save_thread(thread); return;
-            }
-            at->second.awaiting_completion = true;at->second.completion_received=false;
-            at->second.failed = false; at->second.status = winrt::to_string(label(L"Connecting", L"Connecting…"));
-            transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You", L"You"))));
-            selecting = true; composer.Text(L""); selecting = false;
-            render_attachments();update_composer(); show_latest(true); composer.Focus(xaml::FocusState::Programmatic);
-        } catch (...) {report_exception();}
+            if(thread_busy(thread_id))return;auto& run=session_for(thread_id);if(run.pending_actions||run.host_review||run.host_input_blocked)return;
+            auto turn=make_turn(thread.draft,thread.draft_attachments,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
+            coincide::QueuedInput input{coincide::background_host::new_guid(),thread.draft,thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access,thread.draft_attachments};
+            workspace.note_activity(thread_id);save_workspace_index();
+            thread.messages.push_back({input.id,"user",input.text,thread.provider,input.attachments});thread.draft.clear();thread.draft_attachments.clear();
+            try{save_thread_durably(thread);prepare_hosted_input(thread_id,run,input,coincide::HostedIntentOperation::send);}
+            catch(...){thread.draft=input.text;thread.draft_attachments=input.attachments;thread.messages.pop_back();save_thread_durably(thread);throw;}
+            prepare_usage(thread,run,input.id,&input.model);run.awaiting_completion=true;run.completion_received=false;run.failed=false;run.status=winrt::to_string(label(L"Connecting",L"Connecting…"));
+            transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));selecting=true;composer.Text(L"");selecting=false;
+            render_attachments();update_composer();show_latest(true);composer.Focus(xaml::FocusState::Programmatic);
+            const auto delivery=input.id;session_action(thread_id,[turn=std::move(turn),delivery](auto& session)mutable{return session.send_identified(std::move(turn),delivery);},
+                [this,thread_id,input=std::move(input)](auto& current,bool accepted,bool uncertain){input_action_result(thread_id,current,input,false,accepted,uncertain);});
+        }catch(...){report_exception();}
     }
 
     void upsert_output(coincide::Thread& thread, const coincide::SessionEvent& event,const std::string& provider) {
@@ -1649,13 +1987,112 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }
     }
 
+    void refresh_hosted_row(const coincide::Thread& thread,const std::string& message_id){
+        if(closing||selected!=thread.id)return;const auto at=std::find_if(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==message_id;});
+        if(at==thread.messages.end())return;const auto row=static_cast<std::uint32_t>(at-thread.messages.begin());
+        const auto value=message_row(*at,at->role=="user"?winrt::to_string(label(L"You",L"You")):at->provider);
+        if(row<transcript.Items().Size())transcript.Items().SetAt(row,value);else if(row==transcript.Items().Size())transcript.Items().Append(value);
+        show_latest();
+    }
+    winrt::fire_and_forget session_action(std::string id,std::function<bool(coincide::AgentSession&)> action,
+            std::function<void(RunningThread&,bool,bool)> completed={}){
+        auto lifetime=get_strong();const auto at=running.find(id);if(closing||at==running.end())co_return;
+        auto session=at->second.session;++at->second.pending_actions;update_composer();const winrt::apartment_context owner;
+        bool accepted{};std::exception_ptr failure;co_await winrt::resume_background();
+        try{accepted=action(*session);}catch(...){failure=std::current_exception();}
+        try{co_await owner;}catch(...){co_return;}
+        const auto current=running.find(id);if(closing||current==running.end()||current->second.session!=session)co_return;
+        auto& run=current->second;if(run.pending_actions)--run.pending_actions;
+        try{if(!accepted||failure)run.status="The agent action could not be confirmed. Review its current state before retrying.";
+            if(completed)completed(run,accepted,static_cast<bool>(failure));
+        }catch(...){report_exception();}
+        if(selected==id){render_queue();render_prompts();update_composer();}
+    }
+    bool apply_hosted_event(coincide::Thread& thread,RunningThread& run,const coincide::SessionEvent& event,bool& changed_prompts){
+        if(run.host_review)return false;
+        const bool owner_resolution=event.receipt&&event.kind==coincide::SessionEvent::Kind::queue_changed&&(event.detail==coincide::background_host::stopped_queue_resolution_detail||event.detail==coincide::background_host::stopped_input_resolution_detail);
+        std::optional<coincide::Message> recovered,notice;std::string owner_delivery,recovered_row,notice_row;
+        if(owner_resolution){
+            try{
+                owner_delivery=delivery_key(event.receipt->delivery_id);if(!same_delivery(event.id,owner_delivery)||event.text!=(event.detail==coincide::background_host::stopped_queue_resolution_detail?coincide::background_host::stopped_queue_resolution_text:coincide::background_host::stopped_input_resolution_text))throw std::runtime_error("The administrative input receipt did not match its original delivery.");
+                const auto saved=std::find_if(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& input){return same_delivery(input.id,owner_delivery);});
+                const auto original=std::find_if(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.role=="user"&&message.provider==run.provider&&same_delivery(message.id,owner_delivery);});
+                const auto recovered_id="saved-input/"+run.provider+"/"+event.receipt->epoch+"/"+owner_delivery;
+                if(original==thread.messages.end()&&std::none_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==recovered_id;})){
+                    if(saved==thread.queued_inputs.end())throw std::runtime_error("The original uncertain input payload is unavailable; its resolution prefix was not advanced.");recovered=retained_saved_input(*saved,run.provider,event.receipt->epoch);
+                }
+                const auto notice_id="owner-resolution/"+run.provider+"/"+event.receipt->epoch+"/"+owner_delivery;if(std::none_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==notice_id;}))notice=coincide::Message{notice_id,"tool",event.text,run.provider,{}};
+                thread.messages.reserve(thread.messages.size()+(recovered?1:0)+(notice?1:0));
+                const auto full=run.authenticated_host_status?run.authenticated_host_status():std::optional<coincide::background_host::SessionInfo>{};if(!full||!host_clients)throw std::runtime_error("Waiting for authenticated owner-resolution status before saving its prefix.");
+                const auto generation=host_clients->get({thread.id,run.provider});if(generation&&std::any_of(generation->pending.begin(),generation->pending.end(),[&](const auto& input){return input.delivery_id==owner_delivery;}))host_clients->observe_owner_resolution({thread.id,run.provider},event,*full);
+                // Keep a provider completion and its later administrative receipt separately.
+                run.pending_host_receipts.insert_or_assign(owner_delivery+"/owner",event);
+            }catch(...){if(const auto hosted=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session))hosted->replay_unpersisted();throw;}
+        }
+        if(event.receipt&&!event.receipt->delivery_id.empty()
+            &&(event.kind==coincide::SessionEvent::Kind::input||event.kind==coincide::SessionEvent::Kind::started||event.kind==coincide::SessionEvent::Kind::completed)){
+            bool relevant=event.kind!=coincide::SessionEvent::Kind::started;
+            if(!relevant&&host_clients){const auto record=host_clients->get({thread.id,run.provider});if(record)for(const auto& input:record->pending)if(input.delivery_id==event.receipt->delivery_id&&input.operation==coincide::HostedIntentOperation::send)relevant=true;}
+            if(relevant){coincide::SessionEvent observed;observed.kind=event.kind;observed.receipt=event.receipt;observed.text=event.kind==coincide::SessionEvent::Kind::completed?event.text:std::string{};
+                if(event.kind==coincide::SessionEvent::Kind::completed)run.pending_host_receipts.insert_or_assign(event.receipt->delivery_id,std::move(observed));
+                else run.pending_host_receipts.try_emplace(event.receipt->delivery_id,std::move(observed));}
+        }
+        if(recovered)recovered_row=recovered->id;if(notice)notice_row=notice->id;
+        if(event.receipt){dirty_threads.insert(thread.id);dirty_index=true;}
+        const auto result=coincide::HostedConversationReducer::apply(thread,run,event);
+        if(result.status==coincide::HostedApplyStatus::duplicate)return false;
+        if(result.status!=coincide::HostedApplyStatus::applied){
+            run.host_review=true;run.status="This hosted history needs review before further input.";run.session->interrupt();
+            if(tool_bridge)tool_bridge->disable(thread.id);publish_host_tools(thread.id);return false;
+        }
+        const auto& effects=result.effects;
+        if(owner_resolution){
+            if(recovered)thread.messages.push_back(std::move(*recovered));if(notice)thread.messages.push_back(std::move(*notice));
+            std::erase_if(thread.queued_inputs,[&](const auto& input){return same_delivery(input.id,owner_delivery);});dirty_threads.insert(thread.id);dirty_index=true;
+            if(!recovered_row.empty())refresh_hosted_row(thread,recovered_row);if(!notice_row.empty())refresh_hosted_row(thread,notice_row);
+        }
+        if(effects.durable_changed)dirty_threads.insert(thread.id);
+        if(effects.index_changed)dirty_index=true;
+        if(effects.activity){workspace.note_activity(thread.id,coincide::Workspace::now_seconds(),effects.needs_response);dirty_index=true;}
+        if(!effects.input_id.empty()){
+            if(effects.delivered_input&&event.detail!="steered")prepare_usage(thread,run,effects.input_id,&effects.delivered_input->model);
+            if(run.usage){const auto turn=run.pending_native_turns.find(effects.input_id);if(turn!=run.pending_native_turns.end())try{if(!run.usage->bind_native_turn(turn->second))run.usage.reset();}catch(...){run.usage.reset();}}
+            refresh_hosted_row(thread,effects.input_id);
+        }
+        if(!effects.native_turn_id.empty()){
+            const auto delivery=event.receipt?event.receipt->delivery_id:std::string{};
+            if(!delivery.empty())run.pending_native_turns.insert_or_assign(delivery,effects.native_turn_id);
+            if(run.usage&&(delivery.empty()||delivery==run.usage->owner().delivery_id))try{if(!run.usage->bind_native_turn(effects.native_turn_id))run.usage.reset();}catch(...){run.usage.reset();}
+        }
+        if(event.kind==coincide::SessionEvent::Kind::account_scope&&run.usage)try{if(run.usage->owner().profile_id!=run.profile_id||!run.usage->bind_account_scope(run.account_scope))run.usage.reset();}catch(...){run.usage.reset();}
+        if(!effects.session_id.empty()&&run.usage)try{if(!run.usage->bind_session(effects.session_id))run.usage.reset();}catch(...){run.usage.reset();}
+        if(effects.usage&&run.usage&&event.id==run.usage->owner().turn_id)try{(void)run.usage->observe(*effects.usage);}catch(...){}
+        if(effects.output_changed)refresh_hosted_row(thread,run.provider+"/"+event.id);
+        if(effects.queue_changed&&selected==thread.id)render_queue();
+        if(effects.models_changed&&selected==thread.id&&model_picker){dialog_models=run.models;fill_model_controls();}
+        changed_prompts=changed_prompts||(effects.prompts_changed&&selected==thread.id);
+        if(effects.notify_response)notify_thread(thread.id,true);
+        if(effects.completion){
+            finish_usage(run,effects.completion_outcome);run.pending_native_turns.clear();
+            if(!run.schedule_delivery.empty()&&!run.schedule_result_pending){run.schedule_success=effects.completion_success;run.schedule_uncertain=effects.completion_uncertain;run.schedule_status=run.status;run.schedule_result_pending=true;}
+        }
+        return effects.completion;
+    }
+
     void drain_sessions() {
         bool changed_prompts{},new_completion{};
         for (auto& [id, run] : running) {
             try {
                 auto& thread = workspace.thread(id);
+                if(run.hosted)if(const auto facade=std::dynamic_pointer_cast<coincide::HostedAgentSession>(run.session)){
+                    const auto connection=facade->connection_status();if(connection.revision!=run.host_status_revision){run.host_status_revision=connection.revision;
+                        run.host_input_blocked=connection.phase==coincide::HostedAgentPhase::review||connection.phase==coincide::HostedAgentPhase::unavailable||connection.phase==coincide::HostedAgentPhase::closing||connection.phase==coincide::HostedAgentPhase::closed;
+                        if(run.host_input_blocked&&!connection.error.empty()){run.status=connection.error;if(selected==id)render_queue();}
+                    }
+                }
                 bool received_output{};
                 for (const auto& event : run.session->take_events()) {
+                    if(run.hosted){try{new_completion=apply_hosted_event(thread,run,event,changed_prompts)||new_completion;received_output=true;}catch(...){dirty_threads.insert(id);report_exception();}continue;}
                     try{
                     using Kind = coincide::SessionEvent::Kind;
                     switch (event.kind) {
@@ -1695,10 +2132,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     case Kind::input: {
                         const auto pending=std::find_if(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& input){return input.id==event.id;});
                         if(pending==thread.queued_inputs.end())break;
+                        const auto captured_model=pending->model;
                         const auto duplicate=std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==event.id;});
                         if(!duplicate){thread.messages.push_back({event.id,"user",pending->text,run.provider,pending->attachments});if(selected==id)transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));}
                         thread.queued_inputs.erase(pending);workspace.note_activity(id);dirty_threads.insert(id);dirty_index=true;run.awaiting_completion=true;run.completion_received=false;run.failed=false;
-                        if(event.detail!="steered")prepare_usage(thread,run,event.id);
+                        if(event.detail!="steered")prepare_usage(thread,run,event.id,&captured_model);
                         if(selected==id){render_queue();show_latest();}break;
                     }
                     case Kind::prompt:
@@ -1733,8 +2171,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void answer_prompt(const std::string& thread, const std::string& id, const std::string& result) {
         const auto at = running.find(thread);
         if (at == running.end()) return;
-        at->second.session->respond(id, result);
-        at->second.prompts.erase(id); render_prompts();
+        session_action(thread,[id,result](auto& session){session.respond(id,result);return true;},[this,thread,id](auto& run,bool accepted,bool){if(accepted&&!run.hosted)run.prompts.erase(id);if(selected==thread)render_prompts();});
     }
 
     void render_prompts() {
@@ -1802,10 +2239,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(redo?workspace.redo_archive():workspace.undo_archive()){
                 std::vector<std::string> changed;
                 for(const auto& old:before.threads)if(workspace.thread(old.id).project_id!=old.project_id){
-                    if(thread_busy(old.id)||active_terminal(old.id)||repository_mutating())throw std::runtime_error("Stop the agents, close terminals and finish repository operations before undoing a project change.");
+                    if(thread_busy(old.id)||(running.contains(old.id)&&running.at(old.id).hosted)||active_terminal(old.id)||repository_mutating())throw std::runtime_error("Stop the agents, close terminals and finish repository operations before undoing a project change.");
                     changed.push_back(old.id);
                 }
-                store->save_index(workspace);invalidate_project_context(changed);reconcile_selection();
+                save_workspace_index();invalidate_project_context(changed);reconcile_selection();
             }
         }catch(...){workspace=before;report_exception();}
     }
@@ -1841,10 +2278,20 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 } // namespace
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    bool headless_host{};
     try {
-        winrt::init_apartment(winrt::apartment_type::single_threaded);
         int argc{};
         auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        headless_host=argv&&argc>=2&&std::wstring_view(argv[1])==L"--background-agent-host";
+        const auto owned_host=argv&&argc>=2&&std::wstring_view(argv[1])==L"--owned-background-host-fixture";
+        const auto owned_bootstrap=argv&&argc>=2&&std::wstring_view(argv[1])==L"--owned-background-host-bootstrap";
+        if(owned_bootstrap){headless_host=true;if(argc!=3){LocalFree(argv);return 2;}const auto directory=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::tests::bootstrap_hosted_app_fixture(directory);}
+        if(owned_host){headless_host=true;if(argc!=3){LocalFree(argv);return 2;}const auto directory=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::tests::run_hosted_app_fixture(directory);}
+        if(headless_host){
+            if(argc!=3){LocalFree(argv);return 2;}const auto directory=std::filesystem::path(argv[2]);LocalFree(argv);
+            return coincide::run_native_background_host(directory);
+        }
+        winrt::init_apartment(winrt::apartment_type::single_threaded);
         if(argv&&argc>=2&&std::wstring_view(argv[1])==L"--computer-use-helper"){
             if(argc!=3){LocalFree(argv);return 2;}const std::wstring value(argv[2]);
             if(value.empty()||value.size()>10||value.find_first_not_of(L"0123456789")!=std::wstring::npos){LocalFree(argv);return 2;}
@@ -1857,7 +2304,8 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             xaml::Application::Start([&](auto&&){application=winrt::make_self<App>(true);application->question_test_report=report;application->question_test_result=&result;application->native_ui_suite=name;});return result;
         }}
         const auto desktop_test=argv&&argc==2&&std::wstring_view(argv[1])==L"--desktop-fixture-preview";
-        const auto fixture = desktop_test||(argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview");
+        const auto hosted_test=argv&&argc==2&&std::wstring_view(argv[1])==L"--hosted-fixture-preview";
+        const auto fixture = desktop_test||hosted_test||(argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview");
         if (fixture && GetEnvironmentVariableW(L"COINCIDE_DATA_DIR", nullptr, 0) <= 1) {
             throw std::runtime_error("Protocol fixture previews require an explicit isolated test data directory.");
         }
@@ -1866,15 +2314,15 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         // Keep the programmatic application (including its metadata provider and callbacks) alive
         // for the complete dispatcher loop, independently of generated XAML application glue.
         winrt::com_ptr<App> application;
-        xaml::Application::Start([&application, fixture,desktop_test](auto&&) { application = winrt::make_self<App>(fixture,desktop_test); });
+        xaml::Application::Start([&application, fixture,desktop_test,hosted_test](auto&&) { application = winrt::make_self<App>(fixture,desktop_test,hosted_test); });
         return 0;
     } catch (const winrt::hresult_error& error) {
         diagnostic(error.message());
-        MessageBoxW(nullptr, error.message().c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
+        if(!headless_host)MessageBoxW(nullptr, error.message().c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
         return 1;
     } catch (const std::exception& error) {
         diagnostic(winrt::to_hstring(error.what()));
-        MessageBoxW(nullptr, winrt::to_hstring(error.what()).c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
+        if(!headless_host)MessageBoxW(nullptr, winrt::to_hstring(error.what()).c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
         return 1;
     }
 }

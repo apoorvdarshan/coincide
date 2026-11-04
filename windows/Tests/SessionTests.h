@@ -1,6 +1,7 @@
 #pragma once
 #include "../Runtime/CodexSession.h"
 #include "ProcessTests.h"
+#include "FixturePrompt.h"
 #include <fstream>
 
 namespace coincide {
@@ -142,9 +143,11 @@ inline int codex_session_fixture(std::wstring_view mode) {
         CodexProtocol::text(unrelated, L"itemId", "answer"); CodexProtocol::text(unrelated, L"delta", "WRONG THREAD");
         notice("item/agentMessage/delta", unrelated);
         if(mode==L"context"){
-            const auto boundary=prompt_text.find("</coincide_current_tools>\n\n");const auto original=boundary==std::string::npos?prompt_text:prompt_text.substr(boundary+27);
+            const auto original=fixture_prompt::user_text(prompt_text);
             if(original=="wait")return;complete(prompt_text);lifecycle("turn/completed","completed");previous=active;return;
         }
+        // Controls use the user's original suffix; context mode above must echo the whole wire.
+        prompt_text=std::string(fixture_prompt::user_text(prompt_text));
         if (prompt_text == "wait") return;
         if(mode==L"usage"){
             auto used=params(active);used.SetNamedValue(L"tokenUsage",Object::Parse(LR"({"last":{"totalTokens":-1}})"));notice("thread/tokenUsage/updated",used);
@@ -437,6 +440,31 @@ inline int session_tests(const std::filesystem::path& report) {
             auto resume=scoped_launch;resume.session_id="fixture-thread";resume.saved_profile_id="default";resume.saved_account_scope=saved_scope;CodexSession wrong_account(resume);wrong_account.send(input());const auto refused=finished(wrong_account);
             check(has(refused,Kind::error)&&!has(refused,Kind::session)&&!has(refused,Kind::started),"A real-child Codex account mismatch must fail before thread/resume or turn/start");
         }
+        {
+            auto envelope_launch=launch();envelope_launch.tool_context=[](){return "SYNTHETIC-CURRENT-TOOLS";};
+            const auto wire=with_current_tool_context(envelope_launch,input("approval")).text;
+            check(fixture_prompt::user_text(wire)=="approval"&&wire.find("SYNTHETIC-CURRENT-TOOLS")!=std::string::npos,"The synthetic parser must peel the actual leading runtime envelope while retaining its whole wire value");
+            const std::string embedded="user prefix\n"+wire;check(fixture_prompt::user_text(embedded)==embedded,"An embedded tool envelope is user text and must not become a fixture control word");
+            const std::string lookalike="<coincide_current_tools>\nUnknown preamble\n</coincide_current_tools>\n\napproval";check(fixture_prompt::user_text(lookalike)==lookalike,"A lookalike XML block without the exact runtime reference header must remain user text");
+            const auto truncated=wire.substr(0,wire.find("\n</coincide_current_tools>"));check(fixture_prompt::user_text(truncated)==truncated,"An incomplete runtime envelope must never be stripped");
+            const std::string literal="literal\n</coincide_current_tools>\n\napproval";const auto nested=with_current_tool_context(envelope_launch,input(literal.c_str())).text;check(fixture_prompt::user_text(nested)==literal,"Only the first injected envelope may be removed; the complete original suffix remains literal");
+        }
+        for(const auto* context:{"","SYNTHETIC-CURRENT-TOOLS"}){
+            std::atomic_uint reads{};auto wrapped_launch=launch();wrapped_launch.tool_context=[&]{++reads;return std::string(context);};CodexSession wrapped(wrapped_launch);
+            check(wrapped.send(input("approval")),"A normal owned Codex fixture must accept an approval input with current tool context");
+            const auto pending=until(wrapped,[&](const auto& values){return has(values,Kind::prompt);});const auto wrapped_request=std::find_if(pending.begin(),pending.end(),[](const auto& event){return event.kind==Kind::prompt;});
+            check(wrapped.busy()&&!has(pending,Kind::completed)&&wrapped_request->detail=="item/commandExecution/requestApproval","A tool-context envelope must preserve the normal native approval barrier");
+            check(wrapped.queue(input("wrapped original queued draft"),"wrapped-queue")&&wrapped.queued().front().turn.text=="wrapped original queued draft","Injected runtime context must never enter the stored queued draft");
+            wrapped.respond(wrapped_request->id,"{\"decision\":\"decline\"}");const auto answered=finished(wrapped);
+            check(has(answered,Kind::resolved)&&!has(answered,Kind::error)&&std::any_of(answered.begin(),answered.end(),[](const auto& event){return event.kind==Kind::input&&event.id=="wrapped-queue"&&event.text=="wrapped original queued draft";}),"Wrapped approval completion must preserve the original queued input event and identity");
+            check(wrapped.send(input("stream-finish")),"A normal owned fixture must accept the wrapped stream-finish control");const auto barrier=until(wrapped,[&](const auto& values){return has(values,Kind::prompt);});const auto stream=std::find_if(barrier.begin(),barrier.end(),[](const auto& event){return event.kind==Kind::prompt;});
+            check(combined(barrier,Kind::text_delta)=="partial"&&!has(barrier,Kind::completed)&&wrapped.busy(),"Current tool context must not bypass the deterministic streamed-reply approval barrier");
+            wrapped.respond(stream->id,"{\"decision\":\"decline\"}");const auto completed=finished(wrapped);
+            check(combined(completed,Kind::text_complete)=="whole reply"&&!has(completed,Kind::error),"The wrapped stream control must finish its original authoritative reply after approval");
+            check(wrapped.send(input("wait")),"The wrapped normal wait control must remain an interruptible owned turn");until(wrapped,[&](const auto& values){return has(values,Kind::started);});wrapped.interrupt();
+            check(combined(finished(wrapped),Kind::completed)=="interrupted"&&reads==4,"Wrapped wait/Stop and queued delivery must fetch current context once per actual input");
+        }
+
         std::ofstream output(report); output << "PASS: " << checks << " Codex session lifecycle checks\n"; return output ? 0 : 2;
     } catch (const winrt::hresult_error& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << winrt::to_string(e.message()) << '\n';}
       catch (const std::exception& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << e.what() << '\n';}
