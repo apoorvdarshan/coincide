@@ -40,5 +40,6 @@ __pycache__/
 # Native Windows development output (never the Mac app's data).
 /windows/build/
 /windows/App/obj/
+/windows/App/Generated Files/
 /windows/App/*.vcxproj.user
 /windows/.vs/
