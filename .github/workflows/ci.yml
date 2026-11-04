@@ -54,7 +54,7 @@ jobs:
           affects_app() {
             case "$1" in
               .github/workflows/ci.yml) return 0 ;;
-              website/* | discord/* | npm/* | docs/* | store/* | .github/workflows/* | .github/dependabot.yml | \
+              website/* | discord/* | npm/* | docs/* | store/* | windows/* | .github/workflows/* | .github/dependabot.yml | \
                 .github/actionlint.yaml | .github/PULL_REQUEST_TEMPLATE.md) return 1 ;;
               */*) return 0 ;;
               *.md) return 1 ;;
