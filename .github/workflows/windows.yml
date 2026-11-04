@@ -29,6 +29,17 @@ jobs:
       - name: Build and run core tests, then build WinUI
         shell: pwsh
         run: ./windows/build.ps1
+      - name: Check long-thread switching in the native window
+        shell: pwsh
+        run: ./windows/Tests/PreviewSmoke.ps1
+      - name: Save native UI verification results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Windows-native-UI-results
+          path: windows/build/ui-smoke/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Save Windows development build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

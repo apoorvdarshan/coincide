@@ -1,4 +1,6 @@
 #include <windows.h>
+#include <shellapi.h>
+#undef GetCurrentTime
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <microsoft.ui.xaml.window.h>
