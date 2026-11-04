@@ -640,6 +640,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 if (!cwd.empty()) description += L"\n" + std::wstring(cwd);
                 const auto extra = params.GetNamedValue(L"additionalPermissions", coincide::rpc_json::JsonValue::CreateNullValue());
                 if (extra.ValueType() == coincide::rpc_json::JsonValueType::Object) description += L"\nAdditional permissions: " + std::wstring(extra.Stringify());
+                identify(detail, L"ApprovalDetails");
                 detail.Text(winrt::hstring(description)); card.Children().Append(detail);
                 bool allow = file_change && has_file_details;
                 const auto decisions = params.GetNamedValue(L"availableDecisions", coincide::rpc_json::JsonValue::CreateNullValue());
