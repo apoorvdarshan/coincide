@@ -3,7 +3,7 @@ param(
     [string]$Results = (Join-Path $PSScriptRoot '..\build\ui-smoke'),
     [ValidateRange(0,30)][int]$FixtureStartupDelaySeconds = 0,
     [switch]$NativePanelsOnly,
-    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel')][string]$NativeSuite
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -152,6 +152,24 @@ try {
 
     function Invoke-Control([string]$id) {
         $control = Find-Control $script:window $id
+        if (!$control) {
+            # CommandBar moves commands into its native overflow at narrower widths.
+            # Open it once, then find the current command peer in this fixture process.
+            $more=Find-Control $script:window 'MoreButton'
+            if($more){
+                $more.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+                Wait-Until {
+                    $filter=New-Object Windows.Automation.AndCondition(
+                        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,$id)),
+                        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))
+                    $null -ne [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$filter)
+                } "Cannot find overflow command $id"
+                $filter=New-Object Windows.Automation.AndCondition(
+                    (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,$id)),
+                    (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))
+                $control=[Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$filter)
+            }
+        }
         if (!$control) { throw "Cannot find $id" }
         $control.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     }
@@ -305,9 +323,21 @@ try {
 
 
     }
+    if(!$NativePanelsOnly){
+        Select-Thread 'Smoke A'
+        Invoke-Control 'OpenPasswords'
+        Wait-Until { $panel=Find-Control $script:window 'CredentialHelp'; $panel -and !$panel.Current.IsOffscreen } 'The native password settings did not open.'
+        Invoke-Control 'CloseTools'
+        Invoke-Control 'OpenPullRequests'
+        Wait-Until { $panel=Find-Control $script:window 'CodeHostingStatus'; $panel -and !$panel.Current.IsOffscreen } 'The native pull request workspace did not open.'
+        Invoke-Control 'CloseTools'
+        $current=Get-Content (Join-Path $data "threads\$first.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        if($current.draft -ne 'Draft Smoke A'){throw 'Opening password or pull request tools changed the conversation draft.'}
+        $checks += 'Password and pull request tools open in the app without changing the conversation draft'
+    }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel')}
+    $nativeSuites=if($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue

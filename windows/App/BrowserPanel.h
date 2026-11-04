@@ -1,5 +1,9 @@
 #pragma once
 #include "BrowserPolicy.h"
+#include "BrowserToolEngine.h"
+#include "BrowserPrivateText.h"
+#include "BrowserToolCapture.h"
+#include "../Runtime/AppToolBridgeFiles.h"
 #include "NativeStrings.h"
 #include <windows.h>
 #undef GetCurrentTime
@@ -26,6 +30,7 @@
 #include <vector>
 
 namespace coincide {
+namespace credentials {struct FrameContext;struct LoginSecret;}
 namespace browser_xaml = winrt::Microsoft::UI::Xaml;
 namespace browser_controls = winrt::Microsoft::UI::Xaml::Controls;
 namespace browser_core = winrt::Microsoft::Web::WebView2::Core;
@@ -51,6 +56,24 @@ public:
     browser_controls::Grid view() const {return root_;}
     void set_visible(bool value) {visible_ = value; root_.Visibility(value ? browser_xaml::Visibility::Visible : browser_xaml::Visibility::Collapsed);}
     void set_changed_callback(std::function<void()> callback) {changed_ = std::move(callback);}
+    void set_navigation_callback(std::function<void(const std::string&)> callback){navigation_changed_=std::move(callback);}
+    using AgentControlCallback=std::function<void(const std::string&,bool)>;
+    using ShowCallback=std::function<void(const std::string&,bool)>;
+    void set_agent_control_callback(AgentControlCallback value){agent_control_changed_=std::move(value);}
+    void set_show_callback(ShowCallback value){show_=std::move(value);}
+    void set_search_resolver(std::function<std::string(const std::string&)> value){search_=std::move(value);}
+    bool agent_control(const std::string& thread)const{const auto found=agent_grants_.find(thread);return !closed_&&found!=agent_grants_.end()&&found->second->valid;}
+    void set_agent_control(const std::string& thread,bool enabled);
+    static std::string tool_schema(){return browser_tool::Request::schema();}
+    static std::set<std::string> tool_actions(){return browser_tool::Request::actions();}
+    // Caller dispatches on any thread; this coroutine hops to the owning UI dispatcher.
+    // Host lifetime is an out-of-band upload approval/pin owner, never a JSON field.
+    browser_tool::Reply request(std::string thread,std::string json,std::filesystem::path artifact_directory,
+        browser_tool::Cancel cancelled={},std::shared_ptr<void> upload_lifetime={});
+    browser_tool::Action credential_context(std::string thread,std::string tab,std::string frame,
+        std::shared_ptr<credentials::FrameContext> output,browser_tool::Cancel cancelled={});
+    winrt::Windows::Foundation::IAsyncOperation<bool> fill_approved(credentials::FrameContext expected,
+        std::shared_ptr<credentials::LoginSecret> secret,browser_tool::Cancel cancelled={});
     void select_thread(std::string id) {
         if (!browser_thread_id_allowed(id)) throw std::invalid_argument("Invalid browser conversation identity");
         selected_thread_ = std::move(id);
@@ -65,9 +88,9 @@ public:
     }
     void close_tab(const std::string& id) {
         const auto tab = find_tab(id); if (!tab) return;
-        tab->closed = true; tab->ready = false; tab->loading = false; complete_popup(*tab);
+        tab->closed = true; tab->ready = false; tab->loading = false; complete_popup(*tab); complete_agent_dialog(*tab);invalidate_agent_frames(*tab);
         if (tab->page) {
-            try {tab->page.Close();} catch (...) { }
+            try {tab->page.Close();tab->upload_lifetimes.clear();} catch (...) { }
             std::uint32_t index{}; if (pages_.Children().IndexOf(tab->page, index)) pages_.Children().RemoveAt(index);
         }
         auto& state = threads_.at(tab->thread_id);
@@ -103,27 +126,43 @@ public:
         tab->fixture_html = std::move(html);
         if (tab->ready) {tab->fixture_navigation = true; tab->page.NavigateToString(winrt::to_hstring(tab->fixture_html));}
     }
+    void fixture_map_host(const std::string& tab_id,const std::string& host,const std::filesystem::path& directory){
+        if(!fixture_mode_||!host.ends_with(".invalid")||host.size()>128||host.empty()||host.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789.-")!=std::string::npos)throw std::logic_error("Virtual browser hosts are limited to owned offline fixtures");const auto tab=find_tab(tab_id);if(!tab||!tab->ready)throw std::logic_error("The owned fixture browser is not ready");ACPFileSystem pin(directory);tab->page.CoreWebView2().SetVirtualHostNameToFolderMapping(winrt::to_hstring(host),pin.root().wstring(),browser_core::CoreWebView2HostResourceAccessKind::DenyCors);
+    }
     void close() noexcept {
         if (closed_) return;
         closed_ = true;
+        for(auto& [thread,grant]:agent_grants_){grant->valid=false;if(agent_control_changed_)try{agent_control_changed_(thread,false);}catch(...){}}
         try {save_timer_.Stop(); save_state();} catch (...) { }
         for (auto& [id, state] : threads_) {
             (void)id;
-            for (const auto& tab : state.tabs) {tab->closed = true; tab->ready = false; tab->loading = false; complete_popup(*tab); if (tab->page) try {tab->page.Close();} catch (...) { }}
+            for (const auto& tab : state.tabs) {tab->closed = true; tab->ready = false; tab->loading = false; complete_popup(*tab); complete_agent_dialog(*tab);invalidate_agent_frames(*tab); if (tab->page) try {tab->page.Close();tab->upload_lifetimes.clear();} catch (...) { }}
         }
     }
 
 private:
+    friend struct BrowserCredentialBridge;
     struct Tab {
         std::string id, thread_id, url{"about:blank"}, title, error, fixture_html;
-        bool private_mode{}, loading{}, ready{}, initializing{}, closed{}, fixture_navigation{};
-        std::uint64_t navigation_id{};
+        bool private_mode{}, loading{}, ready{}, initializing{}, closed{}, fixture_navigation{}, credential_private{};
+        std::uint64_t navigation_id{},document_generation{};
         browser_controls::WebView2 page{nullptr};
         browser_core::CoreWebView2Environment environment{nullptr};
         browser_core::CoreWebView2NewWindowRequestedEventArgs popup{nullptr};
         winrt::Windows::Foundation::Deferral popup_deferral{nullptr};
         browser_json::JsonObject original{nullptr};
+        struct ObservedFrame{browser_tool::Frame frame;std::uint64_t navigation{},document{};};
+        std::map<std::string,ObservedFrame> observed_frames;
+        browser_tool::PrivateText private_text;
+        std::vector<browser_json::JsonObject> console;
+        std::vector<browser_core::CoreWebView2DevToolsProtocolEventReceiver> protocol_receivers;
+        browser_core::CoreWebView2ScriptDialogOpeningEventArgs agent_dialog{nullptr};
+        winrt::Windows::Foundation::Deferral agent_dialog_deferral{nullptr};
+        std::vector<std::shared_ptr<void>> upload_lifetimes;
+        std::uint64_t agent_download_until{};
+        std::optional<std::pair<double,double>> viewport_override;
     };
+    struct AgentGrant{std::atomic_bool valid{true},busy{};};
     struct ThreadTabs {std::vector<std::shared_ptr<Tab>> tabs; std::string selected;};
     struct Download {BrowserDownloadSnapshot snapshot; browser_core::CoreWebView2DownloadOperation operation{nullptr};};
     struct Deferral {
@@ -146,6 +185,19 @@ private:
     browser_controls::ListView download_list_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer save_timer_{nullptr};
     std::function<void()> changed_;
+    std::function<void(const std::string&)> navigation_changed_;
+    std::map<std::string,std::shared_ptr<AgentGrant>> agent_grants_;
+    browser_tool::Queue dispatcher_{nullptr};
+    AgentControlCallback agent_control_changed_;ShowCallback show_;
+    std::function<std::string(const std::string&)> search_;
+    browser_controls::ToggleSwitch agent_toggle_{nullptr};
+    browser_tool::Reply request_impl(std::string thread,std::string json,std::filesystem::path artifacts,browser_tool::Cancel cancelled,std::shared_ptr<void> upload_lifetime);
+    static void complete_agent_dialog(Tab& tab)noexcept{if(tab.agent_dialog_deferral)try{tab.agent_dialog_deferral.Complete();}catch(...){}tab.agent_dialog_deferral=nullptr;tab.agent_dialog=nullptr;}
+    void invalidate_agent_frames(Tab& tab){std::vector<std::string> frames;for(const auto& [id,observed]:tab.observed_frames){(void)observed;frames.push_back(id);}tab.observed_frames.clear();if(navigation_changed_)for(const auto& id:frames)try{navigation_changed_(id);}catch(...) {}}
+    void wire_agent_events(const std::shared_ptr<Tab>& tab,const browser_core::CoreWebView2& core);
+    void start_agent_download(std::shared_ptr<Tab> tab,browser_core::CoreWebView2DownloadStartingEventArgs args);
+    browser_json::JsonObject agent_metadata(const std::shared_ptr<Tab>& tab)const;
+
 
     BrowserPanel(std::filesystem::path profiles, std::filesystem::path downloads, bool fixture, bool isolate_threads)
         : profiles_(std::move(profiles)), downloads_directory_(std::move(downloads)), fixture_mode_(fixture), isolate_thread_profiles_(isolate_threads), private_session_(identity()) {
@@ -171,14 +223,14 @@ private:
         return value;
     }
     void build_view() {
-        root_ = browser_controls::Grid{}; identify(root_, L"BrowserPanel"); root_.RowSpacing(8);
+        root_ = browser_controls::Grid{}; dispatcher_=root_.DispatcherQueue(); identify(root_, L"BrowserPanel"); root_.RowSpacing(8);
         for (const auto height : {browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto},
                 browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Star},
                 browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}, browser_xaml::GridLength{1, browser_xaml::GridUnitType::Auto}}) {
             browser_controls::RowDefinition row; row.Height(height); root_.RowDefinitions().Append(row);
         }
-        browser_controls::StackPanel tabs_bar; tabs_bar.Orientation(browser_controls::Orientation::Horizontal); tabs_bar.Spacing(8);
-        tab_selector_ = browser_controls::ComboBox{}; tab_selector_.MinWidth(220); tab_selector_.MaxWidth(420); identify(tab_selector_, L"BrowserTabs");
+        browser_controls::StackPanel tabs_bar;tabs_bar.Spacing(6);browser_controls::Grid tab_row;tab_row.ColumnSpacing(6);for(int column=0;column<3;++column){browser_controls::ColumnDefinition value;value.Width({1,column==0?browser_xaml::GridUnitType::Star:browser_xaml::GridUnitType::Auto});tab_row.ColumnDefinitions().Append(value);}
+        tab_selector_ = browser_controls::ComboBox{}; tab_selector_.MinWidth(120);tab_selector_.HorizontalAlignment(browser_xaml::HorizontalAlignment::Stretch); tab_selector_.MaxWidth(420); identify(tab_selector_, L"BrowserTabs");
         tab_selector_.SelectionChanged([weak = weak_from_this()](const auto&, const auto&) {
             if (const auto self = weak.lock(); self && !self->refreshing_) {
                 const auto index = self->tab_selector_.SelectedIndex();
@@ -187,10 +239,10 @@ private:
                 }
             }
         });
-        tabs_bar.Children().Append(tab_selector_);
-        tabs_bar.Children().Append(make_button(L"New Tab", L"BrowserNewTab", [](auto& self){self.new_tab();}));
-        tabs_bar.Children().Append(make_button(L"New Private Tab", L"BrowserNewPrivateTab", [](auto& self){self.new_tab("about:blank", true);}));
-        tabs_bar.Children().Append(make_button(L"Close Tab", L"BrowserCloseTab", [](auto& self){if (const auto tab = self.active_tab()) self.close_tab(tab->id);}));
+        tab_row.Children().Append(tab_selector_);auto close_tab_button=make_button(L"Close Tab",L"BrowserCloseTab",[](auto& self){if(const auto tab=self.active_tab())self.close_tab(tab->id);});browser_controls::Grid::SetColumn(close_tab_button,1);tab_row.Children().Append(close_tab_button);
+        agent_toggle_=browser_controls::ToggleSwitch{};agent_toggle_.Header(winrt::box_value(ui_text(L"Agent Control")));identify(agent_toggle_,L"BrowserAgentControl");
+        agent_toggle_.Toggled([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->refreshing_&&!self->selected_thread_.empty())try{self->set_agent_control(self->selected_thread_,self->agent_toggle_.IsOn());}catch(...){const bool refreshing=self->refreshing_;self->refreshing_=true;self->agent_toggle_.IsOn(self->agent_control(self->selected_thread_));self->refreshing_=refreshing;self->status_.Text(ui_text(L"Browser agent control could not be changed."));}});browser_controls::Grid::SetColumn(agent_toggle_,2);tab_row.Children().Append(agent_toggle_);tabs_bar.Children().Append(tab_row);
+        browser_controls::StackPanel new_tabs;new_tabs.Orientation(browser_controls::Orientation::Horizontal);new_tabs.Spacing(8);new_tabs.Children().Append(make_button(L"New Tab",L"BrowserNewTab",[](auto& self){self.new_tab();}));new_tabs.Children().Append(make_button(L"New Private Tab",L"BrowserNewPrivateTab",[](auto& self){self.new_tab("about:blank",true);}));tabs_bar.Children().Append(new_tabs);
         root_.Children().Append(tabs_bar);
         browser_controls::Grid navigation; navigation.ColumnSpacing(6);
         for (int i = 0; i < 5; ++i) {browser_controls::ColumnDefinition column; column.Width({1, i == 3 ? browser_xaml::GridUnitType::Star : browser_xaml::GridUnitType::Auto}); navigation.ColumnDefinitions().Append(column);}
@@ -264,13 +316,13 @@ private:
             if (core.Profile().IsInPrivateModeEnabled() != tab->private_mode) throw std::runtime_error("The browser did not create the requested private profile");
             const auto settings = core.Settings(); settings.AreDefaultScriptDialogsEnabled(false); settings.IsPasswordAutosaveEnabled(false);
             settings.IsGeneralAutofillEnabled(false); settings.IsWebMessageEnabled(false);
-            wire_events(tab, core); tab->ready = true; tab->loading = false; tab->initializing = false;
+            wire_events(tab, core); wire_agent_events(tab,core); tab->ready = true; tab->loading = false; tab->initializing = false;
             if (tab->popup) {tab->popup.NewWindow(core); complete_popup(*tab);}
             else if (!tab->fixture_html.empty()) {tab->fixture_navigation = true; tab->page.NavigateToString(winrt::to_hstring(tab->fixture_html));}
             else core.Navigate(winrt::to_hstring(tab->url));
         } catch (const winrt::hresult_error& error) {tab->error = winrt::to_string(error.message()); tab->loading = false; tab->initializing = false; complete_popup(*tab);}
           catch (const std::exception& error) {tab->error = error.what(); tab->loading = false; tab->initializing = false; complete_popup(*tab);}
-        refresh_tabs(); notify();
+        try{if(!closed_&&dispatcher_.HasThreadAccess()){refresh_tabs();notify();}}catch(...){}
     }
     void wire_events(const std::shared_ptr<Tab>& tab, const browser_core::CoreWebView2& core) {
         const auto weak = weak_from_this(); const auto item = std::weak_ptr<Tab>(tab);
@@ -283,14 +335,14 @@ private:
                 if (!browser_url_allowed(uri) && !inline_fixture) {
                     args.Cancel(true); value->error = winrt::to_string(ui_text(L"This navigation is blocked."));
                     if (self->fixture_mode_) {const auto colon = uri.find(':'); value->error += " (scheme=" + (colon != std::string::npos && colon < 16 ? uri.substr(0, colon) : "none") + ", length=" + std::to_string(uri.size()) + ")";}
-                } else {value->navigation_id = args.NavigationId(); value->loading = true; value->error.clear(); value->url = inline_fixture ? "about:blank" : uri;}
+                } else {self->complete_agent_dialog(*value);self->invalidate_agent_frames(*value);value->navigation_id = args.NavigationId(); value->loading = true; value->error.clear(); value->url = inline_fixture ? "about:blank" : uri;}
                 self->refresh_navigation(); self->notify();
             }
         });
         core.NavigationCompleted([weak, item](const auto&, const browser_core::CoreWebView2NavigationCompletedEventArgs& args) {
             if (const auto self = weak.lock()) if (const auto value = item.lock()) {
                 if (args.NavigationId() != value->navigation_id) return;
-                value->loading = false; if (!args.IsSuccess() && value->error.empty()) value->error = winrt::to_string(ui_text(L"Navigation failed."));
+                value->loading = false; value->upload_lifetimes.clear(); if (!args.IsSuccess() && value->error.empty()) value->error = winrt::to_string(ui_text(L"Navigation failed."));
                 self->refresh_navigation(); self->schedule_save(); self->notify();
             }
         });
@@ -312,13 +364,13 @@ private:
             args.State(browser_core::CoreWebView2PermissionState::Deny); args.Handled(true); args.SavesInProfile(false);
             if (const auto self = weak.lock()) if (const auto value = item.lock()) if (args.IsUserInitiated() && !permission_name(args.PermissionKind()).empty() && self->can_prompt(value)) self->permission(value, args);
         });
-        core.ScriptDialogOpening([weak, item](const auto&, const browser_core::CoreWebView2ScriptDialogOpeningEventArgs& args) {if (const auto self = weak.lock()) if (const auto value = item.lock()) if (self->can_prompt(value)) self->script_dialog(value, args);});
+        core.ScriptDialogOpening([weak, item](const auto&, const browser_core::CoreWebView2ScriptDialogOpeningEventArgs& args) {if (const auto self = weak.lock()) if (const auto value = item.lock()) {if(self->agent_control(value->thread_id)){complete_agent_dialog(*value);value->agent_dialog=args;value->agent_dialog_deferral=args.GetDeferral();self->notify();}else if (self->can_prompt(value)) self->script_dialog(value, args);}});
         core.BasicAuthenticationRequested([weak, item](const auto&, const browser_core::CoreWebView2BasicAuthenticationRequestedEventArgs& args) {args.Cancel(true); if (const auto self = weak.lock()) if (const auto value = item.lock()) if (self->can_prompt(value)) self->basic_auth(value, args);});
         core.ServerCertificateErrorDetected([](const auto&, const browser_core::CoreWebView2ServerCertificateErrorDetectedEventArgs& args) {args.Action(browser_core::CoreWebView2ServerCertificateErrorAction::Cancel);});
         core.LaunchingExternalUriScheme([](const auto&, const browser_core::CoreWebView2LaunchingExternalUriSchemeEventArgs& args) {args.Cancel(true);});
         core.DownloadStarting([weak, item](const auto&, const browser_core::CoreWebView2DownloadStartingEventArgs& args) {
             args.Cancel(true); args.Handled(true);
-            if (const auto self = weak.lock()) if (const auto value = item.lock()) if (self->can_prompt(value)) self->download(value, args);
+            if (const auto self = weak.lock()) if (const auto value = item.lock()) {if(self->agent_control(value->thread_id)&&GetTickCount64()<value->agent_download_until)self->start_agent_download(value,args);else if (self->can_prompt(value)) self->download(value, args);}
         });
         core.ProcessFailed([weak, item](const auto&, const auto&) {if (const auto self = weak.lock()) if (const auto value = item.lock()) {value->ready = false; value->loading = false; value->error = winrt::to_string(ui_text(L"The browser process stopped.")); self->refresh_navigation(); self->notify();}});
     }
@@ -414,7 +466,7 @@ private:
     }
     void refresh_tabs() {
         if (!tab_selector_ || refreshing_) return;
-        refreshing_ = true; tab_selector_.Items().Clear(); displayed_tabs_.clear();
+        refreshing_ = true; agent_toggle_.IsOn(agent_control(selected_thread_)); tab_selector_.Items().Clear(); displayed_tabs_.clear();
         if (const auto state = threads_.find(selected_thread_); state != threads_.end()) {
             for (const auto& tab : state->second.tabs) {
                 browser_controls::ComboBoxItem entry; auto text = tab->title.empty() ? ui_text(L"New Tab") : winrt::to_hstring(tab->title);
@@ -471,7 +523,7 @@ private:
         for (const auto& [thread, value] : threads_) for (const auto& tab : value.tabs) if (!tab->private_mode && !tab->closed) {
             auto item = tab->original ? tab->original : browser_json::JsonObject{};
             item.SetNamedValue(L"thread", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(thread))); item.SetNamedValue(L"id", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(tab->id)));
-            item.SetNamedValue(L"url", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(browser_restore_url(tab->url)))); item.SetNamedValue(L"selected", browser_json::JsonValue::CreateBooleanValue(value.selected == tab->id)); tabs.Append(item);
+            auto restored=browser_restore_url(tab->url);if(tab->private_text.text(restored)!=restored)restored="about:blank";item.SetNamedValue(L"url", browser_json::JsonValue::CreateStringValue(winrt::to_hstring(restored))); item.SetNamedValue(L"selected", browser_json::JsonValue::CreateBooleanValue(value.selected == tab->id)); tabs.Append(item);
         }
         state.SetNamedValue(L"tabs", tabs); const auto bytes = winrt::to_string(state.Stringify());
         if (bytes.size() > 1024 * 1024) throw std::runtime_error("Browser tabs exceed the save limit; existing data was left unchanged");
@@ -486,3 +538,5 @@ private:
     }
 };
 } // namespace coincide
+#include "BrowserToolRequests.h"
+#include "BrowserCredentialBridge.h"

@@ -1,0 +1,57 @@
+#pragma once
+#include "../Runtime/BackgroundAgentSession.h"
+#include <fstream>
+
+namespace coincide::background_proxy_fixture {
+inline constexpr std::string_view account_scope="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+inline constexpr std::string_view model_catalog=R"({"data":[{"id":"fixture-model","model":"fixture-model","display_name":"Synthetic model","default":true,"hidden":false,"supported_reasoning_efforts":[{"reasoning_effort":"medium","description":"Synthetic"}],"default_reasoning_effort":"medium"}]})";
+struct State {
+    mutable std::mutex gate;std::filesystem::path root;unsigned factories{},sends{},queues{},steers{},responses{},interrupts{},shutdowns{},actual{};bool active{},paused{};std::string prompt,latest_actual,profile_id{"default"};std::vector<AgentQueuedTurn> queued;std::vector<SessionEvent> events;
+    explicit State(std::filesystem::path folder):root(std::move(folder)){write();}
+    void write()const{using namespace background_host;Object object;for(const auto& value:{std::pair{L"factories",factories},{L"sends",sends},{L"queues",queues},{L"steers",steers},{L"responses",responses},{L"interrupts",interrupts},{L"shutdowns",shutdowns},{L"actual",actual}})object.SetNamedValue(value.first,Value::CreateNumberValue(value.second));put(object,L"latest_actual",latest_actual);object.SetNamedValue(L"queued",Value::CreateNumberValue(static_cast<double>(queued.size())));object.SetNamedValue(L"active",Value::CreateBooleanValue(active));std::ofstream(root/(L"trace-"+std::to_wstring(GetCurrentProcessId())+L".json"),std::ios::trunc)<<winrt::to_string(object.Stringify());}
+};
+class Session final:public AgentSession {
+    std::shared_ptr<State> state_;AgentLaunch launch_;
+    void deliver(const CodexTurn& input,const std::string& id){
+        state_->active=true;++state_->actual;state_->latest_actual=with_current_tool_context(launch_,input).text;const auto turn="native-turn-"+std::to_string(state_->actual);state_->events.push_back({SessionEvent::Kind::input,id,input.text,id.empty()?"direct":"queued"});state_->events.push_back({SessionEvent::Kind::started,turn,"",""});
+        if(input.text=="question"){state_->prompt="\"fixture-question\"";state_->events.push_back({SessionEvent::Kind::prompt,state_->prompt,R"({"questions":[{"id":"answer","header":"Choice","question":"Synthetic choice?","options":[{"label":"First","description":"Synthetic"}]}]})","item/tool/requestUserInput"});}
+        else if(input.text!="wait"){state_->events.push_back({SessionEvent::Kind::text_complete,"native-item-"+std::to_string(state_->actual),"Synthetic response",""});state_->events.push_back({SessionEvent::Kind::completed,turn,"completed",""});state_->active=false;}state_->write();
+    }
+public:
+    explicit Session(std::shared_ptr<State> state):state_(std::move(state)){
+        launch_.tool_context=[root=state_->root]{return local_file::read(root/L"current-tools.txt",4096).bytes;};std::lock_guard lock(state_->gate);++state_->factories;state_->events.push_back({SessionEvent::Kind::account_scope,state_->profile_id,std::string(account_scope),"synthetic_verified_identity"});state_->events.push_back({SessionEvent::Kind::session,"fixture-native","",""});state_->events.push_back({SessionEvent::Kind::models,"",std::string(model_catalog),""});state_->write();
+    }
+    bool send(CodexTurn input)override{std::lock_guard lock(state_->gate);if(state_->active||!state_->queued.empty())return false;++state_->sends;deliver(input,{});return true;}
+    bool busy()const noexcept override{std::lock_guard lock(state_->gate);return state_->active||(!state_->paused&&!state_->queued.empty());}
+    bool queue(CodexTurn input,std::string id)override{std::lock_guard lock(state_->gate);if(state_->queued.size()>=64||std::any_of(state_->queued.begin(),state_->queued.end(),[&](const auto& value){return value.id==id;}))return false;++state_->queues;state_->events.push_back({SessionEvent::Kind::queued,id,input.text,"queued"});state_->queued.push_back({std::move(id),std::move(input)});state_->write();return true;}
+    std::vector<AgentQueuedTurn> queued()const override{std::lock_guard lock(state_->gate);return state_->queued;}
+    std::size_t queued_count()const override{std::lock_guard lock(state_->gate);return state_->queued.size();}
+    bool queue_paused()const override{std::lock_guard lock(state_->gate);return state_->paused;}
+    bool remove_queued(const std::string& id)override{std::lock_guard lock(state_->gate);const auto at=std::find_if(state_->queued.begin(),state_->queued.end(),[&](const auto& value){return value.id==id;});if(at==state_->queued.end())return false;state_->queued.erase(at);state_->events.push_back({SessionEvent::Kind::queue_changed,id,"","removed"});state_->write();return true;}
+    bool edit_queued(const std::string& id,CodexTurn input)override{std::lock_guard lock(state_->gate);const auto at=std::find_if(state_->queued.begin(),state_->queued.end(),[&](const auto& value){return value.id==id;});if(at==state_->queued.end())return false;at->turn=std::move(input);state_->events.push_back({SessionEvent::Kind::queue_changed,id,at->turn.text,"edited"});state_->write();return true;}
+    bool resume_queue()override{std::lock_guard lock(state_->gate);if(state_->queued.empty())return false;state_->paused=false;state_->events.push_back({SessionEvent::Kind::queue_changed,"","","resumed"});return true;}
+    bool pause_queue()override{std::lock_guard lock(state_->gate);state_->paused=true;state_->events.push_back({SessionEvent::Kind::queue_changed,"","","paused"});return true;}
+    bool steer(CodexTurn input,std::string id)override{std::lock_guard lock(state_->gate);if(!state_->active)return false;++state_->steers;state_->latest_actual=with_current_tool_context(launch_,input).text;state_->events.push_back({SessionEvent::Kind::input,std::move(id),input.text,"steered"});state_->write();return true;}
+    bool refresh_models()override{std::lock_guard lock(state_->gate);state_->events.push_back({SessionEvent::Kind::models,"",std::string(model_catalog),""});return true;}
+    void respond(std::string id,std::string)override{std::lock_guard lock(state_->gate);if(id!=state_->prompt)return;++state_->responses;state_->events.push_back({SessionEvent::Kind::resolved,id,"",""});state_->prompt.clear();state_->events.push_back({SessionEvent::Kind::text_complete,"native-question-result","Synthetic answer accepted",""});state_->events.push_back({SessionEvent::Kind::completed,"native-question-turn","completed",""});state_->active=false;state_->write();}
+    void interrupt()noexcept override{std::lock_guard lock(state_->gate);++state_->interrupts;state_->active=false;state_->paused=true;if(!state_->prompt.empty()){state_->events.push_back({SessionEvent::Kind::resolved,state_->prompt,"",""});state_->prompt.clear();}state_->events.push_back({SessionEvent::Kind::completed,"native-stop","interrupted",""});state_->write();}
+    std::vector<SessionEvent> take_events()override{std::lock_guard lock(state_->gate);if(!state_->active&&!state_->paused&&!state_->queued.empty()){auto next=std::move(state_->queued.front());state_->queued.erase(state_->queued.begin());deliver(next.turn,next.id);}auto result=std::move(state_->events);state_->events.clear();return result;}
+    void close()noexcept override{}void shutdown()noexcept override{std::lock_guard lock(state_->gate);++state_->shutdowns;state_->active=false;state_->paused=true;state_->queued.clear();state_->write();}
+};
+// Test-only responder can drop one submitted request at the transport boundary. It owns the same
+// authenticated private pipe as Server, but never constructs a real provider or runs a command.
+class FaultServer {
+    background_host::Core& core_;std::shared_ptr<background_host::Scope> scope_;background_host::FileIdentity peer_;background_host::Handle pipe_;bool dropped_{};std::string fault_;std::filesystem::path root_;
+public:
+    FaultServer(background_host::Core& core,std::shared_ptr<background_host::Scope> scope,const std::filesystem::path& peer,std::string fault):core_(core),scope_(std::move(scope)),peer_(background_host::file_identity(peer)),fault_(std::move(fault)),root_(scope_->directory()){
+        using namespace background_host;UserSecurity security(scope_->sid());pipe_.reset(CreateNamedPipeW(scope_->pipe().c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,65536,65536,0,&security.attributes));if(!pipe_)throw std::runtime_error("Owned proxy fault pipe unavailable");
+    }
+    void run(){using namespace background_host;while(!core_.retire_requested()){
+        auto pending=std::make_unique<pipe_io::Operation>();const auto connected=ConnectNamedPipe(pipe_.value,&pending->value);const auto error=connected?ERROR_SUCCESS:GetLastError();if(!connected&&error==ERROR_IO_PENDING){pending->pending=true;try{pipe_io::await(pipe_.value,pending,GetTickCount64()+100,[&]{core_.pump();},{});}catch(...){DisconnectNamedPipe(pipe_.value);continue;}}else if(!connected&&error!=ERROR_PIPE_CONNECTED)throw std::runtime_error("Owned proxy fault listener failed");struct Disconnect{HANDLE handle;~Disconnect(){CancelIoEx(handle,nullptr);DisconnectNamedPipe(handle);}}disconnect{pipe_.value};
+        try{auto peer=authenticate_peer(pipe_.value,true,*scope_,peer_);const auto deadline=GetTickCount64()+2000;const auto request=Object::Parse(winrt::to_hstring(pipe_io::receive(pipe_.value,deadline)));if(text(request,L"scope",64)!=scope_->id())throw std::runtime_error("Owned proxy fault scope mismatch");const auto command_value=command(request.GetNamedObject(L"command"));if(command_value.operation==Operation::send){std::ofstream(root_/L"send-request-count.txt",std::ios::app|std::ios::binary)<<"send\n";if(!dropped_){dropped_=true;if(fault_=="accepted")static_cast<void>(core_.perform(command_value));std::ofstream(root_/L"dropped.txt")<<"synthetic response dropped";continue;}}
+            Object response;put(response,L"id",command_value.id);put(response,L"scope",scope_->id());response.SetNamedValue(L"version",Value::CreateNumberValue(1));try{response.SetNamedValue(L"result",core_.perform(command_value));}catch(...){put(response,L"error","Owned synthetic request rejected");}pipe_io::send(pipe_.value,winrt::to_string(response.Stringify()),deadline);char ack{};pipe_io::transfer(pipe_.value,false,&ack,1,deadline);
+        }catch(...){}core_.pump();
+    }}
+};
+inline BackgroundAgentOptions options(const std::shared_ptr<background_host::Scope>& scope,const std::filesystem::path& fixture,const std::string& epoch){BackgroundAgentOptions value;value.scope=scope;value.key=background_host::checked({"{198ac3fd-4113-463f-8061-e692c31340c6}","codex"});value.expected_host_image=background_host::file_identity(fixture);value.host_owns_current_tool_context=true;value.expected_profile_id="default";value.expected_account_scope=account_scope;value.request_timeout=std::chrono::milliseconds(250);value.action_timeout=std::chrono::seconds(5);value.poll_interval=std::chrono::milliseconds(50);value.reconnect_interval=std::chrono::milliseconds(100);background_host::Launch launch;launch.executable=fixture;launch.cwd=scope->directory();launch.profile_directory=scope->directory();launch.arguments={L"synthetic-provider-only"};launch.saved_profile_id="default";launch.saved_account_scope=account_scope;value.authorized_start=BackgroundAgentStart{epoch,std::move(launch)};return value;}
+} // namespace coincide::background_proxy_fixture

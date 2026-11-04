@@ -41,6 +41,9 @@ def labels():
         for match in re.finditer(r'\bbutton\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*\)', source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text
+        for match in re.finditer(r'\bbutton\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*,\s*\[', source):
+            text = json.loads('"' + match.group(1) + '"')
+            result[ui_key(text)] = text
         for match in re.finditer(r'\b(?:ui_text|toggle|edit|add_page|link|note|command)\(\s*L' + literal, source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text

@@ -45,7 +45,7 @@ if (!$CoreOnly) {
     Copy-Item (Join-Path $root 'Notices\T3-Code-LICENSE.txt') $notices
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence', 'background-host', 'browser-tool', 'credentials-controller', 'hosted-conversation-reducer', 'native-host-factory', 'code-hosting', 'git-repository-identity', 'repository-lease')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
@@ -74,4 +74,28 @@ if (!$CoreOnly) {
         if(Test-Path $report){Get-Content $report}
         if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows Computer Use shared lease tests failed.'}
     }
+}
+
+if (!$CoreOnly -and $Architecture -eq 'x64') {
+    $report=Join-Path $root 'build\host-ipc-test-result.txt'
+    Remove-Item $report -ErrorAction SilentlyContinue
+    $fixture=Join-Path $coreBuild "$Configuration\CoincideBackgroundHostFixture.exe"
+    $process=Start-Process -FilePath $executable -ArgumentList @('--host-ipc-tests', "`"$report`"", "`"$fixture`"") -PassThru
+    if(!$process.WaitForExit(60000)){$process.Kill();throw 'Windows background-host IPC tests timed out.'}
+    if(Test-Path $report){Get-Content $report}
+    if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows background-host IPC tests failed.'}
+    $report=Join-Path $root 'build\background-agent-session-test-result.txt'
+    Remove-Item $report -ErrorAction SilentlyContinue
+    $fixture=Join-Path $coreBuild "$Configuration\CoincideBackgroundProxyFixture.exe"
+    $process=Start-Process -FilePath $executable -ArgumentList @('--background-agent-session-tests', "`"$report`"", "`"$fixture`"") -PassThru
+    if(!$process.WaitForExit(60000)){$process.Kill();throw 'Windows background-agent proxy tests timed out.'}
+    if(Test-Path $report){Get-Content $report}
+    if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows background-agent proxy tests failed.'}
+    $report=Join-Path $root 'build\host-tool-context-test-result.txt'
+    Remove-Item $report -ErrorAction SilentlyContinue
+    $fixture=Join-Path $coreBuild "$Configuration\CoincideHostToolContextFixture.exe"
+    $process=Start-Process -FilePath $executable -ArgumentList @('--host-tool-context-tests', "`"$report`"", "`"$fixture`"") -PassThru
+    if(!$process.WaitForExit(60000)){$process.Kill();throw 'Windows host tool-context tests timed out.'}
+    if(Test-Path $report){Get-Content $report}
+    if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows host tool-context tests failed.'}
 }

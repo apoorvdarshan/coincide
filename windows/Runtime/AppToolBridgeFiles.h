@@ -12,7 +12,7 @@ public:
     UserOnlySecurity(){
         HANDLE raw{};if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&raw))throw std::runtime_error("Could not protect app-tool access");NativeHandle token(raw);DWORD size{};GetTokenInformation(token.get(),TokenUser,nullptr,0,&size);if(!size||size>1024*1024)throw std::runtime_error("Could not protect app-tool access");std::vector<unsigned char> data(size);if(!GetTokenInformation(token.get(),TokenUser,data.data(),size,&size))throw std::runtime_error("Could not protect app-tool access");
         wchar_t* sid{};if(!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(data.data())->User.Sid,&sid))throw std::runtime_error("Could not protect app-tool access");struct Free{void* value;~Free(){LocalFree(value);}}free{sid};
-        const auto sddl=L"D:P(A;OICI;FA;;;"+std::wstring(sid)+L")";if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,&descriptor_,nullptr))throw std::runtime_error("Could not protect app-tool access");
+        const auto sddl=L"O:"+std::wstring(sid)+L"D:P(A;OICI;FA;;;"+std::wstring(sid)+L")";if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,&descriptor_,nullptr))throw std::runtime_error("Could not protect app-tool access");
     }
     UserOnlySecurity(const UserOnlySecurity&)=delete;UserOnlySecurity& operator=(const UserOnlySecurity&)=delete;
     ~UserOnlySecurity(){if(descriptor_)LocalFree(descriptor_);}
@@ -43,22 +43,28 @@ struct UploadPins {
     }
 };
 class PrivateFiles {
+    // The shared root belongs to its owner and any grants still using it. Only the final
+    // lifetime release removes an empty root; artifacts/nonempty directories are preserved.
+    struct RootLifetime {std::filesystem::path path;std::unique_ptr<ACPFileSystem> pin;explicit RootLifetime(std::filesystem::path value):path(std::move(value)),pin(std::make_unique<ACPFileSystem>(path)){}~RootLifetime(){pin.reset();if(!path.empty())RemoveDirectoryW(path.c_str());}};
 public:
     struct GrantFiles {
         Access access;NativeHandle configuration;std::unique_ptr<ACPFileSystem> directory;
+    private:
+        std::shared_ptr<RootLifetime> root_lifetime_;friend class PrivateFiles;
+    public:
         void revoke()noexcept{configuration.reset();if(!access.configuration.empty())DeleteFileW(access.configuration.c_str());}
-        ~GrantFiles(){revoke();directory.reset();if(!access.directory.empty()){RemoveDirectoryW(access.directory.c_str());RemoveDirectoryW(access.directory.parent_path().c_str());}}
+        ~GrantFiles(){revoke();directory.reset();if(!access.directory.empty()){RemoveDirectoryW(access.directory.c_str());}}
     };
     explicit PrivateFiles(const std::filesystem::path& parent){
         ACPFileSystem pin(parent);root_=pin.root()/ACPFileSystem::wide("CoincideAppTools-"+random_secret(16));auto security=security_.attributes();if(!CreateDirectoryW(root_.c_str(),&security))throw std::runtime_error("Could not create a private app-tool directory");
-        try{root_pin_=std::make_unique<ACPFileSystem>(root_);}catch(...){RemoveDirectoryW(root_.c_str());throw;}
+        try{lifetime_=std::make_shared<RootLifetime>(root_);}catch(...){RemoveDirectoryW(root_.c_str());throw;}
     }
     PrivateFiles(const PrivateFiles&)=delete;PrivateFiles& operator=(const PrivateFiles&)=delete;
-    ~PrivateFiles(){root_pin_.reset();if(!root_.empty())RemoveDirectoryW(root_.c_str());}
+    ~PrivateFiles()=default;
     const std::filesystem::path& directory()const{return root_;}
     std::shared_ptr<GrantFiles> create(const std::string& thread,Channel channel,unsigned short port,const std::string& token,const std::set<std::string>& actions){
         const auto folder=root_/ACPFileSystem::wide(channel_name(channel)+"-"+thread_key(thread)+"-"+random_secret(8));auto security=security_.attributes();if(!CreateDirectoryW(folder.c_str(),&security))throw std::runtime_error("Could not create private thread tool access");
-        auto result=std::make_shared<GrantFiles>();result->access.directory=folder;result->directory=std::make_unique<ACPFileSystem>(folder);result->access.configuration=folder/ACPFileSystem::wide(channel_name(channel)+".curl");
+        auto result=std::make_shared<GrantFiles>();result->root_lifetime_=lifetime_;result->access.directory=folder;result->directory=std::make_unique<ACPFileSystem>(folder);result->access.configuration=folder/ACPFileSystem::wide(channel_name(channel)+".curl");
         const auto maximum=channel==Channel::browser?950:channel==Channel::computer_use?130:35;
         std::string config="url = \"http://127.0.0.1:"+std::to_string(port)+"/"+channel_name(channel)+"/"+thread_key(thread)+"\"\nheader = \"Authorization: Bearer "+token+"\"\nheader = \"Content-Type: application/json\"\nsilent\nshow-error\nmax-time = "+std::to_string(maximum)+"\nnoproxy = \"*\"\nproxy = \"\"\n";
         struct Wipe{std::string& value;~Wipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}}wipe{config};
@@ -75,6 +81,6 @@ public:
         result->access.instructions+="</coincide_"+std::string(tag)+">";return result;
     }
 private:
-    UserOnlySecurity security_;std::filesystem::path root_;std::unique_ptr<ACPFileSystem> root_pin_;
+    UserOnlySecurity security_;std::filesystem::path root_;std::shared_ptr<RootLifetime> lifetime_;
 };
 } // namespace coincide::app_tools

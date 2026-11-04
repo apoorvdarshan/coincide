@@ -84,6 +84,9 @@
   <data name="OneWeek" xml:space="preserve">
     <value>1 week</value>
   </data>
+  <data name="Passwords" xml:space="preserve">
+    <value>암호</value>
+  </data>
   <data name="Plan" xml:space="preserve">
     <value>계획</value>
   </data>
@@ -95,6 +98,9 @@
   </data>
   <data name="Projects" xml:space="preserve">
     <value>프로젝트</value>
+  </data>
+  <data name="PullRequests" xml:space="preserve">
+    <value>풀 리퀘스트</value>
   </data>
   <data name="Queue" xml:space="preserve">
     <value>대기열</value>
@@ -189,6 +195,9 @@
   <data name="Text_0359ce99f4f79118" xml:space="preserve">
     <value>Saving creates an approval card. The schedule runs only after you explicitly approve the saved prompt and timing.</value>
   </data>
+  <data name="Text_0379fc73608ab971" xml:space="preserve">
+    <value>완료</value>
+  </data>
   <data name="Text_03b15a3ee7b50b5f" xml:space="preserve">
     <value>Share terminal output only with this conversation. Access lasts until revoked or Coincide closes. Agents cannot type or execute commands through this connection.</value>
   </data>
@@ -200,6 +209,9 @@
   </data>
   <data name="Text_04e69db649437ee9" xml:space="preserve">
     <value>Imported Session</value>
+  </data>
+  <data name="Text_05b37f9ddc3cf3a3" xml:space="preserve">
+    <value>Refresh to load pull requests for the selected repository. GitHub CLI uses your existing sign-in.</value>
   </data>
   <data name="Text_05e7f192d6a89c19" xml:space="preserve">
     <value>Retry saving disabled preferences</value>
@@ -233,6 +245,9 @@
   </data>
   <data name="Text_0b978fa5dd3e4463" xml:space="preserve">
     <value>This navigation is blocked.</value>
+  </data>
+  <data name="Text_0e8b82d208236286" xml:space="preserve">
+    <value>The confirmation could not be shown. No action was started.</value>
   </data>
   <data name="Text_0f811b617ba5423a" xml:space="preserve">
     <value>완료로 표시</value>
@@ -275,6 +290,9 @@
   </data>
   <data name="Text_19f361adab1c6776" xml:space="preserve">
     <value>Recording… Stop to transcribe, or Cancel to discard.</value>
+  </data>
+  <data name="Text_1a0c41d456e2a2ec" xml:space="preserve">
+    <value>Action needed</value>
   </data>
   <data name="Text_1e571a852c803bbc" xml:space="preserve">
     <value>Answer every required question before submitting.</value>
@@ -354,6 +372,9 @@
   <data name="Text_31d653c51878aa90" xml:space="preserve">
     <value>Default model ID</value>
   </data>
+  <data name="Text_32322dc45e502559" xml:space="preserve">
+    <value>거절</value>
+  </data>
   <data name="Text_337dd38e3527e5d9" xml:space="preserve">
     <value>Copy to Composer</value>
   </data>
@@ -429,6 +450,9 @@
   <data name="Text_3e178098bb55daf3" xml:space="preserve">
     <value>커밋 메시지</value>
   </data>
+  <data name="Text_3fd70a61149c0ed1" xml:space="preserve">
+    <value>Loading pull request…</value>
+  </data>
   <data name="Text_41431c2bbdc5f824" xml:space="preserve">
     <value>첨부</value>
   </data>
@@ -453,6 +477,9 @@
   <data name="Text_44fa1773e1e78784" xml:space="preserve">
     <value>Saved</value>
   </data>
+  <data name="Text_45ce61667628ecd4" xml:space="preserve">
+    <value>리뷰 준비 완료로 표시</value>
+  </data>
   <data name="Text_46572f544f43f202" xml:space="preserve">
     <value>Each added profile has its own native CLI login. Coincide stores profile labels and verified account routing metadata; passwords and tokens stay with the CLI.</value>
   </data>
@@ -467,6 +494,9 @@
   </data>
   <data name="Text_499f3644e41825d9" xml:space="preserve">
     <value>Keep Awake uses an app-owned sleep request. Windows, the lid policy or ASUS software can still request hibernation. Quit releases the request.</value>
+  </data>
+  <data name="Text_4a2f004629efd538" xml:space="preserve">
+    <value>풀 리퀘스트 불러오는 중…</value>
   </data>
   <data name="Text_4baba93d34a3603b" xml:space="preserve">
     <value>Refresh manager status</value>
@@ -531,6 +561,9 @@
   <data name="Text_565adaaff41a281c" xml:space="preserve">
     <value>Window Management</value>
   </data>
+  <data name="Text_56d7ae194448aa0c" xml:space="preserve">
+    <value>tab</value>
+  </data>
   <data name="Text_57adf424d57c8a0f" xml:space="preserve">
     <value>보내기</value>
   </data>
@@ -585,6 +618,9 @@
   <data name="Text_60320a18282b2b33" xml:space="preserve">
     <value>이름 변경</value>
   </data>
+  <data name="Text_60b035d19e451230" xml:space="preserve">
+    <value>Manager needs setup in its own app.</value>
+  </data>
   <data name="Text_612bdafe4f589b3c" xml:space="preserve">
     <value>Multiple Downloads</value>
   </data>
@@ -627,6 +663,12 @@
   <data name="Text_68db52366de956f2" xml:space="preserve">
     <value>작업 지시문</value>
   </data>
+  <data name="Text_698cdaf5b2ca193e" xml:space="preserve">
+    <value>Manager status is unavailable. No sign-in or unlock was attempted.</value>
+  </data>
+  <data name="Text_69f800801812a5f0" xml:space="preserve">
+    <value>files</value>
+  </data>
   <data name="Text_6b641f165101ea5e" xml:space="preserve">
     <value>Connect password managers through their existing Windows command-line tools. Managers start off. Opening Settings does not read a vault, sign in or unlock an account.</value>
   </data>
@@ -666,6 +708,9 @@
   <data name="Text_7030546b1c47d2da" xml:space="preserve">
     <value>Show in File Explorer</value>
   </data>
+  <data name="Text_7124eaeee470846f" xml:space="preserve">
+    <value>That CSV could not be read. No logins were imported.</value>
+  </data>
   <data name="Text_72fb39ae70ed43d2" xml:space="preserve">
     <value>Full access allows commands and file changes without asking. Defaults never change an existing conversation.</value>
   </data>
@@ -684,6 +729,9 @@
   <data name="Text_7543f42f6a135d28" xml:space="preserve">
     <value>Select a conversation to grant access.</value>
   </data>
+  <data name="Text_758e0a78aecff1f6" xml:space="preserve">
+    <value>Browser agent control could not be changed.</value>
+  </data>
   <data name="Text_76293c58814dd2e9" xml:space="preserve">
     <value>코드 복사</value>
   </data>
@@ -695,6 +743,9 @@
   </data>
   <data name="Text_77e4a1b4e60a09bb" xml:space="preserve">
     <value>Choose password CSV…</value>
+  </data>
+  <data name="Text_786fbc619c3915f9" xml:space="preserve">
+    <value>The repository lease could not be acquired.</value>
   </data>
   <data name="Text_79296bd60f533fb0" xml:space="preserve">
     <value>CPU threads</value>
@@ -720,6 +771,9 @@
   <data name="Text_7c5de6879135f667" xml:space="preserve">
     <value>Coincide for Windows · Development preview
 C++/WinRT + WinUI 3</value>
+  </data>
+  <data name="Text_7d24125b454a4d47" xml:space="preserve">
+    <value>Manager is locked. Open its own app to unlock it.</value>
   </data>
   <data name="Text_7d736af6cd8199c8" xml:space="preserve">
     <value>Open a terminal for this conversation.</value>
@@ -768,6 +822,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_868a566fb9603774" xml:space="preserve">
     <value>키보드</value>
+  </data>
+  <data name="Text_87635abe82b91acc" xml:space="preserve">
+    <value>풀 리퀘스트</value>
   </data>
   <data name="Text_891154308b5f7c33" xml:space="preserve">
     <value>Use this provider by default in this project</value>
@@ -874,6 +931,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_9899f07ee811b5ca" xml:space="preserve">
     <value>1 hour</value>
   </data>
+  <data name="Text_99e360f40b25f306" xml:space="preserve">
+    <value>Saved logins are available. Each fill still needs Allow once.</value>
+  </data>
   <data name="Text_9b26ee7433b506fb" xml:space="preserve">
     <value>Open a browser tab to begin.</value>
   </data>
@@ -919,6 +979,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_a36aef46efe431eb" xml:space="preserve">
     <value>모델</value>
   </data>
+  <data name="Text_a3a27a128ad87f31" xml:space="preserve">
+    <value>암호</value>
+  </data>
   <data name="Text_a3b9964327605427" xml:space="preserve">
     <value>사용자 이름이나 비밀번호가 없는 HTTP 또는 HTTPS 주소를 입력하세요.</value>
   </data>
@@ -933,6 +996,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_a58d2e30fc010b33" xml:space="preserve">
     <value>Save and Switch</value>
+  </data>
+  <data name="Text_a65a21a0c181bff2" xml:space="preserve">
+    <value>The CSV picker could not open. No logins were imported.</value>
   </data>
   <data name="Text_a6e837218738a71d" xml:space="preserve">
     <value>계획 모드</value>
@@ -1018,6 +1084,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_b879392543a89272" xml:space="preserve">
     <value>Reset keyboard shortcuts</value>
   </data>
+  <data name="Text_b92cc63abe7d60fd" xml:space="preserve">
+    <value>Manager is configured. Its own app may require approval when used.</value>
+  </data>
   <data name="Text_b99af8f463fbfa26" xml:space="preserve">
     <value>Save for approval</value>
   </data>
@@ -1035,6 +1104,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_bf44d6249426d16c" xml:space="preserve">
     <value>Account status, balances and rate limits are unavailable. Check a profile explicitly in Accounts.</value>
+  </data>
+  <data name="Text_bf9c9810624e0c87" xml:space="preserve">
+    <value>리뷰 제출</value>
   </data>
   <data name="Text_c0f4254f45363d61" xml:space="preserve">
     <value>Worktrees</value>
@@ -1056,6 +1128,12 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_c82ec093ac725aca" xml:space="preserve">
     <value>The browser process stopped.</value>
+  </data>
+  <data name="Text_c842bdfd3dc7ecf1" xml:space="preserve">
+    <value>병합…</value>
+  </data>
+  <data name="Text_c91f9df574a74c30" xml:space="preserve">
+    <value>Create Review Worktree</value>
   </data>
   <data name="Text_c9261cecd5546990" xml:space="preserve">
     <value>답변 서체</value>
@@ -1081,6 +1159,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_cbf29ce484222325" xml:space="preserve">
     <value />
   </data>
+  <data name="Text_cbfd70a8bcc150ba" xml:space="preserve">
+    <value>리뷰 메시지</value>
+  </data>
   <data name="Text_cd104d19b5a0ef92" xml:space="preserve">
     <value>계획</value>
   </data>
@@ -1095,6 +1176,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_ce9c449b1ea0acc3" xml:space="preserve">
     <value>Keep Awake on battery too</value>
+  </data>
+  <data name="Text_cee8f527d673b607" xml:space="preserve">
+    <value>에이전트 제어</value>
   </data>
   <data name="Text_d001953bf6bcf290" xml:space="preserve">
     <value>미루기 해제</value>
@@ -1119,6 +1203,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d6ad76dc2c1704a5" xml:space="preserve">
     <value>Each bot keeps its own conversations, personality and instructions. Opening a conversation does not send a message.</value>
+  </data>
+  <data name="Text_d6f8ebda89cceb1f" xml:space="preserve">
+    <value>Diff 보기</value>
   </data>
   <data name="Text_d70e957037f58cd3" xml:space="preserve">
     <value>Allow terminal status, output and interrupt</value>
@@ -1156,6 +1243,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_de483d657caae16e" xml:space="preserve">
     <value>Remove Worktree</value>
   </data>
+  <data name="Text_de77364afa46d798" xml:space="preserve">
+    <value>The pull request action could not be prepared.</value>
+  </data>
   <data name="Text_de84d8cdded66021" xml:space="preserve">
     <value>Loading session preview…</value>
   </data>
@@ -1167,6 +1257,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_e0955919920ee87d" xml:space="preserve">
     <value>Day</value>
+  </data>
+  <data name="Text_e117b24625d0110a" xml:space="preserve">
+    <value>bottom</value>
   </data>
   <data name="Text_e24130f1123560a0" xml:space="preserve">
     <value>속도</value>
@@ -1291,6 +1384,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_f3ff78cc329d3528" xml:space="preserve">
     <value>Previous</value>
   </data>
+  <data name="Text_f4fbdbee8845e29a" xml:space="preserve">
+    <value>Manager is ready. Each fill still needs Allow once.</value>
+  </data>
   <data name="Text_f5af49563512943c" xml:space="preserve">
     <value>새로운 대화</value>
   </data>
@@ -1323,6 +1419,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_fc2490f62b243fa2" xml:space="preserve">
     <value>Navigation failed.</value>
+  </data>
+  <data name="Text_fc755793d4eaeca7" xml:space="preserve">
+    <value>The password export picker could not open. No logins were imported.</value>
   </data>
   <data name="Text_fda3e4a519cfc5ba" xml:space="preserve">
     <value>완료됨</value>
@@ -1359,5 +1458,23 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="You" xml:space="preserve">
     <value>나</value>
+  </data>
+  <data name="clear" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="fullPage" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="query" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="selector" xml:space="preserve">
+    <value>files</value>
+  </data>
+  <data name="top" xml:space="preserve">
+    <value>bottom</value>
+  </data>
+  <data name="url" xml:space="preserve">
+    <value>tab</value>
   </data>
 </root>

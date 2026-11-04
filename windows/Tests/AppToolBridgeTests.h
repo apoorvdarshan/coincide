@@ -91,9 +91,18 @@ inline int app_tool_bridge_tests(const std::filesystem::path& report){
         {
             const auto quote=[](const std::filesystem::path& path){std::wstring value=L"'";for(const auto ch:path.wstring()){value+=ch;if(ch==L'\'')value+=ch;}return value+L"'";};
             const auto powershell=std::filesystem::path(system)/L"WindowsPowerShell"/L"v1.0"/L"powershell.exe";
-            const auto command=L"$OutputEncoding=[System.Text.UTF8Encoding]::new($false); '{\"action\":\"read\"}' | & "+quote(curl)+L" --config "+quote(first.configuration)+L" --data-binary '@-'";std::string shell_output;
-            auto shell=WindowsProcess::start_bytes(powershell,{L"-NoProfile",L"-NonInteractive",L"-Command",command},folder,[&](std::string_view bytes){shell_output.append(bytes);},1024*1024);shell->close_input();const auto end=std::chrono::steady_clock::now()+6s;std::optional<WindowsProcess::Exit> exit;while(!(exit=shell->wait(0ms))&&std::chrono::steady_clock::now()<end){dispatch.pump();Sleep(1);}
-            check(exit&&exit->status==0&&shell_output.find(first_thread)!=std::string::npos&&shell_output.find(secret)==std::string::npos&&first.instructions.find("--data-binary '@-'")!=std::string::npos,"The advertised PowerShell curl syntax must execute an owned synthetic request without copying its private header");
+            const std::string marker="COINCIDE_BRIDGE_SHELL_READY";
+            const auto command=L"[Console]::Out.WriteLine('COINCIDE_BRIDGE_SHELL_READY'); [Console]::Out.Flush(); $OutputEncoding=[System.Text.UTF8Encoding]::new($false); '{\"action\":\"read\"}' | & "+quote(curl)+L" --config "+quote(first.configuration)+L" --data-binary '@-'";std::string shell_output;std::atomic_bool ready{};
+            auto shell=WindowsProcess::start_bytes(powershell,{L"-NoProfile",L"-NonInteractive",L"-Command",command},folder,[&](std::string_view bytes){shell_output.append(bytes);if(shell_output.find(marker)!=std::string::npos)ready=true;},1024*1024);shell->close_input();
+            // Cold Windows PowerShell initialization is distinct from the private HTTP action.
+            // Observe its explicit readiness before starting the same four-second curl budget.
+            const auto startup_end=std::chrono::steady_clock::now()+30s;std::optional<WindowsProcess::Exit> exit;
+            while(!ready&&!(exit=shell->wait(0ms))&&std::chrono::steady_clock::now()<startup_end){dispatch.pump();Sleep(1);}
+            const auto action_end=std::chrono::steady_clock::now()+4s;
+            while(ready&&!exit&&!(exit=shell->wait(0ms))&&std::chrono::steady_clock::now()<action_end){dispatch.pump();Sleep(1);}
+            const bool valid=ready&&exit&&exit->status==0&&shell_output.find(first_thread)!=std::string::npos&&shell_output.find(secret)==std::string::npos&&first.instructions.find("--data-binary '@-'")!=std::string::npos;
+            const auto detail="PowerShell private-config interoperability failed (ready="+std::to_string(ready.load())+", exited="+std::to_string(exit.has_value())+", exit="+std::to_string(exit?exit->status:0)+"). No private output was logged.";
+            check(valid,detail.c_str());
         }
         auto pending=std::async(std::launch::async,[&]{return fixture::exchange(a.port,fixture::request(a,R"({"action":"read"})"));});const auto queue_deadline=std::chrono::steady_clock::now()+2s;while(!dispatch.size()&&std::chrono::steady_clock::now()<queue_deadline)Sleep(1);check(dispatch.size()==1,"An accepted action must wait in the injected dispatcher before effects");
         const auto busy_before=called.load();check(fixture::status(post_without_ui(a,R"({"action":"read","bad":true})"))==400,"Malformed same-grant traffic must not clear an earlier operation's serialization lock");check(fixture::status(post_without_ui(a,R"({"action":"read"})"))==409,"A second same-grant operation cannot bypass an earlier queued action");

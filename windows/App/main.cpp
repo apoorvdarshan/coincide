@@ -45,6 +45,10 @@
 #include "UsagePanel.h"
 #include "PersonaPanel.h"
 #include "BotWorkspace.h"
+#include "CredentialsController.h"
+#include "NativeUserPrompt.h"
+#include "CodeHostingPanel.h"
+#include "../Runtime/RepositoryLease.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -111,6 +115,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::ColumnDefinition tools_column{nullptr};
     std::shared_ptr<coincide::GitPanel> git_panel;
     std::string git_project;
+    std::shared_ptr<coincide::code_hosting_panel::Panel> hosting_panel;
+    controls::ScrollViewer hosting_view{nullptr};
+    std::string hosting_project;
     std::shared_ptr<coincide::BrowserPanel> browser_panel;
     std::shared_ptr<coincide::TerminalPanel> terminal_panel;
     std::shared_ptr<coincide::PreviewPanel> preview_panel;
@@ -138,6 +145,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     std::shared_ptr<coincide::BotStore> bot_store;
     std::unique_ptr<coincide::BotWorkspace> bot_workspace;
     std::shared_ptr<coincide::PersonaPanel> persona_panel;
+    std::shared_ptr<coincide::CredentialsController> credentials_controller;
+    controls::ScrollViewer credentials_view{nullptr};
     std::deque<coincide::UsageRecord> pending_usage;
     std::string usage_warning;
     std::uint64_t usage_retry_at{};
@@ -234,7 +243,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto result=coincide::tests::run_ui_test(native_ui_suite,question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
                 window.Close();xaml::Application::Current().Exit();
             });});
-            window.Activate();window.AppWindow().Hide();return;
+            if(native_ui_suite=="browser-tool-panel")window.AppWindow().Resize({1100,1150});window.Activate();if(native_ui_suite!="browser-tool-panel")window.AppWindow().Hide();return;
         }
         try{
             preferences_store=std::make_unique<coincide::PreferencesStore>(data_directory());preferences=preferences_store->open();preferences_writable=true;
@@ -365,12 +374,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto redo = toolbar_button(L"Redo", L"Redo", L"Redo");
         redo.Click([this](const auto&, const auto&) { history(true); }); toolbar.PrimaryCommands().Append(redo);
         auto git=toolbar_button(L"Git",L"Git",L"OpenGit");git.Click([this](const auto&,const auto&){show_git();});toolbar.PrimaryCommands().Append(git);
+        auto hosting=toolbar_button(L"PullRequests",L"Pull requests",L"OpenPullRequests");hosting.Click([this](const auto&,const auto&){show_hosting();});toolbar.PrimaryCommands().Append(hosting);
         auto browser=toolbar_button(L"Browser",L"Browser",L"OpenBrowser");browser.Click([this](const auto&,const auto&){show_browser();});toolbar.PrimaryCommands().Append(browser);
         auto terminal=toolbar_button(L"Terminal",L"Terminal",L"OpenTerminal");terminal.Click([this](const auto&,const auto&){show_terminal();});toolbar.PrimaryCommands().Append(terminal);
         auto schedules=toolbar_button(L"Schedules",L"Schedules",L"OpenSchedules");schedules.Click([this](const auto&,const auto&){show_schedules();});toolbar.PrimaryCommands().Append(schedules);
         auto instructions=toolbar_button(L"Instructions",L"Instructions",L"OpenInstructions");instructions.Click([this](const auto&,const auto&){show_instructions();});toolbar.PrimaryCommands().Append(instructions);
         auto imports=toolbar_button(L"ImportSessions",L"Import Sessions",L"OpenImports");imports.Click([this](const auto&,const auto&){show_imports();});toolbar.PrimaryCommands().Append(imports);
         auto accounts=toolbar_button(L"Accounts",L"Accounts",L"OpenAccounts");accounts.Click([this](const auto&,const auto&){show_accounts();});toolbar.PrimaryCommands().Append(accounts);
+        auto passwords=toolbar_button(L"Passwords",L"Passwords",L"OpenPasswords");passwords.Click([this](const auto&,const auto&){show_credentials();});toolbar.PrimaryCommands().Append(passwords);
         auto voice=toolbar_button(L"Voice",L"Voice",L"OpenVoice");voice.Click([this](const auto&,const auto&){show_voice();});toolbar.PrimaryCommands().Append(voice);
         auto tools=toolbar_button(L"AgentTools",L"Agent tools",L"AgentToolAccess");tools.Click([this](const auto&,const auto&){show_tool_access();});toolbar.PrimaryCommands().Append(tools);
         auto usage=toolbar_button(L"Usage",L"Usage",L"OpenUsage");usage.Click([this](const auto&,const auto&){show_usage();});toolbar.PrimaryCommands().Append(usage);
@@ -476,7 +487,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         platform_timer.Tick([this](const auto&,const auto&){platform_tick();});
         window.AppWindow().Closing([this](const auto&,const winrt::Microsoft::UI::Windowing::AppWindowClosingEventArgs& args){
             close_voice();
-            if(git_panel&&git_panel->mutating()){
+            if(repository_mutating()){
                 args.Cancel(true);
                 if(!quitting&&preferences.background&&desktop&&desktop->tray_available()){hide_tools();window.AppWindow().Hide();}
                 else{quit_when_safe=true;quitting=true;state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));}
@@ -494,7 +505,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             for (auto& [id, run] : running) {(void)id; run.session->shutdown();}
             drain_sessions(); flush_dirty(); save_current();
             if(git_panel)git_panel->close();if(browser_panel)browser_panel->close();if(terminal_panel)terminal_panel->close();if(preview_panel)preview_panel->close();
-            if(schedule_panel)schedule_panel->close();if(instructions_panel)instructions_panel->close();if(import_panel)import_panel->close();if(accounts_panel)accounts_panel->close();if(usage_panel)usage_panel->close();if(persona_panel)persona_panel->close();flush_usage();close_voice();if(computer_use)computer_use->stop();if(notifications)notifications->close();power_request.close();if(desktop)desktop->close();
+            if(hosting_panel)hosting_panel->close();
+            if(schedule_panel)schedule_panel->close();if(instructions_panel)instructions_panel->close();if(import_panel)import_panel->close();if(accounts_panel)accounts_panel->close();if(usage_panel)usage_panel->close();if(persona_panel)persona_panel->close();if(credentials_controller)credentials_controller->close();flush_usage();close_voice();if(computer_use)computer_use->stop();if(notifications)notifications->close();power_request.close();if(desktop)desktop->close();
         });
 
         try {
@@ -570,8 +582,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             dismiss_notification(id);
             if(schedule_panel)schedule_panel->select_thread(id);
             if(browser_panel)browser_panel->select_thread(id);
+            if(credentials_controller)credentials_controller->select_thread(id);
             if(terminal_panel)terminal_panel->select_thread(id,working_directory(t));
-            if(visible_tool=="git")hide_tools();else if(visible_tool=="instructions")show_instructions();
+            if(visible_tool=="git"||visible_tool=="hosting")hide_tools();else if(visible_tool=="instructions")show_instructions();
         } catch (...) { selecting = false; report_exception(); }
     }
 
@@ -702,7 +715,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             const auto before = workspace;
             try {operation(ids); store->save_index(workspace);}
             catch (...) {workspace = before; throw;}
-            for(const auto& id:ids)if(workspace.thread(id).deleted_at||workspace.thread(id).archived){if(tool_bridge)tool_bridge->disable(id);terminal_tool_threads.erase(id);if(computer_use)computer_use->revoke(id);}
+            for(const auto& id:ids)if(workspace.thread(id).deleted_at||workspace.thread(id).archived){if(tool_bridge)tool_bridge->disable(id);terminal_tool_threads.erase(id);if(computer_use)computer_use->revoke(id);if(browser_panel)browser_panel->set_agent_control(id,false);}
             reconcile_selection();
         } catch (...) {report_exception();}
     }
@@ -762,7 +775,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             dialog.Content(destinations);dialog.PrimaryButtonText(label(L"Save",L"Save"));dialog.CloseButtonText(label(L"Cancel",L"Cancel"));
             if(co_await dialog.ShowAsync()==controls::ContentDialogResult::Primary){
                 if(std::any_of(ids.begin(),ids.end(),[&](const auto& id){return thread_busy(id)||active_terminal(id);}))throw std::runtime_error("Stop the selected agents and close their terminals before moving conversations.");
-                if(git_panel&&git_panel->mutating())throw std::runtime_error("Wait for the repository operation before moving conversations.");
+                if(repository_mutating())throw std::runtime_error("Wait for the repository operation before moving conversations.");
                 const auto index=destinations.SelectedIndex();std::optional<std::string> project;
                 if(index>0)project=projects.at(static_cast<std::size_t>(index-1));
                 for(const auto& id:ids){auto at=running.find(id);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}}
@@ -792,7 +805,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     if(choice==controls::ContentDialogResult::Primary)workspace.rename_project(id,winrt::to_string(name.Text()));
                     else {
                         for(const auto& t:workspace.threads)if(t.project_id==id&&(thread_busy(t.id)||active_terminal(t.id)))throw std::runtime_error("Stop this project's agents and close its terminals before removing the project.");
-                        if(git_panel&&git_panel->mutating())throw std::runtime_error("Wait for the repository operation before removing the project.");
+                        if(repository_mutating())throw std::runtime_error("Wait for the repository operation before removing the project.");
                         for(const auto& t:workspace.threads)if(t.project_id==id){auto at=running.find(t.id);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}}
                         workspace.remove_project(id);
                     }
@@ -885,10 +898,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     RunningThread& session_for(const std::string& id){
         if(closing||quitting)throw std::runtime_error("The app is closing.");
-        if(git_panel&&git_panel->mutating()){
-            const auto folder=working_directory(workspace.thread(id)),repository=git_panel->repository_root(),target=git_panel->mutation_target();
-            if(within_folder(repository,folder)||within_folder(folder,repository)||within_folder(target,folder)||within_folder(folder,target))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
-        }
+        if(repository_busy(workspace.thread(id)))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
         if(const auto found=running.find(id);found!=running.end())return found->second;
         auto& thread=workspace.thread(id);coincide::CodexLaunch launch;launch.cwd=working_directory(thread);
         if(fixture_preview){wchar_t module[32768]{};if(!GetModuleFileNameW(nullptr,module,32768))winrt::throw_last_error();launch.executable=module;launch.arguments={thread.provider=="claude"?L"--claude-session-fixture":thread.provider=="opencode"?L"--opencode-http-fixture":L"--codex-session-fixture",L"normal"};}
@@ -984,11 +994,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void show_window(){if(!closing){window.AppWindow().Show();window.Activate();if(composer&&composer.IsEnabled())composer.Focus(xaml::FocusState::Programmatic);}}
     void quit_app(){
         if(closing)return;quitting=true;
-        if(git_panel&&git_panel->mutating()){quit_when_safe=true;for(auto& [id,run]:running){(void)id;run.session->interrupt();}state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));update_composer();return;}
+        if(repository_mutating()){quit_when_safe=true;for(auto& [id,run]:running){(void)id;run.session->interrupt();}state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));update_composer();return;}
         quit_when_safe=false;if(fixture_preview)diagnostic(L"Explicit quit requested");window.Close();
     }
     bool background_work()const{
-        if(preferences.keep_awake||(git_panel&&git_panel->mutating()))return true;
+        if(preferences.keep_awake||repository_mutating())return true;
         for(const auto& thread:workspace.threads)if(thread_busy(thread.id)||active_terminal(thread.id))return true;
         if(schedule_panel)for(const auto& task:schedule_panel->store().tasks())if(task.in_flight||(task.active()&&task.next_run))return true;
         return false;
@@ -996,12 +1006,13 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     std::string schedule_target(const std::string& canonical)const{
         const winrt::guid id(winrt::to_hstring(canonical));for(const auto& thread:workspace.threads)if(winrt::guid(winrt::to_hstring(thread.id))==id)return thread.id;return{};
     }
+    bool repository_mutating()const{return (git_panel&&git_panel->mutating())||(hosting_panel&&hosting_panel->mutating());}
     bool repository_busy(const coincide::Thread& thread)const{
-        if(!git_panel||!git_panel->mutating())return false;
+        if(!repository_mutating())return false;
         std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
         if(thread.bot_id){if(!bot_store)return true;const auto bot=bot_store->find(*thread.bot_id);if(!bot)return true;try{folder=bot_store->working_directory(*bot);}catch(...){return true;}}
         else if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return true;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
-        try{const auto repository=git_panel->repository_root(),target=git_panel->mutation_target();return within_folder(repository,folder)||within_folder(folder,repository)||within_folder(target,folder)||within_folder(folder,target);}catch(...){return true;}
+        try{const auto overlap=[&](const auto& panel){const auto repository=panel->repository_root(),target=panel->mutation_target();return coincide::repository_lease::conflicts({repository,target},folder);};return (git_panel&&git_panel->mutating()&&overlap(git_panel))||(hosting_panel&&hosting_panel->mutating()&&overlap(hosting_panel));}catch(...){return true;}
     }
     bool native_available(const std::string& provider)const{
         if(fixture_preview)return true;
@@ -1060,8 +1071,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(closing)return;
         flush_usage();
         std::erase_if(tool_workers,[](auto& worker){if(worker.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return false;try{worker.get();}catch(...){}return true;});
-        if(quitting){if(quit_when_safe&&(!git_panel||!git_panel->mutating()))quit_app();return;}
+        if(quitting){if(quit_when_safe&&!repository_mutating())quit_app();return;}
         if(computer_use)computer_use->idle_tick();
+        if(credentials_controller)credentials_controller->tick();
         try{
             last_platform_tick=GetTickCount64();
             if(schedule_panel){
@@ -1111,7 +1123,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     try{const auto& settings=self->preferences.providers.at(provider);const auto path=settings.executable.empty()?coincide::ProviderDiscovery::discover(provider):std::filesystem::path(winrt::to_hstring(settings.executable).c_str());return coincide::ProviderAccountProgram::from(coincide::ACPVendorLaunch::inspect(provider,path));}catch(...){return{};}},
                 [weak](const auto& record,const auto& account_state){if(const auto self=weak.get();self&&!self->closing)self->account_changed(record,account_state);},
                 [weak](const std::string& url){if(const auto self=weak.get();self&&!self->closing){try{
-                    if(!self->browser_panel){self->browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},self->fixture_preview);self->tool_views.Children().Append(self->browser_panel->view());}
+                    self->ensure_browser_panel();
                     if(self->account_browser_context.empty())self->account_browser_context=coincide::new_id();self->browser_panel->select_thread(self->account_browser_context);self->select_tool("browser",self->browser_panel->view(),label(L"Browser",L"Browser"));self->browser_panel->navigate(url);
                 }catch(...){self->report_exception();}}});
                 accounts_panel->set_operation_guard([weak](const coincide::ProviderAccountRecord& record,bool){if(const auto self=weak.get();self&&!self->closing){
@@ -1197,6 +1209,50 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }catch(...){report_exception();}
     }
     static std::string tool_error(const std::string& message){coincide::app_tools::Object result;coincide::computer_use::put(result,L"error",message);return winrt::to_string(result.Stringify());}
+    void ensure_credentials(){
+        if(credentials_controller)return;const auto weak=get_weak();coincide::CredentialsController::Services services;
+        services.show_panel=[weak](const std::string& id){const auto self=weak.get();if(!self||self->closing||self->dialog_open)throw std::runtime_error("The owner window is unavailable for sign-in approval.");if(self->selected!=id)self->open_thread(id);self->show_window();self->show_credentials();};
+        services.choose_csv=[weak](auto complete){std::optional<std::filesystem::path> selected_file;const auto self=weak.get();if(!self||self->closing||self->dialog_open){complete({});return;}self->dialog_open=true;
+            try{winrt::com_ptr<IFileOpenDialog> picker;winrt::check_hresult(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(picker.put())));const COMDLG_FILTERSPEC filters[]={{L"Password CSV export",L"*.csv"}};winrt::check_hresult(picker->SetFileTypes(1,filters));winrt::check_hresult(picker->SetOptions(FOS_FILEMUSTEXIST|FOS_PATHMUSTEXIST|FOS_FORCEFILESYSTEM));HWND hwnd{};winrt::check_hresult(self->window.as<IWindowNative>()->get_WindowHandle(&hwnd));const auto result=picker->Show(hwnd);
+                if(result!=HRESULT_FROM_WIN32(ERROR_CANCELLED)){winrt::check_hresult(result);winrt::com_ptr<IShellItem> item;winrt::check_hresult(picker->GetResult(item.put()));PWSTR value{};winrt::check_hresult(item->GetDisplayName(SIGDN_FILESYSPATH,&value));selected_file=std::filesystem::path(value);CoTaskMemFree(value);}}
+            catch(...){if(!self->closing)self->show_error(coincide::ui_text(L"The password export picker could not open. No logins were imported."));}
+            self->dialog_open=false;complete(std::move(selected_file));
+        };
+        credentials_controller=coincide::CredentialsController::create(data_directory()/L"browser-credentials",std::move(services));
+        credentials_view=controls::ScrollViewer{};credentials_view.Content(credentials_controller->view());credentials_view.HorizontalScrollBarVisibility(controls::ScrollBarVisibility::Disabled);tool_views.Children().Append(credentials_view);credentials_view.Visibility(xaml::Visibility::Collapsed);
+        if(!selected.empty())credentials_controller->select_thread(selected);
+    }
+    void show_credentials(){if(closing||!writable)return;try{ensure_credentials();select_tool("passwords",credentials_view,label(L"Passwords",L"Passwords"));}catch(...){report_exception();}}
+    void ensure_browser_panel(){
+        if(browser_panel)return;browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},fixture_preview);const auto weak=get_weak();
+        browser_panel->set_agent_control_callback([weak](const std::string& id,bool enabled){if(const auto self=weak.get();self&&!self->closing){const auto thread=self->schedule_target(id);if(thread.empty()){if(enabled)self->browser_panel->set_agent_control(id,false);return;}self->ensure_thread_tools(thread);}});
+        browser_panel->set_navigation_callback([weak](const std::string& frame){if(const auto self=weak.get();self&&self->credentials_controller)self->credentials_controller->cancel_navigation(frame);});
+        browser_panel->set_show_callback([weak](const std::string& id,bool show){if(const auto self=weak.get();self&&!self->closing){if(show){if(self->dialog_open)throw std::runtime_error("Finish the open dialog before showing another browser.");const auto thread=self->schedule_target(id);if(thread.empty())throw std::runtime_error("This browser conversation is unavailable.");if(self->selected!=thread)self->open_thread(thread);self->show_window();self->select_tool("browser",self->browser_panel->view(),label(L"Browser",L"Browser"));}else if(self->selected==id&&self->visible_tool=="browser")self->hide_tools();}});
+        browser_panel->set_search_resolver([](const std::string& query){static constexpr char hex[]="0123456789ABCDEF";std::string url="https://www.google.com/search?q=";for(const auto byte:query){const auto c=static_cast<unsigned char>(byte);if((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_'||c=='.'||c=='~')url+=static_cast<char>(c);else{url+='%';url+=hex[c>>4];url+=hex[c&15];}}return url;});
+        tool_views.Children().Append(browser_panel->view());
+    }
+    winrt::fire_and_forget handle_browser_tool(coincide::app_tools::Request request,std::shared_ptr<coincide::app_tools::Operation> operation){
+        auto lifetime=get_strong();const auto id=schedule_target(request.thread_id);bool own_dialog{},restore_browser{},restore_passwords{};
+        try{
+            if(operation->cancelled())co_return;
+            if(id.empty()||!browser_panel||!browser_panel->agent_control(id)){operation->complete(tool_error("Browser control is unavailable for this conversation."),403);co_return;}
+            const auto body=coincide::app_tools::Object::Parse(winrt::to_hstring(request.json));const auto cancelled=[operation]{return operation->cancelled();};coincide::app_tools::Object result;
+            if(request.action=="fill-login"){
+                restore_passwords=visible_tool!="passwords";
+                ensure_credentials();result=co_await credentials_controller->fill_login(browser_panel,id,winrt::to_string(body.GetNamedString(L"tab",L"")),winrt::to_string(body.GetNamedString(L"item",L"")),cancelled);
+            }else if(request.action=="ask-user"){
+                if(dialog_open)throw std::runtime_error("Finish the open dialog before requesting another owner action.");
+                restore_browser=visible_tool!="browser";if(selected!=id)open_thread(id);show_window();select_tool("browser",browser_panel->view(),label(L"Browser",L"Browser"));
+                dialog_open=true;own_dialog=true;
+                const auto deadline=GetTickCount64()+static_cast<std::uint64_t>(body.GetNamedNumber(L"timeout",300)*1000);
+                const auto decision=co_await coincide::native_user_prompt(root.XamlRoot(),coincide::ui_text(L"Action needed"),body.GetNamedString(L"message",L""),coincide::ui_text(L"Done"),deadline,cancelled);
+                dialog_open=false;own_dialog=false;coincide::computer_use::put(result,L"result",winrt::to_string(decision));
+            }else result=co_await browser_panel->request(id,request.json,request.artifact_directory,cancelled,operation);
+            if(!operation->cancelled())operation->complete(winrt::to_string(result.Stringify()));
+        }catch(const winrt::hresult_error&){operation->complete(tool_error("The browser action could not finish. Its result was not replayed."),400);}
+        catch(const std::exception& error){operation->complete(tool_error(error.what()),400);}
+        if(own_dialog)dialog_open=false;if(((restore_browser&&visible_tool=="browser")||(restore_passwords&&visible_tool=="passwords"))&&selected==id)hide_tools();
+    }
     void ensure_tool_bridge(){
         if(tool_bridge||fixture_preview||!writable)return;const auto folder=data_directory()/L"app-tools";std::filesystem::create_directories(folder);const auto queue=window.DispatcherQueue();
         tool_bridge=std::make_shared<coincide::app_tools::AppToolBridge>(folder,[queue](std::function<void()> work){return queue.TryEnqueue([work=std::move(work)]{work();});});
@@ -1207,6 +1263,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         const auto handler=[weak](const coincide::app_tools::Request& request,const std::shared_ptr<coincide::app_tools::Operation>& operation){if(const auto self=weak.get())self->handle_app_tool(request,operation);else operation->complete("{\"error\":\"Coincide is closing\"}",503);};
         using Channel=coincide::app_tools::Channel;
         tool_bridge->enable(id,Channel::schedule,coincide::app_tools::Request::actions(Channel::schedule),handler);
+        if(browser_panel&&browser_panel->agent_control(id))tool_bridge->enable(id,Channel::browser,coincide::app_tools::Request::actions(Channel::browser),handler);else tool_bridge->disable(id,Channel::browser);
         if(terminal_tool_threads.contains(id))tool_bridge->enable(id,Channel::terminal,coincide::app_tools::Request::actions(Channel::terminal),handler);else tool_bridge->disable(id,Channel::terminal);
         if(computer_use&&computer_use->snapshot(id).granted)tool_bridge->enable(id,Channel::computer_use,coincide::app_tools::Request::actions(Channel::computer_use),handler);else tool_bridge->disable(id,Channel::computer_use);
     }
@@ -1216,6 +1273,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         try{
             if(closing||quitting||!writable)throw std::runtime_error("Coincide is closing or its workspace is read-only");
             const auto id=schedule_target(request.thread_id);if(id.empty()||workspace.thread(id).deleted_at||workspace.thread(id).archived)throw std::runtime_error("This conversation is unavailable");
+            if(request.channel==Channel::browser){if(!browser_panel||!browser_panel->agent_control(id))throw std::runtime_error("Browser control is not permitted for this conversation");handle_browser_tool(request,operation);return;}
             if(request.channel==Channel::schedule){ensure_schedules();if((request.action=="run-now"||request.action=="resume")&&!schedule_eligible(workspace.thread(id)))throw std::runtime_error("This conversation's provider or working folder is unavailable");
                 const auto result=schedule_panel->request(id,request.json);operation->complete(winrt::to_string(result.Stringify()));return;}
             if(request.channel==Channel::computer_use){
@@ -1278,7 +1336,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(!preview->directory.empty()){
             const auto folder=std::filesystem::path(winrt::to_hstring(preview->directory).c_str());std::error_code error;
             if(coincide::local_file::local_path(folder)&&!coincide::local_file::has_reparse(folder)&&std::filesystem::is_directory(folder,error)){
-                const auto canonical=std::filesystem::canonical(folder);auto found=std::find_if(candidate.projects.begin(),candidate.projects.end(),[&](const auto& project){std::error_code ignored;return std::filesystem::equivalent(canonical,std::filesystem::path(winrt::to_hstring(project.path).c_str()),ignored)&&!ignored;});
+                const auto canonical=std::filesystem::canonical(folder);auto found=std::find_if(candidate.projects.begin(),candidate.projects.end(),[&](const auto& project){std::error_code ignored;return project.id!=coincide::bots_container_id&&std::filesystem::equivalent(canonical,std::filesystem::path(winrt::to_hstring(project.path).c_str()),ignored)&&!ignored;});
                 if(found!=candidate.projects.end())thread.project_id=found->id;
                 else{const auto id=coincide::new_id();candidate.add_project({id,winrt::to_string(canonical.filename().empty()?canonical.root_name().wstring():canonical.filename().wstring()),winrt::to_string(canonical.wstring())});thread.project_id=id;}
                 resumable=true;
@@ -1321,7 +1379,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void show_browser(std::string url={}){
         if(selected.empty())return;
         try{
-            if(!browser_panel){browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},fixture_preview);tool_views.Children().Append(browser_panel->view());}
+            ensure_browser_panel();
             browser_panel->select_thread(selected);select_tool("browser",browser_panel->view(),label(L"Browser",L"Browser"));
             if(!url.empty())browser_panel->navigate(url);
         }catch(...){report_exception();}
@@ -1341,22 +1399,27 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }catch(...){report_exception();}
     }
 
-    bool git_target_allowed(const std::filesystem::path& target,bool removing)const{
-        if(closing||quitting||!writable)return false;
+    bool git_target_allowed(const std::filesystem::path& target,bool removing,const std::filesystem::path& repository={})const{
+        if(closing||quitting||!writable||repository_mutating())return false;
         try{
             if(removing)for(const auto& project:workspace.projects)if(project.id!=coincide::bots_container_id){const auto folder=std::filesystem::path(winrt::to_hstring(project.path).c_str());if(within_folder(target,folder)||within_folder(folder,target))return false;}
             for(const auto& thread:workspace.threads){
                 std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
                 if(thread.bot_id){if(!bot_store)return false;const auto bot=bot_store->find(*thread.bot_id);if(!bot)return false;folder=bot_store->working_directory(*bot);}
                 else if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return false;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
-                if((within_folder(target,folder)||within_folder(folder,target))&&(removing||thread_busy(thread.id)||active_terminal(thread.id)||!thread.queued_inputs.empty()))return false;
+                const bool active=thread_busy(thread.id)||active_terminal(thread.id)||!thread.queued_inputs.empty();
+                // An idle Home-folder bot does not own every nested worktree. Its Home (or an
+                // ancestor) stays protected, and active broad-folder work retains the lease.
+                if(thread.bot_id&&bot_store->broad_folder(folder)&&!within_folder(target,folder)&&!active)continue;
+                if(removing&&(within_folder(target,folder)||within_folder(folder,target)))return false;
+                if(active&&coincide::repository_lease::conflicts({repository.empty()?target:repository,target},folder))return false;
             }return true;
         }catch(...){return false;}
     }
     void open_worktree(const std::filesystem::path& target){
         if(closing||quitting||!writable)return;
         const auto folder=std::filesystem::canonical(target);if(!coincide::local_file::local_path(folder)||coincide::local_file::has_reparse(folder)||!std::filesystem::is_directory(folder))throw std::runtime_error("Choose an available local worktree.");
-        auto found=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& project){std::error_code error;return std::filesystem::equivalent(folder,std::filesystem::path(winrt::to_hstring(project.path).c_str()),error)&&!error;});
+        auto found=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& project){std::error_code error;return project.id!=coincide::bots_container_id&&std::filesystem::equivalent(folder,std::filesystem::path(winrt::to_hstring(project.path).c_str()),error)&&!error;});
         std::string project;
         if(found==workspace.projects.end()){const auto before=workspace;project=coincide::new_id();try{workspace.add_project({project,winrt::to_string(folder.filename().empty()?folder.root_name().wstring():folder.filename().wstring()),winrt::to_string(folder.wstring())});store->save_index(workspace);}catch(...){workspace=before;throw;}}
         else project=found->id;
@@ -1368,22 +1431,41 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         try{
             const auto folder=working_directory(workspace.thread(selected));const auto key=winrt::to_string(folder.wstring());
             if(!git_panel||git_project!=key){
-                if(git_panel&&git_panel->mutating())throw std::runtime_error("Wait for the repository operation to finish before changing the Git panel.");
+                if(repository_mutating())throw std::runtime_error("Wait for the repository operation to finish before changing the Git panel.");
                 if(git_panel)git_panel->close();if(git_view){uint32_t at{};if(tool_views.Children().IndexOf(git_view,at))tool_views.Children().RemoveAt(at);git_view=nullptr;}git_project=key;const auto weak=get_weak();
                 git_panel=coincide::GitPanel::create(folder,[weak,folder]{
                     const auto self=weak.get();if(!self||self->closing)return false;
-                    const auto target=self->git_panel?self->git_panel->repository_root():folder;for(const auto& [id,run]:self->running){
-                        (void)id;if(!run.session->busy()&&!run.awaiting_completion)continue;if(within_folder(target,run.cwd)||within_folder(run.cwd,target))return false;
-                    }return true;
+                    const auto target=self->git_panel?self->git_panel->repository_root():folder;return self->git_target_allowed(target,false,target);
                 },[weak,key](std::string text){
                     const auto self=weak.get();if(!self||self->closing||self->selected.empty()||text.empty())return;
                     auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at)return;
                     thread.draft+="\n\nRepository diff reference from "+key+":\n```diff\n"+text+"\n```";
                     self->selecting=true;self->composer.Text(winrt::to_hstring(thread.draft));self->selecting=false;self->save_current();self->update_composer();self->composer.Focus(xaml::FocusState::Programmatic);
-                },[weak](const std::filesystem::path& target,bool removing){const auto self=weak.get();return self&&self->git_target_allowed(target,removing);},[weak](const std::filesystem::path& target){if(const auto self=weak.get();self&&!self->closing)try{self->open_worktree(target);}catch(...){self->report_exception();}});
+                },[weak](const std::filesystem::path& target,bool removing){const auto self=weak.get();return self&&self->git_target_allowed(target,removing,self->git_panel?self->git_panel->repository_root():target);},[weak](const std::filesystem::path& target){if(const auto self=weak.get();self&&!self->closing)try{self->open_worktree(target);}catch(...){self->report_exception();}});
                 git_view=controls::ScrollViewer{};git_view.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);git_view.Content(git_panel->view());tool_views.Children().Append(git_view);
             }
             select_tool("git",git_view,label(L"Git",L"Git"));
+        }catch(...){report_exception();}
+    }
+
+    winrt::Windows::Foundation::IAsyncOperation<bool> confirm_hosting(coincide::code_hosting_panel::Confirmation value){
+        auto lifetime=get_strong();if(closing||dialog_open)co_return false;dialog_open=true;winrt::hstring decision;std::exception_ptr failure;
+        try{decision=co_await coincide::native_user_prompt(root.XamlRoot(),winrt::to_hstring(value.title),winrt::to_hstring(value.detail),winrt::to_hstring(value.action),GetTickCount64()+900000,[weak=get_weak()]{const auto self=weak.get();return !self||self->closing;});}catch(...){failure=std::current_exception();}
+        dialog_open=false;if(failure)std::rethrow_exception(failure);co_return decision==L"done";
+    }
+    bool hosting_target_allowed(const std::filesystem::path& repository,const std::filesystem::path& target)const{
+        if(closing||quitting||!writable||repository_mutating())return false;
+        return git_target_allowed(repository,false,repository)&&git_target_allowed(target,false,repository);
+    }
+    void show_hosting(){
+        if(selected.empty()||!writable||closing)return;try{const auto folder=working_directory(workspace.thread(selected));const auto key=winrt::to_string(folder.wstring());
+            if(!hosting_panel||hosting_project!=key){if(repository_mutating())throw std::runtime_error("Wait for the repository operation before changing the pull request workspace.");
+                if(hosting_panel)hosting_panel->close();if(hosting_view){std::uint32_t index{};if(tool_views.Children().IndexOf(hosting_view,index))tool_views.Children().RemoveAt(index);}const auto weak=get_weak();
+                hosting_panel=coincide::CodeHostingPanel::create(folder,[weak](const auto& repository,const auto& target){const auto self=weak.get();return self&&self->hosting_target_allowed(repository,target);},
+                    [weak](const auto& target){if(const auto self=weak.get();self&&!self->closing)self->open_worktree(target);},
+                    [weak](auto confirmation)->winrt::Windows::Foundation::IAsyncOperation<bool>{const auto self=weak.get();if(!self||self->closing)co_return false;co_return co_await self->confirm_hosting(std::move(confirmation));});
+                hosting_project=key;hosting_view=controls::ScrollViewer{};hosting_view.Content(hosting_panel->view());hosting_view.HorizontalScrollBarVisibility(controls::ScrollBarVisibility::Disabled);tool_views.Children().Append(hosting_view);
+            }select_tool("hosting",hosting_view,label(L"PullRequests",L"Pull requests"));
         }catch(...){report_exception();}
     }
 
@@ -1720,7 +1802,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(redo?workspace.redo_archive():workspace.undo_archive()){
                 std::vector<std::string> changed;
                 for(const auto& old:before.threads)if(workspace.thread(old.id).project_id!=old.project_id){
-                    if(thread_busy(old.id)||active_terminal(old.id)||(git_panel&&git_panel->mutating()))throw std::runtime_error("Stop the agents, close terminals and finish repository operations before undoing a project change.");
+                    if(thread_busy(old.id)||active_terminal(old.id)||repository_mutating())throw std::runtime_error("Stop the agents, close terminals and finish repository operations before undoing a project change.");
                     changed.push_back(old.id);
                 }
                 store->save_index(workspace);invalidate_project_context(changed);reconcile_selection();
@@ -1744,7 +1826,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto lifetime=get_strong();if(dialog_open)co_return;dialog_open=true;
         std::shared_ptr<coincide::ComputerUsePanel> computer_settings;
         try{
-            auto panel=coincide::PreferencesPanel::create(preferences,workspace.projects);controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(label(L"Settings",L"Settings")));
+            auto preference_projects=workspace.projects;std::erase_if(preference_projects,[](const auto& project){return project.id==coincide::bots_container_id;});auto panel=coincide::PreferencesPanel::create(preferences,std::move(preference_projects));controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(label(L"Settings",L"Settings")));
             controls::Grid frame;controls::RowDefinition heading;heading.Height({1,xaml::GridUnitType::Auto});frame.RowDefinitions().Append(heading);frame.RowDefinitions().Append(controls::RowDefinition{});
             controls::TextBlock validation;identify(validation,L"PreferencesValidationError");validation.TextWrapping(xaml::TextWrapping::Wrap);validation.IsTextSelectionEnabled(true);if(!preferences_writable)validation.Text(winrt::to_hstring(preferences_error));frame.Children().Append(validation);controls::Grid::SetRow(panel->view(),1);frame.Children().Append(panel->view());dialog.Content(frame);
             if(!fixture_preview){ensure_computer_use();computer_settings=coincide::ComputerUsePanel::create(data_directory()/L"ComputerUse",computer_use,[weak=get_weak()](coincide::ComputerUsePanel::Change change,const std::string& id){if(const auto self=weak.get();self&&!self->closing){if(change==coincide::ComputerUsePanel::Change::master){if(self->tool_bridge)for(const auto& thread:self->workspace.threads)self->tool_bridge->disable(thread.id,coincide::app_tools::Channel::computer_use);}else if(!id.empty())self->ensure_thread_tools(id);}});if(!selected.empty())computer_settings->select_thread(selected,workspace.thread(selected).title);controls::TabViewItem tab;tab.Header(winrt::box_value(coincide::ui_text(L"Computer Use")));tab.IsClosable(false);tab.Content(computer_settings->view());panel->view().TabItems().Append(tab);}

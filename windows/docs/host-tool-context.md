@@ -1,0 +1,11 @@
+# Current app-tool references for hosted providers
+
+`HostToolContextStore(scope, expected_ui_image)` publishes bounded per-thread references under the pinned physical DataRoot. `publish(thread, current_instructions, revision)` accepts only the exact grant blocks emitted by `AppToolBridge::current_instructions`; it stores channel, private curl configuration path and allowlisted action names. Arbitrary agent text and curl contents never enter the record. `revoke(thread, revision)` publishes an empty grant set.
+
+Capture the increasing revision at the UI grant-change event, then dispatch the file write off XAML. A delayed lower revision cannot restore revoked access. Another live UI owner cannot replace the record. After the old process exits, a verified new owner can begin its own revision epoch. Publisher PID, creation time, user, session and executable file identity are captured internally, rather than accepted from an agent request.
+
+Use `supplier(thread)` for the native provider's `AgentLaunch::tool_context` callback. It reads fresh structured metadata at each actual delivery without accessing UI or COM objects. Missing, malformed, revoked, unsafe or dead-owner references produce an empty string. Existing provider prompt wrapping then explicitly invalidates previously supplied grant references. The host may append fixed tool descriptions after this fresh reference text; it must not cache UI grants in the hosted Launch.
+
+Records use atomic bounded user-only files. Physical parent paths, ordinary single-link files, protected ownership and the exact per-thread grant/configuration layout are checked and pinned. The reader checks the owner's process lifetime twice. It reads file attributes and security metadata but never reads an Authorization header from a curl configuration. The existing bridge still owns authentication and revocation of each endpoint.
+
+The native contract suite uses owned synthetic processes and configuration files only. It covers all four channels, revocation/regrant, owner replacement, stale writes, malformed metadata, unsafe files and config ownership. It performs no real provider, account, model, browser or desktop actions. App activation and real controller integration remain separate validation.
