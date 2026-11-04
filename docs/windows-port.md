@@ -11,13 +11,15 @@ delivery route; neither replacement has been implemented or validated yet. These
 ## Verified development milestone
 
 - The native WinUI executable builds on the physical Windows laptop; GitHub Windows runners also compile it.
-- All 201 automated checks pass on the laptop: 71 workspace/process, 17 storage, 39 protocol, 42 subprocess connection,
-  and 32 Codex session lifecycle checks. They do not use a provider account or call a model.
+- All 202 automated checks pass on the laptop: 71 workspace/process, 17 storage, 39 protocol, 42 subprocess connection,
+  32 Codex session lifecycle, and one cached-property binding regression check. They do not use a provider account or call a model.
 - All eleven native UI checks pass: four long-history/draft checks; Codex Send/Unicode/final-text reconciliation;
   repeated identical replies; command approval denial across thread switching; file approval path/diff display and
   denial; typed question answers; Stop preserving a draft; and duplicate conversation titles.
 - A freeze exposed by identical replies is fixed with distinct bindable row identities. Equal display strings no longer
   make WinUI's accessibility sibling traversal revisit the same item. Both transcript and sidebar have regression coverage.
+- Cached binding descriptors read the current target instead of retaining an earlier partial reply; the binding regression
+  check covers this CI-discovered streaming failure.
 - Screenshots and the native accessibility tree were inspected. Codex turn orchestration and the composer are connected;
   native session IDs persist and resume, and unsupported requests fail closed.
 - The native Windows Codex CLI 0.166.0 starts and exposes app-server tooling. Sign-in and a real account conversation

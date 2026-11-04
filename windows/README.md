@@ -19,18 +19,19 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
-On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol, 42 subprocess connection, and
-32 Codex session lifecycle checks.
+On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol, 42 subprocess connection,
+32 Codex session lifecycle, and one cached-property binding regression check.
 The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**, run
 `./windows/Tests/PreviewSmoke.ps1` for native long-thread switching, drafts, and Codex composer checks. It seeds two
 isolated 1,500-message conversations and uses an explicitly labeled subprocess fixture to exercise Send, Unicode
 streaming, command/file approval denial, questions, and Stop. It records UI evidence, closes its own process, and
 removes its temporary conversation data. It does not use real conversations or a provider account.
 
-On the physical Windows laptop, all 201 automated checks and eleven native UI checks pass. The UI suite covers
+On the physical Windows laptop, all 202 automated checks and eleven native UI checks pass. The UI suite covers
 long histories, saved drafts, streaming/final-text reconciliation, repeated identical replies, duplicate chat titles,
 command/file approval denial, typed question answers, and Stop. Distinct view-model identities keep equal visible text
-from confusing WinUI's item lookup and accessibility traversal. Check exact-head CI separately from these local results.
+from confusing WinUI's item lookup and accessibility traversal. Cached binding properties read their supplied target,
+so reused containers display the current streamed text. Check exact-head CI separately from these local results.
 
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
