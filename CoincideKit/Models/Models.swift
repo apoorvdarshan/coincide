@@ -438,15 +438,24 @@ public struct UserQuestion: Codable, Hashable, Sendable, Identifiable {
 
 /// A set of questions an agent asks in one go.
 public struct UserInputRequest: Codable, Hashable, Sendable {
-    /// Id the session needs back in `answer(userInput:answers:)`.
+    public enum ResponseMode: String, Codable, Hashable, Sendable {
+        /// A nonblocking question: reply through the ordinary message/steering path, not an RPC response.
+        case userMessage
+    }
+    /// Id the session needs back in `answer(userInput:answers:)` for a blocking request.
     public var id: String
     public var title: String?
     public var questions: [UserQuestion]
+    /// Nil for a blocking provider request. Optional so previously saved requests still decode.
+    public var responseMode: ResponseMode?
 
-    public nonisolated init(id: String, title: String? = nil, questions: [UserQuestion]) {
+    public nonisolated init(
+        id: String, title: String? = nil, questions: [UserQuestion], responseMode: ResponseMode? = nil
+    ) {
         self.id = id
         self.title = title
         self.questions = questions
+        self.responseMode = responseMode
     }
 }
 

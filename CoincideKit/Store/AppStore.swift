@@ -625,6 +625,7 @@ public final class AppStore {
         where thread.items[index].status == .running || thread.items[index].status == .waiting {
             let kind = thread.items[index].kind
             if kind == .approval, thread.items[index].provider == nil, thread.items[index].approval != nil { continue }
+            if kind == .question, thread.items[index].questions?.responseMode == .userMessage { continue }
             thread.items[index].status = kind == .approval || kind == .question ? .declined : .failed
         }
     }

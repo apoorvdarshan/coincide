@@ -247,9 +247,13 @@ struct CodexEventMapper {
         switch item["type"]?.string {
         case "agentMessage":
             if streamingAssistantID == id { streamingAssistantID = nil }
-            var text = item["text"]?.string ?? ""
+            let text = item["text"]?.string ?? ""
             if item["delivery"]?.string == "async", let questions = item["questions"]?.array, !questions.isEmpty {
-                text = CodexPresentation.asyncQuestionsMarkdown(text: text, questions: questions)
+                let request = CodexPresentation.asyncQuestions(id: "\(turnID ?? "")/\(id)", questions: questions)
+                if !request.questions.isEmpty {
+                    let body = CodexPresentation.asyncQuestionText(text, request: request)
+                    return [.assistantText(itemID: id, text: body), .userInputRequested(request)]
+                }
             }
             guard !text.isEmpty else { return [] }
             return [.assistantText(itemID: id, text: text)]

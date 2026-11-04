@@ -529,7 +529,7 @@ public enum AgentEvent: Sendable, Hashable, Codable {
     /// The provider resolved or withdrew a pending approval itself.
     case approvalResolved(id: String)
     /// The agent asks the user one or more questions (Claude's AskUserQuestion, Codex's request_user_input, …).
-    /// Answers go back through `answer(userInput:answers:)`.
+    /// Blocking answers go back through `answer(userInput:answers:)`; a `.userMessage` request uses a normal message.
     case userInputRequested(UserInputRequest)
     /// The provider withdrew or resolved a pending question itself.
     case userInputResolved(id: String)

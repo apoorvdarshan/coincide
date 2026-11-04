@@ -331,6 +331,69 @@ struct RunnerEventTests {
         #expect(runner.pendingQuestions(thread.id).isEmpty)
     }
 
+    private var asyncQuestion: UserInputRequest {
+        UserInputRequest(id: "async-q", questions: [
+            UserQuestion(id: "publish", prompt: "Publish now?", options: [.init(label: "Wait for my review")])
+        ], responseMode: .userMessage)
+    }
+
+    @Test func asyncQuestionSurvivesCompletionAndSendsOneMessageWithoutAnRPCAnswer() async throws {
+        let provider = FakeProvider(kind: .codex)
+        provider.script = [.userInputRequested(asyncQuestion), .userInputRequested(asyncQuestion), .turnCompleted(.completed)]
+        let (store, runner, thread) = setUp(provider)
+        defer { runner.shutdown(threadID: thread.id) }
+        await runner.send(threadID: thread.id, text: "prepare a release")
+        let question = try #require(runner.pendingQuestions(thread.id).first)
+        #expect(runner.pendingQuestions(thread.id).count == 1)
+        #expect(!runner.isRunning(thread.id))
+        store.updateThread(thread.id) { $0.draft = "Keep my draft" }
+        let session = try #require(provider.lastSession)
+        session.script = [.turnCompleted(.completed)]
+        runner.answer(threadID: thread.id, itemID: question.id, answers: ["publish": ["Wait for my review"]])
+        runner.answer(threadID: thread.id, itemID: question.id, answers: ["publish": ["Wait for my review"]])
+        for _ in 0..<500 where session.sent.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(session.sent.count == 2)
+        #expect(session.sent.last?.text.hasSuffix("Publish now?\nWait for my review") == true)
+        #expect(session.answers.isEmpty)
+        #expect(store.thread(thread.id)?.draft == "Keep my draft")
+        #expect(store.item(question.id, in: thread.id)?.answers == ["publish": ["Wait for my review"]])
+        session.onEvent?(.userInputRequested(asyncQuestion))
+        #expect(runner.pendingQuestions(thread.id).isEmpty)
+        #expect(store.thread(thread.id)?.items.filter { $0.kind == .question }.count == 1)
+    }
+
+    @Test func dismissingAsyncQuestionNeverAnswersAnRPCOrSendsAMessage() async throws {
+        let provider = FakeProvider(kind: .codex)
+        provider.script = [.userInputRequested(asyncQuestion)]
+        let (store, runner, thread) = setUp(provider)
+        defer { runner.shutdown(threadID: thread.id) }
+        await runner.send(threadID: thread.id, text: "prepare a release")
+        let question = try #require(runner.pendingQuestions(thread.id).first)
+        runner.dismissQuestion(threadID: thread.id, itemID: question.id)
+        #expect(provider.lastSession?.answers.isEmpty == true)
+        #expect(provider.lastSession?.sent.count == 1)
+        #expect(store.item(question.id, in: thread.id)?.status == .declined)
+        #expect(runner.isRunning(thread.id))
+    }
+
+    @Test func asyncQuestionSurvivesReopeningAndIsNotSentToAnotherProvider() async throws {
+        let provider = FakeProvider(kind: .codex)
+        provider.script = [.userInputRequested(asyncQuestion), .turnCompleted(.completed)]
+        let (store, runner, thread) = setUp(provider)
+        defer { runner.shutdown(threadID: thread.id) }
+        await runner.send(threadID: thread.id, text: "prepare a release")
+        let question = try #require(runner.pendingQuestions(thread.id).first)
+        store.updateThread(thread.id) { $0.selection.provider = .claude }
+        #expect(runner.pendingQuestions(thread.id).isEmpty)
+        runner.answer(threadID: thread.id, itemID: question.id, answers: ["publish": ["Wait for my review"]])
+        await Task.yield()
+        #expect(store.item(question.id, in: thread.id)?.status == .waiting)
+        #expect(provider.lastSession?.sent.count == 1)
+        store.flush()
+        let reopened = AppStore(directory: store.directory)
+        #expect(reopened.thread(thread.id)?.items.first { $0.id == question.id }?.status == .waiting)
+    }
+
     @Test func continuedSessionKeepsWhatItHasSeen() async {
         let provider = FakeProvider(kind: .opencode)
         provider.script = [.turnCompleted(.completed)]

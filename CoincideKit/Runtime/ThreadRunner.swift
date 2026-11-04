@@ -330,7 +330,11 @@ public final class ThreadRunner {
 
     /// Question items still waiting for an answer.
     public func pendingQuestions(_ threadID: UUID) -> [TranscriptItem] {
-        store.thread(threadID)?.items.filter { $0.kind == .question && $0.status == .waiting } ?? []
+        guard let thread = store.thread(threadID) else { return [] }
+        return thread.items.filter {
+            $0.kind == .question && $0.status == .waiting
+                && ($0.questions?.responseMode != .userMessage || $0.provider == thread.selection.provider)
+        }
     }
 
     // MARK: Turns
@@ -373,7 +377,15 @@ public final class ThreadRunner {
             attachments: imagePaths.isEmpty ? nil : imagePaths, context: context.isEmpty ? nil : context, schedule: schedule)
         let turnID = userItem.id
         store.append(userItem, to: threadID)
-        store.updateThread(threadID, touch: true) { $0.draft = nil; $0.draftContext = nil }
+        store.updateThread(threadID, touch: true) { thread in
+            // A button answer or queued message must not erase a different draft the user is still writing.
+            if (thread.draft ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == trimmed,
+                (thread.draftContext ?? []) == context
+            {
+                thread.draft = nil
+                thread.draftContext = nil
+            }
+        }
         itemMaps[threadID] = [:]
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
         lastActiveAgent.record(provider: provider, account: registry.account(selection.accountID, of: provider).id)
@@ -670,11 +682,32 @@ public final class ThreadRunner {
         guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
             let provider = item.provider
         else { return }
+        if request.responseMode == .userMessage {
+            let replies = request.questions.compactMap { question -> String? in
+                let values = (answers[question.id] ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                guard !values.isEmpty else { return nil }
+                return question.prompt + "\n" + values.joined(separator: ", ")
+            }
+            guard !replies.isEmpty, replies.count == request.questions.count else { return }
+            Task { [weak self] in
+                guard let self, store.item(itemID, in: threadID)?.status == .waiting,
+                    store.thread(threadID)?.selection.provider == provider
+                else { return }
+                recordAnswer(answers, to: itemID, request: request, threadID: threadID)
+                await steer(threadID: threadID, text: replies.joined(separator: "\n\n"))
+            }
+            return
+        }
         guard let session = currentSession(threadID, provider) else {
             closeOrphanedPrompt(itemID, in: threadID)
             return
         }
         session.answer(userInput: request.id, answers: answers)
+        recordAnswer(answers, to: itemID, request: request, threadID: threadID)
+    }
+
+    private func recordAnswer(_ answers: [String: [String]], to itemID: UUID, request: UserInputRequest, threadID: UUID) {
         let secretIDs = Set(request.questions.filter(\.isSecret).map(\.id))
         store.updateItem(itemID, in: threadID) { item in
             // Secret answers are sent to the agent but never stored.
@@ -691,7 +724,9 @@ public final class ThreadRunner {
         guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
             let provider = item.provider
         else { return }
-        currentSession(threadID, provider)?.answer(userInput: request.id, answers: [:])
+        if request.responseMode != .userMessage {
+            currentSession(threadID, provider)?.answer(userInput: request.id, answers: [:])
+        }
         store.updateItem(itemID, in: threadID) { item in
             item.status = .declined
             item.completedAt = Date()
@@ -1093,6 +1128,12 @@ public final class ThreadRunner {
             }
 
         case .userInputRequested(let request):
+            // Async message items may be replayed on reconnect, including after their answer was saved.
+            if request.responseMode == .userMessage,
+                store.thread(threadID)?.items.contains(where: {
+                    $0.kind == .question && $0.provider == provider && $0.externalID == request.id && $0.status != .waiting
+                }) == true
+            { return }
             if let existing = waitingPrompt(.question, requestID: request.id, provider: provider, threadID: threadID) {
                 store.updateItem(existing, in: threadID) { item in
                     item.title = request.title
@@ -1252,6 +1293,8 @@ public final class ThreadRunner {
                     // Also settles items that streamed in after an earlier turn had ended.
                     break
                 case .waiting where index >= start && item.provider == provider:
+                    // Async questions remain actionable after the agent finishes; they have no pending RPC.
+                    if item.questions?.responseMode == .userMessage { continue }
                     // Prompts of other providers, or from between turns, stay open until answered.
                     break
                 default:
@@ -1345,7 +1388,8 @@ public final class ThreadRunner {
         guard let items = store.thread(threadID)?.items else { return }
         let start = turnID.flatMap { id in items.firstIndex { $0.id == id } } ?? 0
         for item in items[start...]
-        where (item.kind == .approval || item.kind == .question) && item.status == .waiting && item.provider == provider {
+        where (item.kind == .approval || item.kind == .question) && item.status == .waiting && item.provider == provider
+            && item.questions?.responseMode != .userMessage {
             store.updateItem(item.id, in: threadID) { item in
                 item.status = .declined
                 item.completedAt = Date()

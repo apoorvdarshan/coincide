@@ -708,12 +708,39 @@ struct CodexEventMapperTests {
             ])
     }
 
-    @Test func asyncQuestionsListTheirSuggestedAnswers() throws {
+    @Test func asyncQuestionsUseNativeControlsAndMessageReplies() throws {
         var mapper = mapper()
         let events = try mapper.feed([
             #"{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m","text":"Which branch?","phase":"final_answer","memoryCitation":null,"delivery":"async","questions":[{"title":"Which branch?","options":["main","dev"]},{"title":"Squash?","options":null}]},"threadId":"T","turnId":"R1","completedAtMs":1}}"#
         ])
-        #expect(events == [.assistantText(itemID: "m", text: "Which branch?\n\n- main\n- dev\n\n**Squash?**")])
+        #expect(events == [
+            .assistantText(itemID: "m", text: "Which branch?"),
+            .userInputRequested(UserInputRequest(id: "codex-async/R1/m", questions: [
+                UserQuestion(id: "R1/m/0", prompt: "Which branch?", options: [.init(label: "main"), .init(label: "dev")]),
+                UserQuestion(id: "R1/m/1", prompt: "Squash?"),
+            ], responseMode: .userMessage)),
+        ])
+    }
+
+    @Test func asyncChoicesAreRemovedFromMarkdownWithoutChangingProseOrCode() throws {
+        let request = CodexPresentation.asyncQuestions(id: "m", questions: [
+            ["title": "Publish?", "options": ["Wait for my review", "Submit after checks pass", "Wait for my review"]],
+            ["title": "   ", "options": ["ignored"]],
+        ])
+        #expect(request.questions.count == 1)
+        #expect(request.questions[0].options.map(\.label) == ["Wait for my review", "Submit after checks pass"])
+        let text = "Context stays.\n\nPublish?\n\n- Wait for my review\n- Submit after checks pass\n\n* Wait for my review\n2. Submit after checks pass"
+        #expect(CodexPresentation.asyncQuestionText(text, request: request) == "Context stays.\n\nPublish?")
+        let code = "```text\n- Wait for my review\n```\nKeep Submit after checks pass in this sentence.\n- An unrelated choice"
+        #expect(CodexPresentation.asyncQuestionText(code, request: request) == code)
+    }
+
+    @Test func questionResponseModesAreBackwardCompatibleAndSurviveTheHostWire() throws {
+        let old = try JSONDecoder().decode(UserInputRequest.self, from: Data(#"{"id":"blocking","questions":[]}"#.utf8))
+        #expect(old.responseMode == nil)
+        let request = UserInputRequest(id: "async", questions: [UserQuestion(id: "q", prompt: "Why?")], responseMode: .userMessage)
+        let event = AgentEvent.userInputRequested(request)
+        #expect(try AgentHostWire.decode(AgentEvent.self, from: AgentHostWire.encode(event)) == event)
     }
 
     @Test func outputOfOlderTurnsIsNeverTakenForANewTurn() throws {

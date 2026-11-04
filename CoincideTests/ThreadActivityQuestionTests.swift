@@ -7,6 +7,50 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct ThreadActivityQuestionTests {
+    @Test func asyncQuestionOptionsAreClickableAndOnlySubmitTheChosenAnswer() throws {
+        let request = UserInputRequest(id: "async", questions: [UserQuestion(id: "publish", prompt: "Publish now?", options: [
+            .init(label: "Wait for my review"), .init(label: "Submit after checks pass"),
+        ])], responseMode: .userMessage)
+        let item = TranscriptItem(kind: .question, status: .waiting, provider: .codex, questions: request)
+        let banner = ComposerQuestionBanner()
+        banner.show(item, othersWaiting: 0)
+        var answers: [String: [String]]?
+        banner.onAnswer = { id, values in
+            #expect(id == item.id)
+            answers = values
+        }
+        let options = descendants(banner).compactMap { $0 as? NSButton }.filter {
+            ["Wait for my review", "Submit after checks pass"].contains($0.title)
+        }
+        #expect(options.map(\.title) == ["Wait for my review", "Submit after checks pass"])
+        let submit = try #require(descendants(banner).compactMap { $0 as? NSButton }.first { $0.title == "Submit" })
+        #expect(!submit.isEnabled && answers == nil)
+        options.first?.performClick(nil)
+        #expect(submit.isEnabled)
+        submit.performClick(nil)
+        #expect(answers == ["publish": ["Wait for my review"]])
+    }
+
+    @Test func asyncQuestionStillAcceptsFreeTextWithoutPreselectingAChoice() throws {
+        let request = UserInputRequest(id: "async", questions: [
+            UserQuestion(id: "branch", prompt: "Which branch?", options: [.init(label: "main")])
+        ], responseMode: .userMessage)
+        let banner = ComposerQuestionBanner()
+        banner.show(TranscriptItem(kind: .question, status: .waiting, provider: .codex, questions: request), othersWaiting: 0)
+        var answers: [String: [String]]?
+        banner.onAnswer = { _, values in answers = values }
+        let field = try #require(descendants(banner).compactMap { $0 as? NSTextField }.first { $0.isEditable && !$0.isHidden })
+        field.stringValue = "release/नया"
+        banner.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        let submit = try #require(descendants(banner).compactMap { $0 as? NSButton }.first { $0.title == "Submit" })
+        submit.performClick(nil)
+        #expect(answers == ["branch": ["release/नया"]])
+    }
+
+    private func descendants(_ view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + descendants($0) }
+    }
+
     @Test func questionsNotifyWithoutChangingApprovalCounts() {
         let fixture = Fixture()
         defer { fixture.cleanUp() }

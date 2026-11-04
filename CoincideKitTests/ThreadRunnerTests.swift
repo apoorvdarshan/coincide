@@ -915,6 +915,19 @@ struct ThreadRunnerTests {
         #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
     }
 
+    @Test func answeringAsyncQuestionSteersWithoutStoppingTheActiveTurn() async throws {
+        let session = await startRunningTurn(steering: true)
+        let request = UserInputRequest(id: "async", questions: [UserQuestion(id: "q", prompt: "Continue?")], responseMode: .userMessage)
+        session.emit(.userInputRequested(request))
+        let question = try #require(runner.pendingQuestions(threadID).first)
+        runner.answer(threadID: threadID, itemID: question.id, answers: ["q": ["Yes"]])
+        #expect(await eventually { session.steered.count == 1 })
+        #expect(session.steered.first?.message == "Continue?\nYes")
+        #expect(session.interrupts == 0 && runner.isRunning(threadID))
+        #expect(runner.pendingQuestions(threadID).isEmpty)
+        runner.shutdown(threadID: threadID)
+    }
+
     @Test func steeringAnIdleThreadSendsAsUsual() async {
         claude.configure = { session in
             session.supportsSteering = true
