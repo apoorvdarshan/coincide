@@ -14,7 +14,7 @@ LABELS = {
 
 
 def generate():
-    catalog = json.loads((ROOT.parent / 'Coincide/Resources/Localizable.xcstrings').read_text())
+    catalog = json.loads((ROOT.parent / 'Coincide/Resources/Localizable.xcstrings').read_text(encoding='utf-8'))
     languages = sorted({language for key in LABELS.values()
                         for language in catalog['strings'][key].get('localizations', {})} | {'en'})
     result = {}
@@ -39,10 +39,10 @@ if __name__ == '__main__':
     stale = []
     for path, contents in generate().items():
         if args.check:
-            if not path.exists() or path.read_text() != contents:
+            if not path.exists() or path.read_text(encoding='utf-8') != contents:
                 stale.append(str(path.relative_to(ROOT)))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(contents)
+            path.write_text(contents, encoding='utf-8', newline='\n')
     if stale:
         raise SystemExit('Regenerate Windows resources: ' + ', '.join(stale))
