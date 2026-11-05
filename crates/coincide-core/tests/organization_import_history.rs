@@ -79,7 +79,7 @@ fn codex_prefers_response_messages_and_bounds_unicode_text() {
     let text = "🦀".repeat(MAX_TEXT + 1);
     let bytes = rollout(vec![
         meta(),
-        json!({"type":"event_msg","payload":{"type":"user_message","message":"duplicate"}}),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":text}}),
         msg("user", &text),
     ]);
     let preview = preview_codex(&bytes).unwrap();
@@ -91,7 +91,7 @@ fn codex_prefers_response_messages_and_bounds_unicode_text() {
 fn history_sums_only_turn_totals_and_retains_snapshots() {
     let bytes = serde_json::to_vec(&json!([
         {"id":ID,"provider":"codex","finishedAt":"2026-11-05T10:00:00Z","usage":{"inputTokens":99999,"costUSD":99}},
-        {"id":Uuid::nil(),"provider":"claude","finishedAt":"2026-11-05T10:00:00Z","usage":{"turnTotals":{"input":4,"cacheRead":3,"cacheWrite":2,"cacheWriteLong":2,"output":5,"reasoning":3},"future":true}}
+        {"id":Uuid::nil().to_string(),"provider":"claude","finishedAt":"2026-11-05T10:00:00Z","usage":{"turnTotals":{"input":4,"cacheRead":3,"cacheWrite":2,"cacheWriteLong":2,"output":5,"reasoning":3},"future":true}}
     ])).unwrap();
     let history = UsageHistory::parse(&bytes).unwrap();
     assert_eq!(history.original(), bytes);
@@ -128,4 +128,45 @@ fn limits_update_keeps_unknown_fields_and_omitted_reset() {
     assert_eq!(result[0]["future"], 7);
     assert_eq!(result[0]["usedPercent"], 20);
     assert!(merge_limit_windows(&old, &[json!({"usedPercent":20})]).is_err());
+}
+
+fn event(role: &str, text: &str) -> Value {
+    json!({"type":"event_msg","payload":{"type":if role == "user" {"user_message"} else {"agent_message"},"message":text}})
+}
+#[test]
+fn codex_mixed_formats_keep_old_turns_pair_duplicates_and_rollback() {
+    let bytes = rollout(vec![
+        meta(),
+        event("user", "old"),
+        event("assistant", "old answer"),
+        event("user", "new"),
+        msg("user", "new"),
+        msg("assistant", "answer"),
+        event("assistant", "answer"),
+        event("user", "rolled back"),
+        msg("user", "rolled back"),
+        json!({"type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}),
+        msg("user", "new"),
+        event("user", "new"),
+    ]);
+    let preview = preview_codex(&bytes).unwrap();
+    assert_eq!(
+        preview
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>(),
+        ["old", "old answer", "new", "answer", "new"]
+    );
+}
+#[test]
+fn codex_same_encoding_repeated_prompts_are_retained() {
+    let preview = preview_codex(&rollout(vec![
+        meta(),
+        event("user", "again"),
+        event("user", "again"),
+        msg("assistant", "ok"),
+    ]))
+    .unwrap();
+    assert_eq!(preview.messages.len(), 3);
 }
