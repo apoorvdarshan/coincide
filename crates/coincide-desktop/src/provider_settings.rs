@@ -314,8 +314,7 @@ impl Coincide {
             json!({"threadId":id,"provider":"antigravity","accountId":self.provider_settings.account,"model":if model.is_empty(){"default"}else{&model}}),
         ) {
             Ok(thread) => {
-                self.selected = Some(thread);
-                self.model_binding = None;
+                self.accept_saved_provider_selection(thread);
                 self.provider_settings.open = false;
                 self.settings_open = false;
                 self.status = "Antigravity account selected. Send a message when ready.".into();

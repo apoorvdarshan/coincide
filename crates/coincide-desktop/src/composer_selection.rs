@@ -103,6 +103,17 @@ fn account_label(account: &Value) -> String {
     }
 }
 impl Coincide {
+    /// Existing provider setup explicitly applied a saved selection. Rebase only
+    /// that thread; unrelated selection drafts and the message draft survive.
+    pub(super) fn accept_saved_provider_selection(&mut self, mut thread: Value) {
+        self.preserve_pending_draft(&mut thread);
+        self.selection_ui
+            .drafts
+            .insert(text(&thread, "id"), SelectionDraft::from_thread(&thread));
+        self.selected = Some(thread);
+        self.selection_ui.context = None;
+        self.selection_ui.bound = None;
+    }
     pub(super) fn sync_composer_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let context = self.selected.as_ref().map(|thread| {
             let id = text(thread, "id");
