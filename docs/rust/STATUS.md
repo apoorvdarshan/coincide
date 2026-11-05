@@ -58,14 +58,14 @@ The broad feature groups above remain open until their complete behavior passes.
 
 | Owner | Verified evidence | Current work / remaining acceptance |
 | --- | --- | --- |
-| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Tabs/splits source delivered; compile, mounted acceptance, shell integration and Windows GUI pending |
+| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Thread-cached tabs/splits, mode-aware input and native IME callbacks mounted; 18 focused tests pass; native IME/shell/Windows GUI acceptance pending |
 | Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes | Windows uploads, broader browser parity and real-account acceptance remain |
 | Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot new conversation/focus, empty native state, retained editor draft and frozen instructions passed native fixtures; real provider acceptance pending |
 | Credentials | Native synthetic WAV insertion preserved Unicode selection and did not send; microphone converter/lifecycle fixtures pass | Gated microphone controls mounted; six fake workflow tests and feature-on converter/lifecycle fixtures pass; real vault/passkey/model/mic acceptance absent |
 | Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | Durable write service and native confirmation transport mounted; 131 combined desktop tests pass; fake-process service validation and native write confirmation acceptance remain separate |
 | Host | Serialized notification runtime fake tests pass; native adapters compile | Settings bridge mounted; default-off foreground native-clear issue corrected with regression fixtures; native delivery/remote/iCloud remain |
 | Packaging | 22 archive tests per supported host and real Mac ZIP/DMG payload readback passed | Concrete HTTPS/ZIP staging service passes 17 Mac fixtures and strict core Clippy; signatures, install, rollback and release readiness remain open |
-| Coordinator | Pushed checkpoint 6830a05 passed all five Rust CI jobs and archive validation; later desktop batch passes 131 tests, updater 17, terminal rendering/PTY 16; Linux GitHub batch passes 356 core tests | Full UI/UX parity remains open; newer GitHub/updater registration and native action acceptance still need a pushed checkpoint; full UI/UX parity remains open |
+| Coordinator | Pushed checkpoint 6830a05 passed all five Rust CI jobs and archive validation; later desktop batch passes 148 tests, updater 17, terminal rendering/PTY 16 and legacy image module 8; Linux final core snapshot passes 369 outer-harness tests | Full UI/UX parity remains open; command palette/terminal mounts and native action acceptance still need a pushed checkpoint; full UI/UX parity remains open |
 
 The latest five native acceptance groups used isolated fixture data and fake
 provider/gh/Whisper processes. Import sources stayed unchanged, imported execution
@@ -355,3 +355,25 @@ shorter project path. Device namespaces and path components whose meaning change
 when a verbatim prefix is removed remain rejected. The regression verifies real
 long-destination metadata, branch/commit identity and unchanged source files/index;
 Windows CI must pass before this fix is considered runtime-verified.
+
+## Latest integration follow-up (2026-11-05)
+
+The snapshot-only command palette is mounted with typed, revision-checked actions
+for loaded conversations/projects, Settings, schedules and explicit projectless
+creation. Ten model tests pass; native focus/keyboard acceptance is pending.
+The terminal workspace now uses cached per-thread entities, tabs/splits, actual
+pane focus guards and parser-mode-aware input/IME callbacks. Eighteen focused
+fixtures pass; the previous root renderer was removed. Full shell and native IME
+acceptance remain separate.
+
+Approved-root historical image inspection/validation/materialization passes eight
+synthetic fixture groups and strict core Clippy. It does not yet have the native
+root-approval workflow, opaque plan registry, transactional local overlay or
+renderer integration. Captured-BLOB restoration and Markdown/audio/video discovery
+remain deferred; source files and thread JSON are untouched.
+
+Candidate7 exposed an unreachable GitHub detail action below the viewport. No
+fake mutation was sent. Detail actions are now pinned above a bounded scrolling
+metadata surface; the correction needs a new immutable native candidate and
+confirmation-flow acceptance. Read/ledger initialization passed, but those do
+not establish COMMENT or merge UI acceptance.

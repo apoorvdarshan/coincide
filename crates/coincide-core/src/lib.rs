@@ -32,3 +32,5 @@ pub mod bot_runtime;
 pub mod github_write;
 
 pub mod updater;
+
+pub mod legacy_media;
