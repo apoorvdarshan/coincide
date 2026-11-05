@@ -617,6 +617,25 @@ fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
     }
     None
 }
+fn current_submission_blocked(
+    context: Option<&(String, Value, bool)>,
+    capabilities: &Value,
+    thread: &Value,
+    running: bool,
+) -> bool {
+    // Running conversations use the separate queue/steering admission paths.
+    // Only a matching trusted response controls this presentation; the Engine
+    // still validates every actual submission against its current private proof.
+    !running
+        && context.is_some_and(|(id, saved, was_running)| {
+            !was_running
+                && thread["id"].as_str() == Some(id.as_str())
+                && *saved
+                    == json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]})
+        })
+        && capabilities["provenance"] == "static_runtime_contract"
+        && capabilities["locked"] == true
+}
 fn account_label(account: &Value) -> String {
     match account {
         Value::Null => "Default account (no stored ID)".into(),
@@ -647,6 +666,16 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
     }
 }
 impl Coincide {
+    pub(super) fn selection_send_blocked(&self) -> bool {
+        self.selected.as_ref().is_some_and(|thread| {
+            current_submission_blocked(
+                self.selection_ui.context.as_ref(),
+                &self.selection_ui.capabilities,
+                thread,
+                self.running.contains(&text(thread, "id")),
+            )
+        })
+    }
     pub(super) fn perform_composer_command(
         &mut self,
         command: crate::composer_commands::Command,
@@ -1855,6 +1884,55 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn submission_lock_uses_only_current_trusted_context_and_preserves_queue() {
+        let thread = json!({"id":"current","selection":{"provider":"codex","modelID":"gpt-6-astra"},"accessMode":"approval","interactionMode":"build"});
+        let context = (
+            "current".into(),
+            json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}),
+            false,
+        );
+        let caps = json!({"provenance":"static_runtime_contract","locked":true});
+        assert!(current_submission_blocked(
+            Some(&context),
+            &caps,
+            &thread,
+            false
+        ));
+        assert!(!current_submission_blocked(
+            Some(&context),
+            &caps,
+            &thread,
+            true
+        ));
+        assert!(!current_submission_blocked(None, &caps, &thread, false));
+        assert!(!current_submission_blocked(
+            Some(&context),
+            &json!({"locked":true}),
+            &thread,
+            false
+        ));
+        assert!(!current_submission_blocked(
+            Some(&context),
+            &json!({"provenance":"static_runtime_contract","locked":false}),
+            &thread,
+            false
+        ));
+        for (key, value) in [
+            ("id", json!("another")),
+            ("selection", json!({"provider":"claude"})),
+            ("interactionMode", json!("plan")),
+        ] {
+            let mut changed = thread.clone();
+            changed[key] = value;
+            assert!(!current_submission_blocked(
+                Some(&context),
+                &caps,
+                &changed,
+                false
+            ));
+        }
+    }
     fn thread(selection: Value) -> Value {
         json!({"id":"t","selection":selection,"draft":"untouched"})
     }

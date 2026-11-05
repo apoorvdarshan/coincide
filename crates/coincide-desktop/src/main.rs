@@ -3983,7 +3983,7 @@ impl Render for Coincide {
                                                 .child(
                                                     Button::new("send")
                                                         .primary()
-                                                        .disabled(importing_images)
+                                                        .disabled(importing_images || self.selection_send_blocked())
                                                         .label(
                                                             if self.running.contains(&selected_id) {
                                                                 "Queue message"
