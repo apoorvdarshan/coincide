@@ -4,8 +4,9 @@ use coincide_core::credentials::{
     Failure, Login, PageBinding, PrivateFillSink, Secret, Vault, VaultCommand,
 };
 use gpui_kit::{
-    component::{button::*, *},
-    *,
+    Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
+    component::{Disableable, button::Button},
+    div,
 };
 use std::sync::{
     Arc,
@@ -350,6 +351,9 @@ mod tests {
         let vault = Vault::new(coincide_core::credentials::Manager::Bitwarden, Never);
         for allow in [false, true] {
             let prompt = prompt();
+            let (view, decisions) = ApprovalView::new(prompt.clone());
+            drop(view);
+            assert!(decisions.try_recv().is_err());
             let decision = NativeDecision {
                 id: if allow { Uuid::new_v4() } else { prompt.id },
                 allow,
