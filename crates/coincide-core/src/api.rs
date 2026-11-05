@@ -17,6 +17,9 @@ use uuid::Uuid;
 mod active_thread;
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[cfg(test)]
+#[path = "attachment_completion_tests.rs"]
+mod attachment_completion_tests;
 #[path = "bot_engine.rs"]
 mod bot_engine;
 #[path = "computer_use_engine.rs"]
@@ -218,10 +221,7 @@ impl Engine {
                 let activity = self.idle_sleep.background_job();
                 std::thread::spawn(move || {
                     let _activity = activity;
-                    let result=crate::attachments::ingest_image(&root,&source)
-                        .and_then(|image|Ok(json!({"attachment":serde_json::to_value(image)?})))
-                        .unwrap_or_else(|error|json!({"error":error.to_string()}));
-                    let _=tx.try_send((operation,result));
+                    import_attachment(root, source, tx, operation);
                 });
                 Ok(json!({"operationId":id}))
             }
@@ -1526,6 +1526,20 @@ impl Engine {
         self.idle_sleep.update(self.runs.len(), self.shutdown);
     }
 }
+// Runs only on the attachment worker. Backpressure must retain both the
+// completion and worker activity until Engine::poll can receive it.
+fn import_attachment(
+    root: PathBuf,
+    source: PathBuf,
+    tx: std::sync::mpsc::SyncSender<(String, Value)>,
+    operation: String,
+) {
+    let result = crate::attachments::ingest_image(&root, &source)
+        .and_then(|image| Ok(json!({"attachment":serde_json::to_value(image)?})))
+        .unwrap_or_else(|error| json!({"error":error.to_string()}));
+    workspace_api::publish_completion(tx, operation, result);
+}
+
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
 }
