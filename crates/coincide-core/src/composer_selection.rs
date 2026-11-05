@@ -12,6 +12,7 @@ pub fn capabilities() -> Value {
             "customModel":{"supported":true,"availability":"unverified"},
             "modelDiscovery":{"supported":crate::model_catalog::supported(id.as_str().unwrap_or("")),
                 "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
+            "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
             "effort":{"supported":false,"reason":"This runtime does not apply reasoning effort."},
             "speed":{"supported":false,"reason":"This runtime does not apply speed selections."},
             "accessModes":["approval"],"interactionModes":["build"]})

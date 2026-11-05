@@ -20,6 +20,8 @@ mod acp;
 mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "codex_steering.rs"]
+pub(crate) mod codex_steering;
 #[path = "provider_cursor.rs"]
 mod cursor;
 #[path = "provider_grok.rs"]
@@ -180,6 +182,7 @@ pub struct Session {
     control: Sender<Control>,
     completion: WorkerCompletion,
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
+    steering: Option<codex_steering::Client>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -225,15 +228,23 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
     ) -> Self {
+        let codex = matches!(&provider, Provider::Codex);
+        let (steer_client, steer_server) = codex_steering::pair();
         let usage = Arc::new(Mutex::new(None));
         let output = usage.clone();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| validate_images(&provider, &images))
                 .and_then(|()| match provider {
-                    Provider::Codex => {
-                        run(launch, images, instructions, commands, events_tx, output)
-                    }
+                    Provider::Codex => run(
+                        launch,
+                        images,
+                        instructions,
+                        commands,
+                        events_tx,
+                        output,
+                        steer_server,
+                    ),
                     Provider::Claude => {
                         claude::run(launch, images, instructions, commands, events_tx)
                     }
@@ -264,7 +275,16 @@ impl Session {
             }
         });
         session.usage = usage;
+        if codex {
+            session.steering = Some(steer_client);
+        }
         session
+    }
+    pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
+        self.steering
+            .as_ref()
+            .context("Active-turn steering is supported only for Codex")?
+            .submit(text)
     }
     pub(crate) fn take_usage(&self) -> Option<usage_capture::Snapshot> {
         self.usage.lock().ok()?.take()
@@ -280,6 +300,7 @@ impl Session {
             control,
             completion: WorkerCompletion::observe(worker),
             usage: Arc::new(Mutex::new(None)),
+            steering: None,
         }
     }
     #[cfg(test)]
@@ -287,6 +308,12 @@ impl Session {
         work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static,
     ) -> Self {
         Self::spawn_worker(work)
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_steering(&mut self) -> codex_steering::Server {
+        let (client, server) = codex_steering::pair();
+        self.steering = Some(client);
+        server
     }
     #[cfg(test)]
     pub(crate) fn fixture_usage(&self, snapshot: usage_capture::Snapshot) {
@@ -370,6 +397,7 @@ fn run(
     commands: Receiver<Control>,
     events: &Sender<Event>,
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
+    mut steering: codex_steering::Server,
 ) -> Result<()> {
     let mut capture = usage_capture::Capture::default();
     let image_paths = images
@@ -388,6 +416,7 @@ fn run(
     let mut completed = false;
     let mut early_completions = std::collections::VecDeque::new();
     let mut provisional_turn = false;
+    let mut early_steering_frames = Vec::new();
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -401,6 +430,7 @@ fn run(
             }
         }
         if completed {
+            steering.close();
             if transport.is_flushed()? {
                 events.send(Event::Finished)?;
                 return Ok(());
@@ -411,6 +441,9 @@ fn run(
         if stage < 4 && started.elapsed() > Duration::from_secs(120) {
             bail!("Codex startup timed out");
         }
+        if let Some(request) = steering.next_request() {
+            transport.write(&request)?;
+        }
         let frame = if stage >= 4 {
             match early_completions.pop_front() {
                 Some(frame) => Some(frame),
@@ -420,6 +453,23 @@ fn run(
             transport.next()?
         };
         if let Some(frame) = frame {
+            if steering.response(&frame) {
+                continue;
+            }
+            if stage < 4
+                && capture.owns_thread(&frame["params"])
+                && matches!(
+                    frame["method"].as_str(),
+                    Some("item/started" | "item/completed" | "item/agentMessage/delta")
+                )
+            {
+                ensure!(
+                    early_steering_frames.len() < 64 && frame.to_string().len() <= 65_536,
+                    "Codex early item boundary buffer exceeded limit"
+                );
+                early_steering_frames.push(frame.clone());
+            }
+            steering.observe(&frame);
             if frame.get("error").is_some() && frame.get("id").is_some() {
                 bail!("Codex rejected request: {}", frame["error"]);
             }
@@ -465,6 +515,17 @@ fn run(
                     _ => {}
                 }
                 stage += 1;
+                if stage == 4
+                    && !early_completions
+                        .iter()
+                        .any(|frame: &Value| capture.matches_completion(&frame["params"]))
+                    && let Some((thread, turn)) = capture.identity()
+                {
+                    steering.activate(thread, turn);
+                    for early in early_steering_frames.drain(..) {
+                        steering.observe(&early);
+                    }
+                }
             } else if frame["id"].as_u64().is_some_and(|id| (1..=3).contains(&id))
                 && frame.get("result").is_some()
             {
