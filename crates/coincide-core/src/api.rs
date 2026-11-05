@@ -23,6 +23,8 @@ mod github_engine;
 mod github_threads_engine;
 #[path = "computer_use_engine.rs"]
 pub mod computer_use_engine;
+#[path = "thread_resolution.rs"]
+mod thread_resolution;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]
@@ -157,6 +159,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if method == "threads.resolve_id" {
+            return self.resolve_thread_id_command(p);
+        }
         if computer_use_engine::METHODS.contains(&method) {
             return self.computer_use_command(method, p, None);
         }
@@ -395,7 +400,7 @@ impl Engine {
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
-                "threads.list",
+                "threads.list", "threads.resolve_id",
                 "threads.read",
                 "threads.open",
                 "threads.create",
