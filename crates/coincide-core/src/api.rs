@@ -13,6 +13,8 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "active_thread.rs"]
+mod active_thread;
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
 #[path = "bot_engine.rs"]
@@ -23,8 +25,6 @@ pub mod computer_use_engine;
 mod github_engine;
 #[path = "github_threads_engine.rs"]
 mod github_threads_engine;
-#[path = "active_thread.rs"]
-mod active_thread;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]

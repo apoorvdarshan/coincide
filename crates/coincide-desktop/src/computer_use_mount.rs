@@ -56,9 +56,7 @@ impl Gateway for Engine {
         self.computer_use_unbind_authority();
     }
     fn selection(&self) -> Option<Uuid> {
-        self.active_thread
-            .as_deref()
-            .and_then(|s| Uuid::parse_str(s).ok())
+        self.active_thread().and_then(|s| Uuid::parse_str(s).ok())
     }
     fn drain(&mut self) -> Vec<Pending> {
         self.computer_use_drain()
