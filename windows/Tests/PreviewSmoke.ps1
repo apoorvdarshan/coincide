@@ -460,6 +460,24 @@ try {
     if($searched.messages.Count -ne 1500 -or @($searched.sessions).Count){throw 'Saved-message search mutated history or started a provider.'}
     $checks += 'Search across saved conversations opens the exact virtualized message without starting a provider or changing its draft'
     Invoke-Control 'ThreadFindClose'
+    foreach($target in @('A','B')){
+        Invoke-Control 'OpenCommandPalette'
+        Set-ControlValue 'CommandPaletteQuery' "Smoke $target"
+        Wait-Until {
+            $list=Find-Control $script:window 'CommandPaletteResults'
+            if(!$list){return $false}
+            $items=$list.FindAll([Windows.Automation.TreeScope]::Children,
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ListItem)))
+            return $items.Count -eq 1 -and $items[0].Current.Name -like "Smoke $target*" -and (Find-Control $script:window 'CommandPaletteOpen').Current.IsEnabled
+        } 'The command palette did not publish the exact conversation result.'
+        Invoke-Control 'CommandPaletteOpen'
+        Wait-Until { (Latest-IsVisible "END-$target") -and (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq "Draft Smoke $target" } 'Command palette navigation did not preserve the selected conversation draft.'
+    }
+    foreach($threadID in @($first,$second)){
+        $savedPaletteThread=Get-Content (Join-Path $data "threads\$threadID.json") -Raw -Encoding UTF8|ConvertFrom-Json
+        if($savedPaletteThread.messages.Count -ne 1500 -or @($savedPaletteThread.sessions).Count){throw 'Command palette navigation mutated saved history or started a provider.'}
+    }
+    $checks += 'Command palette opens exact conversation results and preserves both drafts and saved history without starting a provider'
     Invoke-Control 'NewChat'
     Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The new Codex conversation did not become available.'
     Send-Message 'hello'
@@ -621,7 +639,7 @@ try {
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel')}
+    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel','command-palette-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue

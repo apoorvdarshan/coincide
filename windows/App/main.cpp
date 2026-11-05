@@ -59,6 +59,7 @@
 #include "HostedInputRecovery.h"
 #include "ThreadFindBar.h"
 #include "ConversationSearchPanel.h"
+#include "CommandPalettePanel.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -178,6 +179,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::TextBox search{nullptr};
     std::shared_ptr<coincide::ThreadFindBar> thread_find;
     std::shared_ptr<coincide::ConversationSearchPanel> conversation_search;
+    std::shared_ptr<coincide::CommandPalettePanel> command_palette;
+    std::optional<std::string> project_filter;
+    controls::Button project_scope{nullptr};
     controls::TextBlock title{nullptr};
     controls::TextBlock state{nullptr};
     controls::ComboBox providers{nullptr};
@@ -301,6 +305,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         project.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
         project.Click([this](const auto&, const auto&) { add_project(); });
         sidebar_top.Children().Append(project);
+        auto palette=button(L"CommandPalette",L"Command palette",L"OpenCommandPalette");palette.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);palette.Click([this](const auto&,const auto&){show_command_palette();});sidebar_top.Children().Append(palette);
+        project_scope=button(L"AllProjects",L"All projects",L"ClearProjectFilter");project_scope.Visibility(xaml::Visibility::Collapsed);project_scope.Click([this](const auto&,const auto&){clear_project_filter();refresh_sidebar();});sidebar_top.Children().Append(project_scope);
         search = controls::TextBox{};
         search.PlaceholderText(label(L"Search", L"Search"));
         identify(search, L"ThreadSearch");
@@ -515,7 +521,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         window.Closed([this](const auto&, const auto&) {
             if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
             closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
-            if(thread_find)thread_find->close(false);
+            if(thread_find)thread_find->close(false);if(command_palette)command_palette->hide();
             if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
             drain_sessions(); flush_dirty(); save_current();
@@ -548,6 +554,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         const auto previous_selection = selected_thread_ids();
         selecting = true;
         visible = workspace.listed_threads(thread_view, winrt::to_string(search.Text()));
+        if(project_filter)std::erase_if(visible,[&](const auto& id){return workspace.thread(id).project_id!=project_filter;});
         const auto active_bot=selected.empty()?std::optional<std::string>{}:workspace.thread(selected).bot_id;
         std::erase_if(visible,[&](const auto& id){const auto& thread=workspace.thread(id);return thread.bot_id&&bot_store&&bot_store->find(*thread.bot_id)&&thread.bot_id!=active_bot;});
         sidebar.Items().Clear();
@@ -620,6 +627,39 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         return nullptr;
     }
 
+    void clear_project_filter(){project_filter.reset();project_scope.Visibility(xaml::Visibility::Collapsed);}
+    void show_command_palette(){
+        if(closing||quitting||dialog_open||!writable)return;
+        try{
+            if(!command_palette){const auto weak=get_weak();
+                command_palette=coincide::CommandPalettePanel::create([weak]{
+                    const auto self=weak.get();if(!self||self->closing||!self->writable)throw std::runtime_error("Workspace unavailable");
+                    using K=coincide::PaletteKind;std::vector<coincide::PaletteEntry> entries;
+                    entries.push_back({K::command,"new-chat",winrt::to_string(coincide::ui_text(L"New Chat")),winrt::to_string(coincide::ui_text(L"Create a conversation"))});
+                    entries.push_back({K::command,"search-messages",winrt::to_string(coincide::ui_text(L"Search messages")),winrt::to_string(coincide::ui_text(L"Search saved conversation messages"))});
+                    entries.push_back({K::command,"bots",winrt::to_string(coincide::ui_text(L"Bots")),winrt::to_string(coincide::ui_text(L"Browse bots"))});
+                    entries.push_back({K::command,"all-projects",winrt::to_string(coincide::ui_text(L"All projects")),winrt::to_string(coincide::ui_text(L"Clear the project filter"))});
+                    for(const auto& project:self->workspace.projects)if(project.id!=coincide::bots_container_id)entries.push_back({K::project,project.id,project.name,winrt::to_string(coincide::ui_text(L"Project"))+" · "+project.path});
+                    if(self->workspace.threads.size()+entries.size()>coincide::CommandPalette::maximum_entries)throw std::runtime_error("Workspace metadata exceeds the palette bound");
+                    std::vector<const coincide::Thread*> threads;for(const auto& thread:self->workspace.threads)if(!thread.deleted_at)threads.push_back(&thread);
+                    std::stable_sort(threads.begin(),threads.end(),[](const auto* a,const auto* b){return a->pinned!=b->pinned?a->pinned:a->updated_at>b->updated_at;});
+                    for(const auto* value:threads){const auto& thread=*value;auto detail=thread.provider;if(thread.project_id)detail+=" · "+self->workspace.project(*thread.project_id).name;entries.push_back({K::thread,thread.id,thread.title,std::move(detail)});}
+                    return entries;
+                },[weak](const coincide::PaletteEntry& entry){
+                    const auto self=weak.get();if(!self||self->closing||self->quitting||self->dialog_open||!self->writable)return false;
+                    using K=coincide::PaletteKind;
+                    if(entry.kind==K::thread){const auto& thread=self->workspace.thread(entry.id);if(thread.deleted_at||thread.title!=entry.title)return false;self->hide_tools();self->clear_project_filter();self->search.Text(L"");self->thread_filter.SelectedIndex(5);self->open_thread(entry.id);if(self->selected!=entry.id)return false;self->composer.Focus(xaml::FocusState::Programmatic);return true;}
+                    if(entry.kind==K::project){const auto& project=self->workspace.project(entry.id);if(project.id==coincide::bots_container_id||project.name!=entry.title)return false;self->hide_tools();self->project_filter=project.id;self->project_scope.Content(winrt::box_value(winrt::to_hstring(project.name+" · "+winrt::to_string(coincide::ui_text(L"All projects")))));self->project_scope.Visibility(xaml::Visibility::Visible);self->search.Text(L"");self->thread_filter.SelectedIndex(5);self->refresh_sidebar();if(!self->visible.empty())self->open_thread(self->visible.front());return true;}
+                    if(entry.kind!=K::command||!entry.enabled)return false;
+                    if(entry.id!="new-chat"&&entry.id!="search-messages"&&entry.id!="bots"&&entry.id!="all-projects")return false;
+                    self->hide_tools();if(entry.id=="new-chat"){self->clear_project_filter();self->create_thread();self->composer.Focus(xaml::FocusState::Programmatic);}else if(entry.id=="search-messages")self->show_conversation_search();else if(entry.id=="bots")self->show_bots();else{self->clear_project_filter();self->refresh_sidebar();}return true;
+                },[weak]{if(const auto self=weak.get();self&&!self->closing){self->hide_tools();if(self->composer.IsEnabled())self->composer.Focus(xaml::FocusState::Programmatic);}});
+                tool_views.Children().Append(command_palette->view());
+            }
+            select_tool("command-palette",command_palette->view(),coincide::ui_text(L"Command palette"));command_palette->show();
+        }catch(...){report_exception();}
+    }
+
     void open_thread_find(){
         if(closing||quitting||dialog_open||selected.empty()||!thread_find)return;
         latest_scroll_pending=false;++latest_scroll_generation;thread_find->open();
@@ -686,6 +726,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void create_thread(std::optional<std::string> project = std::nullopt) {
         if (!writable) return;
         try {
+            if(project_filter&&project_filter!=project)clear_project_filter();
             coincide::Thread t;
             t.provider=preferences.provider_default(project);const auto defaults=preferences.model_defaults(project,t.provider);
             t.model=defaults.model;t.effort=defaults.effort;t.service_tier=defaults.service_tier;t.plan=defaults.plan;t.full_access=defaults.full_access;
@@ -1181,6 +1222,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         // Preserve configured shortcuts and native editor operations. Find is available in
         // the conversation menu even if its usual keys have an explicit app assignment.
         const auto reserved=[&](unsigned key,bool control,bool shift){for(const auto& entry:preferences.shortcuts){const auto value=coincide::parse_shortcut(entry.second);if(value.key==key&&value.control==control&&value.shift==shift&&!value.alt)return true;}return false;};
+        if(!reserved('P',true,true)){const auto invoke=[weak](const auto&,const xaml::Input::KeyboardAcceleratorInvokedEventArgs& args){if(const auto self=weak.get();self&&!self->closing&&!self->dialog_open){args.Handled(true);self->show_command_palette();}};for(const bool editor:{false,true}){xaml::Input::KeyboardAccelerator shortcut;shortcut.Key(winrt::Windows::System::VirtualKey::P);shortcut.Modifiers(winrt::Windows::System::VirtualKeyModifiers::Control|winrt::Windows::System::VirtualKeyModifiers::Shift);shortcut.Invoked(invoke);if(editor)composer.KeyboardAccelerators().Append(shortcut);else root.KeyboardAccelerators().Append(shortcut);}}
         const auto add_find=[&](unsigned key,bool control,bool shift,bool backwards){if(reserved(key,control,shift))return;auto mods=winrt::Windows::System::VirtualKeyModifiers::None;if(control)mods|=winrt::Windows::System::VirtualKeyModifiers::Control;if(shift)mods|=winrt::Windows::System::VirtualKeyModifiers::Shift;
             const auto invoke=[weak,key,backwards](const auto&,const xaml::Input::KeyboardAcceleratorInvokedEventArgs& args){if(const auto self=weak.get();self&&!self->closing&&!self->dialog_open){if(key=='F'){if(self->selected.empty())return;args.Handled(true);self->open_thread_find();}else if(self->thread_find&&self->thread_find->visible()){args.Handled(true);self->thread_find->next(backwards);}}};
             xaml::Input::KeyboardAccelerator shortcut;shortcut.Key(static_cast<winrt::Windows::System::VirtualKey>(key));shortcut.Modifiers(mods);shortcut.Invoked(invoke);root.KeyboardAccelerators().Append(shortcut);
@@ -1621,6 +1663,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
 
     void hide_tools(){
+        if(command_palette)command_palette->hide();
         if(conversation_search)conversation_search->hide();
         if(browser_panel)browser_panel->set_visible(false);
         if(terminal_panel)terminal_panel->set_visible(false);

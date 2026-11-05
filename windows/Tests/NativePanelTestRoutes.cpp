@@ -14,6 +14,7 @@
 #include "PersonaPanelTests.h"
 #include "ThreadFindBarTests.h"
 #include "ConversationSearchPanelTests.h"
+#include "CommandPalettePanelTests.h"
 
 namespace coincide::tests {
 std::optional<int> common_panel_test_route(std::string_view suite,const std::filesystem::path& report,const winrt::Microsoft::UI::Xaml::XamlRoot& root){
@@ -21,6 +22,7 @@ std::optional<int> common_panel_test_route(std::string_view suite,const std::fil
     if(suite=="persona-panel")return persona_panel_tests(report,root);
     if(suite=="thread-find-panel")return thread_find_bar_tests(report,root);
     if(suite=="conversation-search-panel")return conversation_search_panel_tests(report,root);
+    if(suite=="command-palette-panel")return command_palette_panel_tests(report,root);
     for(const auto& route:routes)if(route.first==suite)return route.second(report,root);return{};
 }
 } // namespace coincide::tests

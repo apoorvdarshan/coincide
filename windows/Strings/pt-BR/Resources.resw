@@ -9,6 +9,9 @@
   <data name="AgentTools" xml:space="preserve">
     <value>Agent tools</value>
   </data>
+  <data name="AllProjects" xml:space="preserve">
+    <value>All projects</value>
+  </data>
   <data name="AllThreads" xml:space="preserve">
     <value>All Threads</value>
   </data>
@@ -35,6 +38,9 @@
   </data>
   <data name="Close" xml:space="preserve">
     <value>Fechar</value>
+  </data>
+  <data name="CommandPalette" xml:space="preserve">
+    <value>Command palette</value>
   </data>
   <data name="Connecting" xml:space="preserve">
     <value>Conectando…</value>
@@ -234,6 +240,9 @@
   <data name="Text_0673a0b3ae1a3a58" xml:space="preserve">
     <value>Wait for the repository operation to finish before sending terminal input.</value>
   </data>
+  <data name="Text_06c8051b5557e24a" xml:space="preserve">
+    <value>No matching commands, projects or conversations.</value>
+  </data>
   <data name="Text_06d5543325c70d5c" xml:space="preserve">
     <value>The disabled preference is still pending a successful save.</value>
   </data>
@@ -300,6 +309,9 @@
   <data name="Text_17b5c0061baf42a4" xml:space="preserve">
     <value>Default reasoning effort</value>
   </data>
+  <data name="Text_17dfa682f52e72d6" xml:space="preserve">
+    <value>Search commands, projects and conversations</value>
+  </data>
   <data name="Text_181d8c50dd577ce6" xml:space="preserve">
     <value>Remove Selected</value>
   </data>
@@ -348,11 +360,17 @@
   <data name="Text_250a7fc28124c361" xml:space="preserve">
     <value>Read only</value>
   </data>
+  <data name="Text_251125a69bfadff1" xml:space="preserve">
+    <value>Showing the first 100 matches. Refine your search.</value>
+  </data>
   <data name="Text_26f91b6796e33111" xml:space="preserve">
     <value>Restaurar</value>
   </data>
   <data name="Text_26fcd0e8ed49d7f4" xml:space="preserve">
     <value>Account status unavailable</value>
+  </data>
+  <data name="Text_282049f502eac1de" xml:space="preserve">
+    <value>Projeto</value>
   </data>
   <data name="Text_293aedd8bf1fd296" xml:space="preserve">
     <value>Reviewed — resume future runs</value>
@@ -516,6 +534,9 @@
   <data name="Text_42e470ef1d707a28" xml:space="preserve">
     <value>Autoplay</value>
   </data>
+  <data name="Text_4426a19c61d695b7" xml:space="preserve">
+    <value>This command or destination changed. Search again.</value>
+  </data>
   <data name="Text_44ef1526bf1d8106" xml:space="preserve">
     <value>Amanhã</value>
   </data>
@@ -540,6 +561,9 @@
   <data name="Text_471e41ce0f10bcd8" xml:space="preserve">
     <value>Enter text, then search saved conversations. Drafts and queued input are excluded.</value>
   </data>
+  <data name="Text_478e9c026caf32eb" xml:space="preserve">
+    <value>Search saved conversation messages</value>
+  </data>
   <data name="Text_47a9f592c61daa59" xml:space="preserve">
     <value>Voice</value>
   </data>
@@ -554,6 +578,9 @@
   </data>
   <data name="Text_4a2f004629efd538" xml:space="preserve">
     <value>Carregando pull requests…</value>
+  </data>
+  <data name="Text_4b305030ec421c71" xml:space="preserve">
+    <value>Command palette</value>
   </data>
   <data name="Text_4baba93d34a3603b" xml:space="preserve">
     <value>Refresh manager status</value>
@@ -660,6 +687,9 @@
   <data name="Text_598a5dbb3832aa57" xml:space="preserve">
     <value>Adicionar Projeto…</value>
   </data>
+  <data name="Text_59e22d0fbd6ca840" xml:space="preserve">
+    <value>Searching commands, projects and conversations…</value>
+  </data>
   <data name="Text_59eca5c3b90eef1b" xml:space="preserve">
     <value>Controle do computador</value>
   </data>
@@ -747,8 +777,14 @@
   <data name="Text_67facd659d1004bb" xml:space="preserve">
     <value>This address cannot be saved as a bookmark.</value>
   </data>
+  <data name="Text_6830ad993c6bc1fd" xml:space="preserve">
+    <value>Create a conversation</value>
+  </data>
   <data name="Text_6849e258b7827aa4" xml:space="preserve">
     <value>Local profile created. Sign in only when you are ready to approve the provider's browser page.</value>
+  </data>
+  <data name="Text_689735a322f5b33b" xml:space="preserve">
+    <value>Command palette search</value>
   </data>
   <data name="Text_68db52366de956f2" xml:space="preserve">
     <value>Instrução da tarefa</value>
@@ -900,6 +936,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_80bb3641dc16a088" xml:space="preserve">
     <value>Search limit reached; results are partial</value>
+  </data>
+  <data name="Text_80e12a128d2956a9" xml:space="preserve">
+    <value>The search text or destination list is invalid or too large.</value>
   </data>
   <data name="Text_823190519895dcf1" xml:space="preserve">
     <value>Downloading…</value>
@@ -1129,6 +1168,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_a3b9964327605427" xml:space="preserve">
     <value>Digite um endereço HTTP ou HTTPS sem nome de usuário ou senha.</value>
   </data>
+  <data name="Text_a4521dac803b14d7" xml:space="preserve">
+    <value>Browse bots</value>
+  </data>
   <data name="Text_a459f8877eb03e1b" xml:space="preserve">
     <value>Repository folder</value>
   </data>
@@ -1249,6 +1291,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_b92cc63abe7d60fd" xml:space="preserve">
     <value>Manager is configured. Its own app may require approval when used.</value>
   </data>
+  <data name="Text_b95ce6ebea4a9c17" xml:space="preserve">
+    <value>Open selected result</value>
+  </data>
   <data name="Text_b99af8f463fbfa26" xml:space="preserve">
     <value>Save for approval</value>
   </data>
@@ -1257,6 +1302,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_ba18e7a6fd244edb" xml:space="preserve">
     <value>Defaults for new conversations. Provider and account availability is checked when the app starts a delivery.</value>
+  </data>
+  <data name="Text_bb16e67916beb58b" xml:space="preserve">
+    <value>Commands and destinations</value>
   </data>
   <data name="Text_bb96e9629185582e" xml:space="preserve">
     <value>The master switch is saved. Conversation permissions last only in this app session and must be granted again after disabling Computer Use or restarting Coincide. Opening these settings never inspects a window or starts the helper.</value>
@@ -1351,6 +1399,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_cd225b15c0dda097" xml:space="preserve">
     <value>Create Branch</value>
   </data>
+  <data name="Text_ce0b7f83694e5513" xml:space="preserve">
+    <value>Use arrow keys to choose, Enter to open, or Escape to close.</value>
+  </data>
   <data name="Text_ce7d8dfab1df75e0" xml:space="preserve">
     <value>Passkeys use the browser's native WebAuthn handoff when available. Bitwarden private-key extraction and Windows Hello sign-in are not connected in this Windows candidate.</value>
   </data>
@@ -1377,6 +1428,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d4942995ed3dab21" xml:space="preserve">
     <value>The confirmation could not be shown. No repository changes were made.</value>
+  </data>
+  <data name="Text_d50dc37afaf58413" xml:space="preserve">
+    <value>Commands and destinations are unavailable.</value>
   </data>
   <data name="Text_d598b67df9ee9065" xml:space="preserve">
     <value>All threads</value>
@@ -1536,6 +1590,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_ed830958c87f2475" xml:space="preserve">
     <value>Import selected logins</value>
+  </data>
+  <data name="Text_edb546ec479d1cae" xml:space="preserve">
+    <value>Clear the project filter</value>
   </data>
   <data name="Text_ee0ec27fb03d880e" xml:space="preserve">
     <value>Minutos</value>

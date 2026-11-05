@@ -30,6 +30,8 @@ if ($LASTEXITCODE) { throw 'Core tests failed.' }
 if ($LASTEXITCODE) { throw 'Current-thread find tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideConversationSearchTests.exe")
 if ($LASTEXITCODE) { throw 'Cross-conversation search tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideCommandPaletteTests.exe")
+if ($LASTEXITCODE) { throw 'Command palette tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideMarkdownTests.exe")
 if ($LASTEXITCODE) { throw 'Markdown tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideHandoffTests.exe")
