@@ -20,11 +20,40 @@ impl Engine {
         &self,
         selection: &Value,
     ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
-        if selection["effort"].is_null() && selection["speed"].is_null() {
+        if selection["effort"].is_null()
+            && selection["speed"].is_null()
+            && !crate::model_catalog::astra_default_needed(selection)
+        {
             return Ok(None);
         }
         self.model_catalog
             .codex_effort_proof(selection, &self.composer_codex_executable()?)
+    }
+    /// Only ordinary stored threads may obtain automatic Astra default proof.
+    pub(super) fn composer_thread_effort_proof(
+        &self,
+        thread: &Value,
+    ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
+        if !thread["rustBotContext"].is_null()
+            || !thread["botID"].is_null()
+            || self.store.is_imported(required(thread, "id")?)?
+        {
+            return Ok(None);
+        }
+        self.composer_effort_proof(&thread["selection"])
+    }
+    /// Editing an all-null Astra selection is not a request to execute its
+    /// default. Target validation still requires admitted runtime authority.
+    pub(super) fn composer_current_selection_proof(
+        &self,
+        thread: &Value,
+    ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
+        if crate::model_catalog::astra_default_needed(&thread["selection"])
+            && thread["selection"]["speed"].is_null()
+        {
+            return Ok(None);
+        }
+        self.composer_thread_effort_proof(thread)
     }
     pub(super) fn composer_target_effort_proof(
         &self,
@@ -35,7 +64,12 @@ impl Engine {
     pub(super) fn composer_effort_capability(&self, selection: &Value) -> Value {
         match self.composer_codex_executable() {
             Ok(executable) => self.model_catalog.effort_capability(selection, &executable),
-            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+            Err(error) => {
+                let mut null_selection = selection.clone();
+                null_selection["effort"] = Value::Null;
+                json!({"supported":false,"choices":[],"reportedDefault":null,"effectiveDefault":null,
+                    "appDefaultRequired":crate::model_catalog::astra_default_needed(&null_selection),"appDefaultAvailable":false,"reason":error.to_string()})
+            }
         }
     }
     pub(super) fn composer_speed_capability(&self, selection: &Value) -> Value {

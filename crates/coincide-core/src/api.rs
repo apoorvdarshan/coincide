@@ -36,6 +36,9 @@ pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[path = "browser_bookmarks_api_tests.rs"]
 mod browser_bookmarks_api_tests;
 pub use background_workers::BackgroundShutdownStatus;
+#[cfg(test)]
+#[path = "composer_astra_api_tests.rs"]
+mod composer_astra_api_tests;
 #[path = "composer_context_api.rs"]
 mod composer_context_api;
 #[cfg(test)]
@@ -605,7 +608,7 @@ impl Engine {
                     } else if self.unsaved_threads.contains_key(id) {
                         Some("Transcript persistence is recovering; retry after recovery".to_owned())
                     } else {
-                        self.composer_effort_proof(&thread["selection"]).and_then(|proof| crate::composer_selection::validate_thread_with_proof(&thread,proof.as_ref())).err().map(|error|error.to_string())
+                        self.composer_thread_effort_proof(&thread).and_then(|proof| crate::composer_selection::validate_thread_with_proof(&thread,proof.as_ref())).err().map(|error|error.to_string())
                     };
                     if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
@@ -626,6 +629,12 @@ impl Engine {
                         && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
                         && crate::composer_selection::repair_clear_options(&json!({"threadId":id,"effort":null,"speed":null}),&thread).is_ok());
+                    result["canReplaceUnprovedAutomaticDefault"] = json!(!self.admissions_frozen()
+                        && thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
+                        && crate::model_catalog::astra_default_needed(&thread["selection"]) && thread["selection"]["speed"].is_null()
+                        && crate::composer_selection::validate_thread_base(&thread).is_ok()
+                        && self.composer_thread_effort_proof(&thread).is_err());
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -637,6 +646,7 @@ impl Engine {
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
+                ensure!(v["rustBotContext"].is_null() && v["botID"].is_null(),"Bot selection is fixed for this conversation; create a new bot conversation");
                 if p.get("effort").is_some_and(Value::is_null) && p.get("speed").is_some_and(Value::is_null)
                     && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&v)
                 {
@@ -659,7 +669,7 @@ impl Engine {
                     self.store.save(&v)?; self.revision += 1;
                     return Ok(v);
                 }
-                let current_proof = self.composer_effort_proof(&v["selection"])?;
+                let current_proof = self.composer_current_selection_proof(&v)?;
                 let target_proof = self.composer_target_effort_proof(p)?;
                 let selection = crate::composer_selection::select_with_proofs(p, &v,current_proof.as_ref(),target_proof.as_ref())?;
                 if selection["provider"] == "antigravity" {
@@ -772,7 +782,7 @@ impl Engine {
         };
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
-        let effort_proof = self.composer_effort_proof(&v["selection"])?;
+        let effort_proof = self.composer_thread_effort_proof(&v)?;
         crate::composer_selection::validate_thread_with_proof(&v, effort_proof.as_ref())?;
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {

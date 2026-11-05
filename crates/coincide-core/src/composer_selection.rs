@@ -20,7 +20,7 @@ pub fn capabilities() -> Value {
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();
     json!({"provenance":"static_runtime_contract","authenticationChecked":false,"modelsDiscovered":false,
-        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false,"repairSpeedClearAvailable":false,"repairOptionsClearAvailable":false})
+        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false,"repairSpeedClearAvailable":false,"repairOptionsClearAvailable":false,"canReplaceUnprovedAutomaticDefault":false})
 }
 
 pub fn default_account(value: &Value) -> bool {
@@ -95,6 +95,14 @@ pub fn validate_selection(value: &Value) -> Result<()> {
 pub fn validate_thread(thread: &Value) -> Result<()> {
     validate_thread_with_proof(thread, None)
 }
+pub(crate) fn validate_thread_base(thread: &Value) -> Result<()> {
+    crate::composer_policy::Policy::parse_with_effort_proof(
+        thread,
+        crate::composer_policy::Origin::Ordinary,
+        None,
+    )?
+    .preflight_base()
+}
 pub(crate) fn validate_thread_with_proof(
     thread: &Value,
     proof: Option<&crate::model_catalog::CodexEffortProof>,
@@ -163,7 +171,12 @@ pub(crate) fn select_with_proofs(
         current["rustBotContext"].is_null(),
         "Bot selection is fixed for this conversation; create a new bot conversation"
     );
-    validate_thread_with_proof(current, current_proof)?;
+    crate::composer_policy::Policy::parse_with_effort_proof(
+        current,
+        crate::composer_policy::Origin::Ordinary,
+        current_proof,
+    )?
+    .preflight_base()?;
     let fields = params
         .as_object()
         .context("Selection request must be an object")?;
@@ -358,6 +371,6 @@ fn repair_clear_option(params: &Value, current: &Value, option: &str) -> Result<
         .as_object_mut()
         .context("Invalid saved selection")?
         .remove(option);
-    validate_thread(&repaired)?;
+    validate_thread_base(&repaired)?;
     Ok(repaired["selection"].clone())
 }

@@ -16,8 +16,8 @@ use std::{
 
 #[path = "model_catalog_effort.rs"]
 mod effort;
-pub(crate) use effort::CodexEffortProof;
 use effort::EffortExecutable;
+pub(crate) use effort::{CodexEffortProof, astra_default_needed};
 
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;

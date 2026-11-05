@@ -74,6 +74,7 @@ pub struct Policy {
     model: Option<String>,
     bot: bool,
     effort: Option<String>,
+    automatic_effort_required: bool,
     speed: Option<String>,
     effort_proof: Option<crate::model_catalog::CodexEffortProof>,
 }
@@ -152,10 +153,19 @@ impl Policy {
         );
         let model = composer_selection::launch_model(&thread["selection"])?;
         if let Some(proof) = proof {
+            ensure!(
+                !bot,
+                "Frozen bots cannot acquire model-option default authority"
+            );
             proof.validate(&thread["selection"])?;
         }
         Ok(Self {
-            effort: thread["selection"]["effort"].as_str().map(str::to_owned),
+            effort: proof
+                .and_then(|proof| proof.effective_effort())
+                .or_else(|| thread["selection"]["effort"].as_str())
+                .map(str::to_owned),
+            automatic_effort_required: !bot
+                && crate::model_catalog::astra_default_needed(&thread["selection"]),
             speed: thread["selection"]["speed"].as_str().map(str::to_owned),
             effort_proof: proof.cloned(),
             access,
@@ -184,7 +194,21 @@ impl Policy {
         }
         Ok(())
     }
+    fn validate_runtime_effort(&self) -> Result<()> {
+        self.validate_effort_proof()?;
+        ensure!(
+            !self.automatic_effort_required || self.effort.as_deref() == Some("medium"),
+            "Refresh the exact Astra model catalog advertising medium before using its app default"
+        );
+        Ok(())
+    }
     pub fn preflight(&self) -> Result<()> {
+        self.validate_runtime_effort()?;
+        self.preflight_base()
+    }
+    /// Repair syntax/mode checks only. Remaining explicit options still require
+    /// private proof; only an automatic Astra default may stay unproved here.
+    pub(crate) fn preflight_base(&self) -> Result<()> {
         self.validate_effort_proof()?;
         if self.provider == "codex"
             && let Some(model) = &self.model
@@ -233,7 +257,7 @@ impl Policy {
         }
         // The source-bound resolved model above is valid at this wire boundary.
         // Admission preflight has no such evidence and remains stricter.
-        self.validate_effort_proof()?;
+        self.validate_runtime_effort()?;
         let mut fields = json!({"approvalPolicy":if self.access==Access::Approval{"untrusted"}else{"never"},"approvalsReviewer":"user","sandboxPolicy":{"type":if self.access==Access::Approval{"readOnly"}else{"dangerFullAccess"}}});
         if let Some(effort) = &self.effort {
             fields["effort"] = json!(effort);
