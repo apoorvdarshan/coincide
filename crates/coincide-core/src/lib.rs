@@ -18,6 +18,7 @@ pub mod thread_history;
 pub mod cli_session_import;
 pub mod credentials;
 pub mod dictation;
+pub mod local_usage;
 pub mod organization;
 pub mod platform_host;
 pub mod remote;

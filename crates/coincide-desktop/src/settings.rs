@@ -11,6 +11,7 @@ pub(super) enum SettingsSection {
     Browser,
     Media,
     ComputerUse,
+    Usage,
 }
 impl SettingsSection {
     fn id(self) -> &'static str {
@@ -23,6 +24,7 @@ impl SettingsSection {
             Self::Browser => "browser",
             Self::Media => "media",
             Self::ComputerUse => "computer-use",
+            Self::Usage => "usage",
         }
     }
     fn label(self) -> &'static str {
@@ -35,6 +37,7 @@ impl SettingsSection {
             Self::Browser => "Browser",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
+            Self::Usage => "Saved usage",
         }
     }
 }
@@ -547,6 +550,7 @@ impl Coincide {
             S::Browser,
             S::Media,
             S::ComputerUse,
+            S::Usage,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -563,6 +567,29 @@ impl Coincide {
         }
         let mut content = div().flex().flex_col().gap_2();
         let mut count = 0;
+        if matches(
+            S::Usage,
+            "saved local usage history tokens provider reports cost counters",
+        ) {
+            count += 1;
+            if self.settings_section == S::Usage {
+                content = content.child(
+                    div()
+                        .h(px(460.))
+                        .min_h(px(260.))
+                        .child(self.usage_history.panel.clone()),
+                );
+            } else {
+                content = content.child(
+                    Button::new("settings-usage-history")
+                        .label("View saved usage history")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_section = S::Usage;
+                            cx.notify();
+                        })),
+                );
+            }
+        }
         if matches(S::Appearance, "appearance system light dark color theme") {
             count += 1;
             let mode = setting("appearance", json!("system"));
@@ -937,6 +964,13 @@ mod navigation_tests {
         ));
         assert_eq!(S::Accounts.id(), "accounts");
         assert_eq!(S::Browser.id(), "browser");
+        assert_eq!(S::Usage.id(), "usage");
+        assert!(settings_match(
+            S::All,
+            S::Usage,
+            "tokens history",
+            "saved local usage history tokens provider reports"
+        ));
         assert_eq!(S::ComputerUse.id(), "computer-use");
         assert!(settings_match(
             S::ComputerUse,

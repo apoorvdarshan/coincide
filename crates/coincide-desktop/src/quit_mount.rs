@@ -67,6 +67,7 @@ impl Coincide {
             }
         }
         let drafts_saved = self.flush_pending_drafts();
+        self.usage_history.request_shutdown();
         self.credential_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.transcription_panel
@@ -102,6 +103,7 @@ impl Coincide {
         self.request_media_owner_shutdown(cx);
         let media = self.poll_media_owner_shutdown(cx);
         let statuses = [
+            self.usage_history.shutdown_status(),
             self.credential_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.transcription_panel
