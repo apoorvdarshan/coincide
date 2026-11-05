@@ -50,6 +50,7 @@ unsafe extern "C" {
 }
 
 const APP: &str = "Coincide Rust.app";
+#[cfg(any(target_os = "macos", test))]
 const MAIN: &str = "coincide-rust";
 
 #[derive(Clone)]
