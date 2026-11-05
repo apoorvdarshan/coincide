@@ -17,9 +17,10 @@ with real recognition and remaining voice parity still unverified. These decisio
 - [ ] Background queue/recovery robustness: latest full-app crash test stops before the crash because queue delivery becomes uncertain; its original ID/text remain saved. An earlier candidate passed the six crash/relaunch checks, which does not establish the latest case fixed.
 - [x] Instruction Git-root correction: **80 native checks** pass with both normal and real 8.3 TEMP paths; nested/junction/forged-root refusal remains covered.
 - [x] Prepared-host helper portability: **63 actual filesystem/ACL checks pass in each** of Windows PowerShell 5.1 and PowerShell 7 in CI.
-- [ ] Exact-revision Windows CI: the app compiled/linked, but the Claude fixture did not exit after its **49 assertions passed**. Lost-wakeup corrections for Claude, Codex, RPC and ConPTY are implemented and require native validation; success reports now follow owned-session teardown. Native UI acceptance did not run.
+- [x] Native runtime shutdown acceptance: **45 RPC, 102 Codex, 50 Claude and 28 ConPTY checks passed and the processes exited** after the synchronized predicate fixes; success reports now follow owned-session teardown.
+- [ ] Exact-revision Windows CI: the latest app compiled/linked, then the new IPC fixture failed after 18 checks because it preconnected a disconnected listener before rearming it. The fixture setup correction requires a fresh run; native UI acceptance did not run.
 - [ ] Completed-connect deadline race: the scoped IPC correction and deterministic owned-pipe regressions require Windows CI. This is not yet a verified fix for the original queued-message failure.
-- [ ] Find in the current conversation: native message search, visible excerpts and next/previous navigation are implemented, with **32 portable checks passing**; Windows compilation and native UI acceptance are pending.
+- [ ] Find in the current conversation: native message search, visible excerpts and next/previous navigation are implemented, with **32 scanner checks passing on both portable Clang and Windows**, and the app compiles; native UI acceptance is pending.
 - [ ] Further physical validation: the ASUS Windows peer is offline. The last baseline comparison result has not been retrieved.
 - [ ] Initial-marker/missing-host-generation owner recovery and the remaining feature/platform acceptance listed below.
 - [ ] Signed packaging, updates and distribution acceptance. No public release is authorized.

@@ -77,14 +77,25 @@ void run(const std::filesystem::path& root,const Scope& scope,Check& check,Rejec
     }
     {
         const auto folder=root/L"connect-dispatch";std::filesystem::create_directories(folder);auto dispatch_scope=std::make_shared<Scope>(folder);auto state=std::make_shared<background_host_fixture::State>();
-        Core core(dispatch_scope,[&](const Key&,const Launch&){return std::make_unique<background_host_fixture::Session>(state);});Server listener(core,dispatch_scope);
+        Core core(dispatch_scope,[&](const Key&,const Launch&){return std::make_unique<background_host_fixture::Session>(state);});
         const auto started=background_host_fixture::start(folder);Object request;put(request,L"scope",dispatch_scope->id());request.SetNamedValue(L"version",Value::CreateNumberValue(1));request.SetNamedValue(L"command",encode(started));const auto wire=winrt::to_string(request.Stringify());
         Handle client;const auto connect_and_send=[&]{if(client)return;client=pipe_io::connect(*dispatch_scope,GetTickCount64()+1000);pipe_io::send(client.value,wire,GetTickCount64()+1000);char acknowledgement='A';pipe_io::transfer(client.value,true,&acknowledgement,1,GetTickCount64()+1000);};
-        check(!listener.serve_once(std::chrono::milliseconds(0))&&state->factories==0,"A canceled pending server Connect must refuse dispatch without creating a runtime");
-        check(!listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return true;})&&state->factories==0,"Explicit stop at the completed-Connect boundary must never dispatch its already-written Start frame");client.reset();
-        connect_and_send();check(!listener.serve_once(std::chrono::milliseconds(0),[]{return true;})&&state->factories==0,"Explicit stop must also refuse the immediate ERROR_PIPE_CONNECTED server path");client.reset();
-        check(listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return false;})&&state->factories==1,"A successful deadline-boundary Connect must still authenticate and dispatch one original synthetic command");
-        check(core.perform(Command{}).GetNamedArray(L"sessions").Size()==1,"The retained boundary connection must dispatch exactly one authenticated synthetic Start");
+        {
+            Server listener(core,dispatch_scope);
+            check(!listener.serve_once(std::chrono::milliseconds(0))&&state->factories==0,"A canceled pending server Connect must refuse dispatch without creating a runtime");
+            check(!listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return true;})&&state->factories==0,"Explicit stop at the completed-Connect boundary must never dispatch its already-written Start frame");client.reset();
+        }
+        {
+            // A disconnected instance must first rearm ConnectNamedPipe. A fresh instance
+            // lets the client connect before its first ConnectNamedPipe for this distinct path.
+            Server listener(core,dispatch_scope);
+            connect_and_send();check(!listener.serve_once(std::chrono::milliseconds(0),[]{return true;})&&state->factories==0,"Explicit stop must also refuse the immediate ERROR_PIPE_CONNECTED server path");client.reset();
+        }
+        {
+            Server listener(core,dispatch_scope);
+            check(listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return false;})&&state->factories==1,"A successful deadline-boundary Connect must still authenticate and dispatch one original synthetic command");
+            check(core.perform(Command{}).GetNamedArray(L"sessions").Size()==1,"The retained boundary connection must dispatch exactly one authenticated synthetic Start");
+        }
     }
     check(pipe_io::quarantined==0,"Every completion/cancellation boundary fixture must settle without quarantining kernel storage");
 }
