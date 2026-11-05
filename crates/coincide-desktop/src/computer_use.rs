@@ -88,6 +88,10 @@ impl Handle {
         }
         self.authority.native_grant(thread)
     }
+    /// Trusted in-process Engine binding only; never export as a JSON setter.
+    pub fn authority_for_engine(&self) -> Authority {
+        self.authority.clone()
+    }
     pub fn thread_enabled(&self, thread: Uuid) -> bool {
         self.authority.grant(thread).is_ok()
     }
@@ -129,6 +133,21 @@ impl Handle {
         request: Request,
         deadline: Instant,
     ) -> Result<Uuid, Failure> {
+        if deadline <= Instant::now() {
+            return Err(Failure::TimedOut);
+        }
+        let grant = self.authority.grant(thread)?;
+        self.try_request_bound(thread, request, deadline, grant)
+    }
+    /// Native Engine handoff only. Pin the admission stamp into Job; never
+    /// recapture a newer grant after an Engine queue delay or UI regrant.
+    pub fn try_request_bound(
+        &self,
+        thread: Uuid,
+        request: Request,
+        deadline: Instant,
+        expected_grant: Uuid,
+    ) -> Result<Uuid, Failure> {
         let now = Instant::now();
         if deadline <= now {
             return Err(Failure::TimedOut);
@@ -137,7 +156,7 @@ impl Handle {
         if self.stop.load(Ordering::Acquire) {
             return Err(Failure::Revoked);
         }
-        let grant = self.authority.grant(thread)?;
+        let grant = expected_grant;
         let id = Uuid::new_v4();
         let job = Job {
             id,
@@ -150,6 +169,11 @@ impl Handle {
         if Instant::now() >= deadline {
             return Err(Failure::TimedOut);
         }
+        if self.authority.grant(thread) != Ok(expected_grant) {
+            return Err(Failure::Revoked);
+        }
+        // Equality is checked within reservation; Job keeps the expected stamp.
+        // Regrant after this point can only revoke the job, never authorize it anew.
         if !in_flight.insert(thread) {
             return Err(Failure::Busy);
         }
@@ -772,6 +796,45 @@ mod tests {
         // Expiry was a terminal failure, not a delivery retry or a leaked Busy slot.
         h.try_request(second, Request::Status).unwrap();
         assert!(reply(&runtime).result.is_ok());
+        h.shutdown();
+    }
+    #[test]
+    fn engine_handoff_never_retags_old_operation_after_regrant() {
+        let (runtime, calls, permissions) = fake();
+        let h = runtime.handle();
+        let thread = Uuid::new_v4();
+        h.native_enable(true).unwrap();
+        h.native_grant(thread).unwrap();
+        let old = h.authority_for_engine().grant(thread).unwrap();
+        h.native_revoke(thread);
+        h.native_grant(thread).unwrap();
+        let current = h.authority_for_engine().grant(thread).unwrap();
+        assert_ne!(old, current);
+        assert_eq!(
+            h.try_request_bound(
+                thread,
+                Request::Status,
+                Instant::now() + Duration::from_secs(1),
+                old
+            ),
+            Err(Failure::Revoked)
+        );
+        assert!(h.in_flight.lock().unwrap().is_empty());
+        let id = h
+            .try_request_bound(
+                thread,
+                Request::Status,
+                Instant::now() + Duration::from_secs(1),
+                current,
+            )
+            .unwrap();
+        // Regrant after reservation also cannot authorize or expose old replies.
+        h.native_grant(thread).unwrap();
+        let result = reply(&runtime);
+        assert_eq!(result.id, id);
+        assert_eq!(result.result, Err(Failure::Revoked));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(permissions.load(Ordering::SeqCst), 0);
         h.shutdown();
     }
     #[test]
