@@ -1,6 +1,6 @@
 use super::*;
 use crate::{api::Engine, store::Store};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 fn fixture() -> (tempfile::TempDir, SharedEngine, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
