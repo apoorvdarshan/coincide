@@ -808,7 +808,10 @@ impl TerminalWorkspace {
         }
         if let Action::Resize(rows, cols) = action {
             pane.size = (rows, cols);
-            pane.frame = None;
+            // Keep the last coherent frame until the resized frame arrives.
+            // Removing it also removes footer metrics, which can unwrap the
+            // footer and change the viewport height again in narrow splits.
+            // The advanced ticket rejects old replies; selection is cleared above.
         }
         cx.notify();
         true
