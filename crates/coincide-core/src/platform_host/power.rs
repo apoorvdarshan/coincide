@@ -24,6 +24,10 @@ impl AwakePolicy {
 pub trait SleepInhibitor {
     fn acquire(&mut self) -> Result<()>;
     fn release(&mut self) -> Result<()>;
+    /// Verify an existing lease; failure means it cannot be reported as held.
+    fn check(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 pub struct AwakeController<B> {
     backend: B,
@@ -39,9 +43,16 @@ impl<B: SleepInhibitor> AwakeController<B> {
     pub fn is_held(&self) -> bool {
         self.held
     }
-    /// State changes only after OS acknowledgement; errors permit the next tick to retry.
+    /// State changes after backend acknowledgement; errors permit the next tick to retry.
     pub fn reconcile(&mut self, policy: AwakePolicy) -> Result<()> {
         let wanted = policy.needs_lease();
+        if wanted
+            && self.held
+            && let Err(error) = self.backend.check()
+        {
+            self.held = false;
+            return Err(error);
+        }
         if wanted != self.held {
             if wanted {
                 self.backend.acquire()?;
@@ -53,7 +64,10 @@ impl<B: SleepInhibitor> AwakeController<B> {
         Ok(())
     }
     pub fn shutdown(&mut self) -> Result<()> {
-        self.reconcile(AwakePolicy::default())
+        // Retry backend cleanup even after a health check cleared the UI state.
+        self.backend.release()?;
+        self.held = false;
+        Ok(())
     }
 }
 
