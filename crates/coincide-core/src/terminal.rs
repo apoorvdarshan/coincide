@@ -6,14 +6,17 @@ use alacritty_terminal::{
     term::{Config, Term, TermMode, cell::Flags, color::Colors},
     vte::ansi::{Color, CursorShape, Processor},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     path::Path,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, Sender},
+    },
     thread,
 };
 #[path = "terminal_shell.rs"]
@@ -41,17 +44,19 @@ impl EventListener for Listener {
     }
 }
 pub struct Terminal {
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
-    writer: mpsc::SyncSender<Vec<u8>>,
-    output: Receiver<Vec<u8>>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
+    writer: Option<mpsc::SyncSender<Vec<u8>>>,
+    output: Option<Receiver<Vec<u8>>>,
     events: Receiver<Event>,
     term: Term<Listener>,
     processor: Processor,
     shell: shell::ShellObserver,
     shell_anchors: shell::Anchors,
     history_limit: usize,
-    _shell_launch: shell::ShellLaunch,
+    _shell_launch: Option<shell::ShellLaunch>,
+    reader_worker: Option<thread::JoinHandle<()>>,
+    writer_worker: Option<thread::JoinHandle<()>>,
     pub revision: u64,
     pub title: String,
 }
@@ -104,7 +109,7 @@ impl Terminal {
         drop(pty.slave);
         let mut pty_writer = pty.master.take_writer()?;
         let (writer, input) = mpsc::sync_channel::<Vec<u8>>(32);
-        thread::spawn(move || {
+        let writer_worker = thread::spawn(move || {
             while let Ok(bytes) = input.recv() {
                 if pty_writer
                     .write_all(&bytes)
@@ -117,7 +122,7 @@ impl Terminal {
         });
         let mut reader = pty.master.try_clone_reader()?;
         let (tx, output) = mpsc::sync_channel(64);
-        thread::spawn(move || {
+        let reader_worker = thread::spawn(move || {
             let mut buffer = [0u8; 8192];
             while let Ok(n) = reader.read(&mut buffer) {
                 if n == 0 || tx.send(buffer[..n].to_vec()).is_err() {
@@ -127,25 +132,50 @@ impl Terminal {
         });
         let (sender, events) = mpsc::channel();
         Ok(Self {
-            master: pty.master,
-            child,
-            writer,
-            output,
+            master: Some(pty.master),
+            child: Some(child),
+            writer: Some(writer),
+            output: Some(output),
+            reader_worker: Some(reader_worker),
+            writer_worker: Some(writer_worker),
             events,
             term: Term::new(Config::default(), &Size { rows, cols }, Listener(sender)),
             processor: Processor::new(),
             shell: Default::default(),
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
-            _shell_launch: shell_launch,
+            _shell_launch: Some(shell_launch),
             revision: 0,
             title: "Terminal".into(),
         })
     }
+    /// Trusted owner-only transfer. Repeated calls reject; retain the returned owner
+    /// until its actual child/reader/writer joins have been accounted.
+    pub fn request_shutdown(&mut self) -> Result<PendingTerminalShutdown> {
+        let child = self
+            .child
+            .take()
+            .context("Terminal shutdown already requested")?;
+        // Disconnect both bounded queues before the join worker starts.
+        drop(self.output.take());
+        drop(self.writer.take());
+        Ok(PendingTerminalShutdown::start(ShutdownResources {
+            child,
+            master: self.master.take(),
+            shell_launch: self._shell_launch.take(),
+            reader: self.reader_worker.take(),
+            writer: self.writer_worker.take(),
+        }))
+    }
     pub fn poll(&mut self) -> Result<bool> {
         let mut changed = false;
         for _ in 0..64 {
-            let Ok(bytes) = self.output.try_recv() else {
+            let Ok(bytes) = self
+                .output
+                .as_ref()
+                .context("Terminal is stopping")?
+                .try_recv()
+            else {
                 break;
             };
             let mut offset = 0;
@@ -164,7 +194,11 @@ impl Terminal {
         }
         for event in self.events.try_iter() {
             match event {
-                Event::PtyWrite(text) => self.writer.try_send(text.into_bytes())?,
+                Event::PtyWrite(text) => self
+                    .writer
+                    .as_ref()
+                    .context("Terminal is stopping")?
+                    .try_send(text.into_bytes())?,
                 Event::Title(title) => self.title = title,
                 _ => {}
             }
@@ -379,7 +413,10 @@ impl Terminal {
     }
     pub fn write(&mut self, text: &str) -> Result<()> {
         ensure!(text.len() <= 32 * 1024, "Terminal input exceeds 32 KiB");
-        self.writer.try_send(text.as_bytes().to_vec())?;
+        self.writer
+            .as_ref()
+            .context("Terminal is stopping")?
+            .try_send(text.as_bytes().to_vec())?;
         Ok(())
     }
     /// Structured input uses the latest parsed modes without a UI read/write
@@ -388,7 +425,10 @@ impl Terminal {
         self.poll()?;
         let bytes = encode_input(input, self.input_modes())?;
         let len = bytes.len();
-        self.writer.try_send(bytes)?;
+        self.writer
+            .as_ref()
+            .context("Terminal is stopping")?
+            .try_send(bytes)?;
         Ok(json!({"accepted":true,"observedRevision":self.revision,"encodedBytes":len}))
     }
     fn input_modes(&self) -> InputModes {
@@ -399,12 +439,15 @@ impl Terminal {
     }
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         check_size(rows, cols)?;
-        self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        self.master
+            .as_ref()
+            .context("Terminal is stopping")?
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
         self.shell_anchors.invalidate();
         self.term.resize(Size { rows, cols });
         self.revision += 1;
@@ -475,7 +518,12 @@ impl Terminal {
         for line in &mut lines {
             *line = line.trim_end().to_owned();
         }
-        let exited = self.child.try_wait()?.map(|s| s.exit_code());
+        let exited = self
+            .child
+            .as_mut()
+            .context("Terminal is stopping")?
+            .try_wait()?
+            .map(|s| s.exit_code());
         Ok(
             json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport(),"modes":self.input_modes(),"shell":self.shell.state}),
         )
@@ -560,7 +608,12 @@ impl Terminal {
             "visible": shape != "hidden" && (0..rows as i32).contains(&cursor_row) && cursor_col < cols,
             "shape": shape, "blinking": self.term.cursor_style().blinking,
         });
-        let exited = self.child.try_wait()?.map(|s| s.exit_code());
+        let exited = self
+            .child
+            .as_mut()
+            .context("Terminal is stopping")?
+            .try_wait()?
+            .map(|s| s.exit_code());
         Ok(json!({
             "title": self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),
             "lines": lines, "rows": rows, "cols": cols,
@@ -1024,10 +1077,125 @@ fn resolve_color(color: Color, colors: &Colors) -> [u8; 3] {
     [(packed >> 16) as u8, (packed >> 8) as u8, packed as u8]
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TerminalShutdownStatus {
+    pub requested: bool,
+    pub child_exited: bool,
+    pub reader_joined: bool,
+    pub writer_joined: bool,
+    pub joined: bool,
+    pub error: Option<String>,
+}
+impl TerminalShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.requested
+            && self.child_exited
+            && self.reader_joined
+            && self.writer_joined
+            && self.joined
+            && self.error.is_none()
+    }
+}
+struct ShutdownResources {
+    child: Box<dyn Child + Send + Sync>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    shell_launch: Option<shell::ShellLaunch>,
+    reader: Option<thread::JoinHandle<()>>,
+    writer: Option<thread::JoinHandle<()>>,
+}
+pub struct PendingTerminalShutdown {
+    // Retained on join-thread spawn failure; no closure-owned Terminal Drop.
+    _resources: Arc<Mutex<Option<ShutdownResources>>>,
+    status: Arc<Mutex<TerminalShutdownStatus>>,
+}
+impl PendingTerminalShutdown {
+    fn start(resources: ShutdownResources) -> Self {
+        let resources = Arc::new(Mutex::new(Some(resources)));
+        let status = Arc::new(Mutex::new(TerminalShutdownStatus {
+            requested: true,
+            ..Default::default()
+        }));
+        let owned = resources.clone();
+        let observation = status.clone();
+        let started = thread::Builder::new()
+            .name("coincide-terminal-join".into())
+            .spawn(move || {
+                let Some(mut resources) = owned.lock().unwrap_or_else(|e| e.into_inner()).take()
+                else {
+                    return;
+                };
+                // Avoid signalling an already reaped PID. Signal only the directly
+                // owned child; never a process group. Confirmed wait resolves a
+                // benign kill error; a failed wait remains unknown.
+                let waited = match resources.child.try_wait() {
+                    Ok(Some(status)) => Ok(status),
+                    _ => {
+                        let _ = resources.child.kill();
+                        resources.child.wait()
+                    }
+                };
+                match waited {
+                    Ok(_) => {
+                        observation
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .child_exited = true
+                    }
+                    Err(_) => {
+                        observation.lock().unwrap_or_else(|e| e.into_inner()).error =
+                            Some("Terminal child wait failed; exit is unknown".into())
+                    }
+                }
+                drop(resources.master.take());
+                for (reader, worker) in [
+                    (false, resources.writer.take()),
+                    (true, resources.reader.take()),
+                ] {
+                    let result = worker.map_or(Ok(()), |worker| worker.join());
+                    let mut status = observation.lock().unwrap_or_else(|e| e.into_inner());
+                    match result {
+                        Ok(()) if reader => status.reader_joined = true,
+                        Ok(()) => status.writer_joined = true,
+                        Err(_) => status.error = Some("Terminal I/O worker join failed".into()),
+                    }
+                }
+                if observation
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .child_exited
+                {
+                    // Temporary shell integration files outlive every confirmed owner.
+                    drop(resources.shell_launch.take());
+                    drop(resources);
+                } else {
+                    // A failed wait must not discard the child or its launch resources.
+                    *owned.lock().unwrap_or_else(|e| e.into_inner()) = Some(resources);
+                }
+                observation.lock().unwrap_or_else(|e| e.into_inner()).joined = true;
+            });
+        if started.is_err() {
+            status.lock().unwrap_or_else(|e| e.into_inner()).error =
+                Some("Terminal join worker could not start; ownership retained".into());
+        }
+        Self {
+            _resources: resources,
+            status,
+        }
+    }
+    pub fn poll(&self) -> TerminalShutdownStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 fn check_size(rows: u16, cols: u16) -> Result<()> {
@@ -1261,5 +1429,129 @@ mod structured_input_tests {
             assert!(serde_json::from_value::<TerminalInput>(value).is_err());
         }
         assert!(serde_json::from_value::<TerminalInput>(json!({"kind":"key","key":"up"})).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use std::sync::{
+        Condvar,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, Instant};
+    #[derive(Debug, Clone)]
+    struct FakeChild {
+        exited: Arc<AtomicBool>,
+        fail_wait: bool,
+    }
+    impl portable_pty::ChildKiller for FakeChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("already exited fixture"))
+        }
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+    impl Child for FakeChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+            Ok(None)
+        }
+        fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+            if self.fail_wait {
+                return Err(std::io::Error::other("fixture wait failed"));
+            }
+            self.exited.store(true, Ordering::SeqCst);
+            Ok(portable_pty::ExitStatus::with_exit_code(0))
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+    fn resources(fail_wait: bool) -> ShutdownResources {
+        ShutdownResources {
+            child: Box::new(FakeChild {
+                exited: Arc::new(AtomicBool::new(false)),
+                fail_wait,
+            }),
+            master: None,
+            shell_launch: None,
+            reader: None,
+            writer: None,
+        }
+    }
+    fn until(mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !condition() {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+    }
+    #[test]
+    fn terminal_shutdown_retains_pending_reader_until_actual_tls_join() {
+        struct Gate(Arc<(Mutex<bool>, Condvar)>, Arc<AtomicBool>);
+        impl Drop for Gate {
+            fn drop(&mut self) {
+                self.1.store(true, Ordering::SeqCst);
+                let lock = self.0.0.lock().unwrap();
+                drop(self.0.1.wait_while(lock, |blocked| *blocked).unwrap());
+            }
+        }
+        thread_local! { static EXIT:std::cell::RefCell<Option<Gate>>=const {std::cell::RefCell::new(None)}; }
+        let gate = Arc::new((Mutex::new(true), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = false;
+                self.0.1.notify_all();
+            }
+        }
+        let _release = Release(gate.clone());
+        let entered = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+        tx.send(vec![1]).unwrap();
+        let g = gate.clone();
+        let e = entered.clone();
+        let reader = thread::spawn(move || {
+            EXIT.with(|slot| *slot.borrow_mut() = Some(Gate(g, e)));
+            let _ = tx.send(vec![2]);
+        });
+        let (writer_tx, writer_rx) = mpsc::sync_channel::<Vec<u8>>(1);
+        let writer = thread::spawn(move || while writer_rx.recv().is_ok() {});
+        let mut owned = resources(false);
+        owned.reader = Some(reader);
+        owned.writer = Some(writer);
+        drop(rx);
+        drop(writer_tx);
+        let pending = PendingTerminalShutdown::start(owned);
+        until(|| {
+            entered.load(Ordering::SeqCst)
+                && pending.poll().child_exited
+                && pending.poll().writer_joined
+        });
+        let state = pending.poll();
+        assert!(!state.reader_joined);
+        assert!(!state.ready());
+        *gate.0.lock().unwrap() = false;
+        gate.1.notify_all();
+        until(|| pending.poll().joined);
+        assert!(
+            pending.poll().ready(),
+            "confirmed exit resolves benign kill failure"
+        );
+    }
+    #[test]
+    fn terminal_shutdown_failed_wait_retains_child_and_blocks_ready() {
+        let pending = PendingTerminalShutdown::start(resources(true));
+        until(|| pending.poll().joined);
+        let state = pending.poll();
+        assert!(!state.child_exited);
+        assert!(state.error.is_some());
+        assert!(!state.ready());
+        assert!(pending._resources.lock().unwrap().is_some());
     }
 }
