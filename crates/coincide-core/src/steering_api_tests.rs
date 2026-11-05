@@ -7,7 +7,9 @@ fn fixture() -> (
 ) {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
-    let thread = engine.execute("threads.create", &json!({})).unwrap();
+    let thread = engine
+        .execute("threads.create", &json!({"cwd":dir.path()}))
+        .unwrap();
     let id = thread["id"].as_str().unwrap().to_owned();
     let mut session = Session::fixture_worker(|commands, events| {
         let _ = commands.recv();
