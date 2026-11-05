@@ -83,6 +83,29 @@ pub fn validate_thread(thread: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Validate a persisted project/defaults composer envelope without dropping
+/// unknown options or substituting an unsupported account/model/mode.
+pub(crate) fn validate_defaults(value: &Value) -> Result<Value> {
+    let fields = value
+        .as_object()
+        .context("Composer defaults must be an object")?;
+    ensure!(
+        fields
+            .keys()
+            .all(|key| matches!(key.as_str(), "selection" | "accessMode" | "interactionMode")),
+        "Composer defaults contain unsupported options"
+    );
+    let mut defaults = value.clone();
+    if defaults["accessMode"].is_null() {
+        defaults["accessMode"] = json!("approval");
+    }
+    if defaults["interactionMode"].is_null() {
+        defaults["interactionMode"] = json!("build");
+    }
+    validate_thread(&defaults)?;
+    Ok(defaults)
+}
+
 /// Full target selection, not an arbitrary JSON patch. No storage mutation occurs here.
 pub fn select(params: &Value, current: &Value) -> Result<Value> {
     ensure!(

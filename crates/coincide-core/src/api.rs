@@ -52,6 +52,8 @@ mod shutdown_owner;
 pub use shutdown_owner::CoreOwnerShutdownStatus;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
+#[path = "thread_defaults.rs"]
+mod thread_defaults;
 #[path = "thread_resolution.rs"]
 mod thread_resolution;
 #[path = "workspace_api.rs"]
@@ -508,25 +510,7 @@ impl Engine {
                 }
                 Ok(v)
             }
-            "threads.create" => {
-                if let Some(cwd)=p["cwd"].as_str(){ensure!(PathBuf::from(cwd).is_dir(),"Working directory does not exist");}
-                let mut v = self.store.new_thread(
-                    p["projectId"]
-                        .as_str()
-                        .unwrap_or("00000000-0000-0000-0000-000000000000"),
-                )?;
-                v["selection"] = json!({"provider":"codex","modelID":"default"});
-                if let Some(cwd) = p["cwd"].as_str() {
-                    ensure!(
-                        PathBuf::from(cwd).is_dir(),
-                        "Working directory does not exist"
-                    );
-                    v["worktreePath"] = json!(cwd);
-                }
-                self.store.save(&v)?;
-                self.revision += 1;
-                Ok(v)
-            }
+            "threads.create" => self.create_ordinary_thread(p),
             "threads.patch" => {
                 ensure!(!self.unsaved_threads.contains_key(required(p,"threadId")?),"Transcript persistence is recovering; retry this edit after recovery");
                 let v=self.store.patch_thread(required(p,"threadId")?,&p["patch"])?;
