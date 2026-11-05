@@ -27,6 +27,8 @@ struct Runtime<'a> {
     commands: Receiver<Control>,
     queued: VecDeque<Control>,
     events: &'a Sender<Event>,
+    #[cfg(test)]
+    request_join_entered: Option<Sender<()>>,
 }
 impl Runtime<'_> {
     fn wait<T>(&mut self, receiver: Receiver<Result<T>>, limit: Duration) -> Result<T> {
@@ -53,13 +55,45 @@ impl Runtime<'_> {
         path: String,
         body: Option<Value>,
     ) -> Result<Value> {
-        let (sender, receiver) = mpsc::sync_channel(1);
         let http = http.clone();
         let method = method.to_owned();
-        thread::spawn(move || {
-            let _ = sender.send(http.request(&method, &path, body, Duration::from_secs(15)));
-        });
-        self.wait(receiver, Duration::from_secs(16))
+        self.request_with_worker(Duration::from_secs(16), move || {
+            http.request(&method, &path, body, Duration::from_secs(15))
+        })
+    }
+    /// Request result/Stop is semantic completion, not actual worker exit.
+    /// Join only on the already-background provider thread, including TLS;
+    /// Session::stop and Engine/UI observers remain nonblocking. This does not
+    /// account for the separately owned SSE/stdout/stderr workers below.
+    fn request_with_worker<T: Send + 'static>(
+        &mut self,
+        limit: Duration,
+        work: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name("coincide-opencode-request".into())
+            .spawn(move || {
+                let _ = sender.send(work());
+            })
+            .context("OpenCode HTTP request worker could not start")?;
+        let result = self.wait(receiver, limit);
+        // HTTP's deadline/result delivery does not prove thread/TLS exit.
+        // Joined Returned is thread ownership, not a successful request.
+        ensure!(
+            self.join_request_worker(worker).is_ok(),
+            "OpenCode HTTP request worker panicked"
+        );
+        result
+    }
+    fn join_request_worker(&mut self, worker: thread::JoinHandle<()>) -> thread::Result<()> {
+        // Private test signal is at the actual owned-join entry, not an elapsed
+        // absence assertion. Reverting to a detached request never enters it.
+        #[cfg(test)]
+        if let Some(observed) = self.request_join_entered.take() {
+            let _ = observed.send(());
+        }
+        worker.join()
     }
     fn next_command(&mut self) -> Option<Control> {
         self.queued
@@ -422,6 +456,8 @@ fn run_inner(
         commands,
         queued: VecDeque::new(),
         events,
+        #[cfg(test)]
+        request_join_entered: None,
     };
     let mut server = Server::start(&launch, &mut runtime)?;
     let (stream_tx, stream_rx) = mpsc::sync_channel(64);
@@ -649,3 +685,7 @@ fn run_inner(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "provider_opencode_request_tests.rs"]
+mod request_owner_tests;
