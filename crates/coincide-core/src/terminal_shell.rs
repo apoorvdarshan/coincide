@@ -311,7 +311,7 @@ impl ShellObserver {
         self.discard = false;
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub row: usize,
     pub col: usize,
@@ -326,6 +326,7 @@ pub struct OutputAnchor {
 #[derive(Default)]
 pub struct Anchors {
     pub output: Option<OutputAnchor>,
+    pub prompts: std::collections::VecDeque<Position>,
     prompt: Option<(Position, usize)>,
     pending: Option<String>,
     prompt_lines: usize,
@@ -338,6 +339,16 @@ impl Anchors {
         match mark {
             Mark::Invalidate => self.invalidate(),
             Mark::Prompt => {
+                // A redraw/backward prompt cannot leave marks referring to rows
+                // it is about to overwrite. Keep only strictly earlier positions.
+                if self.prompts.back().is_some_and(|last| *last >= position) {
+                    self.output = None;
+                    self.prompts.retain(|mark| *mark < position);
+                }
+                self.prompts.push_back(position);
+                if self.prompts.len() > 256 {
+                    self.prompts.pop_front();
+                }
                 if self.output.as_ref().is_some_and(|o| o.end.is_none()) {
                     self.output = None;
                 }
@@ -698,6 +709,21 @@ mod tests {
         let output = anchors.output.unwrap();
         assert_eq!(output.prompt, Some((Position { row: 2, col: 0 }, 2)));
         assert_eq!(output.end, Some(Position { row: 8, col: 0 }));
+    }
+    #[test]
+    fn prompt_positions_are_bounded_deduplicated_and_revoked_with_other_anchors() {
+        let mut anchors = Anchors::default();
+        for row in 0..300 {
+            anchors.observe(Mark::Prompt, Position { row, col: 0 });
+        }
+        assert_eq!(anchors.prompts.len(), 256);
+        assert_eq!(anchors.prompts.front().unwrap().row, 44);
+        anchors.observe(Mark::Prompt, Position { row: 299, col: 0 });
+        assert_eq!(anchors.prompts.len(), 256);
+        anchors.observe(Mark::Prompt, Position { row: 290, col: 0 });
+        assert!(anchors.prompts.iter().all(|p| p.row <= 290));
+        anchors.invalidate();
+        assert!(anchors.prompts.is_empty());
     }
     #[cfg(unix)]
     #[test]
