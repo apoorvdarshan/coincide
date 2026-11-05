@@ -127,7 +127,7 @@ impl TurnContext {
         // Frozen metadata only; no prompt, response, file path or transcript copy.
         Self {
             id: Uuid::new_v4(),
-            thread: json!({"threadID":thread["id"],"projectID":thread["projectID"],"selection":thread["selection"]}),
+            thread: json!({"threadID":thread["id"],"projectID":thread["projectID"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}),
             started: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -135,6 +135,8 @@ impl TurnContext {
         self.thread["threadID"] == thread["id"]
             && self.thread["projectID"] == thread["projectID"]
             && self.thread["selection"] == thread["selection"]
+            && self.thread["accessMode"] == thread["accessMode"]
+            && self.thread["interactionMode"] == thread["interactionMode"]
     }
     pub(crate) fn finish(self, snapshot: Snapshot) -> Record {
         let mut usage = json!({});

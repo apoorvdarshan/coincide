@@ -228,12 +228,34 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
     ) -> Self {
+        Self::start_with_mode_policy(provider, launch, images, instructions, None)
+    }
+    /// Trusted ordinary-turn policy; Engine has already validated origin,
+    /// selection and preflight before any persistence or provider launch.
+    pub fn start_with_mode_policy(
+        provider: Provider,
+        launch: Launch,
+        images: Vec<ImageAttachment>,
+        instructions: Option<String>,
+        policy: Option<crate::composer_policy::Policy>,
+    ) -> Self {
         let codex = matches!(&provider, Provider::Codex);
         let (steer_client, steer_server) = codex_steering::pair();
         let usage = Arc::new(Mutex::new(None));
         let output = usage.clone();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
             let result = validate_instructions(&provider, instructions.as_deref())
+                .and_then(|()| {
+                    if let Some(policy) = &policy {
+                        ensure!(
+                            matches!(&provider, Provider::Codex) && instructions.is_none(),
+                            "Mode policy is supported only for ordinary Codex turns"
+                        );
+                        policy.require_codex()?;
+                        policy.preflight()?;
+                    }
+                    Ok(())
+                })
                 .and_then(|()| validate_images(&provider, &images))
                 .and_then(|()| match provider {
                     Provider::Codex => run(
@@ -242,8 +264,11 @@ impl Session {
                         instructions,
                         commands,
                         events_tx,
-                        output,
-                        steer_server,
+                        CodexOptions {
+                            usage: output,
+                            steering: steer_server,
+                            policy,
+                        },
                     ),
                     Provider::Claude => {
                         claude::run(launch, images, instructions, commands, events_tx)
@@ -390,15 +415,27 @@ fn request(id: u64, method: &str, params: Value) -> Value {
     json!({"id":id,"method":method,"params":params})
 }
 
+struct CodexOptions {
+    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
+    steering: codex_steering::Server,
+    policy: Option<crate::composer_policy::Policy>,
+}
 fn run(
     launch: Launch,
     images: Vec<ImageAttachment>,
     instructions: Option<String>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
-    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
-    mut steering: codex_steering::Server,
+    options: CodexOptions,
 ) -> Result<()> {
+    let CodexOptions {
+        usage,
+        mut steering,
+        policy,
+    } = options;
+    if let Some(policy) = &policy {
+        policy.preflight()?;
+    }
     let mut capture = usage_capture::Capture::default();
     let image_paths = images
         .iter()
@@ -498,15 +535,38 @@ fn run(
                             .as_str()
                             .context("Codex returned no thread ID")?;
                         ensure!(
+                            launch
+                                .session
+                                .as_ref()
+                                .is_none_or(|expected| expected == id),
+                            "Codex resume returned another source thread identity"
+                        );
+                        ensure!(
                             capture.bind_thread(id),
                             "Codex returned an invalid or duplicate thread identity"
                         );
                         events.send(Event::Session(id.into()))?;
-                        transport.write(&request(
-                            3,
-                            "turn/start",
-                            turn_params(id, &launch, &image_paths),
-                        ))?;
+                        let mut params = turn_params(id, &launch, &image_paths);
+                        if let Some(policy) = &policy {
+                            let resolved =
+                                crate::composer_policy::ResolvedCodexModel::from_thread_result(
+                                    id,
+                                    &frame["result"],
+                                )
+                                .ok();
+                            let history = if launch.session.is_some() {
+                                crate::composer_policy::CollaborationHistory::Unknown
+                            } else {
+                                crate::composer_policy::CollaborationHistory::NeverApplied
+                            };
+                            let fields =
+                                policy.codex_turn_fields(id, resolved.as_ref(), history)?;
+                            params
+                                .as_object_mut()
+                                .unwrap()
+                                .extend(fields.as_object().unwrap().clone());
+                        }
+                        transport.write(&request(3, "turn/start", params))?;
                     }
                     3 => ensure!(
                         capture.bind_turn(&frame["result"]["turn"]["id"]),

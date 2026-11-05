@@ -12,10 +12,12 @@ pub fn capabilities() -> Value {
             "customModel":{"supported":true,"availability":"unverified"},
             "modelDiscovery":{"supported":crate::model_catalog::supported(id.as_str().unwrap_or("")),
                 "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
-            "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
+            "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"requiresBuildMode":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
             "effort":{"supported":false,"reason":"This runtime does not apply reasoning effort."},
             "speed":{"supported":false,"reason":"This runtime does not apply speed selections."},
-            "accessModes":["approval"],"interactionModes":["build"]})
+            "accessModes":if id=="codex"{json!(["approval","fullAccess"])}else{json!(["approval"])},"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
+            "modesOrdinaryThreadsOnly":id=="codex",
+            "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();
     json!({"provenance":"static_runtime_contract","authenticationChecked":false,"modelsDiscovered":false,
         "providers":providers,"locked":false,"lockReason":null})
@@ -36,17 +38,10 @@ pub fn validate_model(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_mode(value: &Value, supported: &str) -> Result<()> {
-    ensure!(
-        value.is_null() || value.as_str() == Some(supported),
-        "This runtime supports {supported} mode only"
-    );
-    Ok(())
-}
-
 /// Reject unsupported stored metadata before any edit/send can silently discard it.
 /// Named Antigravity account configuration is validated separately by the engine.
-pub fn validate_thread(thread: &Value) -> Result<()> {
+pub fn validate_selection(value: &Value) -> Result<()> {
+    let thread = json!({"selection":value});
     let selection = thread["selection"]
         .as_object()
         .context("Invalid provider selection")?;
@@ -79,9 +74,20 @@ pub fn validate_thread(thread: &Value) -> Result<()> {
         provider == "antigravity" || default_account(account),
         "Alternate provider accounts are not connected yet"
     );
-    validate_mode(&thread["accessMode"], "approval")?;
-    validate_mode(&thread["interactionMode"], "build")?;
     Ok(())
+}
+pub fn validate_thread(thread: &Value) -> Result<()> {
+    crate::composer_policy::Policy::parse(thread, crate::composer_policy::Origin::Ordinary)?
+        .preflight()
+}
+pub fn apply_modes(params: &Value, thread: &mut Value) -> Result<()> {
+    for key in ["accessMode", "interactionMode"] {
+        if let Some(value) = params.get(key) {
+            ensure!(value.is_string(), "Mode choices must be explicit text");
+            thread[key] = value.clone();
+        }
+    }
+    validate_thread(thread)
 }
 
 /// Validate a persisted project/defaults composer envelope without dropping
@@ -135,14 +141,6 @@ pub fn select(params: &Value, current: &Value) -> Result<Value> {
         params["effort"].is_null() && params["speed"].is_null(),
         "Reasoning effort/speed is unsupported"
     );
-    for (key, supported) in [("accessMode", "approval"), ("interactionMode", "build")] {
-        if let Some(value) = fields.get(key) {
-            ensure!(
-                value.as_str() == Some(supported),
-                "This runtime supports {supported} mode only"
-            );
-        }
-    }
     let provider = params["provider"]
         .as_str()
         .context("Provider must be text")?;
@@ -169,6 +167,9 @@ pub fn select(params: &Value, current: &Value) -> Result<Value> {
     } else {
         selection["accountID"] = account.clone();
     }
+    let mut candidate = current.clone();
+    candidate["selection"] = selection.clone();
+    apply_modes(params, &mut candidate)?;
     Ok(selection)
 }
 
