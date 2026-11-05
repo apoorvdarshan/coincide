@@ -549,3 +549,11 @@ diagnostics independently of its active runs. Three gated headless Engine tests
 pass, including Finished-before-exit, sticky panic and successive turns on one
 thread. Returned means only that the Rust thread returned: successful child
 cleanup, central admission freeze and whole-app quiescence are not established.
+
+Linux CI at `f81a89c` exposed a shell fixture readiness race: shell metadata
+arrived before Readline rendered the prompt, allowing early input to be echoed
+twice. The fixture now waits for a fresh end-of-PS1 receipt before each write.
+A private FIFO gate deterministically exercises the old readiness window; exact
+transcript, profile order, cwd and exit assertions remain unchanged. The focused
+Mac Bash 3.2 and zsh tests both pass (the existing child entry marker stays
+ignored). Production terminal code is unchanged; Linux verification awaits CI.
