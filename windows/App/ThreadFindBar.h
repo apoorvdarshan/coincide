@@ -24,7 +24,10 @@ public:
     }
     winrt::Microsoft::UI::Xaml::Controls::StackPanel view()const{return root_;}
     bool visible()const{return root_&&root_.Visibility()==winrt::Microsoft::UI::Xaml::Visibility::Visible;}
-    void open(){try{if(!source_||!source_()){close(false);return;}root_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Visible);source_changed();query_.Focus(winrt::Microsoft::UI::Xaml::FocusState::Keyboard);query_.SelectAll();}catch(...){failure();}}
+    void open(){pending_message_.clear();try{if(!source_||!source_()){close(false);return;}root_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Visible);source_changed();query_.Focus(winrt::Microsoft::UI::Xaml::FocusState::Keyboard);query_.SelectAll();}catch(...){failure();}}
+    void open_match(const std::string& query,const std::string& message_id){
+        open();if(!visible())return;try{setting_=true;query_.Text(winrt::to_hstring(query));setting_=false;pending_message_=message_id;navigate_ready_=true;source_changed();}catch(...){setting_=false;failure();}
+    }
     void close(bool restore_focus=true){cancel();valid_=false;model_={};thread_.clear();navigate_ready_=false;try{timer_.Stop();root_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Collapsed);setting_=true;query_.Text(L"");setting_=false;preview_.Inlines().Clear();status_.Text(L"");update_buttons(false);if(restore_focus&&closed_)closed_();}catch(...){setting_=false;failure();}}
     // Only the current rendered transcript calls this. Coalesce bursts of vector changes;
     // background work owns a text-only snapshot and never touches live Thread objects.
@@ -39,7 +42,7 @@ private:
     winrt::Microsoft::UI::Xaml::Controls::TextBlock status_{nullptr},preview_{nullptr};
     winrt::Microsoft::UI::Xaml::Controls::Button previous_{nullptr},next_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
-    std::shared_ptr<std::atomic_bool> cancelled_;TranscriptFind model_;std::string thread_;std::uint64_t generation_{};bool setting_{},working_{},navigate_ready_{},valid_{};
+    std::shared_ptr<std::atomic_bool> cancelled_;TranscriptFind model_;std::string thread_,pending_message_;std::uint64_t generation_{};bool setting_{},working_{},navigate_ready_{},valid_{};
     ThreadFindBar(Source source,Navigate navigate,std::function<void()> closed):source_(std::move(source)),navigate_(std::move(navigate)),closed_(std::move(closed)){}
     static void identify(const Xaml& value,const wchar_t* id){winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetAutomationId(value,id);}
     void cancel(){if(cancelled_)cancelled_->store(true);working_=false;++generation_;}
@@ -62,7 +65,8 @@ private:
         const auto self=weak.lock();if(!self||ticket!=self->generation_||cancellation->load()||!self->visible())co_return;self->working_=false;
         try{
             const auto current=self->source_?self->source_():nullptr;if(stopped||!current||current->id!=id||(!failed&&result.query()!=winrt::to_string(self->query_.Text()))){self->source_changed();co_return;}if(failed){self->failure();co_return;}
-            if(self->thread_==id)result.preserve_selection(self->model_);self->thread_=id;self->model_=std::move(result);self->valid_=true;self->render();
+            if(!self->pending_message_.empty()){const auto target=std::exchange(self->pending_message_,{});if(!result.select(target)){self->failure();self->status_.Text(ui_text(L"This search result changed or is unavailable. Search again."));co_return;}}
+            else if(self->thread_==id)result.preserve_selection(self->model_);self->thread_=id;self->model_=std::move(result);self->valid_=true;self->render();
             const auto navigate=std::exchange(self->navigate_ready_,false);if(navigate&&self->model_.current()&&self->navigate_)self->navigate_(*self->model_.current());
         }catch(...){self->failure();}
     }
@@ -76,7 +80,7 @@ private:
         ui::TextBlock explanation;explanation.Text(ui_text(L"Matches message text literally, including code and markup. One result per message."));explanation.TextWrapping(xaml::TextWrapping::Wrap);root_.Children().Append(explanation);
         preview_=ui::TextBlock{};preview_.TextWrapping(xaml::TextWrapping::Wrap);preview_.IsTextSelectionEnabled(true);identify(preview_,L"ThreadFindExcerpt");ui::ScrollViewer excerpt;excerpt.MaxHeight(100);excerpt.VerticalScrollBarVisibility(ui::ScrollBarVisibility::Auto);excerpt.Content(preview_);root_.Children().Append(excerpt);
         timer_=winrt::Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread().CreateTimer();timer_.Interval(std::chrono::milliseconds(200));timer_.IsRepeating(false);timer_.Tick([weak](const auto&,const auto&){if(const auto self=weak.lock())self->execute();});
-        query_.TextChanging([weak](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->setting_){self->cancel();self->timer_.Stop();self->navigate_ready_=true;self->source_changed();}});
+        query_.TextChanging([weak](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->setting_){self->pending_message_.clear();self->cancel();self->timer_.Stop();self->navigate_ready_=true;self->source_changed();}});
         query_.KeyDown([weak](const auto&,const xaml::Input::KeyRoutedEventArgs& args){if(const auto self=weak.lock()){if(args.Key()==winrt::Windows::System::VirtualKey::Escape){args.Handled(true);self->close();}else if(args.Key()==winrt::Windows::System::VirtualKey::Enter){args.Handled(true);const auto shift=winrt::Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(winrt::Windows::System::VirtualKey::Shift);self->next((shift&winrt::Windows::UI::Core::CoreVirtualKeyStates::Down)==winrt::Windows::UI::Core::CoreVirtualKeyStates::Down);}}});update_buttons(false);
     }
 };
