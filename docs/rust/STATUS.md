@@ -95,7 +95,11 @@ Latest verification and current gates:
   native release remains Unknown. The first native fixture incorrectly retained
   arena-backed AnyElement output across frames; its failure is retained as fixture
   evidence, not proof of a production leak. A concrete owned element-payload API
-  now supports the corrected fixture without arena allocation or manual Render.
+  supports the corrected fixture without arena allocation or manual Render.
+  The PRE v2 native test passed physical hiding, close veto, separate Entity,
+  payload and handle retention, actual Rust Drop return, callback block/target
+  release and normal fixture exit. Native remained Unknown throughout; this is
+  scoped ownership acceptance, not strict updater readiness.
 - Shared provider pipes now retain and join stdout/stderr/stdin workers after
   child cleanup and channel disconnection. OpenCode similarly retains HTTP,
   startup and SSE workers, including cancellation and TLS teardown. Five shared
@@ -108,11 +112,17 @@ Latest verification and current gates:
   default-login reuse passed 16 profile/auth tests. A follow-up preserves only
   validated active-team routing for the same stored-login identity; 22 focused
   tests and the isolated Cursor provider integration passed. Actual Cursor
-  inference remains pending.
+  inference subsequently failed after session creation, with the worker returned
+  and no tool request observed; its cause is under diagnosis. The current-core
+  OpenCode one-turn smoke passed the exact assistant marker in 4.65 seconds,
+  with an empty workspace and actual Rust worker return.
 - The combined authentication/provider batch passed 456 core unit tests plus all
   integration targets (three isolated unit entrypoints remain parent-invoked),
   strict core Clippy and 302 desktop unit tests plus five integration targets.
   Native menu routing is mounted but still needs real interaction acceptance.
+  Twenty mechanical desktop lint fixes then passed the full 302-unit desktop
+  suite and all five integration targets (19, 10, 14, 11 and 8 tests). A fresh
+  strict desktop run still fails remaining diagnostics; no suppression was added.
 - Native helper verification exposed a real codesign CLI argument bug: inline
   requirements need the leading '=' selector. All three production sites are
   corrected, and actual signed positive/exact-role/negative-role checks passed.
@@ -188,6 +198,11 @@ before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
 The last fully green Rust remote checkpoint is 59abdfc (all six jobs). The
+a9a2eaa run passed five jobs but failed Linux core during updater rollback
+recovery: another helper still held the target lock. A deterministic duplicate-FD
+regression covers inherited open-file-description custody; explicit unlock before
+close fixes the source mechanism. All 21 focused installer tests pass locally;
+the corrected exact commit still requires parallel core and Linux CI validation. The
 follow-up WebView payload and Cursor team-routing changes require their own pushed
 CI checkpoint. Native menu acceptance and strong native browser deallocation
 remain open. No real OS GUI parity is inferred from compilation.

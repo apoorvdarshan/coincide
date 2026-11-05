@@ -368,7 +368,7 @@ mod tests {
     }
     #[test]
     fn callback_ack_is_explicit_and_idempotent_but_native_release_still_blocks() {
-        let owner = Shutdown {
+        let mut owner = Shutdown {
             ever_native: true,
             ..Shutdown::default()
         };

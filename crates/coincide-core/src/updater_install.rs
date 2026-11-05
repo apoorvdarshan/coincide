@@ -2061,22 +2061,23 @@ mod tests {
     }
     #[test]
     fn target_lock_drop_releases_even_with_inherited_open_description() {
-        let parent = temp();
-        let lock = target_lock(parent.path(), true).unwrap();
+        let temporary = temp();
+        let parent = temporary.path().canonicalize().unwrap();
+        let lock = target_lock(&parent, true).unwrap();
         // dup shares the open-file description, as a concurrent fork does
         // before exec closes inherited CLOEXEC descriptors. No scheduling race.
         let inherited = lock._file.try_clone().unwrap();
-        assert!(target_lock(parent.path(), false).is_err());
+        assert!(target_lock(&parent, false).is_err());
         drop(lock);
-        let replacement = target_lock(parent.path(), false)
+        let replacement = target_lock(&parent, false)
             .expect("finished transaction unlocks despite inherited descriptor");
         assert!(inherited.metadata().is_ok());
-        assert!(target_lock(parent.path(), false).is_err());
+        assert!(target_lock(&parent, false).is_err());
         // The old descriptor must not release the replacement's distinct lock.
         drop(inherited);
-        assert!(target_lock(parent.path(), false).is_err());
+        assert!(target_lock(&parent, false).is_err());
         drop(replacement);
-        assert!(target_lock(parent.path(), false).is_ok());
+        assert!(target_lock(&parent, false).is_ok());
     }
 
     #[test]
