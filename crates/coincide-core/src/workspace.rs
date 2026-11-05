@@ -12,20 +12,36 @@ use std::{
 
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 
-fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     ensure!(directory.is_dir(), "Project directory does not exist");
     let mut command = Command::new("git");
+    // An inherited Git config/index can redirect operations into another checkout.
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    // A regular file cannot contain executable hooks (portable across platforms).
+    let hooks = std::env::current_exe()?;
+    command
+        .arg("-c")
+        .arg(format!("core.hooksPath={}", hooks.display()));
     command
         .args([
             "--no-pager",
             "--literal-pathspecs",
             "-c",
             "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "protocol.allow=never",
             "-C",
         ])
         .arg(directory)
         .args(arguments)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
