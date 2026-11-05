@@ -14,7 +14,7 @@ with real recognition and remaining voice parity still unverified. These decisio
 - [x] Pushed native hosted-conversation/tool foundation: `2fdefa6`.
 - [x] Earlier physical 11e candidate: **3,457 checks / 65 suites**, native owner-recovery acceptance, **18 ordinary flows** and **18 hosted flows plus Quit** pass. These are separate from the latest CI snapshot below.
 - [x] Native panel foundation: **19 panels / 499 checks**; browser path portability separately checked with real long/8.3 paths.
-- [ ] Background queue/recovery robustness: latest full-app crash test stops before the crash because queue delivery becomes uncertain; its original ID/text remain saved. An earlier candidate passed the six crash/relaunch checks, which does not establish the latest case fixed.
+- [x] Current queue/crash acceptance: CI app `a5d2fed` passed **six physical full-app crash/relaunch checkpoints** on the ASUS laptop, including accepted queued work with blocked saves, unchanged host/provider identities, exactly-once replay and explicit Quit. The earlier uncertain-delivery failure and its original input remain preserved; this pass does not establish its root cause.
 - [x] Instruction Git-root correction: **80 native checks** pass with both normal and real 8.3 TEMP paths; nested/junction/forged-root refusal remains covered.
 - [x] Prepared-host helper portability: **63 actual filesystem/ACL checks pass in each** of Windows PowerShell 5.1 and PowerShell 7 in CI.
 - [x] Native runtime shutdown acceptance: **45 RPC, 102 Codex, 50 Claude and 28 ConPTY checks passed and the processes exited** after the synchronized predicate fixes; success reports now follow owned-session teardown.
@@ -22,11 +22,11 @@ with real recognition and remaining voice parity still unverified. These decisio
 - [x] [Windows CI for app code `a5d2fed`](https://github.com/apoorvdarshan/coincide/actions/runs/41951082618) passed: **18 app flows and 20 native panel suites / 525 assertions**, including **26 find-control checks**. The clipped toolbar command is revealed through one supported scroll before one visible command invocation; existing waits and coverage remain intact.
 - [x] Completed-connect deadline correction: **67 IPC checks** passed, retaining all 45 original checks plus 22 actual-pipe boundary cases. This does not establish the original physical queued-message failure fixed.
 - [x] Find in the current conversation: native message search, visible excerpts and next/previous navigation pass **32 scanner checks on both portable Clang and Windows** and **26 native control checks**. Physical Ctrl+F/F3 focus routing and virtualized row-scroll acceptance remain pending.
-- [ ] Further physical validation: the ASUS Windows peer is offline. The last baseline comparison result has not been retrieved.
+- [x] Physical follow-up: the interrupted original-binary comparison was retrieved and passed. CI app `a5d2fed` separately passed **18 hosted app flows plus orderly Quit** on the laptop, with no scoped host left running. Its executable SHA-256 is `83c3bfb37b4774ad2c52604d96251e5f6e6043a453f08da986d850cc30456396`.
 - [ ] Initial-marker/missing-host-generation owner recovery and the remaining feature/platform acceptance listed below.
 - [ ] Signed packaging, updates and distribution acceptance. No public release is authorized.
 
-The app code and UI driver passed the linked exact-revision CI snapshot. Physical owner-recovery/queue validation and the separate background queue failure remain open.
+The app code and UI driver passed the linked exact-revision CI snapshot and the physical hosted/crash scenarios above. Initial-marker/missing-host-generation owner recovery, real-service acceptance and the remaining parity work remain open. Further features will use focused follow-up PRs rather than extending this foundation PR.
 
 The full Windows port is **in progress**, not complete or released. The pushed frozen Windows candidate passed
 **3,378 automated checks across 64 suites** on the physical laptop. Native acceptance also passed **19 panels / 499

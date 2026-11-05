@@ -32,9 +32,11 @@ guard cases (3/8), so these results do not establish unrestricted hosted readine
 32 scanner and 26 native control checks; physical shortcut/focus and virtualized-row navigation remain pending.
 
 The earlier physical recovery candidate passed **3,457 checks / 65 suites**, explicit native recovery acceptance and the
-18 ordinary/hosted app flows. The latest crash test stops before the crash because queue delivery becomes uncertain;
-its original input remains saved. Instruction Git-root handling now separately passes **80 checks** with normal and
-real 8.3 paths. The linked newer CI snapshot passes; physical background queue robustness remains open in the parity checklist.
+18 ordinary/hosted app flows. The newer CI app `a5d2fed` now separately passes **18 hosted flows plus orderly Quit** and
+**six physical crash/relaunch checkpoints** on the laptop. The interrupted original-binary comparison was retrieved and
+also passed. The earlier uncertain-delivery failure and its input remain preserved; these passes do not establish its
+root cause. Instruction Git-root handling separately passes **80 checks** with normal and real 8.3 paths. Remaining
+recovery and feature acceptance is tracked in the parity checklist.
 
 The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**,
 `./windows/Tests/PreviewSmoke.ps1` exercises native long-thread switching, drafts, Send/Unicode/final-text reconciliation,
