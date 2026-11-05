@@ -120,11 +120,17 @@ impl Engine {
         );
         let thread_text = required(params, "threadId")?;
         let thread = Uuid::parse_str(thread_text).context("Invalid Computer Use thread ID")?;
-        self.store.thread(thread_text)?;
+        let selected = self
+            .active_thread
+            .as_deref()
+            .context("Select a stored thread before using Computer Use")?;
         ensure!(
-            self.active_thread.as_deref() == Some(thread_text),
+            Uuid::parse_str(selected).ok() == Some(thread),
             "Select this stored thread before using Computer Use"
         );
+        // Preserve the Store's original ID spelling (legacy UUIDs are often
+        // uppercase); transport/native identities compare as typed UUIDs.
+        self.store.thread(selected)?;
         ensure!(
             trusted_thread.is_none_or(|trusted| trusted == thread),
             "Computer Use payload does not match the trusted transport thread"
@@ -335,7 +341,7 @@ mod tests {
         let jobs = e.computer_use_drain();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].id, id);
-        assert_eq!(jobs[0].thread.to_string(), a);
+        assert_eq!(jobs[0].thread, Uuid::parse_str(&a).unwrap());
         // Same default-off check as Runtime admission, with no native object,
         // permissions query, grant or backend operation constructed here.
         assert_eq!(authority.grant(jobs[0].thread), Err(Failure::Off));
@@ -344,6 +350,28 @@ mod tests {
         assert_eq!(reply, json!({"ready":true,"result":null,"error":"off"}));
         assert!(!authority.enabled());
         assert_eq!(e.store.thread(&a).unwrap(), before);
+    }
+    #[test]
+    fn transport_uuid_case_alias_preserves_selected_store_identity_and_result_scope() {
+        let (_dir, mut e, a, _) = fixture();
+        let canonical = Uuid::parse_str(&a).unwrap();
+        let before = e.store.thread(&a).unwrap();
+        let lower = canonical.to_string();
+        let payload = json!({"method":"computer_use.request","params":request(&lower)});
+        let accepted = e.dispatch_scoped(payload, canonical);
+        let id = Uuid::parse_str(accepted["result"]["operationId"].as_str().unwrap()).unwrap();
+        let pending = e.computer_use_drain();
+        assert_eq!(pending[0].thread, canonical);
+        assert!(e.computer_use_reply(id, canonical, Err(Failure::Off)));
+        assert_eq!(
+            e.dispatch_scoped(
+                json!({"method":"computer_use.result","params":result(&lower,id)}),
+                canonical
+            )["result"]["error"],
+            "off"
+        );
+        assert_eq!(e.store.thread(&a).unwrap(), before);
+        assert_eq!(e.active_thread.as_deref(), Some(a.as_str()));
     }
     #[test]
     fn provider_context_spoof_and_unscoped_provider_requests_fail_closed() {
