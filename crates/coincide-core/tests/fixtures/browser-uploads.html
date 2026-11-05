@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Coincide local upload acceptance</title>
+<h1>Local upload acceptance</h1>
+<p>Synthetic files only. This fixture makes no network requests and never submits a form.</p>
+<label>Single file <input id="single" type="file"></label>
+<label>Multiple files <input id="multiple" type="file" multiple></label>
+<input id="hidden" type="file" hidden>
+<input id="disabled" type="file" disabled>
+<input id="directory" type="file" webkitdirectory>
+<input id="text" value="not a file input">
+<button id="inspect">Inspect attached file bytes</button>
+<button id="replace">Replace single input</button>
+<button id="navigate">Navigate to fresh document</button>
+<button id="clear">Clear observations</button>
+<pre id="observations">Ready</pre>
+<div id="frames"></div>
+<script>
+const observations = document.querySelector('#observations');
+let events = [];
+function show(value) { observations.textContent = JSON.stringify(value); }
+for (const name of ['input','change']) document.addEventListener(name, event => {
+  if (event.target.type === 'file') {
+    events.push({event:name,input:event.target.id,count:event.target.files.length});
+    show({events});
+  }
+});
+document.querySelector('#inspect').onclick = async () => {
+  const inputs = [];
+  for (const input of document.querySelectorAll('input[type=file]')) {
+    const files = [];
+    for (const file of input.files) {
+      // Diagnostic reads are bounded independently of the upload implementation.
+      const bytes = [...new Uint8Array(await file.slice(0,256).arrayBuffer())];
+      files.push({name:file.name,size:file.size,type:file.type,bytes,truncated:file.size>256});
+    }
+    inputs.push({input:input.id,files});
+  }
+  show({events,inputs});
+};
+document.querySelector('#replace').onclick = () => {
+  const input = document.querySelector('#single');
+  input.replaceWith(input.cloneNode());
+  show({replaced:true,events});
+};
+document.querySelector('#navigate').onclick = () => { location.search = '?fresh='+Date.now(); };
+document.querySelector('#clear').onclick = () => { events=[]; show({events}); };
+if (!new URLSearchParams(location.search).has('frame')) {
+  const frame = document.createElement('iframe');
+  frame.title = 'Same-origin upload fixture';
+  frame.src = location.pathname+'?frame=1';
+  document.querySelector('#frames').append(frame);
+}
+</script>

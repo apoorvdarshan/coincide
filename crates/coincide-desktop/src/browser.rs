@@ -250,6 +250,10 @@ impl BrowserController {
                     !self.uploads.values().any(|upload| upload.tab == target),
                     "An upload is already active in this tab"
                 );
+                ensure!(
+                    self.uploads.len() < 2,
+                    "At most two upload requests may be pending"
+                );
                 let permit = self.upload_slots.reserve()?;
                 let ticket = Uuid::new_v4().to_string();
                 let source = upload_probe_script(&request, &ticket)?;
@@ -335,6 +339,7 @@ impl BrowserController {
             }
             BrowserAction::Navigate { url } => {
                 let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
+                tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.view.read(cx).raw().load_url(url)?;
                 tab.url = url.clone();
                 tab.loading = true;
