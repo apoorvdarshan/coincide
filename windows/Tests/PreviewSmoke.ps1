@@ -597,6 +597,29 @@ try {
         $current=Get-Content (Join-Path $data "threads\$first.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if($current.draft -ne 'Draft Smoke A'){throw 'Opening password or pull request tools changed the conversation draft.'}
         $checks += 'Password and pull request tools open in the app without changing the conversation draft'
+        Invoke-Control 'OpenTerminal'
+        $selection=@{range=$null}
+        Wait-Until {
+            $rows=$script:window.FindAll([Windows.Automation.TreeScope]::Descendants,
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,'TerminalRowText')))
+            foreach($row in $rows){
+                if($row.Current.IsOffscreen){continue}
+                try{$pattern=$row.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern);$range=$pattern.DocumentRange;if($range.GetText(-1) -like '*TERMINAL_FIXTURE_READY*'){$selection.range=$range;return $true}}catch [Windows.Automation.ElementNotAvailableException]{}catch [InvalidOperationException]{}
+            }
+            return $false
+        } 'The owned terminal fixture did not expose its native selectable output.'
+        $selection.range.Select()
+        Invoke-Control 'TerminalUseSelection'
+        Wait-Until {
+            $text=(Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value
+            $text.StartsWith('Draft Smoke A') -and $text -like '*TERMINAL_FIXTURE_READY*' -and $text.Contains('```text')
+        } 'Explicit terminal selection did not append quoted context to the current draft.'
+        $current=Get-Content (Join-Path $data "threads\$first.json") -Raw -Encoding UTF8|ConvertFrom-Json
+        if($current.messages.Count -ne 1500 -or @($current.sessions).Count){throw 'Quoting terminal text started a provider or changed saved history.'}
+        Set-Message 'Draft Smoke A'
+        Invoke-Control 'CloseTools'
+        $checks += 'Explicit native terminal selection appends quoted composer context without sending or changing history'
+
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.

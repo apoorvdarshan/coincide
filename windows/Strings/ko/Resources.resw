@@ -234,6 +234,9 @@
   <data name="Text_06d5543325c70d5c" xml:space="preserve">
     <value>The disabled preference is still pending a successful save.</value>
   </data>
+  <data name="Text_09023907b59c38eb" xml:space="preserve">
+    <value>Go</value>
+  </data>
   <data name="Text_0911a156db3ad35b" xml:space="preserve">
     <value>Approve schedule</value>
   </data>
@@ -308,6 +311,9 @@
   </data>
   <data name="Text_1a0c41d456e2a2ec" xml:space="preserve">
     <value>Action needed</value>
+  </data>
+  <data name="Text_1c3461f13244ede3" xml:space="preserve">
+    <value>Split</value>
   </data>
   <data name="Text_1e571a852c803bbc" xml:space="preserve">
     <value>Answer every required question before submitting.</value>
@@ -393,6 +399,9 @@
   <data name="Text_2f826a07716be31f" xml:space="preserve">
     <value>Select metadata rows to import first.</value>
   </data>
+  <data name="Text_300fb3d831b074f9" xml:space="preserve">
+    <value>New Private Tab</value>
+  </data>
   <data name="Text_30edcc4e98194755" xml:space="preserve">
     <value>Windows did not release the microphone cleanly. Restart Coincide before recording again.</value>
   </data>
@@ -434,6 +443,9 @@
   </data>
   <data name="Text_365e0ea3db8f9c26" xml:space="preserve">
     <value>This conversation can inspect native windows.</value>
+  </data>
+  <data name="Text_3687049d1af562c4" xml:space="preserve">
+    <value>복사하기</value>
   </data>
   <data name="Text_36f0e292c4ded521" xml:space="preserve">
     <value>Save voice settings before recording.</value>
@@ -528,6 +540,9 @@
   <data name="Text_46bd91cf9ae909f5" xml:space="preserve">
     <value>Selected metadata file</value>
   </data>
+  <data name="Text_47737e058a7a9d67" xml:space="preserve">
+    <value>Terminal selection</value>
+  </data>
   <data name="Text_47a9f592c61daa59" xml:space="preserve">
     <value>Voice</value>
   </data>
@@ -614,6 +629,9 @@
   </data>
   <data name="Text_565adaaff41a281c" xml:space="preserve">
     <value>Window Management</value>
+  </data>
+  <data name="Text_5691f21b88960793" xml:space="preserve">
+    <value>☆</value>
   </data>
   <data name="Text_56d7ae194448aa0c" xml:space="preserve">
     <value>tab</value>
@@ -713,6 +731,9 @@
   </data>
   <data name="Text_66242229134ba7c5" xml:space="preserve">
     <value>Saving conversations and stopping background work…</value>
+  </data>
+  <data name="Text_666d711b6aaaf843" xml:space="preserve">
+    <value>북마크 및 방문 기록</value>
   </data>
   <data name="Text_6673f9a868c4c0b4" xml:space="preserve">
     <value>Import Browser Data</value>
@@ -879,6 +900,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_80495269815e81b0" xml:space="preserve">
     <value>Profile label</value>
+  </data>
+  <data name="Text_82005fbfeb927a60" xml:space="preserve">
+    <value>탭 닫기</value>
   </data>
   <data name="Text_823190519895dcf1" xml:space="preserve">
     <value>Downloading…</value>
@@ -1075,6 +1099,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_9f9b794bd3d61346" xml:space="preserve">
     <value>Track Remote Branch</value>
   </data>
+  <data name="Text_9fc3568ec8629bda" xml:space="preserve">
+    <value>앞으로</value>
+  </data>
   <data name="Text_a0ca791d0f13f0e5" xml:space="preserve">
     <value>보관</value>
   </data>
@@ -1246,6 +1273,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_c0f4254f45363d61" xml:space="preserve">
     <value>Worktrees</value>
   </data>
+  <data name="Text_c16e00a7a8b2fde2" xml:space="preserve">
+    <value>뒤로</value>
+  </data>
   <data name="Text_c2c9910c3206ce2f" xml:space="preserve">
     <value>Choose a bookmark HTML/JSON export or supported browser metadata file. Preview and select rows before importing. Cookies, passwords and sign-ins are excluded.</value>
   </data>
@@ -1339,6 +1369,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_d32d5436ebcdb941" xml:space="preserve">
     <value>Remove Conversations</value>
   </data>
+  <data name="Text_d374c80e17e18808" xml:space="preserve">
+    <value>붙여넣기</value>
+  </data>
   <data name="Text_d4942995ed3dab21" xml:space="preserve">
     <value>The confirmation could not be shown. No repository changes were made.</value>
   </data>
@@ -1347,6 +1380,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d5a79b5f1ddbd0c3" xml:space="preserve">
     <value>Keep Awake while Coincide is running</value>
+  </data>
+  <data name="Text_d5b6130b4937488c" xml:space="preserve">
+    <value>다시 로드</value>
   </data>
   <data name="Text_d6ad76dc2c1704a5" xml:space="preserve">
     <value>Each bot keeps its own conversations, personality and instructions. Opening a conversation does not send a message.</value>
@@ -1413,6 +1449,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_e117b24625d0110a" xml:space="preserve">
     <value>bottom</value>
+  </data>
+  <data name="Text_e23e62b91bcd0f02" xml:space="preserve">
+    <value>Use selection in message</value>
   </data>
   <data name="Text_e24130f1123560a0" xml:space="preserve">
     <value>속도</value>

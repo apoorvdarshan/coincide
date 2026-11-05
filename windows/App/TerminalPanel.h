@@ -1,5 +1,6 @@
 #pragma once
 #include "../Core/TerminalScreen.h"
+#include "../Core/ComposerContext.h"
 #include "../Runtime/ConPtySession.h"
 #include "NativeStrings.h"
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -124,6 +125,14 @@ public:
     }
     terminal_ui::ui::Grid view()const{return root_;}
     void set_command_guard(std::function<bool(const std::string&,const std::filesystem::path&)> guard){command_guard_=std::move(guard);}
+    void set_selection_callback(std::function<void(const std::string&,const std::string&)> callback){selection_callback_=std::move(callback);}
+    void use_selection(){
+        if(closed_||!visible_)throw std::runtime_error("Open this conversation's terminal first.");
+        const auto pane=active_pane();if(!pane||pane->closed||pane->thread_id!=selected_thread_)throw std::runtime_error("The selected terminal pane is unavailable.");
+        const auto text=*pane->selection;(void)composer_context::terminal_selection({},text);
+        if(!selection_callback_)throw std::runtime_error("The conversation composer is unavailable.");
+        selection_callback_(pane->thread_id,text);
+    }
     void select_thread(std::string id,std::filesystem::path cwd){
         if(id.empty()){selected_thread_.clear();show_active();return;}
         if(id.size()!=36&&id.size()!=38)throw std::invalid_argument("Invalid terminal conversation identity");
@@ -213,6 +222,7 @@ private:
     std::filesystem::path base_;bool fixture_{},visible_{},closed_{},refreshing_{};std::string selected_thread_;
     std::unordered_map<std::string,ThreadTabs> threads_;std::vector<std::shared_ptr<Pane>> retired_;
     std::function<bool(const std::string&,const std::filesystem::path&)> command_guard_;
+    std::function<void(const std::string&,const std::string&)> selection_callback_;
     std::vector<std::string> displayed_tabs_;
     terminal_ui::ui::Grid root_{nullptr},panes_view_{nullptr};terminal_ui::ui::ComboBox tabs_{nullptr};terminal_ui::ui::TextBlock status_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
@@ -253,7 +263,9 @@ private:
         toolbar.Children().Append(make_button(L"Paste",L"TerminalPaste",[](auto& self){if(const auto pane=self.active_pane())self.paste(pane);}));
         toolbar.Children().Append(make_button(L"Copy",L"TerminalCopy",[](auto& self){if(const auto pane=self.active_pane())self.copy(pane);}));
         toolbar.Children().Append(make_button(L"Stop",L"TerminalStop",[](auto& self){if(const auto pane=self.active_pane();pane&&pane->session)pane->session->stop();}));
-        root_.Children().Append(toolbar);panes_view_=ui::Grid{};panes_view_.ColumnSpacing(4);panes_view_.RowSpacing(4);ui::Grid::SetRow(panes_view_,1);root_.Children().Append(panes_view_);
+        ui::StackPanel toolbar_rows;toolbar_rows.Spacing(6);toolbar_rows.Children().Append(toolbar);
+        toolbar_rows.Children().Append(make_button(L"Use selection in message",L"TerminalUseSelection",[](auto& self){self.use_selection();}));
+        root_.Children().Append(toolbar_rows);panes_view_=ui::Grid{};panes_view_.ColumnSpacing(4);panes_view_.RowSpacing(4);ui::Grid::SetRow(panes_view_,1);root_.Children().Append(panes_view_);
         status_=ui::TextBlock{};status_.Text(ui_text(L"Open a terminal for this conversation."));status_.TextWrapping(xaml::TextWrapping::Wrap);terminal_ui::identify(status_,L"TerminalPanelStatus");ui::Grid::SetRow(status_,2);root_.Children().Append(status_);
         timer_=root_.DispatcherQueue().CreateTimer();timer_.Interval(std::chrono::milliseconds(40));
         timer_.Tick([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock())self->tick();});timer_.Start();

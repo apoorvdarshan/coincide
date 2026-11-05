@@ -36,6 +36,8 @@ if ($LASTEXITCODE) { throw 'Handoff tests failed.' }
 if ($LASTEXITCODE) { throw 'Terminal screen tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideSchedulerTests.exe")
 if ($LASTEXITCODE) { throw 'Scheduler tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideComposerContextTests.exe")
+if ($LASTEXITCODE) { throw 'Terminal selection composer tests failed.' }
 
 if (!$CoreOnly) {
     & $msbuild (Join-Path $root 'App\Coincide.vcxproj') /restore /m /verbosity:minimal "/p:Configuration=$Configuration" "/p:Platform=$Architecture" "/p:CoincideCompilerJobs=$CompilerJobs"
