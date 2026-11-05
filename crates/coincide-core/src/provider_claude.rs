@@ -232,9 +232,12 @@ impl Mapper {
 
 pub(super) fn run(
     launch: Launch,
+    images: Vec<ImageAttachment>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
+    let mut content = Some(images::claude_content(&launch.prompt, &images));
+    drop(images);
     let mut arguments = [
         "--output-format",
         "stream-json",
@@ -358,7 +361,8 @@ pub(super) fn run(
                 );
                 initialized = true;
                 if stopping.is_none() {
-                    transport.write(&json!({"type":"user","message":{"role":"user","content":launch.prompt},"parent_tool_use_id":null,"uuid":uuid::Uuid::new_v4().to_string(),"origin":{"kind":"human"}}))?;
+                    let content = content.take().context("Claude prompt was already sent")?;
+                    transport.write(&json!({"type":"user","message":{"role":"user","content":content},"parent_tool_use_id":null,"uuid":uuid::Uuid::new_v4().to_string(),"origin":{"kind":"human"}}))?;
                 }
             }
             Some("control_request") => {

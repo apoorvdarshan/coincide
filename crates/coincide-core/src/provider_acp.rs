@@ -103,9 +103,13 @@ impl Mapper {
 pub(super) fn run(
     launch: Launch,
     arguments: Vec<String>,
+    images: Vec<ImageAttachment>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
+    let has_images = !images.is_empty();
+    let mut prompt = Some(images::acp_content(&launch.prompt, &images));
+    drop(images);
     let mut transport = Transport::spawn(&launch, &arguments, &[])?;
     transport.write(&rpc(
         1,
@@ -244,6 +248,11 @@ pub(super) fn run(
                     result["protocolVersion"].as_u64() == Some(1),
                     "This adapter requires ACP protocol version 1"
                 );
+                ensure!(
+                    !has_images
+                        || result["agentCapabilities"]["promptCapabilities"]["image"] == true,
+                    "ACP server does not advertise image prompt support; no prompt was sent"
+                );
                 let mut params = json!({"cwd":launch.cwd,"mcpServers":[]});
                 let method = if let Some(id) = &launch.session {
                     ensure!(
@@ -297,7 +306,7 @@ pub(super) fn run(
                 transport.write(&rpc(
                     4,
                     "session/prompt",
-                    json!({"sessionId":id,"prompt":[{"type":"text","text":launch.prompt}]}),
+                    json!({"sessionId":id,"prompt":prompt.take().context("ACP prompt was already sent")?}),
                 ))?;
                 stage = 4;
             }
@@ -305,7 +314,7 @@ pub(super) fn run(
                 transport.write(&rpc(
                     4,
                     "session/prompt",
-                    json!({"sessionId":session_id,"prompt":[{"type":"text","text":launch.prompt}]}),
+                    json!({"sessionId":session_id,"prompt":prompt.take().context("ACP prompt was already sent")?}),
                 ))?;
                 stage = 4;
             }

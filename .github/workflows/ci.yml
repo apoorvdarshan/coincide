@@ -54,6 +54,9 @@ jobs:
           affects_app() {
             case "$1" in
               .github/workflows/ci.yml) return 0 ;;
+              # The standalone Rust workspace has its own cross-platform checks.
+              # No Xcode target or build/test script reads these files.
+              crates/* | Cargo.toml | Cargo.lock | \
               website/* | discord/* | npm/* | docs/* | store/* | windows/* | .github/workflows/* | .github/dependabot.yml | \
                 .github/actionlint.yaml | .github/PULL_REQUEST_TEMPLATE.md) return 1 ;;
               */*) return 0 ;;

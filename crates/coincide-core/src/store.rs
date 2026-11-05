@@ -32,6 +32,15 @@ pub struct ImportReport {
 }
 
 impl Store {
+    /// The directory of this isolated store, never the legacy application root.
+    pub fn data_directory(&self) -> Result<std::path::PathBuf> {
+        let path = self.db.path().context("Store has no filesystem location")?;
+        let parent = Path::new(path)
+            .parent()
+            .context("Store has no parent directory")?;
+        Ok(parent.canonicalize()?)
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             let existed = parent.exists();

@@ -365,6 +365,10 @@ impl<'a> ScheduleService<'a> {
         }
         if matches!(state, TargetState::Busy | TargetState::Unavailable) {
             consume(value, job.occurrence, now, &typed, job.manual)?;
+            // A deferred occurrence that cannot run is now consumed as missed;
+            // leaving it pending would retry it on every tick and replay it
+            // when the provider became available again.
+            value["pendingDelivery"] = Value::Null;
             value["lastOutcome"] = json!("missed");
             value["lastMessage"] =
                 json!("Run skipped because the project or provider was unavailable.");

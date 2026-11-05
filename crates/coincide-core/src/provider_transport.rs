@@ -2,8 +2,9 @@
 use super::*;
 use std::{collections::VecDeque, process::Command, sync::mpsc::SyncSender};
 
-const MAX_OUTBOUND_FRAME: usize = 8 * 1024 * 1024;
-const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+const MAX_OUTBOUND_FRAME: usize = 32 * 1024 * 1024;
+const MAX_INBOUND_FRAME: usize = 32 * 1024 * 1024;
+const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 const WRITE_DEADLINE: Duration = Duration::from_secs(10);
 
 struct PendingWrite {
@@ -74,18 +75,20 @@ impl Transport {
                 let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
             });
         }
-        let (tx, frames) = mpsc::sync_channel(256);
+        // Image echoes/tool results can be as large as outbound prompts. Keep
+        // fewer queued frames so the larger frame limit does not multiply RAM.
+        let (tx, frames) = mpsc::sync_channel(8);
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut line = Vec::new();
                 let result = match reader
                     .by_ref()
-                    .take(4 * 1024 * 1024 + 1)
+                    .take(MAX_INBOUND_FRAME as u64 + 1)
                     .read_until(b'\n', &mut line)
                 {
                     Ok(0) => break,
-                    Ok(n) if n <= 4 * 1024 * 1024 => {
+                    Ok(n) if n <= MAX_INBOUND_FRAME => {
                         if line.iter().all(u8::is_ascii_whitespace) {
                             continue;
                         }
@@ -133,11 +136,11 @@ impl Transport {
         bytes.push(b'\n');
         ensure!(
             bytes.len() <= MAX_OUTBOUND_FRAME,
-            "Provider input frame exceeds 8 MiB"
+            "Provider input frame exceeds 32 MiB"
         );
         ensure!(
             self.queued_bytes + bytes.len() <= MAX_QUEUED_BYTES,
-            "Provider input queue exceeds 16 MiB"
+            "Provider input queue exceeds 64 MiB"
         );
         self.sequence += 1;
         let pending = PendingWrite {

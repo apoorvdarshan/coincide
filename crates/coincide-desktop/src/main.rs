@@ -3,6 +3,7 @@ mod browser;
 use browser::BrowserController;
 use coincide_core::{
     api::{Engine, SharedEngine, call},
+    attachments::StoredImage,
     browser_protocol::BrowserAction,
     control,
     store::{Store, ThreadSummary, text},
@@ -21,6 +22,16 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+enum PreviewState {
+    Checking,
+    Ready(std::path::PathBuf),
+    Unavailable,
+}
+struct ImagePreview {
+    state: PreviewState,
+    rows: Vec<(String, usize)>,
+}
+
 struct Coincide {
     engine: SharedEngine,
     revision: u64,
@@ -28,6 +39,14 @@ struct Coincide {
     pending_requests: Vec<Value>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
+    schedules_open: bool,
+    schedule_create_open: bool,
+    schedule_interval: bool,
+    schedules: Vec<Value>,
+    schedule_name: Entity<InputState>,
+    schedule_prompt: Entity<TextareaState>,
+    schedule_minutes: Entity<InputState>,
+    schedule_status: String,
     _poll: Task<()>,
     terminal_id: Option<String>,
     terminal_text: String,
@@ -42,6 +61,14 @@ struct Coincide {
     project_path: Entity<InputState>,
     selected: Option<Value>,
     composer: Entity<TextareaState>,
+    attachment_import_threads: std::collections::HashSet<String>,
+    attachment_root: Option<std::path::PathBuf>,
+    image_previews: std::collections::HashMap<String, ImagePreview>,
+    image_preview_order: std::collections::VecDeque<String>,
+    image_validations_running: usize,
+    image_waiting_rows: std::collections::HashSet<(String, usize)>,
+    image_assets: Entity<RetainAllImageCache>,
+    image_asset_order: std::collections::VecDeque<std::path::PathBuf>,
     search: Entity<InputState>,
     status: String,
     show_archived: bool,
@@ -61,6 +88,11 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(|cx| TextareaState::new(window, cx).placeholder("Write a message…"));
+        let schedule_name = cx.new(|cx| InputState::new(window, cx).placeholder("Schedule name"));
+        let schedule_prompt = cx.new(|cx| {
+            TextareaState::new(window, cx).placeholder("Message to send to this conversation")
+        });
+        let schedule_minutes = cx.new(|cx| InputState::new(window, cx).placeholder("Minutes"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let project_path =
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
@@ -104,6 +136,10 @@ impl Coincide {
             .ok()
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
+        let attachment_root = engine
+            .lock()
+            .ok()
+            .and_then(|engine| engine.store.data_directory().ok());
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -124,6 +160,14 @@ impl Coincide {
             pending_requests: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
+            schedules_open: false,
+            schedule_create_open: false,
+            schedule_interval: false,
+            schedules: Vec::new(),
+            schedule_name,
+            schedule_prompt,
+            schedule_minutes,
+            schedule_status: String::new(),
             _poll: poll,
             terminal_id: None,
             terminal_text: String::new(),
@@ -138,6 +182,14 @@ impl Coincide {
             project_path,
             selected: None,
             composer,
+            attachment_import_threads: Default::default(),
+            attachment_root,
+            image_previews: Default::default(),
+            image_preview_order: Default::default(),
+            image_validations_running: 0,
+            image_waiting_rows: Default::default(),
+            image_assets: RetainAllImageCache::new(cx),
+            image_asset_order: Default::default(),
             search,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             show_archived: false,
@@ -417,6 +469,9 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.schedules_open {
+            self.refresh_schedules(cx);
+        }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
         }
@@ -430,6 +485,19 @@ impl Coincide {
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(v) => {
                 let draft = text(&v, "draft");
+                if self
+                    .selected
+                    .as_ref()
+                    .is_none_or(|thread| thread["id"] != id)
+                {
+                    self.image_assets
+                        .update(cx, |cache, cx| cache.clear(window, cx));
+                    self.image_asset_order.clear();
+                    self.image_waiting_rows.clear();
+                    for entry in self.image_previews.values_mut() {
+                        entry.rows.clear();
+                    }
+                }
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
@@ -457,7 +525,242 @@ impl Coincide {
             }
             Err(e) => self.status = format!("Unable to open conversation: {e}"),
         }
+        if self.schedules_open {
+            self.refresh_schedules(cx);
+        }
         cx.notify();
+    }
+    fn refresh_schedules(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            self.schedules.clear();
+            return;
+        };
+        match call(&self.engine, "schedules.list", json!({"threadId":thread})) {
+            Ok(result) => self.schedules = result["tasks"].as_array().cloned().unwrap_or_default(),
+            Err(error) => self.schedule_status = format!("Unable to load schedules: {error}"),
+        }
+        cx.notify();
+    }
+    fn schedule_action(&mut self, id: &str, action: &str, cx: &mut Context<Self>) {
+        let result = if action == "approve" {
+            // Approval is a trusted native button action, never an agent-callable API.
+            match self.engine.lock() {
+                Ok(mut engine) => engine.approve_schedule(id),
+                Err(_) => Err(anyhow::anyhow!("App engine is unavailable")),
+            }
+        } else {
+            call(&self.engine, action, json!({"scheduleId":id}))
+        };
+        self.schedule_status = match result {
+            Ok(_) => match action {
+                "approve" => "Approved for execution in Coincide Rust.",
+                "schedules.pause" => "Schedule paused.",
+                "schedules.resume" => "Schedule resumed; approval is still required if shown.",
+                "schedules.delete" => "Schedule deleted.",
+                "schedules.run-now" => {
+                    "Run requested; check the conversation for execution status."
+                }
+                _ => "Schedule updated.",
+            }
+            .into(),
+            Err(error) => format!("Schedule action failed: {error}"),
+        };
+        self.refresh_schedules(cx);
+    }
+    fn create_schedule(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let minutes = match self.schedule_minutes.read(cx).value().trim().parse::<u32>() {
+            Ok(minutes)
+                if (1..=44640).contains(&minutes) && (!self.schedule_interval || minutes >= 5) =>
+            {
+                minutes
+            }
+            _ => {
+                self.schedule_status =
+                    "Enter 1–44,640 minutes for once, or 5–44,640 for an interval.".into();
+                cx.notify();
+                return;
+            }
+        };
+        let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return;
+        };
+        let recurrence = json!({"kind":if self.schedule_interval {"interval"} else {"once"},
+            "timeZoneID":"UTC","date":now.as_secs_f64()-978307200.0+f64::from(minutes)*60.0,
+            "hour":0,"minute":0,"weekday":1,"intervalMinutes":if self.schedule_interval {Some(minutes)} else {None}});
+        let task = json!({"name":self.schedule_name.read(cx).value().to_string(),"prompt":self.schedule_prompt.read(cx).value().to_string(),
+            "projectID":thread["projectID"],"threadID":thread["id"],"recurrence":recurrence});
+        match call(&self.engine, "schedules.create", json!({"task":task})) {
+            Ok(_) => {
+                self.schedule_status =
+                    "Schedule created. Review its message and timing, then approve below.".into();
+                self.schedule_create_open = false;
+            }
+            Err(error) => self.schedule_status = format!("Schedule was not created: {error}"),
+        }
+        self.refresh_schedules(cx);
+    }
+    fn schedules_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut content = div().id("schedule-panel").flex().flex_col().flex_1().min_h_0().min_w_0().gap_3().p_4().overflow_y_scroll()
+            .child(div().text_lg().child("Schedules for this conversation"))
+            .child(div().text_sm().child("Imported schedules remain dormant until you approve them separately in Coincide Rust. The app must be running for schedules to execute."))
+            .child(Button::new("schedule-new").label(if self.schedule_create_open {"Hide new schedule"} else {"New schedule"})
+                .on_click(cx.listener(|this,_,_,cx| {this.schedule_create_open=!this.schedule_create_open;cx.notify();})))
+            .child(div().text_sm().child(self.schedule_status.clone()));
+        if self.schedule_create_open {
+            content = content.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .p_3()
+                    .rounded_md()
+                    .bg(rgb(0x202a3b))
+                    .child(Input::new(&self.schedule_name))
+                    .child(Textarea::new(&self.schedule_prompt).h(px(90.)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("schedule-once")
+                                    .label(if self.schedule_interval {
+                                        "Once"
+                                    } else {
+                                        "✓ Once"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.schedule_interval = false;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("schedule-interval")
+                                    .label(if self.schedule_interval {
+                                        "✓ Interval"
+                                    } else {
+                                        "Interval"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.schedule_interval = true;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(div().text_sm().child(if self.schedule_interval {
+                        "Repeat every N minutes; first run after N minutes (minimum 5)."
+                    } else {
+                        "Run once, N minutes from now."
+                    }))
+                    .child(Input::new(&self.schedule_minutes))
+                    .child(
+                        Button::new("schedule-create")
+                            .label("Create for review")
+                            .on_click(cx.listener(|this, _, _, cx| this.create_schedule(cx))),
+                    ),
+            );
+        }
+        if self.schedules.is_empty() {
+            content = content.child(div().child("No schedules in this conversation."));
+        }
+        for schedule in &self.schedules {
+            let id = text(schedule, "id");
+            let state = text(schedule, "approvalState");
+            let approved = state == "approved";
+            let proposed = schedule
+                .get("proposal")
+                .filter(|value| value.is_object())
+                .unwrap_or(schedule);
+            let mut card = div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .gap_2()
+                .p_3()
+                .rounded_md()
+                .bg(rgb(0x202a3b))
+                .child(div().font_semibold().child(text(proposed, "name")))
+                .child(div().child(text(proposed, "prompt")))
+                .child(div().text_sm().child(format!(
+                    "Next run: {}",
+                    schedule_date(&schedule["nextRunAt"])
+                )))
+                .child(div().text_sm().child(format!(
+                    "Timing: {}",
+                    schedule_timing(&proposed["recurrence"])
+                )))
+                .child(div().text_sm().child(format!(
+                    "Approval: {} · {}",
+                    if approved {
+                        "Approved"
+                    } else if state == "awaitingUserApproval" {
+                        "Awaiting your approval"
+                    } else {
+                        "Awaiting separate Rust approval"
+                    },
+                    if schedule["isPaused"] == true {
+                        "Paused"
+                    } else {
+                        "Enabled"
+                    }
+                )));
+            if !schedule["proposal"].is_null() {
+                card = card.child(
+                    div()
+                        .text_sm()
+                        .child("Pending changes shown above will take effect when approved."),
+                );
+            }
+            if let Some(reason) = schedule["pauseReason"].as_str() {
+                card = card.child(div().text_sm().child(reason.to_owned()));
+            }
+            let mut actions = div().flex().flex_wrap().gap_2();
+            if !approved {
+                let id = id.clone();
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
+                        .label("Approve in Rust")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.schedule_action(&id, "approve", cx)
+                        })),
+                );
+            }
+            for (action, label) in [
+                (
+                    if schedule["isPaused"] == true {
+                        "schedules.resume"
+                    } else {
+                        "schedules.pause"
+                    },
+                    if schedule["isPaused"] == true {
+                        "Resume"
+                    } else {
+                        "Pause"
+                    },
+                ),
+                ("schedules.run-now", "Run now"),
+                ("schedules.delete", "Delete"),
+            ] {
+                if action == "schedules.run-now" && !approved {
+                    continue;
+                }
+                let id = id.clone();
+                actions =
+                    actions.child(
+                        Button::new(SharedString::from(format!("schedule-{action}-{id}")))
+                            .label(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.schedule_action(&id, action, cx)
+                            })),
+                    );
+            }
+            content = content.child(card.child(actions));
+        }
+        content.into_any_element()
     }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self
@@ -541,6 +844,10 @@ impl Coincide {
             }
         }
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
+            let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+            let was_running = selected_thread
+                .as_ref()
+                .is_some_and(|id| self.running.contains(id));
             self.running = status["running"]
                 .as_array()
                 .map(|a| {
@@ -549,6 +856,15 @@ impl Coincide {
                         .collect()
                 })
                 .unwrap_or_default();
+            if was_running
+                && selected_thread
+                    .as_ref()
+                    .is_some_and(|id| !self.running.contains(id))
+                && self.status == "Agent running · approval required for changes"
+            {
+                self.status = "Agent turn ended.".into();
+                cx.notify();
+            }
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
                 self.revision = revision;
@@ -853,14 +1169,295 @@ impl Coincide {
                 .into_any_element(),
         )
     }
+    fn attach_images(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        if !self.attachment_import_threads.insert(thread_id.clone()) {
+            return;
+        }
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach images".into()),
+        });
+        let engine = self.engine.clone();
+        self.status = "Choose images to attach to this draft.".into();
+        cx.notify();
+        cx.spawn(async move |this,cx| {
+            let outcome: Result<usize> = async {
+                let Some(paths) = picker.await?? else {return Ok(0);};
+                anyhow::ensure!(paths.len()<=20,"Select at most 20 images at a time");
+                let mut imported=0;
+                for path in paths {
+                    this.update(cx,|_,_|())?;
+                    let operation=call(&engine,"attachments.add",json!({"threadId":thread_id,"path":path}))?;
+                    let operation_id=operation["operationId"].as_str().ok_or_else(||anyhow::anyhow!("Image import did not return an operation ID"))?;
+                    loop {
+                        let result=call(&engine,"workspace.result",json!({"threadId":thread_id,"operationId":operation_id}))?;
+                        if result["ready"]==true {
+                            if let Some(error)=result["result"]["error"].as_str(){anyhow::bail!("{error}");}
+                            imported+=1;
+                            break;
+                        }
+                        cx.background_executor().timer(Duration::from_millis(150)).await;
+                    }
+                }
+                Ok(imported)
+            }.await;
+            let _=this.update(cx,|this,cx| {
+                this.attachment_import_threads.remove(&thread_id);
+                this.status=match outcome {
+                    Ok(0)=>"Image selection cancelled.".into(),
+                    Ok(count)=>format!("Attached {count} image(s) to the draft."),
+                    Err(error)=>format!("Image import stopped: {error}. Any earlier successful imports remain attached."),
+                };
+                if this.selected.as_ref().is_some_and(|thread|thread["id"]==thread_id) {
+                    if let Ok(thread)=call(&this.engine,"threads.read",json!({"threadId":thread_id})){this.selected=Some(thread);}
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+    fn remove_image(&mut self, attachment_id: &str, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        match call(
+            &self.engine,
+            "attachments.remove",
+            json!({"threadId":thread_id,"attachmentId":attachment_id}),
+        ) {
+            Ok(_) => {
+                if let Ok(thread) =
+                    call(&self.engine, "threads.read", json!({"threadId":thread_id}))
+                {
+                    self.selected = Some(thread);
+                }
+                self.status = "Image removed from this draft.".into();
+            }
+            Err(error) => self.status = format!("Image could not be removed: {error}"),
+        }
+        cx.notify();
+    }
+    fn image_preview(
+        &mut self,
+        metadata: &Value,
+        row: Option<usize>,
+        width: f32,
+        height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let placeholder = |label: &'static str| {
+            div()
+                .w(px(width))
+                .h(px(height))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(rgb(0x111722))
+                .rounded_md()
+                .text_xs()
+                .child(label)
+                .into_any_element()
+        };
+        let Ok(stored) = serde_json::from_value::<StoredImage>(metadata.clone()) else {
+            return placeholder("Image unavailable");
+        };
+        // The complete typed metadata is the cache revision. An ID reused with
+        // a different path/dimensions never inherits an earlier validation.
+        let Ok(key) = serde_json::to_string(&stored) else {
+            return placeholder("Image unavailable");
+        };
+        if key.len() > 16384 {
+            return placeholder("Image unavailable");
+        }
+        if !self.image_previews.contains_key(&key) {
+            if self.image_validations_running >= 4 {
+                if let Some(index) = row {
+                    if let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+                        self.image_waiting_rows.insert((thread, index));
+                    }
+                }
+                return placeholder("Loading image…");
+            }
+            let Some(root) = self.attachment_root.clone() else {
+                return placeholder("Image unavailable");
+            };
+            while self.image_previews.len() >= 128 {
+                let candidate = self
+                    .image_preview_order
+                    .iter()
+                    .find(|key| {
+                        self.image_previews
+                            .get(*key)
+                            .is_none_or(|entry| !matches!(entry.state, PreviewState::Checking))
+                    })
+                    .cloned();
+                let Some(candidate) = candidate else {
+                    break;
+                };
+                self.image_preview_order.retain(|key| key != &candidate);
+                self.image_previews.remove(&candidate);
+            }
+            self.image_previews.insert(
+                key.clone(),
+                ImagePreview {
+                    state: PreviewState::Checking,
+                    rows: Vec::new(),
+                },
+            );
+            self.image_validations_running += 1;
+            let validation = cx.background_executor().spawn(async move {
+                // Includes UUID-root/path/symlink/size/decoded-dimension checks.
+                // No metadata path reaches GPUI until this succeeds.
+                stored.prepare_in(&root).map(|_| stored.path)
+            });
+            let completed_key = key.clone();
+            cx.spawn(async move |this, cx| {
+                let result = validation.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.image_validations_running =
+                        this.image_validations_running.saturating_sub(1);
+                    if let Some(entry) = this.image_previews.get_mut(&completed_key) {
+                        entry.state = match result {
+                            Ok(path) => PreviewState::Ready(path),
+                            Err(_) => PreviewState::Unavailable,
+                        };
+                        let selected = this.selected.as_ref().map(|thread| text(thread, "id"));
+                        for (thread, index) in &entry.rows {
+                            if selected.as_deref() == Some(thread.as_str())
+                                && *index < this.transcript_count
+                            {
+                                this.transcript_list.splice(*index..*index + 1, 1);
+                            }
+                        }
+                    }
+                    let selected = this.selected.as_ref().map(|thread| text(thread, "id"));
+                    for (thread, index) in this.image_waiting_rows.drain() {
+                        if selected.as_deref() == Some(thread.as_str())
+                            && index < this.transcript_count
+                        {
+                            this.transcript_list.splice(index..index + 1, 1);
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        self.image_preview_order.retain(|previous| previous != &key);
+        self.image_preview_order.push_back(key.clone());
+        let entry = self
+            .image_previews
+            .get_mut(&key)
+            .expect("preview was inserted");
+        if let Some(index) = row {
+            if let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+                let target = (thread, index);
+                if !entry.rows.contains(&target) {
+                    entry.rows.push(target);
+                }
+            }
+        }
+        let path = match &entry.state {
+            PreviewState::Ready(path) => path.clone(),
+            PreviewState::Checking => return placeholder("Loading image…"),
+            PreviewState::Unavailable => return placeholder("Image unavailable"),
+        };
+        self.image_asset_order.retain(|old| old != &path);
+        self.image_asset_order.push_back(path.clone());
+        // Bound decoded native/GPU images independently of cheap validation
+        // records. Offscreen transcript rows remain virtualized by ListState.
+        while self.image_asset_order.len() > 32 {
+            if let Some(old) = self.image_asset_order.pop_front() {
+                let resource: Resource = old.into();
+                self.image_assets
+                    .update(cx, |cache, cx| cache.remove(&resource, window, cx));
+            }
+        }
+        img(path)
+            .image_cache(&self.image_assets)
+            .w(px(width))
+            .h(px(height))
+            .flex_shrink_0()
+            .object_fit(ObjectFit::Contain)
+            .rounded_md()
+            .with_loading(|| div().text_xs().child("Loading image…").into_any_element())
+            .with_fallback(|| {
+                div()
+                    .text_xs()
+                    .child("Image unavailable")
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
+    fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let images = self.selected.as_ref()?["rustDraftImages"]
+            .as_array()?
+            .clone();
+        if images.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .id("draft-images")
+                .flex()
+                .flex_col()
+                .gap_1()
+                .max_h(px(110.))
+                .overflow_y_scroll()
+                .mb_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .child(format!("{} image(s) attached", images.len())),
+                )
+                .children(images.iter().map(|image| {
+                    let id = text(image, "id");
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .child(self.image_preview(image, None, 64., 64., window, cx))
+                        .child(div().flex_1().min_w_0().truncate().text_sm().child(format!(
+                            "{} · {}×{}",
+                            text(image, "originalName"),
+                            image["width"],
+                            image["height"]
+                        )))
+                        .child(
+                            Button::new(SharedString::from(format!("remove-image-{id}")))
+                                .label("Remove")
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.remove_image(&id, cx)),
+                                ),
+                        )
+                }))
+                .into_any_element(),
+        )
+    }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {
+            if self.attachment_import_threads.contains(&text(v, "id")) {
+                self.status = "Wait for image imports to finish before sending.".into();
+                cx.notify();
+                return;
+            }
             match call(
                 &self.engine,
                 "agent.send",
                 json!({"threadId":v["id"],"text":self.composer.read(cx).value().to_string()}),
             ) {
                 Ok(_) => {
+                    let id = text(v, "id");
+                    if !self.running.contains(&id) {
+                        self.running.push(id);
+                    }
                     self.status = "Agent running · approval required for changes".into();
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
@@ -887,12 +1484,7 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn message(
-        &mut self,
-        index: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self
             .selected
             .as_ref()
@@ -911,6 +1503,22 @@ impl Coincide {
             body
         };
         let label = format!("{} {}", kind, text(item, "provider"));
+        // Only Rust-ingested metadata is previewable. Legacy imported media is
+        // deliberately not opened through arbitrary historical paths.
+        let images = item["rustImages"].as_array().cloned().unwrap_or_default();
+        let previews = images
+            .iter()
+            .take(20)
+            .map(|image| {
+                let name: String = text(image, "originalName").chars().take(200).collect();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(self.image_preview(image, Some(index), 240., 180., window, cx))
+                    .child(div().max_w(px(240.)).truncate().text_xs().child(name))
+            })
+            .collect::<Vec<_>>();
         div()
             .mx_6()
             .my_2()
@@ -938,6 +1546,9 @@ impl Coincide {
                 )
             })
             .child(TextView::markdown(("message", index), shown))
+            .when(!previews.is_empty(), |view| {
+                view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
+            })
             .into_any_element()
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1160,8 +1771,19 @@ impl Render for Coincide {
         })
         .flex_1()
         .min_h_0();
+        let conversation_content = if self.schedules_open {
+            self.schedules_pane(cx)
+        } else {
+            transcript.into_any_element()
+        };
         let browser_pane = self.browser_pane(cx);
         let pending_pane = self.pending_pane(cx);
+        let draft_images = if self.schedules_open {
+            None
+        } else {
+            self.draft_images(window, cx)
+        };
+        let importing_images = self.attachment_import_threads.contains(&selected_id);
         div()
             .flex()
             .size_full()
@@ -1197,6 +1819,21 @@ impl Render for Coincide {
                                 ),
                             )
                             .child(
+                                Button::new("schedules")
+                                    .label(if self.schedules_open {
+                                        "Conversation"
+                                    } else {
+                                        "Schedules"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.schedules_open = !this.schedules_open;
+                                        if this.schedules_open {
+                                            this.refresh_schedules(cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
                                 Button::new("fork").label("Fork").on_click(
                                     cx.listener(|this, _, window, cx| this.fork(window, cx)),
                                 ),
@@ -1208,7 +1845,7 @@ impl Render for Coincide {
                                 cx.listener(|this, _, _, cx| this.toggle("isArchived", cx)),
                             )),
                     )
-                    .child(transcript)
+                    .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when(self.terminal_id.is_some(), |view| {
                         view.child(
@@ -1237,69 +1874,151 @@ impl Render for Coincide {
                                 .child(self.terminal_text.clone()),
                         )
                     })
-                    .child(
-                        div()
-                            .p_4()
-                            .border_t_1()
-                            .border_color(rgb(0x29303d))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .mb_2()
-                                    .child(Button::new("provider-codex").label("Codex").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.select_provider("codex", cx)
-                                        }),
-                                    ))
-                                    .child(Button::new("provider-claude").label("Claude").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.select_provider("claude", cx)
-                                        }),
-                                    ))
-                                    .child(
-                                        div().text_sm().child(
-                                            self.selected
-                                                .as_ref()
-                                                .map(|v| text(&v["selection"], "provider"))
-                                                .unwrap_or_default(),
+                    .when(!self.schedules_open, |view| {
+                        view.child(
+                            div()
+                                .p_4()
+                                .border_t_1()
+                                .border_color(rgb(0x29303d))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .mb_2()
+                                        .child(
+                                            Button::new("provider-codex").label("Codex").on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.select_provider("codex", cx)
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            Button::new("provider-claude")
+                                                .label("Claude")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.select_provider("claude", cx)
+                                                })),
+                                        )
+                                        .child(
+                                            div().text_sm().child(
+                                                self.selected
+                                                    .as_ref()
+                                                    .map(|v| text(&v["selection"], "provider"))
+                                                    .unwrap_or_default(),
+                                            ),
                                         ),
-                                    ),
-                            )
-                            .child(Textarea::new(&self.composer).h(px(110.)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .mt_2()
-                                    .child(Button::new("send").primary().label("Send").on_click(
-                                        cx.listener(|this, _, window, cx| this.send(window, cx)),
-                                    ))
-                                    .child(Button::new("stop").label("Stop").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            if let Some(v) = this.selected.as_ref() {
-                                                if let Err(e) = call(
-                                                    &this.engine,
-                                                    "agent.stop",
-                                                    json!({"threadId":v["id"]}),
-                                                ) {
-                                                    this.status = e.to_string();
+                                )
+                                .when_some(draft_images, |view, images| view.child(images))
+                                .child(Textarea::new(&self.composer).h(px(110.)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .mt_2()
+                                        .child(
+                                            Button::new("attach-images")
+                                                .label(if importing_images {
+                                                    "Importing images…"
+                                                } else {
+                                                    "Attach images"
+                                                })
+                                                .disabled(importing_images)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.attach_images(cx)
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("send")
+                                                .primary()
+                                                .disabled(importing_images)
+                                                .label("Send")
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.send(window, cx)
+                                                })),
+                                        )
+                                        .child(Button::new("stop").label("Stop").on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                if let Some(v) = this.selected.as_ref() {
+                                                    if let Err(e) = call(
+                                                        &this.engine,
+                                                        "agent.stop",
+                                                        json!({"threadId":v["id"]}),
+                                                    ) {
+                                                        this.status = e.to_string();
+                                                    }
                                                 }
-                                            }
-                                            cx.notify();
-                                        }),
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .mt_2()
-                                    .text_sm()
-                                    .text_color(rgb(0x98a6ba))
-                                    .child(self.status.clone()),
-                            ),
-                    ),
+                                                cx.notify();
+                                            }),
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .mt_2()
+                                        .text_sm()
+                                        .text_color(rgb(0x98a6ba))
+                                        .child(self.status.clone()),
+                                ),
+                        )
+                    }),
             )
             .when_some(browser_pane, |view, pane| view.child(pane))
+    }
+}
+fn schedule_date(value: &Value) -> String {
+    if value.is_null() {
+        return "None".into();
+    }
+    coincide_core::scheduling::parse_date(value)
+        .map(|date| date.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|_| "Unavailable".into())
+}
+fn schedule_timing(recurrence: &Value) -> String {
+    let zone = text(recurrence, "timeZoneID");
+    let time = format!(
+        "{:02}:{:02} ({zone})",
+        recurrence["hour"].as_u64().unwrap_or(0),
+        recurrence["minute"].as_u64().unwrap_or(0)
+    );
+    let weekday = |day: u64| {
+        [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+        ]
+        .get(day.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("Unknown day")
+    };
+    match recurrence["kind"].as_str().unwrap_or("") {
+        "once" => format!("Once at {} · {zone}", schedule_date(&recurrence["date"])),
+        "interval" => format!(
+            "Every {} minutes · first run {}",
+            recurrence["intervalMinutes"],
+            schedule_date(&recurrence["date"])
+        ),
+        "daily" => format!("Daily at {time}"),
+        "weekly" => format!(
+            "Every {} at {time}",
+            weekday(recurrence["weekday"].as_u64().unwrap_or(0))
+        ),
+        "weekdays" => format!("Monday–Friday at {time}"),
+        "days" => format!(
+            "{} at {time}",
+            recurrence["weekdays"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .map(weekday)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        "cron" => format!("Cron {} ({zone})", text(recurrence, "cron")),
+        _ => "Unsupported timing".into(),
     }
 }
 fn main() -> Result<()> {

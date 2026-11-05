@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Cone mode includes root manifests; omit unrelated native/store media.
+          sparse-checkout: |
+            crates
+            .cargo
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        id: toolchain
         with:
           components: rustfmt, clippy
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -37,7 +42,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          # A lockfile change rebuilds changed dependencies, not the entire graph.
+          # The last prefix also migrates existing caches; Cargo checks fingerprints.
+          restore-keys: |
+            rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
+            rust-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo fmt --all --check
       - run: cargo test -p coincide-core --locked
       - run: cargo clippy -p coincide-core --all-targets --locked -- -D warnings
@@ -50,12 +60,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          sparse-checkout: |
+            crates
+            .cargo
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        id: toolchain
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          restore-keys: |
+            rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
+            rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo build -p coincide-desktop --locked

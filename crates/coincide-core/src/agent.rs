@@ -14,8 +14,11 @@ use std::{
 mod acp;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "provider_images.rs"]
+mod images;
 #[path = "provider_transport.rs"]
 mod transport;
+pub use images::{ImageAttachment, validate_images};
 
 /// Protocol selection is separate from executable discovery and account selection.
 /// Launches inherit the caller's environment; no adapter switches accounts or permissions.
@@ -57,14 +60,25 @@ impl Session {
         Self::start_with(Provider::Codex, launch)
     }
     pub fn start_with(provider: Provider, launch: Launch) -> Self {
+        Self::start_with_images(provider, launch, Vec::new())
+    }
+    /// Images are validated/materialized by the caller before launch. Existing
+    /// text-only callers keep the same Launch and Session interfaces.
+    pub fn start_with_images(
+        provider: Provider,
+        launch: Launch,
+        images: Vec<ImageAttachment>,
+    ) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (control, commands) = mpsc::channel();
         thread::spawn(move || {
-            let result = match provider {
-                Provider::Codex => run(launch, commands, &events_tx),
-                Provider::Claude => claude::run(launch, commands, &events_tx),
-                Provider::AcpV1 { arguments } => acp::run(launch, arguments, commands, &events_tx),
-            };
+            let result = validate_images(&provider, &images).and_then(|()| match provider {
+                Provider::Codex => run(launch, images, commands, &events_tx),
+                Provider::Claude => claude::run(launch, images, commands, &events_tx),
+                Provider::AcpV1 { arguments } => {
+                    acp::run(launch, arguments, images, commands, &events_tx)
+                }
+            });
             if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));
             }
@@ -115,7 +129,17 @@ fn request(id: u64, method: &str, params: Value) -> Value {
     json!({"id":id,"method":method,"params":params})
 }
 
-fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> Result<()> {
+fn run(
+    launch: Launch,
+    images: Vec<ImageAttachment>,
+    commands: Receiver<Control>,
+    events: &Sender<Event>,
+) -> Result<()> {
+    let image_paths = images
+        .iter()
+        .map(|image| image.path().to_path_buf())
+        .collect::<Vec<_>>();
+    drop(images);
     let mut transport = transport::Transport::spawn(&launch, &["app-server".into()], &[])?;
     transport.write(&request(
         1,
@@ -174,7 +198,11 @@ fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> R
                             .as_str()
                             .context("Codex returned no thread ID")?;
                         events.send(Event::Session(id.into()))?;
-                        transport.write(&request(3, "turn/start", turn_params(id, &launch)))?;
+                        transport.write(&request(
+                            3,
+                            "turn/start",
+                            turn_params(id, &launch, &image_paths),
+                        ))?;
                     }
                     _ => {}
                 }
@@ -198,8 +226,17 @@ fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> R
         }
     }
 }
-fn turn_params(id: &str, launch: &Launch) -> Value {
-    let mut v = json!({"threadId":id,"cwd":launch.cwd,"input":[{"type":"text","text":launch.prompt}],"approvalPolicy":"untrusted","approvalsReviewer":"user","sandboxPolicy":{"type":"readOnly"}});
+fn turn_params(id: &str, launch: &Launch, image_paths: &[PathBuf]) -> Value {
+    let mut input = Vec::new();
+    if !launch.prompt.is_empty() {
+        input.push(json!({"type":"text","text":launch.prompt}));
+    }
+    input.extend(
+        image_paths
+            .iter()
+            .map(|path| json!({"type":"localImage","path":path})),
+    );
+    let mut v = json!({"threadId":id,"cwd":launch.cwd,"input":input,"approvalPolicy":"untrusted","approvalsReviewer":"user","sandboxPolicy":{"type":"readOnly"}});
     if let Some(model) = &launch.model {
         v["model"] = json!(model);
     }
@@ -209,6 +246,12 @@ fn turn_params(id: &str, launch: &Launch) -> Value {
 /// Swift encodes dictionaries whose key is an enum as alternating key/value arrays.
 /// Accept both representations; never replace other providers' session references.
 pub fn provider_session(thread: &Value, provider: &str) -> Option<String> {
+    provider_reference(thread, provider)?["sessionID"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn provider_reference<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
     let sessions = &thread["sessions"];
     if let Some(array) = sessions.as_array() {
         array
@@ -216,14 +259,56 @@ pub fn provider_session(thread: &Value, provider: &str) -> Option<String> {
             .0
             .iter()
             .find(|pair| pair[0] == provider)
-            .and_then(|pair| pair[1]["sessionID"].as_str())
-            .map(str::to_owned)
+            .map(|pair| &pair[1])
     } else {
-        sessions[provider]["sessionID"].as_str().map(str::to_owned)
+        sessions.get(provider)
     }
 }
-pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
+
+/// Missing or malformed progress must replay context rather than silently skip
+/// it. The index is into the complete transcript, including non-message items.
+pub fn provider_seen_count(thread: &Value, provider: &str) -> usize {
+    let Some(reference) = provider_reference(thread, provider) else {
+        return 0;
+    };
+    if reference["sessionID"].as_str().is_none_or(str::is_empty) {
+        return 0;
+    }
+    let count = reference["seenItemCount"]
+        .as_u64()
+        .and_then(|count| usize::try_from(count).ok());
+    let length = thread["items"].as_array().map_or(0, Vec::len);
+    count.filter(|count| *count <= length).unwrap_or(0)
+}
+
+/// Call only after the turn completed successfully and its transcript is ready
+/// to persist. Session creation alone does not prove the prompt was delivered.
+/// This never fabricates a missing session or changes another provider/account.
+pub fn mark_provider_seen(thread: &mut Value, provider: &str) {
     let count = thread["items"].as_array().map_or(0, Vec::len);
+    let sessions = &mut thread["sessions"];
+    let reference = if sessions.is_array() {
+        let array = sessions.as_array_mut().expect("array checked above");
+        array
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .find(|pair| pair[0] == provider)
+            .map(|pair| &mut pair[1])
+    } else {
+        sessions.get_mut(provider)
+    };
+    if let Some(reference) = reference
+        && reference.is_object()
+        && reference["sessionID"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    {
+        reference["seenItemCount"] = json!(count);
+    }
+}
+
+pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
     if let Some(array) = thread["sessions"].as_array_mut() {
         for pair in array.as_chunks_mut::<2>().0 {
             if pair[0] == provider {
@@ -231,16 +316,13 @@ pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
                 return;
             }
         }
-        array.extend([
-            json!(provider),
-            json!({"sessionID":id,"seenItemCount":count}),
-        ]);
+        array.extend([json!(provider), json!({"sessionID":id,"seenItemCount":0})]);
     } else {
         if !thread["sessions"].is_object() {
             thread["sessions"] = json!({});
         }
         if !thread["sessions"][provider].is_object() {
-            thread["sessions"][provider] = json!({"seenItemCount":count});
+            thread["sessions"][provider] = json!({"seenItemCount":0});
         }
         thread["sessions"][provider]["sessionID"] = json!(id);
     }
@@ -258,6 +340,70 @@ mod tests {
         assert_eq!(v["accountSessions"]["codex/other"]["sessionID"], "c");
     }
     #[test]
+    fn seen_progress_supports_both_encodings_and_preserves_unknown_fields() {
+        for sessions in [
+            json!({"claude":{"sessionID":"native","seenItemCount":1,"future":{"keep":true}},"codex":{"sessionID":"other","seenItemCount":2}}),
+            json!(["claude",{"sessionID":"native","seenItemCount":1,"future":{"keep":true}},"codex",{"sessionID":"other","seenItemCount":2}]),
+        ] {
+            let mut thread = json!({"items":[{}, {}, {}],"sessions":sessions,"accountSessions":{"claude/other":{"sessionID":"account","seenItemCount":9}}});
+            assert_eq!(provider_seen_count(&thread, "claude"), 1);
+            set_provider_session(&mut thread, "claude", "native");
+            assert_eq!(
+                provider_seen_count(&thread, "claude"),
+                1,
+                "initialization must not mark a queued prompt seen"
+            );
+            mark_provider_seen(&mut thread, "claude");
+            assert_eq!(provider_seen_count(&thread, "claude"), 3);
+            assert_eq!(
+                provider_reference(&thread, "claude").unwrap()["future"],
+                json!({"keep":true})
+            );
+            assert_eq!(provider_seen_count(&thread, "codex"), 2);
+            assert_eq!(
+                thread["accountSessions"]["claude/other"]["seenItemCount"],
+                9
+            );
+            let before = thread.clone();
+            mark_provider_seen(&mut thread, "missing");
+            assert_eq!(thread, before);
+        }
+    }
+    #[test]
+    fn newly_created_session_has_no_seen_items_until_success_is_marked() {
+        for sessions in [json!({}), json!([])] {
+            let mut thread = json!({"items":[{},{}],"sessions":sessions});
+            set_provider_session(&mut thread, "claude", "fresh");
+            assert_eq!(provider_seen_count(&thread, "claude"), 0);
+            mark_provider_seen(&mut thread, "claude");
+            assert_eq!(provider_seen_count(&thread, "claude"), 2);
+        }
+    }
+    #[test]
+    fn invalid_or_stale_seen_indices_replay_context_instead_of_skipping_it() {
+        for value in [
+            Value::Null,
+            json!(-1),
+            json!("2"),
+            json!(3),
+            json!(u64::MAX),
+        ] {
+            let thread = json!({"items":[{},{}],"sessions":{"claude":{"sessionID":"native","seenItemCount":value}}});
+            assert_eq!(provider_seen_count(&thread, "claude"), 0);
+        }
+        for reference in [
+            json!("opaque"),
+            json!({"seenItemCount":1}),
+            json!({"sessionID":"","seenItemCount":1}),
+        ] {
+            let mut thread = json!({"items":[{},{}],"sessions":["claude",reference]});
+            let before = thread.clone();
+            assert_eq!(provider_seen_count(&thread, "claude"), 0);
+            mark_provider_seen(&mut thread, "claude");
+            assert_eq!(thread, before);
+        }
+    }
+    #[test]
     fn default_turn_never_grants_full_access() {
         let v = turn_params(
             "test",
@@ -268,6 +414,7 @@ mod tests {
                 prompt: "hello".into(),
                 model: None,
             },
+            &[],
         );
         assert_eq!(v["approvalPolicy"], "untrusted");
         assert_eq!(v["sandboxPolicy"]["type"], "readOnly");

@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -19,6 +19,10 @@ struct Running {
     provider: String,
     transcript_start: usize,
     pending: HashMap<String, Value>,
+    schedule_claim: Option<String>,
+    cancelled: bool,
+    events: VecDeque<Event>,
+    persistence_error: Option<String>,
 }
 pub struct Engine {
     pub store: Store,
@@ -34,12 +38,25 @@ pub struct Engine {
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
     workspace_pending: HashMap<String, (String, Instant)>,
     workspace_results: HashMap<String, Value>,
+    attachment_operations: HashSet<String>,
     workspace_tx: std::sync::mpsc::SyncSender<(String, Value)>,
     workspace_rx: std::sync::mpsc::Receiver<(String, Value)>,
+    provider_discovery: Option<Value>,
+    schedule_initialized: bool,
+    schedule_recovery_pending: bool,
+    schedule_last_poll: Instant,
+    schedule_completions: Vec<(String, crate::schedule_service::Outcome, Option<String>)>,
+    pub schedule_error: Option<String>,
+    unsaved_threads: HashMap<String, Value>,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
         let (workspace_tx, workspace_rx) = std::sync::mpsc::sync_channel(32);
+        let discovery_tx = workspace_tx.clone();
+        std::thread::spawn(move || {
+            let report = crate::provider_catalog::discover_installed_tools();
+            let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
+        });
         Self {
             store,
             runs: HashMap::new(),
@@ -54,8 +71,16 @@ impl Engine {
             browser_results: HashMap::new(),
             workspace_pending: HashMap::new(),
             workspace_results: HashMap::new(),
+            attachment_operations: HashSet::new(),
             workspace_tx,
             workspace_rx,
+            provider_discovery: None,
+            schedule_initialized: false,
+            schedule_recovery_pending: false,
+            schedule_last_poll: Instant::now() - Duration::from_secs(2),
+            schedule_completions: Vec::new(),
+            schedule_error: None,
+            unsaved_threads: HashMap::new(),
         }
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
@@ -68,25 +93,69 @@ impl Engine {
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         match method {
+            "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":["codex","claude"],"discoveryOnly":true})),
+            "attachments.add" => {
+                ensure!(self.workspace_pending.len()<32 && self.attachment_operations.len()<4,"Too many attachment imports; wait for existing imports to finish");
+                let thread=required(p,"threadId")?.to_owned();
+                ensure!(!self.unsaved_threads.contains_key(&thread),"Transcript persistence is recovering; retry after recovery");
+                let value=self.store.thread(&thread)?;
+                ensure!(!self.store.is_imported(&thread)?,"Fork an imported thread before adding attachments");
+                ensure!(value["rustDraftImages"].as_array().map_or(0,Vec::len)<20,"A draft can contain at most 20 images");
+                let source=PathBuf::from(required(p,"path")?);
+                ensure!(source.is_absolute(),"Image path must be absolute");
+                let root=self.store.data_directory()?;
+                let id=Uuid::new_v4().to_string();
+                self.workspace_pending.insert(id.clone(),(thread,Instant::now()));
+                self.attachment_operations.insert(id.clone());
+                let tx=self.workspace_tx.clone();let operation=id.clone();
+                std::thread::spawn(move || {
+                    let result=crate::attachments::ingest_image(&root,&source)
+                        .and_then(|image|Ok(json!({"attachment":serde_json::to_value(image)?})))
+                        .unwrap_or_else(|error|json!({"error":error.to_string()}));
+                    let _=tx.try_send((operation,result));
+                });
+                Ok(json!({"operationId":id}))
+            }
+            "attachments.remove" => {
+                let id=required(p,"threadId")?;
+                ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
+                let attachment=required(p,"attachmentId")?;
+                let mut thread=self.store.thread(id)?;
+                ensure!(!self.store.is_imported(id)?,"Fork an imported thread before changing attachments");
+                let images=thread["rustDraftImages"].as_array_mut().context("Draft has no image attachments")?;
+                let before=images.len();images.retain(|value|value["id"]!=attachment);
+                ensure!(images.len()<before,"Draft image not found");
+                self.store.save(&thread)?;self.revision+=1;
+                Ok(json!({"removed":true}))
+            }
             "schedules.list"=> {
-                let tasks=crate::schedule_service::ScheduleService::new(&mut self.store).list()?;
-                Ok(json!({"tasks":tasks.into_iter().filter(|task|p["threadId"].as_str().is_none_or(|id|task["threadID"]==id)).collect::<Vec<_>>(),"executionAvailable":false}))
+                let service=crate::schedule_service::ScheduleService::new(&mut self.store);
+                let mut tasks=service.list()?;
+                for task in &mut tasks {task["approvalState"]=serde_json::to_value(service.approval_state(&text(task,"id"))?)?;}
+                Ok(json!({"tasks":tasks.into_iter().filter(|task|p["threadId"].as_str().is_none_or(|id|task["threadID"]==id)).collect::<Vec<_>>(),"executionAvailable":self.schedule_initialized,"error":self.schedule_error}))
             }
             "schedules.create"=> {
                 let task=crate::schedule_service::ScheduleService::new(&mut self.store).create(&p["task"],chrono::Utc::now())?;
-                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":self.schedule_initialized}))
             }
             "schedules.patch"=> {
                 let task=crate::schedule_service::ScheduleService::new(&mut self.store).patch(required(p,"scheduleId")?,&p["patch"],chrono::Utc::now())?;
-                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":self.schedule_initialized}))
             }
             "schedules.pause" | "schedules.resume"=> {
                 let task=crate::schedule_service::ScheduleService::new(&mut self.store).set_paused(required(p,"scheduleId")?,method=="schedules.pause",chrono::Utc::now())?;
-                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":self.schedule_initialized}))
             }
             "schedules.delete"=> {
                 let removed=crate::schedule_service::ScheduleService::new(&mut self.store).delete(required(p,"scheduleId")?)?;
                 self.revision+=1;Ok(json!({"removed":removed}))
+            }
+            "schedules.run-now"=> {
+                ensure!(self.schedule_initialized,"Scheduler recovery has not completed");
+                let id=required(p,"scheduleId")?;
+                let job=crate::schedule_service::ScheduleService::new(&mut self.store).plan_now(id,chrono::Utc::now())?;
+                self.launch_schedule(&job)?;
+                Ok(json!({"task":crate::schedule_service::ScheduleService::new(&mut self.store).list()?.into_iter().find(|v|v["id"]==id)}))
             }
             "git.status" | "git.diff" | "files.list" | "files.read" => {
                 ensure!(self.workspace_pending.len()<32,"Too many workspace operations; collect results first");
@@ -116,7 +185,7 @@ impl Engine {
                 if let Some(result)=self.workspace_results.remove(id) {
                     self.workspace_pending.remove(id);return Ok(json!({"ready":true,"result":result}));
                 }
-                if started.elapsed()>Duration::from_secs(20) {
+                if started.elapsed()>Duration::from_secs(if self.attachment_operations.contains(id){120}else{20}) {
                     self.workspace_pending.remove(id);return Ok(json!({"ready":true,"result":{"error":"Workspace operation timed out"}}));
                 }
                 Ok(json!({"ready":false}))
@@ -148,7 +217,7 @@ impl Engine {
                 }
                 Ok(json!({"ready":false}))
             }
-            "app.quit"=>{self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.quit"=>{ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
@@ -160,7 +229,12 @@ impl Engine {
                 Ok(json!({"terminalId":id}))
             }
             "terminal.list"=>Ok(json!(self.terminals.iter().filter(|(_, (thread,_))|p["threadId"].as_str().is_none_or(|id|thread==id)).map(|(id,(thread,terminal))|json!({"terminalId":id,"threadId":thread,"title":terminal.title})).collect::<Vec<_>>())),
-            "terminal.read"=>self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.snapshot(),
+            "terminal.read"=>{
+                let terminal=&mut self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1;
+                if p["styled"]==true {
+                    terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
+                } else {terminal.snapshot()}
+            },
             "terminal.write"=>{self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.write(required(p,"text")?)?;Ok(json!({"accepted":true}))}
             "terminal.resize"=>{
                 let rows=u16::try_from(p["rows"].as_u64().context("Missing rows")?)?;
@@ -169,12 +243,12 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => Ok(json!([
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result",
-                "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete",
+                "app.capabilities", "providers.list", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list",
                 "threads.read",
@@ -205,7 +279,8 @@ impl Engine {
                 p["includeArchived"].as_bool().unwrap_or(false),
             )?)?),
             "threads.read" => {
-                let mut v=self.store.thread(required(p,"threadId")?)?;
+                let id=required(p,"threadId")?;
+                let mut v=if let Some(v)=self.unsaved_threads.get(id){v.clone()}else{self.store.thread(id)?};
                 if let Some(limit)=p["itemLimit"].as_u64(){
                     ensure!(limit<=1000,"itemLimit must be at most 1000");
                     let items=v["items"].as_array().context("Invalid transcript")?;
@@ -235,10 +310,12 @@ impl Engine {
                 Ok(v)
             }
             "threads.patch" => {
+                ensure!(!self.unsaved_threads.contains_key(required(p,"threadId")?),"Transcript persistence is recovering; retry this edit after recovery");
                 let v=self.store.patch_thread(required(p,"threadId")?,&p["patch"])?;
                 self.revision+=1;Ok(v)
             }
             "threads.fork" => {
+                ensure!(!self.unsaved_threads.contains_key(required(p,"threadId")?),"Transcript persistence is recovering; retry after recovery");
                 let mut v = self.store.thread(required(p, "threadId")?)?;
                 v["id"] = json!(Uuid::new_v4().to_string().to_uppercase());
                 v["title"] = json!(format!("{} (fork)", text(&v, "title")));
@@ -257,6 +334,7 @@ impl Engine {
             }
             "agent.select" => {
                 let id = required(p, "threadId")?;
+                ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let provider = required(p, "provider")?;
                 ensure!(["codex", "claude"].contains(&provider), "Provider not connected in this preview");
@@ -286,108 +364,10 @@ impl Engine {
                 run.pending.remove(key); self.revision += 1;
                 Ok(json!({"answered":true}))
             }
-            "agent.send" => {
-                let id = required(p, "threadId")?.to_owned();
-                ensure!(
-                    !self.runs.contains_key(&id),
-                    "This thread is already running"
-                );
-                let prompt = required(p, "text")?;
-                ensure!(
-                    !prompt.trim().is_empty() && prompt.len() <= 1024 * 1024,
-                    "Message must contain text and fit within 1 MiB"
-                );
-                let mut v = self.store.thread(&id)?;
-                ensure!(v["accessMode"].as_str().is_none_or(|mode|mode=="approval") && v["interactionMode"].as_str().is_none_or(|mode|mode=="build"), "This preview supports approval/build mode only; fork this conversation to use supported defaults");
-                let provider = text(&v["selection"], "provider");
-                let adapter = match provider.as_str() {
-                    "codex" => Provider::Codex,
-                    "claude" => Provider::Claude,
-                    _ => bail!("Provider not connected in this preview; fork and choose Codex or Claude"),
-                };
-                ensure!(
-                    v["selection"]["accountID"].is_null(),
-                    "Alternate provider accounts are not connected yet"
-                );
-                // Imported native sessions may still be owned by the running Swift app.
-                // A fork starts a separate provider session and cannot steal that session.
-                ensure!(
-                    !self.store.is_imported(&id)?,
-                    "Imported conversations are read-only for agent execution until cutover; fork first"
-                );
-                let cwd = if let Some(path) = v["worktreePath"].as_str() {
-                    PathBuf::from(path)
-                } else {
-                    self.store
-                        .projects()?
-                        .as_array()
-                        .and_then(|projects| {
-                            projects
-                                .iter()
-                                .find(|project| project["id"] == v["projectID"])
-                                .and_then(|project| project["path"].as_str())
-                                .map(PathBuf::from)
-                        })
-                        .context("Choose a project working directory first")?
-                };
-                ensure!(cwd.is_dir(), "Working directory does not exist");
-                let session = agent::provider_session(&v, &provider);
-                let mut outgoing = String::new();
-                if session.is_none()
-                    && let Some(items) = v["items"].as_array()
-                {
-                    for item in items
-                        .iter()
-                        .filter(|item| item["kind"] == "user" || item["kind"] == "assistant")
-                    {
-                        let addition =
-                            format!("\n{}: {}\n", text(item, "kind"), text(item, "text"));
-                        ensure!(
-                            outgoing.len() + addition.len() < 2 * 1024 * 1024,
-                            "Conversation is too large for the preview handoff; start a new thread"
-                        );
-                        outgoing.push_str(&addition);
-                    }
-                }
-                outgoing.push_str(prompt);
-                let model = v["selection"]["modelID"]
-                    .as_str()
-                    .filter(|m| !m.is_empty() && *m != "default")
-                    .map(str::to_owned);
-                let executable = std::env::var_os(if provider=="claude" {"COINCIDE_CLAUDE_EXECUTABLE"} else {"COINCIDE_CODEX_EXECUTABLE"})
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| provider.clone().into());
-                append(&mut v, "user", prompt, None);
-                v["draft"] = json!("");
-                v["updatedAt"] = json!(swift_timestamp());
-                if v["title"] == "New conversation" {
-                    v["title"] = json!(prompt.chars().take(70).collect::<String>());
-                }
-                self.store.save(&v)?;
-                self.runs.insert(
-                    id,
-                    Running {
-                        session: Session::start_with(adapter, Launch {
-                            executable,
-                            cwd,
-                            session,
-                            prompt: outgoing,
-                            model,
-                        }),
-                        provider,
-                        transcript_start: v["items"].as_array().map_or(0, Vec::len),
-                        pending: HashMap::new(),
-                    },
-                );
-                self.revision += 1;
-                Ok(json!({"accepted":true}))
-            }
+            "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
-                self.runs
-                    .get(required(p, "threadId")?)
-                    .context("Thread is not running")?
-                    .session
-                    .stop();
+                let run=self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
+                run.cancelled=true;run.session.stop();
                 Ok(json!({"requested":true}))
             }
             "agent.respond" => {
@@ -422,6 +402,328 @@ impl Engine {
             _ => bail!("Unsupported method: {method}"),
         }
     }
+    /// Trusted native UI entry point. Deliberately not part of the agent dispatcher.
+    fn send_turn(&mut self, p: &Value, scheduled: bool) -> Result<Value> {
+        let id = required(p, "threadId")?.to_owned();
+        ensure!(
+            !self.unsaved_threads.contains_key(&id),
+            "Transcript persistence is recovering; retry after recovery"
+        );
+        ensure!(
+            !self.runs.contains_key(&id),
+            "This thread is already running"
+        );
+        if !scheduled {
+            ensure!(
+                !self.attachment_operations.iter().any(|operation| self
+                    .workspace_pending
+                    .get(operation)
+                    .is_some_and(|(owner, _)| owner == &id)),
+                "Wait for this thread's image imports to finish before sending"
+            );
+        }
+        let prompt = required(p, "text")?;
+        ensure!(
+            prompt.len() <= 1024 * 1024,
+            "Message text must fit within 1 MiB"
+        );
+        let mut v = self.store.thread(&id)?;
+        let draft_images: Vec<crate::attachments::StoredImage> =
+            if scheduled || v["rustDraftImages"].is_null() {
+                Vec::new()
+            } else {
+                ensure!(
+                    v["rustDraftImages"]
+                        .as_array()
+                        .context("Invalid draft image metadata")?
+                        .len()
+                        <= 20,
+                    "A draft can contain at most 20 images"
+                );
+                serde_json::from_value(v["rustDraftImages"].clone())
+                    .context("Invalid draft image metadata")?
+            };
+        ensure!(
+            !prompt.trim().is_empty() || !draft_images.is_empty(),
+            "Add text or an image before sending"
+        );
+        ensure!(
+            v["accessMode"]
+                .as_str()
+                .is_none_or(|mode| mode == "approval")
+                && v["interactionMode"]
+                    .as_str()
+                    .is_none_or(|mode| mode == "build"),
+            "This preview supports approval/build mode only; fork this conversation to use supported defaults"
+        );
+        let provider = text(&v["selection"], "provider");
+        let adapter = match provider.as_str() {
+            "codex" => Provider::Codex,
+            "claude" => Provider::Claude,
+            _ => bail!("Provider not connected in this preview; fork and choose Codex or Claude"),
+        };
+        ensure!(
+            v["selection"]["accountID"].is_null(),
+            "Alternate provider accounts are not connected yet"
+        );
+        // Imported native sessions may still be owned by the running Swift app.
+        // A fork starts a separate provider session and cannot steal that session.
+        ensure!(
+            !self.store.is_imported(&id)?,
+            "Imported conversations are read-only for agent execution until cutover; fork first"
+        );
+        let data = self.store.data_directory()?;
+        ensure!(
+            draft_images
+                .iter()
+                .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
+                .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
+            "Draft images exceed 20 MiB"
+        );
+        let cwd = if let Some(path) = v["worktreePath"].as_str() {
+            PathBuf::from(path)
+        } else {
+            self.store
+                .projects()?
+                .as_array()
+                .and_then(|projects| {
+                    projects
+                        .iter()
+                        .find(|project| project["id"] == v["projectID"])
+                        .and_then(|project| project["path"].as_str())
+                        .map(PathBuf::from)
+                })
+                .context("Choose a project working directory first")?
+        };
+        ensure!(cwd.is_dir(), "Working directory does not exist");
+        let session = agent::provider_session(&v, &provider);
+        let seen = if session.is_some() {
+            agent::provider_seen_count(&v, &provider)
+        } else {
+            0
+        };
+        let mut handoff_images = Vec::<crate::attachments::StoredImage>::new();
+        let mut outgoing = String::new();
+        if let Some(items) = v["items"].as_array() {
+            for item in items
+                .iter()
+                .skip(seen)
+                .filter(|item| item["kind"] == "user" || item["kind"] == "assistant")
+            {
+                if outgoing.is_empty() {
+                    outgoing.push_str("Earlier conversation context (historical messages, not a new user request):\n");
+                }
+                let addition = format!("\n{}: {}\n", text(item, "kind"), text(item, "text"));
+                ensure!(
+                    outgoing.len() + addition.len() < 2 * 1024 * 1024,
+                    "Conversation is too large for the preview handoff; start a new thread"
+                );
+                outgoing.push_str(&addition);
+                if let Some(raw) = item["rustImages"].as_array() {
+                    ensure!(
+                        handoff_images.len() + raw.len() + draft_images.len() <= 20,
+                        "Conversation image handoff exceeds 20 images; start a new thread"
+                    );
+                    for raw in raw {
+                        handoff_images.push(
+                            serde_json::from_value(raw.clone())
+                                .context("Invalid historical image metadata")?,
+                        );
+                    }
+                }
+            }
+        }
+        if !outgoing.is_empty() {
+            outgoing.push_str("\nCurrent user request:\n");
+        }
+        outgoing.push_str(prompt);
+        handoff_images.extend(draft_images.iter().cloned());
+        ensure!(
+            handoff_images
+                .iter()
+                .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
+                .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
+            "Conversation images exceed 20 MiB"
+        );
+        let images = handoff_images
+            .iter()
+            .map(|image| image.prepare_in(&data))
+            .collect::<Result<Vec<_>>>()?;
+        agent::validate_images(&adapter, &images)?;
+        let model = v["selection"]["modelID"]
+            .as_str()
+            .filter(|m| !m.is_empty() && *m != "default")
+            .map(str::to_owned);
+        let executable = std::env::var_os(if provider == "claude" {
+            "COINCIDE_CLAUDE_EXECUTABLE"
+        } else {
+            "COINCIDE_CODEX_EXECUTABLE"
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| provider.clone().into());
+        append(&mut v, "user", prompt, None);
+        if !draft_images.is_empty() {
+            v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
+                serde_json::to_value(&draft_images)?;
+        }
+        if !scheduled {
+            v["rustDraftImages"] = json!([]);
+            v["draft"] = json!("");
+        }
+        v["updatedAt"] = json!(swift_timestamp());
+        if v["title"] == "New conversation" {
+            v["title"] = json!(if prompt.trim().is_empty() {
+                "Image conversation".into()
+            } else {
+                prompt.chars().take(70).collect::<String>()
+            });
+        }
+        self.store.save(&v)?;
+        self.runs.insert(
+            id,
+            Running {
+                session: Session::start_with_images(
+                    adapter,
+                    Launch {
+                        executable,
+                        cwd,
+                        session,
+                        prompt: outgoing,
+                        model,
+                    },
+                    images,
+                ),
+                provider,
+                transcript_start: v["items"].as_array().map_or(0, Vec::len),
+                pending: HashMap::new(),
+                schedule_claim: None,
+                cancelled: false,
+                events: VecDeque::new(),
+                persistence_error: None,
+            },
+        );
+        self.revision += 1;
+        Ok(json!({"accepted":true}))
+    }
+    pub fn approve_schedule(&mut self, id: &str) -> Result<Value> {
+        ensure!(
+            self.schedule_initialized,
+            "Scheduler recovery has not completed"
+        );
+        let approved = crate::schedule_service::ScheduleService::new(&mut self.store)
+            .approve(id, chrono::Utc::now())?;
+        self.revision += 1;
+        Ok(serde_json::to_value(approved)?)
+    }
+    fn poll_schedules(&mut self, resumed: bool) -> Result<()> {
+        use crate::schedule_service::ScheduleService;
+        let now = chrono::Utc::now();
+        self.schedule_recovery_pending |= resumed;
+        if !self.schedule_initialized || self.schedule_recovery_pending {
+            let count =
+                ScheduleService::new(&mut self.store).recover(now, !self.schedule_initialized)?;
+            self.schedule_initialized = true;
+            self.schedule_recovery_pending = false;
+            if count > 0 {
+                self.revision += 1;
+            }
+        }
+        // A failed disk write must never cause a second provider submission.
+        while let Some((claim, outcome, message)) = self.schedule_completions.pop() {
+            match ScheduleService::new(&mut self.store).complete(
+                &claim,
+                outcome,
+                message.as_deref(),
+                now,
+            ) {
+                Ok(changed) => {
+                    if changed {
+                        self.revision += 1;
+                    }
+                }
+                Err(error) => {
+                    self.schedule_completions.push((claim, outcome, message));
+                    return Err(error);
+                }
+            }
+        }
+        let jobs = ScheduleService::new(&mut self.store).plan_due(now)?;
+        for job in jobs.into_iter().take(16) {
+            self.launch_schedule(&job)?;
+        }
+        Ok(())
+    }
+    fn launch_schedule(&mut self, job: &crate::schedule_service::DueJob) -> Result<()> {
+        use crate::schedule_service::{Outcome, ScheduleService, TargetState};
+        let task = ScheduleService::new(&mut self.store)
+            .list()?
+            .into_iter()
+            .find(|task| task["id"] == job.schedule_id)
+            .context("Schedule no longer exists")?;
+        let state = if let Some(id) = task["threadID"].as_str() {
+            match self.store.thread(id) {
+                Ok(thread) if thread["isArchived"] == true => TargetState::Archived,
+                Ok(_) if self.runs.contains_key(id) => TargetState::Busy,
+                Ok(thread) => {
+                    if self.store.is_imported(id)?
+                        || self.unsaved_threads.contains_key(id)
+                        || self
+                            .working_directory(&thread)
+                            .map_or(true, |path| !path.is_dir())
+                    {
+                        TargetState::Unavailable
+                    } else {
+                        TargetState::Ready
+                    }
+                }
+                Err(_) => TargetState::Missing,
+            }
+        } else if self.store.projects()?.as_array().is_some_and(|projects| {
+            projects.iter().any(|project| {
+                project["id"] == task["projectID"]
+                    && project["path"]
+                        .as_str()
+                        .is_some_and(|path| std::path::Path::new(path).is_dir())
+            })
+        }) {
+            TargetState::Ready
+        } else {
+            TargetState::Unavailable
+        };
+        let claim = ScheduleService::new(&mut self.store).claim(job, state, chrono::Utc::now())?;
+        self.revision += 1;
+        let Some(claim) = claim else {
+            return Ok(());
+        };
+        let launched = (|| -> Result<()> {
+            let thread = if let Some(id) = &claim.thread_id {
+                id.clone()
+            } else {
+                let thread =
+                    self.execute("threads.create", &json!({"projectId":claim.project_id}))?;
+                let id = text(&thread, "id");
+                ensure!(
+                    ScheduleService::new(&mut self.store).attach_thread(&claim.claim_id, &id)?,
+                    "Schedule changed before its thread was attached"
+                );
+                id
+            };
+            self.send_turn(&json!({"threadId":thread,"text":claim.prompt}), true)?;
+            self.runs
+                .get_mut(&thread)
+                .context("Scheduled turn did not start")?
+                .schedule_claim = Some(claim.claim_id.clone());
+            Ok(())
+        })();
+        if let Err(error) = launched {
+            self.schedule_completions.push((
+                claim.claim_id,
+                Outcome::Failed,
+                Some(error.to_string()),
+            ));
+        }
+        Ok(())
+    }
     pub fn browser_reply(&mut self, reply: crate::browser_protocol::BrowserReply) {
         if self
             .browser_pending
@@ -453,8 +755,51 @@ impl Engine {
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
         self.workspace_results
             .retain(|id, _| self.workspace_pending.contains_key(id));
-        for (id, result) in self.workspace_rx.try_iter() {
+        for (id, mut result) in self.workspace_rx.try_iter() {
+            let is_attachment = self.attachment_operations.remove(&id);
+            if id == "provider-discovery" {
+                self.provider_discovery = Some(result);
+                self.revision += 1;
+                continue;
+            }
             if self.workspace_pending.contains_key(&id) {
+                if is_attachment && result.get("error").is_none() {
+                    let owner = self.workspace_pending[&id].0.clone();
+                    let saved = (|| -> Result<()> {
+                        ensure!(
+                            !self.unsaved_threads.contains_key(&owner),
+                            "Transcript persistence is recovering; image was imported but not added to draft"
+                        );
+                        let mut thread = self.store.thread(&owner)?;
+                        if thread["rustDraftImages"].is_null() {
+                            thread["rustDraftImages"] = json!([]);
+                        }
+                        let images = thread["rustDraftImages"]
+                            .as_array_mut()
+                            .context("Invalid draft image metadata")?;
+                        ensure!(images.len() < 20, "A draft can contain at most 20 images");
+                        let total = images
+                            .iter()
+                            .map(|v| v["byteLen"].as_u64().unwrap_or(u64::MAX))
+                            .try_fold(0u64, |sum, size| sum.checked_add(size))
+                            .context("Invalid image byte total")?;
+                        ensure!(
+                            total.saturating_add(
+                                result["attachment"]["byteLen"]
+                                    .as_u64()
+                                    .context("Missing image size")?
+                            ) <= 20 * 1024 * 1024,
+                            "Draft images exceed 20 MiB"
+                        );
+                        images.push(result["attachment"].clone());
+                        self.store.save(&thread)?;
+                        Ok(())
+                    })();
+                    if let Err(error) = saved {
+                        result["error"] = json!(error.to_string());
+                        result["attached"] = json!(false);
+                    }
+                }
                 self.workspace_results.insert(id, result);
                 self.revision += 1;
             }
@@ -474,17 +819,32 @@ impl Engine {
 
         let ids = self.runs.keys().cloned().collect::<Vec<_>>();
         for id in ids {
-            let mut events = Vec::new();
-            if let Some(run) = self.runs.get(&id) {
-                events.extend(run.session.events.try_iter().take(256));
+            if let Some(run) = self.runs.get_mut(&id)
+                && run.events.is_empty()
+            {
+                run.events.extend(run.session.events.try_iter().take(256));
             }
-            if events.is_empty() {
+            if self.runs[&id].events.is_empty() {
                 continue;
             }
-            let Ok(mut v) = self.store.thread(&id) else {
-                continue;
+            let mut v = if let Some(v) = self.unsaved_threads.get(&id) {
+                v.clone()
+            } else {
+                match self.store.thread(&id) {
+                    Ok(v) => v,
+                    Err(error) => {
+                        let message = format!("Transcript read failed: {error}");
+                        let run = self.runs.get_mut(&id).unwrap();
+                        run.persistence_error = Some(message.clone());
+                        run.session.stop();
+                        self.schedule_error = Some(message);
+                        continue;
+                    }
+                }
             };
+            let events = std::mem::take(&mut self.runs.get_mut(&id).unwrap().events);
             let mut finished = false;
+            let mut failure = None;
             let transcript_start = self.runs[&id].transcript_start;
             for event in events {
                 match event {
@@ -497,6 +857,7 @@ impl Engine {
                     }
                     Event::Failed(error) => {
                         finished = true;
+                        failure = Some(error.clone());
                         append(&mut v, "error", &error, None);
                     }
                     Event::Frame(frame) => {
@@ -642,14 +1003,55 @@ impl Engine {
                     }
                 }
             }
-            if self.store.save(&v).is_err()
-                && let Some(run) = self.runs.get(&id)
+            if finished
+                && failure.is_none()
+                && !self.runs[&id].cancelled
+                && self.runs[&id].persistence_error.is_none()
             {
+                agent::mark_provider_seen(&mut v, &self.runs[&id].provider);
+            }
+            if let Err(error) = self.store.save(&v) {
+                let message = format!("Transcript could not be saved: {error}");
+                self.unsaved_threads.insert(id.clone(), v);
+                let run = self.runs.get_mut(&id).unwrap();
+                run.persistence_error = Some(message.clone());
                 run.session.stop();
+                self.schedule_error = Some(message);
+            } else {
+                self.unsaved_threads.remove(&id);
             }
             self.revision += 1;
-            if finished {
-                self.runs.remove(&id);
+            if finished
+                && let Some(run) = self.runs.remove(&id)
+                && let Some(claim) = run.schedule_claim
+            {
+                let failure = failure.or(run.persistence_error);
+                let outcome = if run.cancelled {
+                    crate::schedule_service::Outcome::Interrupted
+                } else if failure.is_some() {
+                    crate::schedule_service::Outcome::Failed
+                } else {
+                    crate::schedule_service::Outcome::Completed
+                };
+                self.schedule_completions.push((claim, outcome, failure));
+            }
+        }
+        if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
+            let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);
+            self.schedule_last_poll = Instant::now();
+            self.unsaved_threads
+                .retain(|_, thread| self.store.save(thread).is_err());
+            match self.poll_schedules(resumed) {
+                Ok(()) => {
+                    self.schedule_error = if !self.unsaved_threads.is_empty() {
+                        Some("Transcript persistence is recovering; unsaved changes remain in memory".into())
+                    } else {
+                        self.runs
+                            .values()
+                            .find_map(|run| run.persistence_error.clone())
+                    };
+                }
+                Err(error) => self.schedule_error = Some(error.to_string()),
             }
         }
     }

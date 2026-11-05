@@ -398,3 +398,43 @@ fn store_schedule_imported_swift_approval_never_authorizes_rust_execution() {
     );
     assert_eq!(service.plan_due(due()).unwrap().len(), 1);
 }
+
+#[test]
+fn store_schedule_unavailable_consumes_pending_without_replaying_when_ready() {
+    let (_dir, mut store, thread) = fixture();
+    create_approved(&mut store, &thread);
+    let mut service = ScheduleService::new(&mut store);
+    let job = service.plan_due(due()).unwrap().remove(0);
+    assert!(
+        service
+            .claim(&job, TargetState::Busy, due())
+            .unwrap()
+            .is_none()
+    );
+    let later = at("2026-11-05T00:12:00Z");
+    let pending = service.plan_due(later).unwrap().remove(0);
+    assert!(
+        service
+            .claim(&pending, TargetState::Unavailable, later)
+            .unwrap()
+            .is_none()
+    );
+    let saved = service.list().unwrap().remove(0);
+    assert!(saved["pendingDelivery"].is_null());
+    assert_eq!(saved["lastOutcome"], "missed");
+    assert!(service.plan_due(later).unwrap().is_empty());
+    assert!(
+        service
+            .claim(&pending, TargetState::Ready, later)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(service.list().unwrap()[0], saved);
+    let next = at("2026-11-05T00:15:00Z");
+    let job = service.plan_due(next).unwrap().remove(0);
+    let claim = service
+        .claim(&job, TargetState::Ready, next)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.occurrence, next);
+}

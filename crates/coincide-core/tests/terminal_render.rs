@@ -1,0 +1,247 @@
+//! PTY fixtures only: no shell profile, desktop window, or original app data.
+#![cfg(unix)]
+
+use coincide_core::terminal::Terminal;
+use serde_json::{Value, json};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    thread,
+    time::{Duration, Instant},
+};
+use tempfile::TempDir;
+
+struct Fixture {
+    terminal: Terminal,
+    // Keep the script alive until after the PTY has been dropped.
+    _dir: TempDir,
+}
+
+impl Fixture {
+    fn new(rows: u16, cols: u16, phases: &[&str]) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("terminal-fixture");
+        let mut source = String::from("#!/bin/sh\nstty -echo\n");
+        for (index, phase) in phases.iter().enumerate() {
+            if index != 0 {
+                source.push_str("IFS= read -r step || exit\n");
+            }
+            // Octal encoding avoids shell interpolation and printf format expansion.
+            let bytes = format!("{phase}\x1b]2;fixture-{index}\x07");
+            let escaped: String = bytes.bytes().map(|b| format!("\\{b:03o}")).collect();
+            source.push_str(&format!("printf '{escaped}'\n"));
+        }
+        source.push_str("IFS= read -r finish\n");
+        fs::write(&script, source).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let terminal = Terminal::spawn(dir.path(), script.to_str().unwrap(), rows, cols).unwrap();
+        Self {
+            terminal,
+            _dir: dir,
+        }
+    }
+
+    fn snapshot(&mut self, phase: usize) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = self.terminal.styled_snapshot(0, 10).unwrap();
+            // OSC follows the complete fixture output, so an echoed command cannot
+            // accidentally satisfy readiness and we need no fixed startup sleep.
+            if snapshot["title"] == format!("fixture-{phase}") {
+                return snapshot;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "PTY fixture {phase} timed out: {snapshot}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn next(&mut self, phase: usize) -> Value {
+        self.terminal.write("next\n").unwrap();
+        self.snapshot(phase)
+    }
+}
+
+#[test]
+fn ansi_styles_resolve_colors_and_reset_without_losing_blank_backgrounds() {
+    let mut fixture = Fixture::new(
+        4,
+        20,
+        &["\x1b[2J\x1b[H\x1b[31;44;1;3;4mA\x1b[7mB\x1b[0mC\x1b[48;2;4;5;6m \x1b[0m"],
+    );
+    let snapshot = fixture.snapshot(0);
+    assert_eq!(snapshot["rows"], 4);
+    assert_eq!(snapshot["cols"], 20);
+    assert_eq!(snapshot["lines"][0], "ABC");
+    let row = &snapshot["grid"][0];
+    assert_eq!(row[0]["text"], "A");
+    assert_eq!(row[0]["foreground"], json!([205, 49, 49]));
+    assert_eq!(row[0]["background"], json!([36, 114, 200]));
+    for style in ["bold", "italic", "underline"] {
+        assert_eq!(row[0][style], true);
+        assert_eq!(row[2][style], false);
+    }
+    assert_eq!(row[1]["inverse"], true);
+    assert_eq!(row[1]["foreground"], row[0]["background"]);
+    assert_eq!(row[1]["background"], row[0]["foreground"]);
+    assert_eq!(row[2]["inverse"], false);
+    assert_eq!(row[2]["foreground"], json!([212, 212, 212]));
+    assert_eq!(row[2]["background"], json!([12, 12, 12]));
+    assert_eq!(row[3]["text"], " ");
+    assert_eq!(row[3]["background"], json!([4, 5, 6]));
+    assert_eq!(row.as_array().unwrap().len(), 20);
+    assert_eq!(snapshot["cursor"]["col"], 4);
+}
+
+#[test]
+fn indexed_truecolor_palette_overrides_and_extended_styles() {
+    let mut fixture = Fixture::new(
+        3,
+        20,
+        &[
+            "\x1b[2J\x1b[H\x1b[38;5;196;48;5;232mA\x1b[38;2;12;34;56;48;2;78;90;123mB\x1b[0;91;104mC\x1b[0;2;9mD\x1b[8mE\x1b[0;4:3mF\x1b[0m\x1b]4;1;rgb:01/02/03\x07\x1b[31mG",
+        ],
+    );
+    let snapshot = fixture.snapshot(0);
+    let row = &snapshot["grid"][0];
+    assert_eq!(row[0]["foreground"], json!([255, 0, 0]));
+    assert_eq!(row[0]["background"], json!([8, 8, 8]));
+    assert_eq!(row[1]["foreground"], json!([12, 34, 56]));
+    assert_eq!(row[1]["background"], json!([78, 90, 123]));
+    assert_eq!(row[2]["foreground"], json!([241, 76, 76]));
+    assert_eq!(row[2]["background"], json!([59, 142, 234]));
+    assert_eq!(row[3]["dim"], true);
+    assert_eq!(row[3]["strikethrough"], true);
+    assert_eq!(row[3]["foreground"], json!([141, 141, 141]));
+    assert_eq!(row[4]["hidden"], true);
+    assert_eq!(row[4]["foreground"], row[4]["background"]);
+    assert_eq!(row[5]["underline"], true);
+    assert_eq!(row[6]["foreground"], json!([1, 2, 3]));
+}
+
+#[test]
+fn cursor_visibility_position_shape_and_alternate_screen_restore() {
+    let mut fixture = Fixture::new(
+        6,
+        20,
+        &[
+            "\x1b[2J\x1b[HMAIN\x1b[3;7H\x1b[?25l",
+            "\x1b[?1049h\x1b[2J\x1b[HALT\x1b[4;9H\x1b[?25h\x1b[6 q",
+            "\x1b[?1049l",
+        ],
+    );
+    let first = fixture.snapshot(0);
+    assert_eq!(first["cursor"]["row"], 2);
+    assert_eq!(first["cursor"]["col"], 6);
+    assert_eq!(first["cursor"]["visible"], false);
+    let alternate = fixture.next(1);
+    assert_eq!(alternate["lines"][0], "ALT");
+    assert_eq!(alternate["cursor"]["row"], 3);
+    assert_eq!(alternate["cursor"]["col"], 8);
+    assert_eq!(alternate["cursor"]["visible"], true);
+    assert_eq!(alternate["cursor"]["shape"], "beam");
+    assert_eq!(alternate["cursor"]["blinking"], false);
+    let restored = fixture.next(2);
+    assert_eq!(restored["lines"][0], "MAIN");
+    assert_eq!(restored["cursor"]["row"], 2);
+    assert_eq!(restored["cursor"]["col"], 6);
+    assert!(restored["revision"].as_u64().unwrap() > first["revision"].as_u64().unwrap());
+}
+
+#[test]
+fn wide_and_combining_cells_preserve_columns_and_clip_excess_marks() {
+    let phase = format!("\x1b[2J\x1b[H界e\u{301}X{}", "\u{301}".repeat(100));
+    let mut fixture = Fixture::new(3, 20, &[&phase]);
+    let snapshot = fixture.snapshot(0);
+    let row = &snapshot["grid"][0];
+    assert_eq!(row[0]["text"], "界");
+    assert_eq!(row[0]["width"], 2);
+    assert_eq!(row[1]["text"], "");
+    assert_eq!(row[1]["width"], 0);
+    assert_eq!(row[1]["continuation"], true);
+    assert_eq!(row[2]["text"], "e\u{301}");
+    assert_eq!(row[3]["text"].as_str().unwrap().chars().count(), 17);
+    assert_eq!(snapshot["truncated"], true);
+    assert_eq!(snapshot["cursor"]["col"], 4);
+}
+
+#[test]
+fn maximum_viewport_pages_fit_control_frames_and_plain_reads_have_no_grid() {
+    let mut fixture = Fixture::new(300, 500, &["\x1b[2J\x1b[H\x1b[48;2;255;128;64m\x1b[2J"]);
+    let first = fixture.snapshot(0);
+    assert_eq!(first["rows"], 300);
+    assert_eq!(first["cols"], 500);
+    assert_eq!(first["rowOffset"], 0);
+    assert_eq!(first["rowCount"], 10);
+    assert_eq!(first["nextRowOffset"], 10);
+    let plain = fixture.terminal.snapshot().unwrap();
+    assert!(plain.get("grid").is_none());
+    assert!(plain.get("cursor").is_none());
+    assert_eq!(plain["lines"].as_array().unwrap().len(), 300);
+    assert!(serde_json::to_vec(&plain).unwrap().len() < 4 * 1024 * 1024);
+    for offset in [0, 10, 290, 299, 300] {
+        let page = fixture.terminal.styled_snapshot(offset, 10).unwrap();
+        let count = 10.min(300 - offset);
+        let grid = page["grid"].as_array().unwrap();
+        assert_eq!(page["rowOffset"], offset);
+        assert_eq!(grid.len(), count);
+        assert_eq!(page["lines"].as_array().unwrap().len(), count);
+        assert_eq!(page["truncated"], false);
+        if offset + count == 300 {
+            assert!(page["nextRowOffset"].is_null());
+        }
+        for row in grid {
+            assert_eq!(row.as_array().unwrap().len(), 500);
+            assert_eq!(row[499]["background"], json!([255, 128, 64]));
+        }
+        assert!(
+            serde_json::to_vec(&json!({"id":"test","result":page}))
+                .unwrap()
+                .len()
+                < 4 * 1024 * 1024
+        );
+    }
+    for (offset, limit) in [(0, 0), (0, 11), (301, 1), (usize::MAX, 10), (0, usize::MAX)] {
+        assert!(fixture.terminal.styled_snapshot(offset, limit).is_err());
+    }
+    fixture.terminal.resize(4, 12).unwrap();
+    let resized = fixture.terminal.styled_snapshot(0, 10).unwrap();
+    assert_eq!(resized["grid"].as_array().unwrap().len(), 4);
+    assert!(
+        resized["grid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row.as_array().unwrap().len() == 12)
+    );
+}
+
+#[test]
+fn maximum_styled_page_with_combining_text_fits_four_mib() {
+    let cell = format!("\\{}", "\u{1d185}".repeat(16));
+    let phase = format!("\x1b[2J\x1b[H{}", cell.repeat(10 * 500));
+    let mut fixture = Fixture::new(300, 500, &[&phase]);
+    let page = fixture.snapshot(0);
+    assert_eq!(page["grid"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        page["grid"][0][0]["text"].as_str().unwrap().chars().count(),
+        17
+    );
+    assert_eq!(
+        page["grid"][9][499]["text"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        17
+    );
+    assert_eq!(page["cursor"]["row"], 9);
+    assert!(
+        serde_json::to_vec(&json!({"id":"test","result":page}))
+            .unwrap()
+            .len()
+            < 4 * 1024 * 1024
+    );
+}

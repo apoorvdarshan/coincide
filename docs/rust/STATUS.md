@@ -45,7 +45,7 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Verified so far
 
-2026-11-05 checkpoint: approximately 18% of the macOS replacement is verified.
+2026-11-05 checkpoint: approximately 24% of the macOS replacement is verified.
 This remains a planning estimate; the broad acceptance groups above stay unchecked
 until their complete behavior is accepted. Mac is the first release target; Linux
 currently supplies additional build/test capacity and portability feedback.
@@ -73,12 +73,22 @@ footers remain visible while long details scroll. Buttons and inputs appear in t
 accessibility tree after initialization; full keyboard/accessibility acceptance is
 still outstanding.
 
-The next portable batch passes 56 tests, including cancellation while all three
-provider transports block on large stdin writes, write deadlines, schedule claim
-and recovery transitions, separate Rust approval for imported schedules, and project
-file/Git inspection. Strict core clippy and Mac compilation pass. The previous
-checkpoint `b99c3a2` also passed every applicable GitHub check (Mac/Linux/Windows
-core checks, Mac GPUI build and existing Swift CI).
+The current portable batch passes 97 tests with strict core clippy, including actual
+headless CLI/server restart persistence, real PTYs, schedule execution through fake
+providers, draft preservation during scheduled sends, safe image normalization and
+provider image delivery. Mac GPUI compilation passes. Native image thumbnails and
+Send were checked against a synthetic provider. Native schedule approval and Run now
+completed while preserving an unsent text/image draft. Visual acceptance exposed a
+clipped schedule action row; the schedule view now uses the full panel, preserving
+the hidden composer state. No real provider account has been accepted yet.
+Checkpoint `fd2b758` passed every applicable GitHub check; the next checkpoint's CI
+result must be verified after push.
+
+CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
+changes. Rust-only files are excluded from Swift's change classifier; changes to that
+classifier itself still run Swift CI. Existing test/lint/platform coverage is retained.
+Baseline Rust runs 41991737611 / 41993318402 took 293 / 73 seconds; two post-change
+runs are required before attributing a speedup to these changes.
 
 Implemented foundations are deliberately narrower than full feature groups:
 
@@ -87,19 +97,35 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Browser has a separate persistent profile and thread-scoped tabs. Frames,
   downloads/uploads, passwords, passkeys, dialogs, screenshots and native-key actions
   still need implementation. Existing Swift browser profiles are not migrated.
-- Terminal has a real PTY and monochrome screen grid. Full colors, selection, splits,
-  tabs and shell integration remain. Candidate child processes cannot inherit the
-  running Swift conversation's control bindings.
+- Terminal has a real PTY and monochrome desktop grid. API clients can request
+  paged RGB/style/cursor snapshots (at most ten rows); plain polling stays lightweight.
+  Styled desktop rendering, selection, splits, tabs and shell integration remain.
+  Candidate child processes cannot inherit the running Swift conversation's bindings.
 - Claude and generic ACP protocol adapters have fixture coverage. ACP is not exposed
   as a named provider until its launch/account/mode integration is implemented.
 - Scheduling has validated persisted models, recurrence calculations, CRUD APIs,
-  durable claims, explicit approval transitions and restart recovery. Imported Swift
-  approvals cannot authorize Rust execution. Nothing executes schedules yet and
-  there is no schedule approval UI; API replies explicitly report execution unavailable.
+  durable claims, native approval cards and restart recovery. Approved schedules
+  execute while the Rust engine is running, defer busy threads once, and record
+  completion/failure/interruption without resubmitting a durable claim. Scheduled
+  sends preserve unsent text and image drafts. Imported Swift approvals cannot
+  authorize Rust execution; imported thread execution still requires a fork.
+  Native creation currently exposes once/interval; richer recurrence editing and
+  complete legacy scheduling UI parity remain.
 - Project selection and existing-folder registration are in the preview. Bounded
   background Git status/diff, file listing and text-file reads are available through
   API/CLI; Git mutations, worktree/checkpoint UI and provider context injection remain.
-- Transcripts use a virtualized list, but selectable text/media parity is unfinished.
+- Images import asynchronously through API/CLI or a native file picker. PNG/JPEG/
+  GIF/WebP originals are copied privately; a static normalized image is capped at
+  2000 pixels per edge and 3,750,000 bytes. Draft removal preserves stored files.
+  UUID/path/symlink and content checks precede provider delivery and thumbnails.
+  Claude/Codex and generic ACP image transport have fixture coverage; HEIC/TIFF,
+  PDFs, image editing, clipboard/paste/drop and broader media parity remain.
+- Six legacy providers have a filesystem-only discovery catalog. Discovery does not
+  verify authentication, versions, models or runtime support; only Codex/Claude are
+  connected in the preview. Successful native sessions record transcript progress;
+  subsequent provider handoffs include missed messages/images within bounded limits.
+- Transcripts use a virtualized list with validated image previews, but selectable
+  text and full media behavior remain unfinished.
 
 ## Data boundaries
 
@@ -138,3 +164,10 @@ The CLI talks to the running Rust app's owner-only Unix socket. `coincide-rs api
 accepts one JSON request (`id`, `method`, `params`) on stdin. `capabilities` reports
 only implemented commands. `serve` starts the same engine without a GUI. Windows
 named-pipe transport, legacy CLI compatibility and broader APIs remain pending.
+
+Headless acceptance uses `coincide-rs serve` with a private
+`COINCIDE_RUST_DATA_DIR`; no GUI is required for core tests. Native browser requests
+fail explicitly in that mode. `attach THREAD ABSOLUTE_IMAGE_PATH`,
+`detach THREAD ATTACHMENT_ID`, and `providers` expose the corresponding API flows.
+Use `terminal.read` with `styled:true`, `rowOffset`, and `rowLimit` (1–10) for styled
+pages; compare revisions when assembling multiple pages from a changing terminal.

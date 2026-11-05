@@ -36,6 +36,19 @@ fn main() -> Result<()> {
         "status" => ("app.status", json!({})),
         "capabilities" => ("app.capabilities", json!({})),
         "projects" => ("projects.list", json!({})),
+        "providers" => ("providers.list", json!({})),
+        "attach" => {
+            return operation(
+                &data.join("control.sock"),
+                "attachments.add",
+                json!({"threadId":argument(1)?,"path":argument(2)?}),
+                "workspace.result",
+            );
+        }
+        "detach" => (
+            "attachments.remove",
+            json!({"threadId":argument(1)?,"attachmentId":argument(2)?}),
+        ),
         "git-status" | "git-diff" | "files" | "file" => {
             let mut params = json!({"threadId":argument(1)?});
             let method = match cmd {
@@ -156,7 +169,7 @@ fn main() -> Result<()> {
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }
@@ -199,7 +212,12 @@ fn operation(
             });
         }
         anyhow::ensure!(
-            started.elapsed() < std::time::Duration::from_secs(35),
+            started.elapsed()
+                < std::time::Duration::from_secs(if method == "attachments.add" {
+                    125
+                } else {
+                    35
+                }),
             "Operation timed out"
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
