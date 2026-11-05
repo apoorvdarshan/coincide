@@ -393,6 +393,22 @@ impl Store {
         Ok(value)
     }
 
+    /// Rust-owned settings only. Imported original files never grant runtime
+    /// authorization merely by containing the same document or field names.
+    pub fn local_document(&self, name: &str) -> Result<Option<Value>> {
+        validate_document_name(name)?;
+        let current: Option<String> = self
+            .db
+            .query_row(
+                "SELECT document FROM documents WHERE name=?1",
+                [name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        current
+            .map(|text| serde_json::from_str(&text).map_err(Into::into))
+            .transpose()
+    }
     pub fn document(&self, name: &str) -> Result<Option<Value>> {
         validate_document_name(name)?;
         let current: Option<String> = self

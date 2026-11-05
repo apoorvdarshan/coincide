@@ -1,5 +1,6 @@
 use coincide_core::attachments::{
     MAX_IMAGE_EDGE, MAX_NORMALIZED_BYTES, MAX_SOURCE_BYTES, StoredImage, ingest_image,
+    stage_clipboard_image,
 };
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use std::{fs, io::Cursor, path::Path};
@@ -24,6 +25,127 @@ fn solid(width: u32, height: u32) -> DynamicImage {
         height,
         Rgba([20, 90, 180, 255]),
     ))
+}
+
+#[test]
+fn clipboard_staging_imports_supported_bytes_and_removes_only_its_owned_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("existing-user-source");
+    for format in [
+        ImageFormat::Png,
+        ImageFormat::Jpeg,
+        ImageFormat::Gif,
+        ImageFormat::WebP,
+    ] {
+        let bytes = encode(&source, &solid(8, 8), format);
+        let staged = stage_clipboard_image(directory.path(), &bytes).unwrap();
+        let staged_path = staged.path().to_owned();
+        let staged_dir = staged_path.parent().unwrap().to_owned();
+        assert_eq!(fs::read(&staged_path).unwrap(), bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&staged_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&staged_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        let stored = ingest_image(directory.path(), &staged_path).unwrap();
+        drop(staged);
+        assert!(!staged_path.exists());
+        assert!(!staged_dir.exists());
+        assert!(stored.path.exists());
+        assert!(stored.original_path.exists());
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn clipboard_cancellation_and_decode_failure_clean_owned_temps_but_not_other_imports() {
+    let directory = tempfile::tempdir().unwrap();
+    let bytes = encode(
+        &directory.path().join("source.png"),
+        &solid(8, 8),
+        ImageFormat::Png,
+    );
+    let first = stage_clipboard_image(directory.path(), &bytes).unwrap();
+    let second = stage_clipboard_image(directory.path(), &bytes).unwrap();
+    let first_path = first.path().to_owned();
+    let second_path = second.path().to_owned();
+    drop(first);
+    assert!(!first_path.exists());
+    assert_eq!(fs::read(&second_path).unwrap(), bytes);
+    let bad = stage_clipboard_image(directory.path(), b"\x89PNG\r\n\x1a\ntruncated").unwrap();
+    let bad_path = bad.path().to_owned();
+    assert!(ingest_image(directory.path(), bad.path()).is_err());
+    drop(bad);
+    assert!(!bad_path.exists());
+    assert!(second_path.exists());
+    assert!(stage_clipboard_image(directory.path(), b"<svg>unsupported</svg>").is_err());
+    assert!(stage_clipboard_image(directory.path(), &[]).is_err());
+    assert!(
+        stage_clipboard_image(directory.path(), &vec![0; MAX_SOURCE_BYTES as usize + 1]).is_err()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn clipboard_cleanup_refuses_replaced_files_or_redirected_directories() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let bytes = encode(
+        &directory.path().join("source.png"),
+        &solid(8, 8),
+        ImageFormat::Png,
+    );
+    let staged = stage_clipboard_image(directory.path(), &bytes).unwrap();
+    let path = staged.path().to_owned();
+    let moved = path.with_file_name("original-moved.png");
+    fs::rename(&path, &moved).unwrap();
+    fs::write(&path, b"unrelated replacement").unwrap();
+    drop(staged);
+    assert_eq!(fs::read(&path).unwrap(), b"unrelated replacement");
+    assert!(moved.exists());
+    let redirected = stage_clipboard_image(directory.path(), &bytes).unwrap();
+    let staged_path = redirected.path().to_owned();
+    let folder = staged_path.parent().unwrap();
+    fs::rename(folder, folder.with_extension("moved")).unwrap();
+    let unrelated = directory.path().join("unrelated-directory");
+    fs::create_dir(&unrelated).unwrap();
+    let unrelated_file = unrelated.join(staged_path.file_name().unwrap());
+    fs::write(&unrelated_file, b"keep").unwrap();
+    symlink(&unrelated, folder).unwrap();
+    drop(redirected);
+    assert_eq!(fs::read(&unrelated_file).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn clipboard_staging_rejects_redirected_roots_without_writing_into_them() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let bytes = encode(
+        &directory.path().join("source.png"),
+        &solid(2, 2),
+        ImageFormat::Png,
+    );
+    let staging = directory.path().join("clipboard-staging");
+    symlink(outside.path(), &staging).unwrap();
+    assert!(stage_clipboard_image(directory.path(), &bytes).is_err());
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    fs::remove_file(&staging).unwrap();
+    fs::write(&staging, b"existing unrelated file").unwrap();
+    assert!(stage_clipboard_image(directory.path(), &bytes).is_err());
+    assert_eq!(fs::read(&staging).unwrap(), b"existing unrelated file");
+    let linked_data = directory.path().join("linked-data");
+    symlink(outside.path(), &linked_data).unwrap();
+    assert!(stage_clipboard_image(&linked_data, &bytes).is_err());
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
 }
 
 #[test]

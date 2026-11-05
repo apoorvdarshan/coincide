@@ -154,6 +154,86 @@ pub fn ingest_image(data_directory: &Path, source: &Path) -> Result<StoredImage>
     })
 }
 
+/// A clipboard-only source owned by one import. Dropping it removes only the
+/// file created here, after checking its identity; durable imported images and
+/// user-provided source paths are never part of this cleanup.
+pub struct StagedClipboardImage {
+    path: PathBuf,
+    directory: PathBuf,
+    root: PathBuf,
+    identity: fs::Metadata,
+}
+impl StagedClipboardImage {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+pub fn stage_clipboard_image(data_directory: &Path, bytes: &[u8]) -> Result<StagedClipboardImage> {
+    ensure!(
+        !bytes.is_empty() && bytes.len() as u64 <= MAX_SOURCE_BYTES,
+        "Clipboard image must contain 1 byte–20 MiB of encoded data"
+    );
+    let format = supported_format(bytes)?;
+    let extension = extension_for_mime(mime_for_format(format)?)?;
+    let root = canonical_data_directory(data_directory)?.join("clipboard-staging");
+    match create_private_directory(&root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error).context("Unable to create clipboard staging directory"),
+    }
+    require_directory(&root)?;
+    let directory = root.join(Uuid::new_v4().to_string());
+    create_private_directory(&directory)?;
+    let mut created = CreatedFiles {
+        directory: directory.clone(),
+        files: Vec::new(),
+        keep: false,
+    };
+    let path = directory.join(format!("clipboard.{extension}"));
+    created.write(&path, bytes)?;
+    let identity = fs::symlink_metadata(&path)?;
+    created.keep = true;
+    Ok(StagedClipboardImage {
+        path,
+        directory,
+        root,
+        identity,
+    })
+}
+
+impl Drop for StagedClipboardImage {
+    fn drop(&mut self) {
+        if require_directory(&self.root).is_err()
+            || require_directory(&self.directory).is_err()
+            || self.directory.canonicalize().ok().as_ref() != Some(&self.directory)
+        {
+            return;
+        }
+        let Ok(current) = fs::symlink_metadata(&self.path) else {
+            return;
+        };
+        if !current.is_file() || current.file_type().is_symlink() {
+            return;
+        }
+        #[cfg(unix)]
+        let same = {
+            use std::os::unix::fs::MetadataExt;
+            current.dev() == self.identity.dev() && current.ino() == self.identity.ino()
+        };
+        #[cfg(not(unix))]
+        let same = current
+            .created()
+            .ok()
+            .is_some_and(|created| self.identity.created().ok() == Some(created))
+            && current.len() == self.identity.len();
+        if same {
+            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_dir(&self.directory);
+        }
+    }
+}
+
 fn canonical_data_directory(path: &Path) -> Result<PathBuf> {
     require_directory(path)?;
     let path = fs::canonicalize(path).context("Unable to resolve attachment data directory")?;

@@ -13,6 +13,9 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "provider_antigravity_api.rs"]
+mod antigravity_api;
+
 pub type SharedEngine = Arc<Mutex<Engine>>;
 struct Running {
     session: Session,
@@ -103,6 +106,7 @@ impl Engine {
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         match method {
+            "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
                 ensure!(self.workspace_pending.len()<32 && self.attachment_operations.len()<4,"Too many attachment imports; wait for existing imports to finish");
@@ -264,7 +268,7 @@ impl Engine {
             ),
             "app.capabilities" => Ok(json!([
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "providers.list", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list",
@@ -367,7 +371,13 @@ impl Engine {
                 ensure!(model.len() <= 512 && !model.chars().any(char::is_control), "Invalid model ID");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
-                v["selection"] = json!({"provider":provider,"modelID":model});
+                let mut selection=json!({"provider":provider,"modelID":model});
+                if provider=="antigravity" {
+                    selection["accountID"]=p["accountId"].clone();
+                    let (account,_) = self.antigravity_selection(&selection)?;
+                    if account=="default" {selection.as_object_mut().unwrap().remove("accountID");}
+                } else {ensure!(p["accountId"].is_null(),"Alternate provider accounts are not connected yet");}
+                v["selection"] = selection;
                 self.store.save(&v)?; self.revision += 1;
                 Ok(v)
             }
@@ -488,7 +498,7 @@ impl Engine {
         let provider = text(&v["selection"], "provider");
         let mut adapter = Provider::from_name(&provider)?;
         ensure!(
-            v["selection"]["accountID"].is_null(),
+            provider == "antigravity" || v["selection"]["accountID"].is_null(),
             "Alternate provider accounts are not connected yet"
         );
         // Imported native sessions may still be owned by the running Swift app.
@@ -498,6 +508,13 @@ impl Engine {
             "Imported conversations are read-only for agent execution until cutover; fork first"
         );
         let data = self.store.data_directory()?;
+        let antigravity_executable = if provider == "antigravity" {
+            let (configured, executable) = self.antigravity_launch(&id, &v["selection"])?;
+            adapter = configured;
+            Some(executable)
+        } else {
+            None
+        };
         if let Provider::Cursor { profile } = &mut adapter {
             *profile = Some(data.join("providers").join("cursor").join(&id));
         }
@@ -588,10 +605,11 @@ impl Engine {
             "grok" => "COINCIDE_GROK_EXECUTABLE",
             "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
             "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
+            "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
             _ => bail!("Provider executable is not configured"),
         };
-        let executable = std::env::var_os(executable_variable)
-            .map(PathBuf::from)
+        let executable = antigravity_executable
+            .or_else(|| std::env::var_os(executable_variable).map(PathBuf::from))
             .unwrap_or_else(|| {
                 if provider == "cursor" {
                     "cursor-agent".into()
@@ -1379,7 +1397,10 @@ mod tests {
             catalog["runtimeConnected"],
             json!(Provider::supported_names())
         );
-        for provider in Provider::supported_names() {
+        for provider in Provider::supported_names()
+            .iter()
+            .filter(|name| **name != "antigravity")
+        {
             let selected = engine
                 .execute(
                     "agent.select",

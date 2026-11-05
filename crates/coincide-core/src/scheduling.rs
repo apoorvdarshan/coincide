@@ -144,6 +144,41 @@ pub fn parse_date(value: &Value) -> Result<DateTime<Utc>> {
         .context("Invalid schedule date")
 }
 
+/// Parse minute-precision editor input using the same DST policy as recurrence.
+/// A spring gap advances to the first valid minute; a fold chooses its first occurrence.
+pub fn parse_local_datetime(date: &str, time: &str, zone: &str) -> Result<DateTime<Utc>> {
+    ensure!(date.len() == 10, "Use a date in YYYY-MM-DD format");
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .context("Use a valid date in YYYY-MM-DD format")?;
+    ensure!(
+        time.len() == 5
+            && time.as_bytes()[2] == b':'
+            && time
+                .bytes()
+                .enumerate()
+                .all(|(i, b)| i == 2 || b.is_ascii_digit()),
+        "Use a time in HH:MM format"
+    );
+    let hour: u32 = time[..2].parse()?;
+    let minute: u32 = time[3..].parse()?;
+    ensure!(
+        hour < 24 && minute < 60,
+        "Time must be between 00:00 and 23:59"
+    );
+    let zone: Tz = zone.parse().context("Unknown IANA time zone")?;
+    resolve_time(zone, day, hour, minute).context("This local date has no valid scheduled time")
+}
+
+/// Format a persisted schedule instant for its own time zone, never the host zone.
+pub fn format_local_datetime(date: &Value, zone: &str) -> Result<(String, String)> {
+    let zone: Tz = zone.parse().context("Unknown IANA time zone")?;
+    let local = parse_date(date)?.with_timezone(&zone);
+    Ok((
+        local.format("%Y-%m-%d").to_string(),
+        local.format("%H:%M").to_string(),
+    ))
+}
+
 // Foundation's .nextTime moves a nonexistent local time to the first valid
 // instant; .first selects the earlier occurrence in a fall-back fold. Never
 // return the second occurrence after the first has already been consumed.

@@ -60,6 +60,22 @@ impl Transport {
         remove_env: &[&str],
         environment: &[(std::ffi::OsString, std::ffi::OsString)],
     ) -> Result<Self> {
+        Self::spawn_policy(launch, args, remove_env, environment, false)
+    }
+    pub(super) fn spawn_antigravity(
+        launch: &Launch,
+        remove_env: &[&str],
+        environment: &[(std::ffi::OsString, std::ffi::OsString)],
+    ) -> Result<Self> {
+        Self::spawn_policy(launch, &[], remove_env, environment, true)
+    }
+    fn spawn_policy(
+        launch: &Launch,
+        args: &[String],
+        remove_env: &[&str],
+        environment: &[(std::ffi::OsString, std::ffi::OsString)],
+        antigravity: bool,
+    ) -> Result<Self> {
         ensure!(
             launch.cwd.is_dir(),
             "Agent working directory does not exist"
@@ -79,14 +95,34 @@ impl Transport {
         let mut child = OwnedChild::spawn(&mut command).context("Unable to launch provider")?;
         let mut stdin = child.0.stdin.take().context("Missing provider stdin")?;
         let stdout = child.0.stdout.take().context("Missing provider stdout")?;
+        // A small bounded queue prevents an agent from flooding retained output.
+        let (tx, frames) = mpsc::sync_channel(8);
         if let Some(stderr) = child.0.stderr.take() {
+            let errors = tx.clone();
             thread::spawn(move || {
-                let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
+                if !antigravity {
+                    let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
+                    return;
+                }
+                let mut reader = BufReader::new(stderr);
+                loop {
+                    let mut line = Vec::new();
+                    match reader.by_ref().take(8193).read_until(b'\n', &mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) if antigravity_auth_line(&line) => {
+                            let _ = errors.send(Err(super::antigravity::AUTH_FAILURE.into()));
+                            break;
+                        }
+                        Ok(n) if n > 8192 => {
+                            let _ = errors
+                                .send(Err("Antigravity diagnostic exceeds its size limit".into()));
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
             });
         }
-        // Image echoes/tool results can be as large as outbound prompts. Keep
-        // fewer queued frames so the larger frame limit does not multiply RAM.
-        let (tx, frames) = mpsc::sync_channel(8);
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -101,8 +137,21 @@ impl Transport {
                         if line.iter().all(u8::is_ascii_whitespace) {
                             continue;
                         }
-                        serde_json::from_slice(&line)
-                            .map_err(|_| "Invalid provider JSON frame".to_owned())
+                        if antigravity && antigravity_auth_line(&line) {
+                            Err(super::antigravity::AUTH_FAILURE.into())
+                        } else if antigravity
+                            && line.len() <= 8192
+                            && !line
+                                .iter()
+                                .copied()
+                                .find(|byte| !byte.is_ascii_whitespace())
+                                .is_some_and(|byte| matches!(byte, b'{' | b'['))
+                        {
+                            continue;
+                        } else {
+                            serde_json::from_slice(&line)
+                                .map_err(|_| "Invalid provider JSON frame".to_owned())
+                        }
                     }
                     _ => Err("Invalid or oversized provider frame".into()),
                 };
@@ -252,6 +301,16 @@ pub(super) fn raw(events: &Sender<Event>, provider: &str, frame: &Value) -> Resu
         "provider/event",
         json!({"provider":provider,"providerFrame":frame}),
     )
+}
+
+fn antigravity_auth_line(line: &[u8]) -> bool {
+    [
+        b"Open the following link to authenticate the ACP server: ".as_slice(),
+        b"__COINCIDE_ANTIGRAVITY_AUTH_URL__".as_slice(),
+        b"__COINCIDE_ANTIGRAVITY_SIGN_IN_REQUIRED__".as_slice(),
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
 }
 
 #[cfg(test)]

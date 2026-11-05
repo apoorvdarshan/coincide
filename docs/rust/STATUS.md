@@ -18,6 +18,10 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [x] Preserve unknown fields, attachments, drafts and provider session references.
 - [x] Rollback invalid/duplicate imports and refuse symlink traversal.
 - [x] Display imported conversations in the macOS preview.
+- [ ] Match the existing macOS app's UI and UX in Rust: window/sidebar layout,
+  typography, spacing, colors, icons, transcript/composer, panels, menus, dialogs,
+  shortcuts, focus, scrolling, loading/error states and accessibility. Verify
+  equivalent screens and interaction flows side by side before migration.
 - [ ] Complete projects, bots and projectless-chat navigation.
 - [ ] Search, pin/archive, multi-select, undo/redo and snooze parity.
 - [ ] Fully selectable, virtualized transcript, markdown, media and previews.
@@ -106,8 +110,22 @@ accessibility IDs replace recycled transcript action IDs. Checkpoint `85cbae1` p
 The following Cursor/terminal batch passes 167 portable tests, strict core clippy
 and Mac/Linux desktop builds. Mac-focused Cursor and terminal fixtures pass.
 Native Cursor selection persisted; terminal Select All/Copy/paste excluded concealed
-text and a new tab cleared the selection. This batch still needs its own CI; no real
-Cursor account or provider network call was used.
+text and a new tab cleared the selection. Checkpoint `0cae281` passed every applicable
+GitHub check after correcting Windows path-prefix validation. No real Cursor account
+or provider network call was used.
+
+The current scheduling/composer/Antigravity batch passes 194 portable core tests,
+strict Linux core clippy and a macOS desktop build. Antigravity synthetic tests
+cover isolated runtime/profile copies, explicit account configuration, approvals,
+questions, account-specific sessions and file callbacks. A review fix preserves
+existing file permissions during atomic writes and creates new files privately;
+focused Mac/Linux regressions cover it. No real account authentication was tested.
+Native acceptance verified creating a selected-days schedule in Asia/Kolkata and
+saving it as pending approval without execution. All seven recurrence kinds have
+editor regression coverage. Image paste/drop and full-message copy are implemented
+but native acceptance remains pending. Antigravity desktop setup/sign-in controls,
+API-key accounts and Windows runtime support remain pending. This batch still needs
+its own GitHub CI; the overall verified parity estimate remains approximately 30%.
 
 CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
 changes. Rust-only files are excluded from Swift's change classifier; changes to that

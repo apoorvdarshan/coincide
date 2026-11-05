@@ -1,7 +1,9 @@
 use anyhow::Result;
 mod browser;
+mod composer_attachments;
 mod navigation;
 mod queue;
+mod scheduling;
 mod settings;
 mod terminal_selection;
 use browser::BrowserController;
@@ -129,12 +131,8 @@ struct Coincide {
     appearance_dark: bool,
     applied_theme: Option<(bool, String)>,
     schedules_open: bool,
-    schedule_create_open: bool,
-    schedule_interval: bool,
     schedules: Vec<Value>,
-    schedule_name: Entity<InputState>,
-    schedule_prompt: Entity<TextareaState>,
-    schedule_minutes: Entity<InputState>,
+    schedule_editor: scheduling::ScheduleEditor,
     schedule_status: String,
     _poll: Task<()>,
     terminal_id: Option<String>,
@@ -199,11 +197,7 @@ impl Coincide {
                 .submit_on_enter(settings["sendOnReturn"].as_bool().unwrap_or(true))
         });
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
-        let schedule_name = cx.new(|cx| InputState::new(window, cx).placeholder("Schedule name"));
-        let schedule_prompt = cx.new(|cx| {
-            TextareaState::new(window, cx).placeholder("Message to send to this conversation")
-        });
-        let schedule_minutes = cx.new(|cx| InputState::new(window, cx).placeholder("Minutes"));
+        let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -218,7 +212,7 @@ impl Coincide {
         if let Ok(mut engine) = engine.lock() {
             engine.ui_available = browser.is_some();
         }
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe(&rename_input, |this, _, event, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) { this.save_rename(cx); }
             }),
@@ -253,6 +247,7 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.extend(schedule_editor.subscriptions(cx));
         let threads = call(&engine, "threads.list", json!({}))
             .and_then(|v| Ok(serde_json::from_value(v)?))
             .unwrap_or_default();
@@ -293,12 +288,8 @@ impl Coincide {
             appearance_dark: true,
             applied_theme: None,
             schedules_open: false,
-            schedule_create_open: false,
-            schedule_interval: false,
             schedules: Vec::new(),
-            schedule_name,
-            schedule_prompt,
-            schedule_minutes,
+            schedule_editor,
             schedule_status: String::new(),
             _poll: poll,
             terminal_id: None,
@@ -651,6 +642,9 @@ impl Coincide {
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
+                if self.schedule_editor.thread_id != id {
+                    self.schedule_editor.open = false;
+                }
                 self.selected = Some(v);
                 self.settings_open = false;
                 self.rename_target = None;
@@ -687,238 +681,6 @@ impl Coincide {
             self.refresh_schedules(cx);
         }
         cx.notify();
-    }
-    fn refresh_schedules(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
-            self.schedules.clear();
-            return;
-        };
-        match call(&self.engine, "schedules.list", json!({"threadId":thread})) {
-            Ok(result) => self.schedules = result["tasks"].as_array().cloned().unwrap_or_default(),
-            Err(error) => self.schedule_status = format!("Unable to load schedules: {error}"),
-        }
-        cx.notify();
-    }
-    fn schedule_action(&mut self, id: &str, action: &str, cx: &mut Context<Self>) {
-        let result = if action == "approve" {
-            // Approval is a trusted native button action, never an agent-callable API.
-            match self.engine.lock() {
-                Ok(mut engine) => engine.approve_schedule(id),
-                Err(_) => Err(anyhow::anyhow!("App engine is unavailable")),
-            }
-        } else {
-            call(&self.engine, action, json!({"scheduleId":id}))
-        };
-        self.schedule_status = match result {
-            Ok(_) => match action {
-                "approve" => "Approved for execution in Coincide Rust.",
-                "schedules.pause" => "Schedule paused.",
-                "schedules.resume" => "Schedule resumed; approval is still required if shown.",
-                "schedules.delete" => "Schedule deleted.",
-                "schedules.run-now" => {
-                    "Run requested; check the conversation for execution status."
-                }
-                _ => "Schedule updated.",
-            }
-            .into(),
-            Err(error) => format!("Schedule action failed: {error}"),
-        };
-        self.refresh_schedules(cx);
-    }
-    fn create_schedule(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref() else {
-            return;
-        };
-        let minutes = match self.schedule_minutes.read(cx).value().trim().parse::<u32>() {
-            Ok(minutes)
-                if (1..=44640).contains(&minutes) && (!self.schedule_interval || minutes >= 5) =>
-            {
-                minutes
-            }
-            _ => {
-                self.schedule_status =
-                    "Enter 1–44,640 minutes for once, or 5–44,640 for an interval.".into();
-                cx.notify();
-                return;
-            }
-        };
-        let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
-            return;
-        };
-        let recurrence = json!({"kind":if self.schedule_interval {"interval"} else {"once"},
-            "timeZoneID":"UTC","date":now.as_secs_f64()-978307200.0+f64::from(minutes)*60.0,
-            "hour":0,"minute":0,"weekday":1,"intervalMinutes":if self.schedule_interval {Some(minutes)} else {None}});
-        let task = json!({"name":self.schedule_name.read(cx).value().to_string(),"prompt":self.schedule_prompt.read(cx).value().to_string(),
-            "projectID":thread["projectID"],"threadID":thread["id"],"recurrence":recurrence});
-        match call(&self.engine, "schedules.create", json!({"task":task})) {
-            Ok(_) => {
-                self.schedule_status =
-                    "Schedule created. Review its message and timing, then approve below.".into();
-                self.schedule_create_open = false;
-            }
-            Err(error) => self.schedule_status = format!("Schedule was not created: {error}"),
-        }
-        self.refresh_schedules(cx);
-    }
-    fn schedules_pane(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut content = div().id("schedule-panel").flex().flex_col().flex_1().min_h_0().min_w_0().gap_3().p_4().overflow_y_scroll()
-            .child(div().text_lg().child("Schedules for this conversation"))
-            .child(div().text_sm().child("Imported schedules remain dormant until you approve them separately in Coincide Rust. The app must be running for schedules to execute."))
-            .child(Button::new("schedule-new").label(if self.schedule_create_open {"Hide new schedule"} else {"New schedule"})
-                .on_click(cx.listener(|this,_,_,cx| {this.schedule_create_open=!this.schedule_create_open;cx.notify();})))
-            .child(div().text_sm().child(self.schedule_status.clone()));
-        if self.schedule_create_open {
-            content = content.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .p_3()
-                    .rounded_md()
-                    .bg(self.color(0x202a3b))
-                    .child(Input::new(&self.schedule_name))
-                    .child(Textarea::new(&self.schedule_prompt).h(px(90.)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(
-                                Button::new("schedule-once")
-                                    .label(if self.schedule_interval {
-                                        "Once"
-                                    } else {
-                                        "✓ Once"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.schedule_interval = false;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("schedule-interval")
-                                    .label(if self.schedule_interval {
-                                        "✓ Interval"
-                                    } else {
-                                        "Interval"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.schedule_interval = true;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(div().text_sm().child(if self.schedule_interval {
-                        "Repeat every N minutes; first run after N minutes (minimum 5)."
-                    } else {
-                        "Run once, N minutes from now."
-                    }))
-                    .child(Input::new(&self.schedule_minutes))
-                    .child(
-                        Button::new("schedule-create")
-                            .label("Create for review")
-                            .on_click(cx.listener(|this, _, _, cx| this.create_schedule(cx))),
-                    ),
-            );
-        }
-        if self.schedules.is_empty() {
-            content = content.child(div().child("No schedules in this conversation."));
-        }
-        for schedule in &self.schedules {
-            let id = text(schedule, "id");
-            let state = text(schedule, "approvalState");
-            let approved = state == "approved";
-            let proposed = schedule
-                .get("proposal")
-                .filter(|value| value.is_object())
-                .unwrap_or(schedule);
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .flex_shrink_0()
-                .gap_2()
-                .p_3()
-                .rounded_md()
-                .bg(self.color(0x202a3b))
-                .child(div().font_semibold().child(text(proposed, "name")))
-                .child(div().child(text(proposed, "prompt")))
-                .child(div().text_sm().child(format!(
-                    "Next run: {}",
-                    schedule_date(&schedule["nextRunAt"])
-                )))
-                .child(div().text_sm().child(format!(
-                    "Timing: {}",
-                    schedule_timing(&proposed["recurrence"])
-                )))
-                .child(div().text_sm().child(format!(
-                    "Approval: {} · {}",
-                    if approved {
-                        "Approved"
-                    } else if state == "awaitingUserApproval" {
-                        "Awaiting your approval"
-                    } else {
-                        "Awaiting separate Rust approval"
-                    },
-                    if schedule["isPaused"] == true {
-                        "Paused"
-                    } else {
-                        "Enabled"
-                    }
-                )));
-            if !schedule["proposal"].is_null() {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .child("Pending changes shown above will take effect when approved."),
-                );
-            }
-            if let Some(reason) = schedule["pauseReason"].as_str() {
-                card = card.child(div().text_sm().child(reason.to_owned()));
-            }
-            let mut actions = div().flex().flex_wrap().gap_2();
-            if !approved {
-                let id = id.clone();
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
-                        .label("Approve in Rust")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, "approve", cx)
-                        })),
-                );
-            }
-            for (action, label) in [
-                (
-                    if schedule["isPaused"] == true {
-                        "schedules.resume"
-                    } else {
-                        "schedules.pause"
-                    },
-                    if schedule["isPaused"] == true {
-                        "Resume"
-                    } else {
-                        "Pause"
-                    },
-                ),
-                ("schedules.run-now", "Run now"),
-                ("schedules.delete", "Delete"),
-            ] {
-                if action == "schedules.run-now" && !approved {
-                    continue;
-                }
-                let id = id.clone();
-                actions =
-                    actions.child(
-                        Button::new(SharedString::from(format!("schedule-{action}-{id}")))
-                            .label(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.schedule_action(&id, action, cx)
-                            })),
-                    );
-            }
-            content = content.child(card.child(actions));
-        }
-        content.into_any_element()
     }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self
@@ -1324,57 +1086,6 @@ impl Coincide {
                 .into_any_element(),
         )
     }
-    fn attach_images(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
-            return;
-        };
-        if !self.attachment_import_threads.insert(thread_id.clone()) {
-            return;
-        }
-        let picker = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: Some("Attach images".into()),
-        });
-        let engine = self.engine.clone();
-        self.status = "Choose images to attach to this draft.".into();
-        cx.notify();
-        cx.spawn(async move |this,cx| {
-            let outcome: Result<usize> = async {
-                let Some(paths) = picker.await?? else {return Ok(0);};
-                anyhow::ensure!(paths.len()<=20,"Select at most 20 images at a time");
-                let mut imported=0;
-                for path in paths {
-                    this.update(cx,|_,_|())?;
-                    let operation=call(&engine,"attachments.add",json!({"threadId":thread_id,"path":path}))?;
-                    let operation_id=operation["operationId"].as_str().ok_or_else(||anyhow::anyhow!("Image import did not return an operation ID"))?;
-                    loop {
-                        let result=call(&engine,"workspace.result",json!({"threadId":thread_id,"operationId":operation_id}))?;
-                        if result["ready"]==true {
-                            if let Some(error)=result["result"]["error"].as_str(){anyhow::bail!("{error}");}
-                            imported+=1;
-                            break;
-                        }
-                        cx.background_executor().timer(Duration::from_millis(150)).await;
-                    }
-                }
-                Ok(imported)
-            }.await;
-            let _=this.update(cx,|this,cx| {
-                this.attachment_import_threads.remove(&thread_id);
-                this.status=match outcome {
-                    Ok(0)=>"Image selection cancelled.".into(),
-                    Ok(count)=>format!("Attached {count} image(s) to the draft."),
-                    Err(error)=>format!("Image import stopped: {error}. Any earlier successful imports remain attached."),
-                };
-                if this.selected.as_ref().is_some_and(|thread|thread["id"]==thread_id) {
-                    if let Ok(thread)=call(&this.engine,"threads.read",json!({"threadId":thread_id})){this.selected=Some(thread);}
-                }
-                cx.notify();
-            });
-        }).detach();
-    }
     fn remove_image(&mut self, attachment_id: &str, cx: &mut Context<Self>) {
         let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
@@ -1727,6 +1438,7 @@ impl Coincide {
             return div().into_any_element();
         }
         let body = text(item, "text");
+        let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
         let expanded = self.expanded.contains(&index);
         let shown = if collapsible && !expanded {
@@ -1768,7 +1480,29 @@ impl Coincide {
                     .text_sm()
                     .text_color(self.color(0x98b1d4))
                     .mb_2()
-                    .child(label),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(div().child(label))
+                    .child({
+                        let source = source_id.clone();
+                        let item = item_id.clone();
+                        Button::new(SharedString::from(format!(
+                            "copy-message-{source_id}-{item_id}"
+                        )))
+                        .accessibility_id(SharedString::from(format!(
+                            "copy-message-{source_id}-{item_id}"
+                        )))
+                        .label("Copy message")
+                        .disabled(copy_empty)
+                        .tooltip("Copy the complete message text, including collapsed content")
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.copy_message(&source, &item, cx)
+                            }),
+                        )
+                    }),
             )
             .when(collapsible, |view| {
                 let source = source_id.clone();
@@ -2746,7 +2480,25 @@ impl Render for Coincide {
                                 )
                                 .when_some(queue_pane, |view, queue| view.child(queue))
                                 .when_some(draft_images, |view, images| view.child(images))
-                                .child(Textarea::new(&self.composer).h(px(110.)))
+                                .child({
+                                    let target = cx.entity().downgrade();
+                                    div()
+                                        .id("composer-image-drop")
+                                        .on_drop(cx.listener(
+                                            |this, paths: &ExternalPaths, _, cx| {
+                                                this.drop_image_paths(paths, cx)
+                                            },
+                                        ))
+                                        .child(Textarea::new(&self.composer).h(px(110.)).on_paste(
+                                            move |item, _, cx| {
+                                                target
+                                                    .update(cx, |this, cx| {
+                                                        this.paste_images(item, cx)
+                                                    })
+                                                    .unwrap_or(false)
+                                            },
+                                        ))
+                                })
                                 .child(
                                     div()
                                         .flex()
@@ -2812,55 +2564,6 @@ fn schedule_date(value: &Value) -> String {
     coincide_core::scheduling::parse_date(value)
         .map(|date| date.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|_| "Unavailable".into())
-}
-fn schedule_timing(recurrence: &Value) -> String {
-    let zone = text(recurrence, "timeZoneID");
-    let time = format!(
-        "{:02}:{:02} ({zone})",
-        recurrence["hour"].as_u64().unwrap_or(0),
-        recurrence["minute"].as_u64().unwrap_or(0)
-    );
-    let weekday = |day: u64| {
-        [
-            "Sunday",
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-        ]
-        .get(day.saturating_sub(1) as usize)
-        .copied()
-        .unwrap_or("Unknown day")
-    };
-    match recurrence["kind"].as_str().unwrap_or("") {
-        "once" => format!("Once at {} · {zone}", schedule_date(&recurrence["date"])),
-        "interval" => format!(
-            "Every {} minutes · first run {}",
-            recurrence["intervalMinutes"],
-            schedule_date(&recurrence["date"])
-        ),
-        "daily" => format!("Daily at {time}"),
-        "weekly" => format!(
-            "Every {} at {time}",
-            weekday(recurrence["weekday"].as_u64().unwrap_or(0))
-        ),
-        "weekdays" => format!("Monday–Friday at {time}"),
-        "days" => format!(
-            "{} at {time}",
-            recurrence["weekdays"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_u64)
-                .map(weekday)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        "cron" => format!("Cron {} ({zone})", text(recurrence, "cron")),
-        _ => "Unsupported timing".into(),
-    }
 }
 fn main() -> Result<()> {
     let data = control::data_directory()?;

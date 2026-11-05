@@ -12,6 +12,8 @@ use std::{
 
 #[path = "provider_acp.rs"]
 mod acp;
+#[path = "provider_antigravity.rs"]
+mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
 #[path = "provider_cursor.rs"]
@@ -34,6 +36,11 @@ pub enum Provider {
     Claude,
     Grok,
     OpenCode,
+    Antigravity {
+        profile: Option<PathBuf>,
+        source_profile: Option<PathBuf>,
+        risk_acknowledged: bool,
+    },
     Cursor {
         profile: Option<PathBuf>,
     },
@@ -46,7 +53,14 @@ pub enum Provider {
 
 impl Provider {
     pub fn supported_names() -> &'static [&'static str] {
-        &["codex", "claude", "grok", "opencode", "cursor"]
+        &[
+            "codex",
+            "claude",
+            "grok",
+            "opencode",
+            "cursor",
+            "antigravity",
+        ]
     }
     pub fn from_name(name: &str) -> Result<Self> {
         match name {
@@ -55,9 +69,11 @@ impl Provider {
             "grok" => Ok(Self::Grok),
             "cursor" => Ok(Self::Cursor { profile: None }),
             "opencode" => Ok(Self::OpenCode),
-            "antigravity" => bail!(
-                "Antigravity requires its private signed-in profile, runtime and ACP extensions; the Rust adapter is not connected yet"
-            ),
+            "antigravity" => Ok(Self::Antigravity {
+                profile: None,
+                source_profile: None,
+                risk_acknowledged: false,
+            }),
             _ => bail!("Unknown provider: {name}"),
         }
     }
@@ -67,6 +83,7 @@ impl Provider {
             Self::Claude => "claude",
             Self::Grok => "grok",
             Self::OpenCode => "opencode",
+            Self::Antigravity { .. } => "antigravity",
             Self::Cursor { .. } => "cursor",
             Self::AcpV1 { .. } => "acp",
         }
@@ -117,6 +134,19 @@ impl Session {
                 Provider::Claude => claude::run(launch, images, commands, &events_tx),
                 Provider::Grok => grok::run(launch, images, commands, &events_tx),
                 Provider::OpenCode => opencode::run(launch, images, commands, &events_tx),
+                Provider::Antigravity {
+                    profile,
+                    source_profile,
+                    risk_acknowledged,
+                } => antigravity::run(
+                    launch,
+                    images,
+                    profile,
+                    source_profile,
+                    risk_acknowledged,
+                    commands,
+                    &events_tx,
+                ),
                 Provider::Cursor { profile } => {
                     cursor::run(launch, images, profile, commands, &events_tx)
                 }
@@ -296,7 +326,23 @@ pub fn provider_session(thread: &Value, provider: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn provider_reference<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
+fn selected_account<'a>(thread: &'a Value, provider: &str) -> &'a str {
+    if thread["selection"]["provider"] == provider {
+        thread["selection"]["accountID"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .unwrap_or("default")
+    } else {
+        "default"
+    }
+}
+fn reference_account(reference: &Value) -> &str {
+    reference["accountID"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .unwrap_or("default")
+}
+fn current_reference<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
     let sessions = &thread["sessions"];
     if let Some(array) = sessions.as_array() {
         array
@@ -308,6 +354,12 @@ fn provider_reference<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value
     } else {
         sessions.get(provider)
     }
+}
+fn provider_reference<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
+    let account = selected_account(thread, provider);
+    current_reference(thread, provider)
+        .filter(|reference| reference_account(reference) == account)
+        .or_else(|| thread["accountSessions"].get(format!("{provider}/{account}")))
 }
 
 /// Missing or malformed progress must replay context rather than silently skip
@@ -331,17 +383,23 @@ pub fn provider_seen_count(thread: &Value, provider: &str) -> usize {
 /// This never fabricates a missing session or changes another provider/account.
 pub fn mark_provider_seen(thread: &mut Value, provider: &str) {
     let count = thread["items"].as_array().map_or(0, Vec::len);
-    let sessions = &mut thread["sessions"];
-    let reference = if sessions.is_array() {
-        let array = sessions.as_array_mut().expect("array checked above");
-        array
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .find(|pair| pair[0] == provider)
-            .map(|pair| &mut pair[1])
+    let account = selected_account(thread, provider).to_owned();
+    let current_matches = current_reference(thread, provider)
+        .is_some_and(|reference| reference_account(reference) == account);
+    let reference = if current_matches {
+        let sessions = &mut thread["sessions"];
+        if let Some(array) = sessions.as_array_mut() {
+            array
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .find(|pair| pair[0] == provider)
+                .map(|pair| &mut pair[1])
+        } else {
+            sessions.get_mut(provider)
+        }
     } else {
-        sessions.get_mut(provider)
+        thread["accountSessions"].get_mut(format!("{provider}/{account}"))
     };
     if let Some(reference) = reference
         && reference.is_object()
@@ -354,27 +412,95 @@ pub fn mark_provider_seen(thread: &mut Value, provider: &str) {
 }
 
 pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
-    if let Some(array) = thread["sessions"].as_array_mut() {
-        for pair in array.as_chunks_mut::<2>().0 {
-            if pair[0] == provider {
-                pair[1]["sessionID"] = json!(id);
-                return;
-            }
+    let account = selected_account(thread, provider).to_owned();
+    let current = current_reference(thread, provider).cloned();
+    let same_account = current
+        .as_ref()
+        .is_some_and(|reference| reference_account(reference) == account);
+    let mut reference = if same_account {
+        current.clone().unwrap()
+    } else {
+        if !thread["accountSessions"].is_object() {
+            thread["accountSessions"] = json!({});
         }
-        array.extend([json!(provider), json!({"sessionID":id,"seenItemCount":0})]);
+        if let Some(current) = current {
+            let key = format!("{provider}/{}", reference_account(&current));
+            thread["accountSessions"][key] = current;
+        }
+        thread["accountSessions"]
+            .as_object_mut()
+            .unwrap()
+            .remove(&format!("{provider}/{account}"))
+            .unwrap_or_else(|| json!({"seenItemCount":0}))
+    };
+    if !reference.is_object() {
+        reference = json!({"seenItemCount":0});
+    }
+    reference["sessionID"] = json!(id);
+    if account != "default" {
+        reference["accountID"] = json!(account);
+    }
+    if let Some(array) = thread["sessions"].as_array_mut() {
+        if let Some(pair) = array
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .find(|pair| pair[0] == provider)
+        {
+            pair[1] = reference;
+        } else {
+            array.extend([json!(provider), reference]);
+        }
     } else {
         if !thread["sessions"].is_object() {
             thread["sessions"] = json!({});
         }
-        if !thread["sessions"][provider].is_object() {
-            thread["sessions"][provider] = json!({"seenItemCount":0});
-        }
-        thread["sessions"][provider]["sessionID"] = json!(id);
+        thread["sessions"][provider] = reference;
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_selection_never_resumes_or_overwrites_another_accounts_session() {
+        for sessions in [
+            json!({"antigravity":{"sessionID":"default-native","seenItemCount":1,"future":42}}),
+            json!(["antigravity",{"sessionID":"default-native","seenItemCount":1,"future":42}]),
+        ] {
+            let mut thread = json!({"selection":{"provider":"antigravity","accountID":"other"},"sessions":sessions,"items":[{},{}]});
+            assert_eq!(provider_session(&thread, "antigravity"), None);
+            set_provider_session(&mut thread, "antigravity", "other-native");
+            mark_provider_seen(&mut thread, "antigravity");
+            assert_eq!(
+                provider_session(&thread, "antigravity").as_deref(),
+                Some("other-native")
+            );
+            assert_eq!(
+                thread["accountSessions"]["antigravity/default"]["future"],
+                42
+            );
+            thread["selection"]["accountID"] = Value::Null;
+            assert_eq!(
+                provider_session(&thread, "antigravity").as_deref(),
+                Some("default-native")
+            );
+            assert_eq!(provider_seen_count(&thread, "antigravity"), 1);
+            set_provider_session(&mut thread, "antigravity", "default-native");
+            assert_eq!(
+                thread["accountSessions"]["antigravity/other"]["sessionID"],
+                "other-native"
+            );
+            assert_eq!(
+                thread["accountSessions"]["antigravity/other"]["seenItemCount"],
+                2
+            );
+            assert_eq!(
+                provider_reference(&thread, "antigravity").unwrap()["future"],
+                42
+            );
+        }
+    }
     #[test]
     fn session_update_preserves_other_accounts_and_future_fields() {
         let mut v = json!({"items":[],"sessions":["claude",{"sessionID":"a"},"codex",{"sessionID":"b","future":42}],"accountSessions":{"codex/other":{"sessionID":"c"}}});
