@@ -399,6 +399,7 @@ struct Coincide {
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
+    composer_accessory_scroll: ScrollHandle,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -1043,6 +1044,7 @@ impl Coincide {
             composer,
             model_input,
             selection_ui: Default::default(),
+            composer_accessory_scroll: ScrollHandle::default(),
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -1467,6 +1469,8 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.composer_accessory_scroll
+                        .set_offset(point(px(0.), px(0.)));
                     self.image_assets
                         .update(cx, |cache, cx| cache.clear(window, cx));
                     self.image_asset_order.clear();
@@ -3838,27 +3842,48 @@ impl Render for Coincide {
                                         .border_1()
                                         .border_color(self.color(0x29303d))
                                         .child(
+                                            // The bounded accessory viewport shrinks independently of
+                                            // the pinned textarea/actions. Keep a persistent thumb so
+                                            // long selection forms do not require coarse wheel steps.
                                             div()
-                                                .id("composer-accessories")
+                                                .relative()
                                                 .min_h_0()
                                                 .max_h(px(160.))
                                                 .flex_shrink_1()
-                                                .overflow_y_scroll()
-                                                .child(self.composer_selection_pane(cx))
-                                                .when_some(
-                                                    self.composer_steering_pane(cx),
-                                                    |view, steering| view.child(steering),
+                                                .flex()
+                                                .flex_col()
+                                                .overflow_hidden()
+                                                .child(
+                                                    div()
+                                                        .id("composer-accessories")
+                                                        .track_scroll(&self.composer_accessory_scroll)
+                                                        .pr_4()
+                                                        .min_h_0()
+                                                        .max_h(px(160.))
+                                                        .flex_shrink_1()
+                                                        .overflow_y_scroll()
+                                                        .child(self.composer_selection_pane(cx))
+                                                        .when_some(
+                                                            self.composer_steering_pane(cx),
+                                                            |view, steering| view.child(steering),
+                                                        )
+                                                        .when_some(
+                                                            self.composer_context_pane(cx),
+                                                            |view, context| view.child(context),
+                                                        )
+                                                        .when_some(queue_pane, |view, queue| {
+                                                            view.child(queue)
+                                                        })
+                                                        .when_some(draft_images, |view, images| {
+                                                            view.child(images)
+                                                        })
                                                 )
-                                                .when_some(
-                                                    self.composer_context_pane(cx),
-                                                    |view, context| view.child(context),
-                                                )
-                                                .when_some(queue_pane, |view, queue| {
-                                                    view.child(queue)
-                                                })
-                                                .when_some(draft_images, |view, images| {
-                                                    view.child(images)
-                                                }),
+                                                .child(
+                                                    gpui_kit::component::scroll::Scrollbar::vertical(
+                                                        &self.composer_accessory_scroll,
+                                                    )
+                                                    .mode(gpui_kit::component::scroll::ScrollbarMode::Always),
+                                                ),
                                         )
                                         .child({
                                             let target = cx.entity().downgrade();
