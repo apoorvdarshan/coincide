@@ -61,8 +61,8 @@ private:bool content_{};
 };
 // The immutable identity avoids equal-row lookup cycles and builds a visual only for realized rows.
 struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
-    Row(TerminalLine cells,double cell_width,double line_height,std::optional<std::size_t> cursor,std::shared_ptr<std::string> selected)
-        :cells_(std::move(cells)),cell_width_(cell_width),line_height_(line_height),cursor_(cursor),selected_(std::move(selected)){}
+    Row(TerminalLine cells,double cell_width,double line_height,std::optional<std::size_t> cursor,std::shared_ptr<std::string> selected,std::function<void()> selection_changed={})
+        :cells_(std::move(cells)),cell_width_(cell_width),line_height_(line_height),cursor_(cursor),selected_(std::move(selected)),selection_changed_(std::move(selection_changed)){}
     xaml::Data::ICustomProperty GetCustomProperty(const winrt::hstring& name)const{
         if(name==L"Text")return winrt::make<RowProperty>();if(name==L"Content")return winrt::make<RowProperty>(true);return nullptr;
     }
@@ -78,8 +78,8 @@ struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
         ui::RichTextBlock text;text.FontFamily(xaml::Media::FontFamily(L"Consolas"));text.FontSize(14);
         text.LineHeight(line_height_);text.LineStackingStrategy(xaml::LineStackingStrategy::BlockLineHeight);
         text.TextWrapping(xaml::TextWrapping::NoWrap);text.IsTextSelectionEnabled(true);identify(text,L"TerminalRowText");
-        text.SelectionChanged([selected=selected_](const auto& sender,const auto&){
-            const auto value=sender.template as<ui::RichTextBlock>().SelectedText();if(!value.empty())*selected=winrt::to_string(value);
+        text.SelectionChanged([selected=selected_,changed=selection_changed_](const auto& sender,const auto&){
+            const auto value=sender.template as<ui::RichTextBlock>().SelectedText();if(!value.empty()){*selected=winrt::to_string(value);if(changed)changed();}
         });
         docs::Paragraph paragraph;paragraph.Margin({0,0,0,0});
         for(std::size_t first=0;first<cells_.size();){
@@ -110,7 +110,7 @@ struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
     }
 private:
     TerminalLine cells_;double cell_width_,line_height_;std::optional<std::size_t> cursor_;
-    std::shared_ptr<std::string> selected_;ui::Grid content_{nullptr};
+    std::shared_ptr<std::string> selected_;std::function<void()> selection_changed_;ui::Grid content_{nullptr};
 };
 inline Inspectable row_content(const Inspectable& target){return winrt::get_self<Row>(target.as<xaml::Data::ICustomPropertyProvider>())->content();}
 } // namespace terminal_ui
@@ -125,13 +125,13 @@ public:
     }
     terminal_ui::ui::Grid view()const{return root_;}
     void set_command_guard(std::function<bool(const std::string&,const std::filesystem::path&)> guard){command_guard_=std::move(guard);}
-    void set_selection_callback(std::function<void(const std::string&,const std::string&)> callback){selection_callback_=std::move(callback);}
+    void set_selection_callback(std::function<void(const std::string&,const std::string&,const std::string&)> callback){selection_callback_=std::move(callback);}
     void use_selection(){
         if(closed_||!visible_)throw std::runtime_error("Open this conversation's terminal first.");
         const auto pane=active_pane();if(!pane||pane->closed||pane->thread_id!=selected_thread_)throw std::runtime_error("The selected terminal pane is unavailable.");
         const auto text=*pane->selection;(void)composer_context::terminal_selection({},text);
         if(!selection_callback_)throw std::runtime_error("The conversation composer is unavailable.");
-        selection_callback_(pane->thread_id,text);
+        selection_callback_(pane->thread_id,pane->id,text);
     }
     void select_thread(std::string id,std::filesystem::path cwd){
         if(id.empty()){selected_thread_.clear();show_active();return;}
@@ -222,7 +222,7 @@ private:
     std::filesystem::path base_;bool fixture_{},visible_{},closed_{},refreshing_{};std::string selected_thread_;
     std::unordered_map<std::string,ThreadTabs> threads_;std::vector<std::shared_ptr<Pane>> retired_;
     std::function<bool(const std::string&,const std::filesystem::path&)> command_guard_;
-    std::function<void(const std::string&,const std::string&)> selection_callback_;
+    std::function<void(const std::string&,const std::string&,const std::string&)> selection_callback_;
     std::vector<std::string> displayed_tabs_;
     terminal_ui::ui::Grid root_{nullptr},panes_view_{nullptr};terminal_ui::ui::ComboBox tabs_{nullptr};terminal_ui::ui::TextBlock status_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
@@ -433,7 +433,8 @@ private:
         const auto append=[&](const TerminalLine& row){
             const bool cursor_changed=(pane->rendered_cursor&&*pane->rendered_cursor==index)||(cursor_row&&*cursor_row==index);
             if(index>=pane->rendered.size()||pane->rendered[index]!=row||cursor_changed){
-                auto item=winrt::make<terminal_ui::Row>(row,pane->cell_width,pane->line_height,cursor_row&&*cursor_row==index?std::optional<std::size_t>(cursor.column):std::nullopt,pane->selection);
+                auto item=winrt::make<terminal_ui::Row>(row,pane->cell_width,pane->line_height,cursor_row&&*cursor_row==index?std::optional<std::size_t>(cursor.column):std::nullopt,pane->selection,
+                    [weak=weak_from_this(),source=std::weak_ptr<Pane>(pane)]{const auto self=weak.lock();const auto value=source.lock();if(!self||!value||!self->visible_||self->closed_||value->closed||value->thread_id!=self->selected_thread_)return;const auto tab=self->active_tab();if(tab&&std::find(tab->panes.begin(),tab->panes.end(),value)!=tab->panes.end())tab->active=value->id;});
                 if(index<pane->rendered.size()){pane->rendered[index]=row;pane->output.Items().SetAt(static_cast<std::uint32_t>(index),item);}
                 else{pane->rendered.push_back(row);pane->output.Items().Append(item);}
             }
