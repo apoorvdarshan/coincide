@@ -14,3 +14,6 @@ pub mod workspace;
 
 pub mod message_queue;
 pub mod thread_history;
+
+pub mod platform_host;
+pub mod remote;
