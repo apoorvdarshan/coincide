@@ -88,6 +88,89 @@ struct Composition {
     selected: Range<usize>,
     marked: bool,
 }
+// The platform input context belongs to the native view, not a GPUI pane.
+// Keep its cancellation ownership beside the pane-local composition so a new
+// pane can never inherit the old context's pending dead-key/IME state.
+struct PreeditContext<C>(Option<C>);
+impl<C> Default for PreeditContext<C> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+impl<C> PreeditContext<C> {
+    fn stage(&mut self, capture: impl FnOnce() -> Option<C>) {
+        if self.0.is_none() {
+            self.0 = capture();
+        }
+    }
+    fn cancel(&mut self, discard: impl FnOnce(C)) {
+        if let Some(context) = self.0.take() {
+            discard(context);
+        }
+    }
+    fn committed(&mut self) {
+        self.0 = None;
+    }
+}
+#[cfg(target_os = "macos")]
+struct NativePreeditContext(objc2::rc::Retained<objc2::runtime::AnyObject>);
+#[cfg(target_os = "macos")]
+impl NativePreeditContext {
+    fn capture(window: &Window) -> Option<Self> {
+        if !window.is_window_active() {
+            return None;
+        }
+        use objc2::{
+            class, msg_send,
+            runtime::{AnyObject, Bool},
+            sel,
+        };
+        // This runs only in an accepted marked-text callback on the active
+        // terminal. Capture that responder's exact context now; cancellation
+        // must not look up a later pane/window's first responder.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let window: *mut AnyObject = msg_send![app, keyWindow];
+            if window.is_null() {
+                return None;
+            }
+            let responder: *mut AnyObject = msg_send![window, firstResponder];
+            if responder.is_null() {
+                return None;
+            }
+            let supports: Bool = msg_send![responder, respondsToSelector: sel!(inputContext)];
+            if !supports.as_bool() {
+                return None;
+            }
+            let context: *mut AnyObject = msg_send![responder, inputContext];
+            if context.is_null() {
+                return None;
+            }
+            let supports: Bool = msg_send![context, respondsToSelector: sel!(discardMarkedText)];
+            if !supports.as_bool() {
+                return None;
+            }
+            objc2::rc::Retained::retain(context).map(Self)
+        }
+    }
+    fn discard(self, cx: &mut App) {
+        // discardMarkedText may synchronously call unmarkText back into GPUI.
+        // Wait only for the current effect cycle, not a timer or another input,
+        // so Entity borrows are released before any native callback occurs.
+        cx.defer(move |_| unsafe {
+            let _: () = objc2::msg_send![&*self.0, discardMarkedText];
+        });
+    }
+}
+#[cfg(not(target_os = "macos"))]
+struct NativePreeditContext;
+#[cfg(not(target_os = "macos"))]
+impl NativePreeditContext {
+    fn capture(_: &Window) -> Option<Self> {
+        None
+    }
+    fn discard(self, _: &mut App) {}
+}
 fn utf16_byte(text: &str, offset: usize) -> Option<usize> {
     let mut units = 0;
     for (byte, ch) in text.char_indices() {
@@ -156,6 +239,10 @@ impl Composition {
     fn clear(&mut self) {
         *self = Self::default();
     }
+    fn cancel<C>(&mut self, context: &mut PreeditContext<C>, discard: impl FnOnce(C)) {
+        self.clear();
+        context.cancel(discard);
+    }
     fn display(&self) -> String {
         self.text.replace(['\t', '\r', '\n'], " ")
     }
@@ -178,6 +265,7 @@ struct PaneInput {
     focus: FocusHandle,
     active: bool,
     composition: Composition,
+    native_preedit: PreeditContext<NativePreeditContext>,
     notice: String,
     anchor: Point<Pixels>,
     bounds: Option<Bounds<Pixels>>,
@@ -203,8 +291,17 @@ impl PaneInput {
             )
         })
     }
+    fn clear_preedit(&mut self, cx: &mut Context<Self>) {
+        self.composition
+            .cancel(&mut self.native_preedit, |context| context.discard(cx));
+    }
+    fn revoke(&mut self, cx: &mut Context<Self>) {
+        self.active = false;
+        self.clear_preedit(cx);
+        cx.notify();
+    }
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.composition.clear();
+        self.clear_preedit(cx);
         window.notify_text_input_changed(&self.focus);
         cx.notify();
     }
@@ -215,7 +312,7 @@ impl PaneInput {
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.current(window, cx) {
-            self.composition.clear();
+            self.clear_preedit(cx);
             return false;
         }
         self.owner
@@ -295,11 +392,15 @@ impl EntityInputHandler for PaneInput {
         cx: &mut Context<Self>,
     ) {
         if !self.current(window, cx) {
-            self.composition.clear();
+            self.clear_preedit(cx);
             return;
         }
         match self.composition.stage(range, text, selected) {
-            Ok(()) => self.notice.clear(),
+            Ok(()) => {
+                self.native_preedit
+                    .stage(|| NativePreeditContext::capture(window));
+                self.notice.clear();
+            }
             Err(error) => self.notice = error.to_string(),
         }
         self.changed(window, cx);
@@ -312,13 +413,14 @@ impl EntityInputHandler for PaneInput {
         cx: &mut Context<Self>,
     ) {
         if !self.current(window, cx) {
-            self.composition.clear();
+            self.clear_preedit(cx);
             return;
         }
         match self.composition.replacement(range, text) {
             Ok((text, _)) => {
                 if self.submit(TerminalInput::Text { text }, window, cx) {
                     self.composition.clear();
+                    self.native_preedit.committed();
                     self.notice.clear();
                 }
             }
@@ -331,7 +433,7 @@ impl EntityInputHandler for PaneInput {
             match valid_payload(&text, true) {
                 Ok(()) => {
                     if self.submit(TerminalInput::Paste { text }, window, cx) {
-                        self.composition.clear();
+                        self.clear_preedit(cx);
                         self.notice.clear();
                     }
                 }
@@ -711,7 +813,7 @@ impl TerminalWorkspace {
     /// Parent calls false when hiding a cached entity, true when mounting it.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if !visible {
-            self.revoke_inputs();
+            self.revoke_inputs(cx);
         }
         self.visible = visible;
         self.watch();
@@ -801,9 +903,11 @@ impl TerminalWorkspace {
         pane.selection.clear();
         pane.blink = Instant::now();
         if matches!(action, Action::Close) {
+            if let Some(input) = pane.ime.take() {
+                input.update(cx, |input, cx| input.revoke(cx));
+            }
             pane.closing = true;
             pane.ime_epoch += 1;
-            pane.ime = None;
             pane.ime_observer = None;
         }
         if let Action::Resize(rows, cols) = action {
@@ -977,10 +1081,12 @@ impl TerminalWorkspace {
             cx.notify();
         }
     }
-    fn revoke_inputs(&mut self) {
+    fn revoke_inputs(&mut self, cx: &mut Context<Self>) {
         for pane in self.panes.values_mut() {
+            if let Some(input) = pane.ime.take() {
+                input.update(cx, |input, cx| input.revoke(cx));
+            }
             pane.ime_epoch += 1;
-            pane.ime = None;
             pane.ime_observer = None;
         }
     }
@@ -1022,7 +1128,7 @@ impl TerminalWorkspace {
             p.focus.is_focused(window) && p.ime.as_ref().is_some_and(|ime| ime.read(cx).active)
         });
         if !same {
-            self.revoke_inputs();
+            self.revoke_inputs(cx);
             let owner = cx.entity().downgrade();
             let pane = self.panes.get_mut(&key).unwrap();
             let epoch = pane.ime_epoch;
@@ -1046,6 +1152,7 @@ impl TerminalWorkspace {
                     focus: focus.clone(),
                     active: true,
                     composition: Default::default(),
+                    native_preedit: Default::default(),
                     notice: String::new(),
                     anchor: point(px(0.), px(0.)),
                     bounds: None,
@@ -2352,5 +2459,89 @@ mod tests {
         assert!(!native_scope(1, 4, true, &[2, 3], Some((4, true)))); // another tab
         assert!(!native_scope(1, 4, true, &[1, 2], Some((4, false)))); // closed/unfocused/unbound
         assert!(!native_scope(1, 4, true, &[1, 2], None)); // removed pane
+    }
+    #[::core::prelude::v1::test]
+    fn native_context_belongs_to_one_preedit_session_and_cancels_exactly_once() {
+        let mut native = PreeditContext::default();
+        let mut state = Composition::default();
+        state.stage(None, "´", None).unwrap();
+        native.stage(|| Some("left-context"));
+        native.stage(|| panic!("preedit updates must keep their original context"));
+        let mut cancelled = Vec::new();
+        state.cancel(&mut native, |context| cancelled.push(context));
+        state.cancel(&mut native, |context| cancelled.push(context));
+        assert_eq!(cancelled, ["left-context"]);
+        assert!(!state.marked);
+        assert!(state.text.is_empty());
+        assert_eq!(state.selected, 0..0);
+        native.stage(|| Some("next-context"));
+        native.committed();
+        native.cancel(|_| panic!("successful native commit must not be cancelled"));
+    }
+    #[::core::prelude::v1::test]
+    fn pane_switch_cancels_native_dead_key_before_right_pane_commit() {
+        let worker = FakeWorker::new();
+        worker.tx.send(Command::Adopt(1, "left".into())).unwrap();
+        worker.tx.send(Command::Adopt(2, "right".into())).unwrap();
+        let pending = std::rc::Rc::new(std::cell::RefCell::new(Some("´".to_owned())));
+        let mut left = Composition::default();
+        let mut native = PreeditContext::default();
+        left.stage(None, "´", None).unwrap();
+        native.stage(|| Some(pending.clone()));
+        // Use the exact cancellation operation shared by blur/hide/close/focus
+        // revocation. Like App::defer, run the native reset after releasing the
+        // old component's borrow but before accepting the next input event.
+        let mut deferred: Vec<Box<dyn FnOnce()>> = Vec::new();
+        left.cancel(&mut native, |context| {
+            deferred.push(Box::new(move || {
+                context.borrow_mut().take();
+            }))
+        });
+        assert_eq!(pending.borrow().as_deref(), Some("´"));
+        for reset in deferred {
+            reset();
+        }
+        let native_commit = format!("{}c", pending.borrow().as_deref().unwrap_or_default());
+        let right = Composition::default();
+        let text = right.replacement(None, &native_commit).unwrap().0;
+        assert_eq!(text.as_bytes(), &[99]);
+        worker
+            .tx
+            .send(Command::Act(
+                2,
+                1,
+                Action::Input(TerminalInput::Text { text }),
+            ))
+            .unwrap();
+        worker.tx.send(Command::Act(2, 2, Action::Close)).unwrap();
+        assert!(matches!(worker.next(), Update::Closed(2, 2, Ok(()))));
+        let inputs = worker
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "terminal.input")
+            .map(|(_, params)| params.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            inputs,
+            vec![json!({"terminalId":"right","input":{"kind":"text","text":"c"}})]
+        );
+        assert!(left.text.is_empty());
+        worker.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn same_pane_native_commit_preserves_accents_and_literal_prefixes() {
+        for committed in ["é", "´c", "日本語", "e\u{301}"] {
+            let mut state = Composition::default();
+            let mut native = PreeditContext::default();
+            state.stage(None, "´", None).unwrap();
+            native.stage(|| Some("same-pane"));
+            assert_eq!(state.replacement(None, committed).unwrap().0, committed);
+            state.clear();
+            native.committed();
+            native.cancel(|_| panic!("a successful commit must not reset native input"));
+            assert!(valid_payload(committed, false).is_ok());
+        }
     }
 }
