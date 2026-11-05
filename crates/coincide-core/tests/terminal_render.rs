@@ -1,7 +1,7 @@
 //! PTY fixtures only: no shell profile, desktop window, or original app data.
 #![cfg(unix)]
 
-use coincide_core::terminal::Terminal;
+use coincide_core::terminal::{Terminal, TerminalPoint, selected_text};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -244,4 +244,59 @@ fn maximum_styled_page_with_combining_text_fits_four_mib() {
             .len()
             < 4 * 1024 * 1024
     );
+}
+
+#[test]
+fn pty_selection_matches_visible_styled_cells_and_rejects_stale_revision() {
+    let mut fixture = Fixture::new(
+        4,
+        8,
+        &[
+            "\x1b[2J\x1b[H\x1b[31m界e\u{301}\x1b[0mX\r\n\x1b[8mHIDDEN\x1b[0mY",
+            "\x1b[2J\x1b[Hchanged",
+        ],
+    );
+    let first = fixture.snapshot(0);
+    let start = TerminalPoint { row: 0, col: 1 };
+    let end = TerminalPoint { row: 1, col: 6 };
+    let copied = fixture
+        .terminal
+        .copy_selection(first["revision"].as_u64().unwrap(), start, end)
+        .unwrap();
+    assert_eq!(copied, "界e\u{301}X\n      Y");
+    assert_eq!(copied, selected_text(&first, start, end).unwrap());
+    fixture.next(1);
+    assert!(
+        fixture
+            .terminal
+            .copy_selection(first["revision"].as_u64().unwrap(), start, end)
+            .unwrap_err()
+            .to_string()
+            .contains("changed")
+    );
+}
+
+#[test]
+fn pty_soft_wrapping_metadata_prevents_spurious_copied_newlines() {
+    let mut fixture = Fixture::new(4, 8, &["\x1b[2J\x1b[Habcdefghij"]);
+    let page = fixture.snapshot(0);
+    assert_eq!(page["grid"][0][7]["wrapline"], true);
+    let start = TerminalPoint { row: 0, col: 0 };
+    let end = TerminalPoint { row: 1, col: 1 };
+    assert_eq!(selected_text(&page, start, end).unwrap(), "abcdefghij");
+    assert_eq!(
+        fixture
+            .terminal
+            .copy_selection(page["revision"].as_u64().unwrap(), start, end)
+            .unwrap(),
+        "abcdefghij"
+    );
+}
+
+#[test]
+fn full_width_terminal_cursor_reports_insertion_boundary_after_last_cell() {
+    let mut fixture = Fixture::new(4, 8, &["\x1b[2J\x1b[Habcdefgh"]);
+    let page = fixture.snapshot(0);
+    assert_eq!(page["cursor"]["col"], 7);
+    assert_eq!(page["cursor"]["insertionCol"], 8);
 }

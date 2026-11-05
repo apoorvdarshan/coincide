@@ -14,6 +14,8 @@ use std::{
 mod acp;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "provider_cursor.rs"]
+mod cursor;
 #[path = "provider_grok.rs"]
 mod grok;
 #[path = "provider_images.rs"]
@@ -32,6 +34,9 @@ pub enum Provider {
     Claude,
     Grok,
     OpenCode,
+    Cursor {
+        profile: Option<PathBuf>,
+    },
     /// An explicitly configured ACP v1 server. Provider-specific discovery, login,
     /// modes and extensions are not implied by support for its wire protocol.
     AcpV1 {
@@ -41,16 +46,14 @@ pub enum Provider {
 
 impl Provider {
     pub fn supported_names() -> &'static [&'static str] {
-        &["codex", "claude", "grok", "opencode"]
+        &["codex", "claude", "grok", "opencode", "cursor"]
     }
     pub fn from_name(name: &str) -> Result<Self> {
         match name {
             "codex" => Ok(Self::Codex),
             "claude" => Ok(Self::Claude),
             "grok" => Ok(Self::Grok),
-            "cursor" => bail!(
-                "Cursor requires an isolated configuration before its Rust adapter can run without changing the existing app's model defaults"
-            ),
+            "cursor" => Ok(Self::Cursor { profile: None }),
             "opencode" => Ok(Self::OpenCode),
             "antigravity" => bail!(
                 "Antigravity requires its private signed-in profile, runtime and ACP extensions; the Rust adapter is not connected yet"
@@ -64,6 +67,7 @@ impl Provider {
             Self::Claude => "claude",
             Self::Grok => "grok",
             Self::OpenCode => "opencode",
+            Self::Cursor { .. } => "cursor",
             Self::AcpV1 { .. } => "acp",
         }
     }
@@ -113,6 +117,9 @@ impl Session {
                 Provider::Claude => claude::run(launch, images, commands, &events_tx),
                 Provider::Grok => grok::run(launch, images, commands, &events_tx),
                 Provider::OpenCode => opencode::run(launch, images, commands, &events_tx),
+                Provider::Cursor { profile } => {
+                    cursor::run(launch, images, profile, commands, &events_tx)
+                }
                 Provider::AcpV1 { arguments } => {
                     acp::run(launch, arguments, images, commands, &events_tx)
                 }

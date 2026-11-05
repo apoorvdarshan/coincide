@@ -245,6 +245,13 @@ impl Engine {
                     terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
                 } else {terminal.snapshot()}
             },
+            "terminal.selection"=>{
+                let revision=p["revision"].as_u64().context("Missing terminal revision")?;
+                let start:crate::terminal::TerminalPoint=serde_json::from_value(p["start"].clone())?;
+                let end:crate::terminal::TerminalPoint=serde_json::from_value(p["end"].clone())?;
+                let terminal=&mut self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1;
+                Ok(json!({"text":terminal.copy_selection(revision,start,end)?,"revision":revision}))
+            }
             "terminal.write"=>{self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.write(required(p,"text")?)?;Ok(json!({"accepted":true}))}
             "terminal.resize"=>{
                 let rows=u16::try_from(p["rows"].as_u64().context("Missing rows")?)?;
@@ -256,7 +263,7 @@ impl Engine {
                 json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => Ok(json!([
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "providers.list", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
@@ -479,7 +486,7 @@ impl Engine {
             "This preview supports approval/build mode only; fork this conversation to use supported defaults"
         );
         let provider = text(&v["selection"], "provider");
-        let adapter = Provider::from_name(&provider)?;
+        let mut adapter = Provider::from_name(&provider)?;
         ensure!(
             v["selection"]["accountID"].is_null(),
             "Alternate provider accounts are not connected yet"
@@ -491,6 +498,9 @@ impl Engine {
             "Imported conversations are read-only for agent execution until cutover; fork first"
         );
         let data = self.store.data_directory()?;
+        if let Provider::Cursor { profile } = &mut adapter {
+            *profile = Some(data.join("providers").join("cursor").join(&id));
+        }
         ensure!(
             draft_images
                 .iter()
@@ -577,11 +587,18 @@ impl Engine {
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
             "grok" => "COINCIDE_GROK_EXECUTABLE",
             "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
+            "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
             _ => bail!("Provider executable is not configured"),
         };
         let executable = std::env::var_os(executable_variable)
             .map(PathBuf::from)
-            .unwrap_or_else(|| provider.clone().into());
+            .unwrap_or_else(|| {
+                if provider == "cursor" {
+                    "cursor-agent".into()
+                } else {
+                    provider.clone().into()
+                }
+            });
         append(&mut v, "user", prompt, None);
         if !draft_images.is_empty() {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
@@ -1373,7 +1390,7 @@ mod tests {
             assert_eq!(selected["selection"]["modelID"], "fixture-model");
         }
         let before = engine.store.thread(id.as_str().unwrap()).unwrap();
-        for provider in ["cursor", "antigravity", "unknown"] {
+        for provider in ["antigravity", "unknown"] {
             assert!(
                 engine
                     .execute("agent.select", &json!({"threadId":id,"provider":provider}))

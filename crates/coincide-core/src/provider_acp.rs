@@ -13,7 +13,7 @@ fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
         .find(|option| option["kind"] == kind && option["optionId"].is_string())
 }
 
-fn permission_reply(params: &Value, answer: &Value) -> Result<Value> {
+pub(super) fn permission_reply(params: &Value, answer: &Value) -> Result<Value> {
     let options = params["options"]
         .as_array()
         .context("ACP permission options missing")?;
@@ -36,7 +36,7 @@ fn permission_reply(params: &Value, answer: &Value) -> Result<Value> {
     })
 }
 
-struct Mapper {
+pub(super) struct Mapper {
     run_id: String,
     message_number: u64,
     tools: HashMap<String, Value>,
@@ -51,7 +51,12 @@ impl Default for Mapper {
     }
 }
 impl Mapper {
-    fn update(&mut self, update: &Value, frame: &Value, events: &Sender<Event>) -> Result<()> {
+    pub(super) fn update(
+        &mut self,
+        update: &Value,
+        frame: &Value,
+        events: &Sender<Event>,
+    ) -> Result<()> {
         let text = update["content"]["text"].as_str().unwrap_or("");
         let id = update["messageId"]
             .as_str()

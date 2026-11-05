@@ -3,6 +3,7 @@ mod browser;
 mod navigation;
 mod queue;
 mod settings;
+mod terminal_selection;
 use browser::BrowserController;
 use coincide_core::{
     api::{Engine, SharedEngine, call},
@@ -138,6 +139,7 @@ struct Coincide {
     _poll: Task<()>,
     terminal_id: Option<String>,
     terminal_frame: Option<Value>,
+    terminal_selection: terminal_selection::TerminalSelection,
     terminal_tabs: Vec<Value>,
     terminal_selected: std::collections::HashMap<String, String>,
     terminal_row_offset: usize,
@@ -301,6 +303,7 @@ impl Coincide {
             _poll: poll,
             terminal_id: None,
             terminal_frame: None,
+            terminal_selection: Default::default(),
             terminal_tabs: Vec::new(),
             terminal_selected: Default::default(),
             terminal_row_offset: 0,
@@ -670,6 +673,7 @@ impl Coincide {
                 }
                 self.terminal_id = None;
                 self.terminal_frame = None;
+                self.terminal_selection.clear();
                 self.terminal_tabs.clear();
                 self.terminal_row_offset = 0;
                 self.terminal_status.clear();
@@ -1908,6 +1912,7 @@ impl Coincide {
                         .first()
                         .map(|tab| text(tab, "terminalId"));
                     self.terminal_frame = None;
+                    self.terminal_selection.clear();
                     self.terminal_row_offset = 0;
                     if let Some(id) = &self.terminal_id {
                         self.terminal_selected.insert(thread, id.clone());
@@ -1919,6 +1924,7 @@ impl Coincide {
         self.terminal_tabs_last_poll = Instant::now();
     }
     fn select_terminal(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.terminal_selection.clear();
         if let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) {
             self.terminal_selected.insert(thread, id.clone());
         }
@@ -1966,6 +1972,7 @@ impl Coincide {
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_id.is_some() {
+            self.terminal_selection.clear();
             self.terminal_id = None;
             self.terminal_frame = None;
             cx.notify();
@@ -2022,6 +2029,7 @@ impl Coincide {
                 if needs_frame {
                     match read_terminal_frame(&self.engine, &id, self.terminal_row_offset) {
                         Ok(Some(frame)) => {
+                            self.terminal_selection.sync(&id, &frame);
                             self.terminal_frame = Some(frame);
                             self.terminal_status.clear();
                             self.terminal_blink_origin = Instant::now();
@@ -2121,6 +2129,14 @@ impl Coincide {
                 cx.listener(|this, _, window, cx| window.focus(&this.terminal_focus, cx)),
             )
             .on_key_down(cx.listener(|this, event, _, cx| this.terminal_key(event, cx)))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.terminal_selection.end_drag()),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.terminal_selection.end_drag()),
+            )
             .font_family(if cfg!(target_os = "macos") {
                 "Menlo"
             } else {
@@ -2136,6 +2152,8 @@ impl Coincide {
             let grid = frame["grid"].as_array();
             let count = grid.map_or(0, Vec::len);
             let focused = self.terminal_focus.is_focused(window);
+            let selection_terminal = self.terminal_id.clone().unwrap_or_default();
+            let selection_revision = frame["revision"].as_u64().unwrap_or(0);
             if let Some(grid) = grid {
                 let mut canvas = div()
                     .flex()
@@ -2158,8 +2176,18 @@ impl Coincide {
                                 continue;
                             }
                             let width = cell["width"].as_u64().unwrap_or(1).clamp(1, 2) as f32;
+                            let selected = self.terminal_selection.is_selected(
+                                &selection_terminal,
+                                frame,
+                                offset + index,
+                                column,
+                                width as usize,
+                            );
+                            let down_terminal = selection_terminal.clone();
+                            let drag_terminal = selection_terminal.clone();
                             row = row.child(
                                 div()
+                                    .relative()
                                     .flex_shrink_0()
                                     .w(px(width * TERMINAL_CELL_WIDTH))
                                     .h(px(TERMINAL_CELL_HEIGHT))
@@ -2172,7 +2200,81 @@ impl Coincide {
                                     .when(cell["italic"] == true, |view| view.italic())
                                     .when(cell["underline"] == true, |view| view.underline())
                                     .when(cell["strikethrough"] == true, |view| view.line_through())
-                                    .child(text(cell, "text")),
+                                    .child(if cell["hidden"] == true {
+                                        " ".repeat(width as usize)
+                                    } else {
+                                        text(cell, "text")
+                                    })
+                                    // Tint the complete cell, including foreground;
+                                    // replacing only background could reveal ANSI concealed text.
+                                    .when(selected, |view| {
+                                        view.child(div().absolute().inset_0().bg(rgba(0x648ce670)))
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |this, event: &MouseDownEvent, window, cx| {
+                                                if this.terminal_id.as_deref()
+                                                    != Some(down_terminal.as_str())
+                                                {
+                                                    return;
+                                                }
+                                                if let Some(frame) = &this.terminal_frame {
+                                                    if frame["revision"].as_u64()
+                                                        != Some(selection_revision)
+                                                        || frame["rowOffset"].as_u64()
+                                                            != Some(offset as u64)
+                                                        || frame["cols"].as_u64()
+                                                            != Some(cols as u64)
+                                                        || frame["grid"].as_array().map(Vec::len)
+                                                            != Some(count)
+                                                    {
+                                                        return;
+                                                    }
+                                                    this.terminal_selection.begin(
+                                                        &down_terminal,
+                                                        frame,
+                                                        offset + index,
+                                                        column,
+                                                        event.modifiers.shift,
+                                                    );
+                                                    window.focus(&this.terminal_focus, cx);
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                }
+                                            },
+                                        ),
+                                    )
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            if event.pressed_button != Some(MouseButton::Left)
+                                                || this.terminal_id.as_deref()
+                                                    != Some(drag_terminal.as_str())
+                                            {
+                                                return;
+                                            }
+                                            if let Some(frame) = &this.terminal_frame {
+                                                if frame["revision"].as_u64()
+                                                    != Some(selection_revision)
+                                                    || frame["rowOffset"].as_u64()
+                                                        != Some(offset as u64)
+                                                    || frame["cols"].as_u64() != Some(cols as u64)
+                                                    || frame["grid"].as_array().map(Vec::len)
+                                                        != Some(count)
+                                                {
+                                                    return;
+                                                }
+                                                if this.terminal_selection.drag(
+                                                    &drag_terminal,
+                                                    frame,
+                                                    offset + index,
+                                                    column,
+                                                ) {
+                                                    cx.notify();
+                                                }
+                                            }
+                                        },
+                                    )),
                             );
                         }
                     }
@@ -2229,6 +2331,10 @@ impl Coincide {
                         .map(|code| format!(" · exited {code}"))
                         .unwrap_or_default()
                 )));
+            footer=footer.child(Button::new("terminal-copy-selection").label("Copy selection")
+                .tooltip("Select cells with the mouse or Shift+arrows. Copy: Cmd+C or Ctrl+Shift+C. Select displayed page: Cmd+A or Ctrl+Shift+A.")
+                .disabled(!self.terminal_selection.has_selection(&selection_terminal,frame))
+                .on_click(cx.listener(|this,_,window,cx|this.copy_terminal_selection(window,cx))));
             if rows > TERMINAL_PAGE_ROWS {
                 footer = footer
                     .child(
@@ -2236,6 +2342,7 @@ impl Coincide {
                             .label("Earlier rows")
                             .disabled(offset == 0)
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.terminal_selection.clear();
                                 this.terminal_row_offset =
                                     this.terminal_row_offset.saturating_sub(TERMINAL_PAGE_ROWS);
                                 this.terminal_frame = None;
@@ -2247,6 +2354,7 @@ impl Coincide {
                             .label("Later rows")
                             .disabled(offset + count >= rows)
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.terminal_selection.clear();
                                 this.terminal_row_offset += TERMINAL_PAGE_ROWS;
                                 this.terminal_frame = None;
                                 cx.notify();
@@ -2280,6 +2388,33 @@ impl Coincide {
         let Some(id) = self.terminal_id.as_ref() else {
             return;
         };
+        if let Some(frame) = &self.terminal_frame {
+            match self.terminal_selection.key(id, frame, event, cx) {
+                Ok(true) => {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                Err(error) => {
+                    self.terminal_status = error.to_string();
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                Ok(false) => {}
+            }
+        } else {
+            let key = &event.keystroke;
+            if (key.modifiers.platform || (key.modifiers.control && key.modifiers.shift))
+                && !key.modifiers.alt
+                && matches!(key.key.as_str(), "c" | "C" | "a" | "A")
+            {
+                self.terminal_status = "Wait for terminal output before selecting text".into();
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+        }
         let key = &event.keystroke;
         if key.modifiers.platform {
             return;
@@ -2318,6 +2453,16 @@ impl Coincide {
         self.terminal_blink_on = true;
         cx.notify();
         cx.stop_propagation();
+    }
+    fn copy_terminal_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let (Some(id), Some(frame)) = (&self.terminal_id, &self.terminal_frame) {
+            self.terminal_status = match self.terminal_selection.copy(id, frame, cx) {
+                Ok(bytes) => format!("Copied {bytes} bytes from the selected visible cells"),
+                Err(error) => error.to_string(),
+            };
+        }
+        window.focus(&self.terminal_focus, cx);
+        cx.notify();
     }
     fn branch_from_item(
         &mut self,
@@ -2550,6 +2695,13 @@ impl Render for Coincide {
                                                 this.select_provider("grok", cx)
                                             }),
                                         ))
+                                        .child(
+                                            Button::new("provider-cursor")
+                                                .label("Cursor")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.select_provider("cursor", cx)
+                                                })),
+                                        )
                                         .child(
                                             Button::new("provider-opencode")
                                                 .label("OpenCode")

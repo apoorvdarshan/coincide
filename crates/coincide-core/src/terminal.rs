@@ -8,6 +8,7 @@ use alacritty_terminal::{
 };
 use anyhow::{Result, ensure};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -222,6 +223,7 @@ impl Terminal {
                 "text": text,
                 "width": if continuation { 0 } else if flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 },
                 "continuation": continuation,
+                "wrapline": flags.contains(Flags::WRAPLINE),
                 "foreground": foreground, "background": background,
                 "bold": flags.contains(Flags::BOLD),
                 "italic": flags.contains(Flags::ITALIC),
@@ -247,6 +249,7 @@ impl Terminal {
         };
         let cursor = json!({
             "row": cursor_row, "col": cursor_col,
+            "insertionCol": cursor_col+usize::from(self.term.grid().cursor.input_needs_wrap),
             "visible": shape != "hidden" && (0..rows as i32).contains(&cursor_row) && cursor_col < cols,
             "shape": shape, "blinking": self.term.cursor_style().blinking,
         });
@@ -260,6 +263,252 @@ impl Terminal {
             "nextRowOffset": (row_offset + row_count < rows).then_some(row_offset + row_count),
         }))
     }
+
+    /// Copy from a known viewport revision, never from scrollback or another
+    /// screen revision after output/resize changed the selected coordinates.
+    pub fn copy_selection(
+        &mut self,
+        revision: u64,
+        start: TerminalPoint,
+        end: TerminalPoint,
+    ) -> Result<String> {
+        self.poll()?;
+        ensure!(
+            revision == self.revision,
+            "Terminal output changed; select the text again"
+        );
+        let rows = self.term.screen_lines();
+        let cols = self.term.columns();
+        let offset = self.term.grid().display_offset();
+        copy_cells(0, rows, cols, start, end, |row, col| {
+            let cell = &self.term.grid()[Line(row as i32 - offset as i32)][Column(col)];
+            let flags = cell.flags;
+            let continuation =
+                flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
+            let mut text = if continuation {
+                String::new()
+            } else {
+                cell.c.to_string()
+            };
+            if !continuation && let Some(marks) = cell.zerowidth() {
+                text.extend(marks.iter().take(MAX_COMBINING_CHARS).copied());
+            }
+            Ok(CopyCell {
+                text,
+                width: if continuation {
+                    0
+                } else if flags.contains(Flags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                },
+                continuation,
+                hidden: flags.contains(Flags::HIDDEN),
+                wrapline: flags.contains(Flags::WRAPLINE),
+            })
+        })
+    }
+}
+
+/// Inclusive, zero-based viewport cell coordinates (not UTF-8 byte offsets).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TerminalPoint {
+    pub row: usize,
+    pub col: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SelectionMovement {
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+}
+
+/// Keyboard selection uses insertion boundaries, unlike inclusive mouse cells.
+/// Moving once from the cursor therefore selects exactly one cell.
+pub fn move_selection_boundary(
+    position: usize,
+    movement: SelectionMovement,
+    rows: usize,
+    cols: usize,
+) -> Result<usize> {
+    ensure!(
+        (1..=300).contains(&rows) && (1..=500).contains(&cols),
+        "Invalid terminal selection dimensions"
+    );
+    let total = rows * cols;
+    ensure!(
+        position <= total,
+        "Keyboard boundary is outside the displayed page"
+    );
+    Ok(match movement {
+        SelectionMovement::Left => position.saturating_sub(1),
+        SelectionMovement::Right => (position + 1).min(total),
+        SelectionMovement::Up => position.saturating_sub(cols),
+        SelectionMovement::Down => (position + cols).min(total),
+        SelectionMovement::Home => (position / cols).min(rows - 1) * cols,
+        SelectionMovement::End => ((position / cols + 1) * cols).min(total),
+    })
+}
+
+pub fn selection_from_boundaries(
+    anchor: usize,
+    caret: usize,
+    offset: usize,
+    rows: usize,
+    cols: usize,
+) -> Result<Option<(TerminalPoint, TerminalPoint)>> {
+    ensure!(
+        (1..=300).contains(&rows) && (1..=500).contains(&cols) && offset <= 300 - rows,
+        "Invalid terminal selection dimensions"
+    );
+    let total = rows * cols;
+    ensure!(
+        anchor <= total && caret <= total,
+        "Keyboard boundary is outside the displayed page"
+    );
+    if anchor == caret {
+        return Ok(None);
+    }
+    let start = anchor.min(caret);
+    let end = anchor.max(caret) - 1;
+    Ok(Some((
+        TerminalPoint {
+            row: offset + start / cols,
+            col: start % cols,
+        },
+        TerminalPoint {
+            row: offset + end / cols,
+            col: end % cols,
+        },
+    )))
+}
+
+/// Extract the selection from a coherent styled frame already displayed by the
+/// UI. A page cannot select coordinates outside its rowOffset/grid bounds.
+pub fn selected_text(frame: &Value, start: TerminalPoint, end: TerminalPoint) -> Result<String> {
+    let rows = frame["rows"]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| anyhow::anyhow!("Terminal frame has no rows"))?;
+    let cols = frame["cols"]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| anyhow::anyhow!("Terminal frame has no columns"))?;
+    let offset = frame["rowOffset"]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| anyhow::anyhow!("Terminal frame has no row offset"))?;
+    let grid = frame["grid"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Terminal frame has no grid"))?;
+    ensure!(
+        rows <= 300 && offset <= rows && grid.len() <= rows - offset,
+        "Terminal frame has invalid row bounds"
+    );
+    ensure!(
+        (1..=500).contains(&cols)
+            && grid
+                .iter()
+                .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
+        "Terminal frame has invalid columns"
+    );
+    copy_cells(offset, grid.len(), cols, start, end, |row, col| {
+        let cell = &grid[row - offset][col];
+        let text = cell["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Terminal cell has no text"))?;
+        ensure!(
+            text.chars().count() <= MAX_COMBINING_CHARS + 1,
+            "Terminal cell text exceeds the display limit"
+        );
+        let width = cell["width"]
+            .as_u64()
+            .filter(|value| *value <= 2)
+            .ok_or_else(|| anyhow::anyhow!("Terminal cell has invalid width"))?
+            as usize;
+        Ok(CopyCell {
+            text: text.into(),
+            width,
+            continuation: cell["continuation"] == true,
+            hidden: cell["hidden"] == true,
+            wrapline: cell["wrapline"] == true,
+        })
+    })
+}
+
+struct CopyCell {
+    text: String,
+    width: usize,
+    continuation: bool,
+    hidden: bool,
+    wrapline: bool,
+}
+fn copy_cells(
+    offset: usize,
+    rows: usize,
+    cols: usize,
+    start: TerminalPoint,
+    end: TerminalPoint,
+    mut read: impl FnMut(usize, usize) -> Result<CopyCell>,
+) -> Result<String> {
+    ensure!(
+        (1..=300).contains(&rows) && (1..=500).contains(&cols),
+        "Invalid terminal selection dimensions"
+    );
+    let (mut start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    ensure!(
+        start.row >= offset && end.row < offset + rows && start.col < cols && end.col < cols,
+        "Selection is outside the displayed terminal page"
+    );
+    // Selecting the trailing half of a wide glyph copies that glyph once.
+    if start.col > 0
+        && read(start.row, start.col)?.continuation
+        && read(start.row, start.col - 1)?.width == 2
+    {
+        start.col -= 1;
+    }
+    let mut result = String::new();
+    for row in start.row..=end.row {
+        let first = if row == start.row { start.col } else { 0 };
+        let last = if row == end.row { end.col } else { cols - 1 };
+        let mut line = String::new();
+        for col in first..=last {
+            let cell = read(row, col)?;
+            if cell.continuation {
+                continue;
+            }
+            if cell.hidden {
+                line.extend(std::iter::repeat_n(' ', cell.width));
+            } else {
+                ensure!(
+                    !cell.text.chars().any(char::is_control),
+                    "Terminal copy contains non-display control characters"
+                );
+                line.push_str(&cell.text);
+            }
+        }
+        let wrapped = last == cols - 1 && read(row, last)?.wrapline;
+        if last == cols - 1 && !wrapped {
+            line.truncate(line.trim_end_matches(' ').len());
+        }
+        result.push_str(&line);
+        if row < end.row && !wrapped {
+            result.push('\n');
+        }
+        ensure!(
+            result.len() <= 1024 * 1024,
+            "Terminal selection exceeds 1 MiB"
+        );
+    }
+    Ok(result)
 }
 // Styled wire contract: grid[page_row][col] includes blank cells; coordinates
 // are zero-based and page_row starts at rowOffset. RGB arrays are final display

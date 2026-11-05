@@ -52,6 +52,14 @@ pub(super) struct Transport {
 
 impl Transport {
     pub(super) fn spawn(launch: &Launch, args: &[String], remove_env: &[&str]) -> Result<Self> {
+        Self::spawn_with_environment(launch, args, remove_env, &[])
+    }
+    pub(super) fn spawn_with_environment(
+        launch: &Launch,
+        args: &[String],
+        remove_env: &[&str],
+        environment: &[(std::ffi::OsString, std::ffi::OsString)],
+    ) -> Result<Self> {
         ensure!(
             launch.cwd.is_dir(),
             "Agent working directory does not exist"
@@ -67,6 +75,7 @@ impl Transport {
         for key in remove_env {
             command.env_remove(key);
         }
+        command.envs(environment.iter().map(|(key, value)| (key, value)));
         let mut child = OwnedChild::spawn(&mut command).context("Unable to launch provider")?;
         let mut stdin = child.0.stdin.take().context("Missing provider stdin")?;
         let stdout = child.0.stdout.take().context("Missing provider stdout")?;

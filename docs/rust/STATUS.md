@@ -45,7 +45,7 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Verified so far
 
-2026-11-05 checkpoint: approximately 27% of the macOS replacement is verified.
+2026-11-05 checkpoint: approximately 30% of the macOS replacement is verified.
 This remains a planning estimate; the broad acceptance groups above stay unchecked
 until their complete behavior is accepted. Mac is the first release target; Linux
 currently supplies additional build/test capacity and portability feedback.
@@ -94,15 +94,20 @@ refusal, scrolling, cross-origin refusal and stale ancestor handles. Native sett
 Light/Paper changes persisted and survived restart. Native queue pause/resume and
 settled-turn forks passed. macOS CI exposed reverse-DNS blocking in the synthetic
 OpenCode HTTP fixture; checkpoint `49d6ba0` removes that lookup and passes the full
-Rust GitHub workflow. Legacy Swift CI is still pending.
+Rust GitHub workflow.
 
 The next navigation/browser batch passes 147 portable tests, strict core clippy and
 Mac/Linux desktop builds. Native checks verified isolated console capture/clear,
 selector/text/frame waits and tab-close cancellation, selected-element reads and
 pagination. Native projectless filtering/collapse, rename, snooze/unsnooze,
 archive confirmation/restore and edit-message branching passed. Stable thread/item
-accessibility IDs replace recycled transcript action IDs. These additions still
-need their own pushed checkpoint and CI.
+accessibility IDs replace recycled transcript action IDs. Checkpoint `85cbae1` passed every applicable GitHub check, including Swift CI.
+
+The following Cursor/terminal batch passes 167 portable tests, strict core clippy
+and Mac/Linux desktop builds. Mac-focused Cursor and terminal fixtures pass.
+Native Cursor selection persisted; terminal Select All/Copy/paste excluded concealed
+text and a new tab cleared the selection. This batch still needs its own CI; no real
+Cursor account or provider network call was used.
 
 CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
 changes. Rust-only files are excluded from Swift's change classifier; changes to that
@@ -117,7 +122,7 @@ an overall pipeline speedup percentage. Continue independent work while CI runs.
 Implemented foundations are deliberately narrower than full feature groups:
 
 - Shared CLI/API supports project CRUD, settings-document patches, thread actions,
-  Codex/Claude/Grok/OpenCode selection, pending approvals/questions, and explicit responses.
+  Codex/Claude/Grok/OpenCode/Cursor selection, pending approvals/questions, and explicit responses.
 - Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
   uploads, passwords, passkeys, dialogs, screenshots and native-key actions
   still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
@@ -132,7 +137,11 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Terminal has real PTYs, native create/select/close tabs and a styled desktop grid. API clients can request
   paged RGB/style/cursor snapshots (at most ten rows); plain polling stays lightweight.
   The desktop assembles coherent revision-matched pages, capped at 40 visible rows.
-  Selection, splits and shell integration remain.
+  Visible-page selection/copy supports drag, Shift-click, keyboard extension and
+  Select All; output/tab/page changes invalidate selection. Copy preserves wide and
+  combining characters and soft wraps, masks concealed text, and checks revisions.
+  Native Select All/Copy/paste and new-tab clearing passed. Scrollback selection,
+  drag autoscroll, splits and shell integration remain.
   Candidate child processes cannot inherit the running Swift conversation's bindings.
 - Claude and generic ACP protocol adapters have fixture coverage. ACP is not exposed
   as a named provider until its launch/account/mode integration is implemented.
@@ -158,7 +167,7 @@ Implemented foundations are deliberately narrower than full feature groups:
   Claude/Codex and generic ACP image transport have fixture coverage; HEIC/TIFF,
   PDFs, image editing, clipboard/paste/drop and broader media parity remain.
 - Six legacy providers have a filesystem-only discovery catalog. Discovery does not
-  verify authentication, versions, models or runtime support; Codex/Claude/Grok/OpenCode are
+  verify authentication, versions, models or runtime support; Codex/Claude/Grok/OpenCode/Cursor are
   connected in the preview. Grok authentication, resume, explicit models, images,
   questions/approvals, plan capture and cancellation have synthetic fixture coverage;
   real accounts, usage/effort and background-task UI remain unverified. OpenCode
@@ -166,6 +175,12 @@ Implemented foundations are deliberately narrower than full feature groups:
   sessions, streams, asks approvals/questions, sends images and cleans up on Stop.
   Reconnection/backfill, pooling, dynamic models/accounts and plan controls remain. Successful native sessions record transcript progress;
   subsequent provider handoffs include missed messages/images within bounded limits.
+- Cursor uses a private per-thread profile and in-memory environment authentication.
+  Model settings and checkpointed native sessions are copied without modifying the
+  original profile; live WAL/journal sources are refused. Synthetic fixtures cover
+  resume, exact model confirmation, approvals/questions, cancellation, provider
+  errors and Engine routing. Keychain/file login reuse, Windows private-session
+  resume and richer Cursor extension presentation remain unsupported.
 - Text follow-ups persist in a bounded queue and execute in order after successful
   turns. Stop/failure/save failure pause the queue; restarts require explicit Resume.
   Uncertain dispatches become interrupted, never automatically replayed. Provider
