@@ -606,6 +606,7 @@ impl Engine {
                     self.antigravity_selection(&selection)?;
                 }
                 v["selection"] = selection;
+                crate::composer_selection::apply_modes(p,&mut v)?;
                 self.store.save(&v)?; self.revision += 1;
                 Ok(v)
             }
@@ -733,15 +734,6 @@ impl Engine {
                 || crate::composer_context::has_context(&context),
             "Add text, an image or a reference before sending"
         );
-        ensure!(
-            v["accessMode"]
-                .as_str()
-                .is_none_or(|mode| mode == "approval")
-                && v["interactionMode"]
-                    .as_str()
-                    .is_none_or(|mode| mode == "build"),
-            "This preview supports approval/build mode only; fork this conversation to use supported defaults"
-        );
         // Imported native sessions may still be owned by the running Swift app.
         // A fork starts a separate provider session and cannot steal that session.
         ensure!(
@@ -751,6 +743,14 @@ impl Engine {
         let cwd = self.working_directory(&v)?;
         ensure!(cwd.is_dir(), "Working directory does not exist");
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
+        let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
+            Some(crate::composer_policy::Policy::parse(
+                &v,
+                crate::composer_policy::Origin::Ordinary,
+            )?)
+        } else {
+            None
+        };
         let provider = text(&v["selection"], "provider");
         let mut adapter = Provider::from_name(&provider)?;
         ensure!(
@@ -887,7 +887,7 @@ impl Engine {
             id,
             Running {
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
-                session: Session::start_with_images_and_instructions(
+                session: Session::start_with_mode_policy(
                     adapter,
                     Launch {
                         executable,
@@ -898,6 +898,7 @@ impl Engine {
                     },
                     images,
                     bot_instructions,
+                    mode_policy,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -2072,3 +2073,7 @@ mod catalog_shutdown_adapter_tests {
 #[cfg(test)]
 #[path = "usage_capture_engine_tests.rs"]
 mod usage_capture_engine_tests;
+
+#[cfg(test)]
+#[path = "composer_policy_api_tests.rs"]
+mod composer_policy_api_tests;

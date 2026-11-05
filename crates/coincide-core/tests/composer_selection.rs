@@ -22,8 +22,22 @@ fn static_capabilities_never_claim_discovered_or_authenticated_models() {
         assert_eq!(provider["customModel"]["availability"], "unverified");
         assert_eq!(provider["effort"]["supported"], false);
         assert_eq!(provider["speed"]["supported"], false);
-        assert_eq!(provider["accessModes"], json!(["approval"]));
-        assert_eq!(provider["interactionModes"], json!(["build"]));
+        assert_eq!(
+            provider["accessModes"],
+            if provider["provider"] == "codex" {
+                json!(["approval", "fullAccess"])
+            } else {
+                json!(["approval"])
+            }
+        );
+        assert_eq!(
+            provider["interactionModes"],
+            if provider["provider"] == "codex" {
+                json!(["build", "plan"])
+            } else {
+                json!(["build"])
+            }
+        );
     }
 }
 
@@ -57,7 +71,7 @@ fn unsupported_or_malformed_requests_are_atomic() {
         ("effort", json!(false)),
         ("speed", json!("")),
         ("speed", json!([])),
-        ("accessMode", json!("fullAccess")),
+        ("accessMode", json!("unknownAccess")),
         ("interactionMode", json!("plan")),
         ("accessMode", json!(0)),
         ("accessMode", Value::Null),
@@ -96,7 +110,7 @@ fn unsupported_saved_choices_are_never_replaced_by_defaults() {
         assert_eq!(current, before);
     }
     for (key, value) in [
-        ("accessMode", json!("fullAccess")),
+        ("accessMode", json!("unknownAccess")),
         ("interactionMode", json!(false)),
     ] {
         let mut current = thread();

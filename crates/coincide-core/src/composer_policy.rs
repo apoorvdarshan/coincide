@@ -1,5 +1,5 @@
-//! Pure proposed ordinary-turn mode contract, derived from Swift CodexProtocol.
-//! Not registered by the runtime yet. No discovery, account authorization,
+//! Ordinary-turn mode contract, derived from Swift CodexProtocol.
+//! No discovery, account authorization,
 //! process launch, source mutation, or relaxation of bot/import execution gates.
 use crate::composer_selection;
 use anyhow::{Context, Result, ensure};
@@ -86,9 +86,7 @@ impl Policy {
         // Reuse strict selection validation without translating the requested
         // modes. This envelope validates selection ONLY; parsed modes below
         // determine the returned policy and exact provider wire fields.
-        composer_selection::validate_thread(
-            &json!({"selection":thread["selection"],"accessMode":"approval","interactionMode":"build"}),
-        )?;
+        composer_selection::validate_selection(&thread["selection"])?;
         let provider = thread["selection"]["provider"]
             .as_str()
             .context("Missing provider")?
@@ -142,6 +140,25 @@ impl Policy {
             model,
             bot,
         })
+    }
+    pub fn require_codex(&self) -> Result<()> {
+        ensure!(
+            self.provider == "codex",
+            "Mode policy is implemented only for Codex"
+        );
+        Ok(())
+    }
+    pub fn preflight(&self) -> Result<()> {
+        if self.provider == "codex"
+            && let Some(model) = &self.model
+        {
+            validate_actual_model(model)?;
+        }
+        if self.interaction == Interaction::Plan {
+            let model=self.model.as_deref().context("Codex Plan requires an explicit model before selection or creation; provider default has no resolved model proof")?;
+            validate_actual_model(model)?;
+        }
+        Ok(())
     }
     /// Exact turn/start policy fields only. Thread creation/resume parameters,
     /// text/images, effort/speed and account selection are deliberately separate.

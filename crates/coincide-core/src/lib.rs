@@ -54,3 +54,5 @@ pub mod computer_use;
 pub mod legacy_media_recovery;
 
 pub mod composer_context;
+
+pub mod composer_policy;

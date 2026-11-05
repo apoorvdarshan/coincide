@@ -88,6 +88,12 @@ impl Engine {
             );
         }
         crate::composer_selection::validate_thread(&stored)?;
+        ensure!(
+            stored["interactionMode"]
+                .as_str()
+                .is_none_or(|mode| mode == "build"),
+            "Text steering is available only in Build mode"
+        );
         let cwd = self.working_directory(&stored)?;
         self.bot_instructions(&stored, &cwd)?;
         let run = self.runs.get(thread).context("Thread is not running")?;
