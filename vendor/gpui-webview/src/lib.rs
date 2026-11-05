@@ -239,6 +239,16 @@ impl WebView {
         self.webview.receipt()
     }
 
+    /// Create the concrete payload used by normal rendering, retaining this
+    /// entity and its exact native owner. Convert it to an arena-backed element
+    /// only during GPUI drawing; `AnyElement` is not cross-frame owned storage.
+    pub fn element_payload(&self, cx: &mut gpui::Context<Self>) -> WebViewElement {
+        WebViewElement {
+            parent: cx.entity(),
+            view: ElementWebView::Tracked(self.webview.clone()),
+        }
+    }
+
     /// Set window-relative bounds, including offscreen loading bounds.
     /// With window composition, position the managed container and its child together.
     pub fn set_bounds(&self, bounds: Rect) -> wry::Result<()> {
@@ -426,11 +436,9 @@ impl EventEmitter<DismissEvent> for WebView {}
 impl Render for WebView {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let view = cx.entity().clone();
-
         div()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -443,12 +451,7 @@ impl Render for WebView {
                 .absolute()
                 .size_full()
             })
-            .child(WebViewElement::new_tracked(
-                self.webview.clone(),
-                view,
-                window,
-                cx,
-            ))
+            .child(self.element_payload(cx))
     }
 }
 
@@ -482,17 +485,6 @@ impl WebViewElement {
     ) -> Self {
         Self {
             view: ElementWebView::Legacy(view),
-            parent,
-        }
-    }
-    fn new_tracked(
-        view: Rc<OwnedWry>,
-        parent: Entity<WebView>,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Self {
-        Self {
-            view: ElementWebView::Tracked(view),
             parent,
         }
     }

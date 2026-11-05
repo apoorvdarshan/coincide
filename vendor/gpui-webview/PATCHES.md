@@ -19,6 +19,11 @@ new dependencies, native subclass/swizzle, private WebKit calls or browser mount
 - ReleaseRegistry::new(), close(), snapshots(), poll(&mut App).
 - WebView::build_with_release_registry(builder, window, cx, &registry).
 - WebView::release_receipt() -> Option<ReleaseReceipt>.
+- WebView::element_payload(cx) returns the concrete native element used by
+  normal Render. This supports explicit Rust ownership without holding an
+  arena-backed AnyElement outside its frame. Calling Render outside drawing
+  can allocate nested elements in GPUI's fallback arena; such a test holder
+  does not release its payload merely by dropping AnyElement.
 - Receipt::snapshot() publishes opaque stable ID, SurfacePhase,
   RustOwnerPhase, ReleaseTaskPhase, NativeReleasePhase::Unknown.
 
