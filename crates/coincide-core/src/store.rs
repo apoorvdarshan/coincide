@@ -254,6 +254,64 @@ impl Store {
         Ok(report)
     }
 
+    /// Add a captured CLI conversation without replacing existing data. The
+    /// caller supplies the validated preview and exact captured source bytes;
+    /// filesystem discovery and source freshness checks belong to that caller.
+    /// Original bytes, transcript, execution barrier, and indexes commit together.
+    pub fn import_cli_session(
+        &mut self,
+        document: &Value,
+        source_key: &str,
+        source: &[u8],
+    ) -> Result<()> {
+        validate_cli_source_key(source_key)?;
+        ensure!(
+            !source.is_empty() && source.len() <= CLI_IMPORT_BYTES,
+            "CLI source must contain 1 byte to 32 MiB of captured bytes"
+        );
+        validate_cli_thread(document)?;
+        let id = validate_thread(document)?;
+        let mut writer = ImportDocumentWriter(Vec::new());
+        serde_json::to_writer(&mut writer, document)
+            .context("CLI thread document exceeds its bounds or cannot be serialized")?;
+        let serialized = String::from_utf8(writer.0)?;
+        // Acquire the writer before duplicate checks. Two imports cannot race
+        // through the case-insensitive check on the existing case-sensitive tables.
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let duplicate_id: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)",
+            [id], |row| row.get(0),
+        )?;
+        ensure!(
+            !duplicate_id,
+            "A conversation with this UUID already exists"
+        );
+        let duplicate_source: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM original_files WHERE path=?1 COLLATE NOCASE)",
+            [source_key],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !duplicate_source,
+            "This CLI source key was already imported"
+        );
+        tx.execute(
+            "INSERT INTO original_files(path,data) VALUES (?1,?2)",
+            params![source_key, source],
+        )?;
+        tx.execute(
+            "INSERT INTO threads(id,document) VALUES (?1,?2)",
+            params![id, serialized],
+        )?;
+        tx.execute("INSERT INTO imported_threads(id) VALUES (?1)", [id])?;
+        index_thread(&tx, document)?;
+        cache_thread(&tx, document, true)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Sidebar reads touch only cached scalar metadata. Search uses the trigram
     /// index for queries of three or more Unicode characters, with a literal
     /// substring recheck; short queries scan cached text, never JSON transcripts.
@@ -546,6 +604,359 @@ impl Store {
         );
         entries.remove(index);
         self.save_document("projects.json", &projects)
+    }
+}
+
+const CLI_IMPORT_BYTES: usize = 32 * 1024 * 1024;
+const CLI_IMPORT_NODES: usize = 1_000_000;
+
+fn validate_cli_source_key(key: &str) -> Result<()> {
+    ensure!(
+        key.len() <= 1024
+            && key.starts_with("ImportedSessions/")
+            && key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-._/".contains(&byte)),
+        "CLI source key must be an ASCII relative key under ImportedSessions/"
+    );
+    ensure!(
+        key.split('/').all(|part| !part.is_empty()
+            && part.len() <= 255
+            && !part.starts_with('.')
+            && !part.ends_with('.')),
+        "CLI source key contains an invalid path segment"
+    );
+    Ok(())
+}
+
+fn canonical_uuid(value: &str) -> Result<Uuid> {
+    let id = Uuid::parse_str(value).context("Invalid imported UUID")?;
+    ensure!(
+        id.hyphenated().to_string().eq_ignore_ascii_case(value),
+        "Imported UUID must use hyphenated form"
+    );
+    Ok(id)
+}
+
+fn validate_cli_thread(value: &Value) -> Result<()> {
+    canonical_uuid(validate_thread(value)?)?;
+    // Bound recursion and structural overhead before serialization. Unknown
+    // fields remain intact, but cannot bypass the resource budget.
+    fn visit(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> {
+        ensure!(
+            depth <= 128 && *nodes < CLI_IMPORT_NODES,
+            "CLI thread structure exceeds its bounds"
+        );
+        *nodes += 1;
+        match value {
+            Value::Array(items) => {
+                ensure!(
+                    items.len() <= CLI_IMPORT_NODES - *nodes,
+                    "Too many CLI thread values"
+                );
+                for item in items {
+                    visit(item, depth + 1, nodes)?;
+                }
+            }
+            Value::Object(fields) => {
+                ensure!(
+                    fields.len() <= CLI_IMPORT_NODES - *nodes,
+                    "Too many CLI thread fields"
+                );
+                for (key, value) in fields {
+                    ensure!(key.len() <= 4096, "CLI thread field name is too long");
+                    visit(value, depth + 1, nodes)?;
+                }
+            }
+            Value::String(text) => ensure!(
+                text.len() <= CLI_IMPORT_BYTES,
+                "CLI thread text is too large"
+            ),
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut nodes = 0;
+    visit(value, 0, &mut nodes)?;
+    for (field, limit) in [("title", 1024), ("draft", 1_048_576)] {
+        if let Some(text) = value.get(field) {
+            ensure!(
+                text.as_str().is_some_and(|s| s.len() <= limit),
+                "Invalid imported {field}"
+            );
+        }
+    }
+    for field in ["isPinned", "isArchived"] {
+        if let Some(flag) = value.get(field) {
+            ensure!(flag.is_boolean(), "Invalid imported {field}");
+        }
+    }
+    if let Some(project) = value.get("projectID").filter(|id| !id.is_null()) {
+        let project = project
+            .as_str()
+            .context("Imported projectID must be text")?;
+        if !project.is_empty() {
+            canonical_uuid(project)?;
+        }
+    }
+    for field in ["createdAt", "updatedAt", "snoozedUntil"] {
+        if let Some(date) = value.get(field).filter(|v| !v.is_null()) {
+            crate::scheduling::parse_date(date)
+                .with_context(|| format!("Invalid imported {field}"))?;
+        }
+    }
+    let items = value["items"]
+        .as_array()
+        .context("Thread has no items array")?;
+    ensure!(items.len() <= 100_000, "CLI thread has too many items");
+    let mut ids = std::collections::HashSet::new();
+    for item in items {
+        ensure!(
+            item.is_object(),
+            "Imported transcript items must be objects"
+        );
+        if let Some(id) = item.get("id") {
+            let id = canonical_uuid(id.as_str().context("Imported item ID must be text")?)?;
+            ensure!(ids.insert(id), "Duplicate imported item UUID");
+        }
+        if let Some(kind) = item.get("kind") {
+            ensure!(
+                kind.as_str()
+                    .is_some_and(|s| !s.is_empty() && s.len() <= 64),
+                "Invalid imported item kind"
+            );
+        }
+        if let Some(text) = item.get("text") {
+            ensure!(text.is_string(), "Imported item text must be text");
+        }
+    }
+    Ok(())
+}
+
+/// JSON escaping can expand input strings. Bound the encoded output while
+/// writing rather than allocating an unbounded Vec and checking it afterwards.
+struct ImportDocumentWriter(Vec<u8>);
+impl std::io::Write for ImportDocumentWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > CLI_IMPORT_BYTES.saturating_sub(self.0.len()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "CLI thread JSON exceeds 32 MiB",
+            ));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cli_import_tests {
+    use super::*;
+    const ID: &str = "A1111111-1111-4111-8111-111111111111";
+    const OTHER: &str = "C3333333-3333-4333-8333-333333333333";
+    const ITEM: &str = "B2222222-2222-4222-8222-222222222222";
+    const KEY: &str = "ImportedSessions/codex/source.jsonl";
+    fn fixture() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("data/db.sqlite")).unwrap();
+        (dir, store)
+    }
+    fn document(id: &str) -> Value {
+        json!({"id":id,"title":"Captured conversation","projectID":"", "draft":"preserved draft",
+            "createdAt":"2026-11-05T09:30:17.125+05:30","updatedAt":815544017.125,
+            "items":[{"id":ITEM,"kind":"assistant","text":"searchable import needle 日本語","futureItem":{"opaque":true}}],
+            "selection":{"provider":"codex","modelID":"source-model"},
+            "sessions":{"codex":{"sessionID":"captured-only"}},
+            "isPinned":false,"isArchived":false,"futureField":[1,{"bytes":"preserve"}]})
+    }
+    fn counts(store: &Store) -> Vec<i64> {
+        [
+            "original_files",
+            "threads",
+            "imported_threads",
+            "thread_summaries",
+            "search",
+            "search_trigram",
+        ]
+        .iter()
+        .map(|table| {
+            store
+                .db
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        })
+        .collect()
+    }
+    #[test]
+    fn cli_import_preserves_source_unknown_fields_indexes_and_execution_barrier() {
+        let (dir, mut store) = fixture();
+        let raw = b" \r\n{\"source\":true}\n\xff\0";
+        let expected = document(ID);
+        store.import_cli_session(&expected, KEY, raw).unwrap();
+        assert_eq!(store.original(KEY).unwrap().unwrap(), raw);
+        assert_eq!(store.thread(ID).unwrap(), expected);
+        assert!(store.is_imported(&ID.to_lowercase()).unwrap());
+        assert_eq!(store.summaries("import needle", false).unwrap()[0].id, ID);
+        assert_eq!(counts(&store), vec![1, 1, 1, 1, 1, 1]);
+        drop(store);
+        let reopened = Store::open(&dir.path().join("data/db.sqlite")).unwrap();
+        assert!(reopened.is_imported(ID).unwrap());
+        assert_eq!(reopened.thread(ID).unwrap(), expected);
+        assert_eq!(reopened.original(KEY).unwrap().unwrap(), raw);
+    }
+    #[test]
+    fn cli_import_refuses_case_aliases_without_overwriting_original_or_local_thread() {
+        let (_dir, mut store) = fixture();
+        let expected = document(ID);
+        store
+            .import_cli_session(&expected, KEY, b"original bytes")
+            .unwrap();
+        let before = counts(&store);
+        assert!(
+            store
+                .import_cli_session(
+                    &document(&ID.to_lowercase()),
+                    "ImportedSessions/codex/another.jsonl",
+                    b"replacement"
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .import_cli_session(
+                    &document(OTHER),
+                    "ImportedSessions/CODEX/SOURCE.JSONL",
+                    b"replacement"
+                )
+                .is_err()
+        );
+        assert_eq!(counts(&store), before);
+        assert_eq!(store.thread(ID).unwrap(), expected);
+        assert_eq!(store.original(KEY).unwrap().unwrap(), b"original bytes");
+        assert!(
+            store
+                .original("ImportedSessions/codex/another.jsonl")
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.thread(OTHER).is_err());
+        let local = store.new_thread("").unwrap();
+        let id = local["id"].as_str().unwrap();
+        assert!(
+            store
+                .import_cli_session(
+                    &document(id),
+                    "ImportedSessions/codex/local.jsonl",
+                    b"source"
+                )
+                .is_err()
+        );
+        assert_eq!(store.thread(id).unwrap(), local);
+        assert!(!store.is_imported(id).unwrap());
+    }
+    #[test]
+    fn cli_import_late_cache_failure_rolls_back_original_thread_marker_and_both_indexes() {
+        let (_dir, mut store) = fixture();
+        let local = store.new_thread("").unwrap();
+        let before = counts(&store);
+        store.db.execute_batch(&format!("CREATE TRIGGER reject_cli_cache BEFORE INSERT ON thread_summaries WHEN NEW.id='{ID}' BEGIN SELECT RAISE(ABORT,'synthetic cache failure'); END;")).unwrap();
+        assert!(
+            store
+                .import_cli_session(&document(ID), KEY, b"captured bytes")
+                .is_err()
+        );
+        assert_eq!(counts(&store), before);
+        assert!(store.original(KEY).unwrap().is_none());
+        assert!(store.thread(ID).is_err());
+        assert!(!store.is_imported(ID).unwrap());
+        assert!(store.summaries("import needle", true).unwrap().is_empty());
+        assert_eq!(store.thread(local["id"].as_str().unwrap()).unwrap(), local);
+        store
+            .db
+            .execute_batch("DROP TRIGGER reject_cli_cache")
+            .unwrap();
+        store
+            .import_cli_session(&document(ID), KEY, b"captured bytes")
+            .unwrap();
+        assert_eq!(store.summaries("import needle", true).unwrap().len(), 1);
+    }
+    #[test]
+    fn cli_import_rejects_reserved_source_paths_and_malformed_documents_atomically() {
+        let (_dir, mut store) = fixture();
+        for key in [
+            "",
+            "settings.json",
+            "/ImportedSessions/a",
+            "ImportedSessions/",
+            "ImportedSessions/../settings.json",
+            "ImportedSessions/./a",
+            "ImportedSessions//a",
+            "ImportedSessions/a\\b",
+            "ImportedSessions/a\0b",
+            "ImportedSessions/a.",
+        ] {
+            assert!(
+                store
+                    .import_cli_session(&document(ID), key, b"source")
+                    .is_err(),
+                "{key:?}"
+            );
+        }
+        assert!(store.import_cli_session(&document(ID), KEY, b"").is_err());
+        for (key, invalid) in [
+            (
+                "id",
+                json!(Uuid::parse_str(ID).unwrap().simple().to_string()),
+            ),
+            ("items", json!([null])),
+            ("title", json!(12)),
+            ("projectID", json!("../../path")),
+            ("isPinned", json!("true")),
+            ("updatedAt", json!("invalid date")),
+        ] {
+            let mut bad = document(ID);
+            bad[key] = invalid;
+            assert!(
+                store.import_cli_session(&bad, KEY, b"source").is_err(),
+                "{key}"
+            );
+        }
+        let mut duplicate = document(ID);
+        duplicate["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":ITEM.to_lowercase(),"kind":"user","text":"duplicate"}));
+        assert!(
+            store
+                .import_cli_session(&duplicate, KEY, b"source")
+                .is_err()
+        );
+        assert_eq!(counts(&store), vec![0; 6]);
+    }
+    #[test]
+    fn cli_import_bounds_source_structure_and_serialized_document() {
+        let (_dir, mut store) = fixture();
+        assert!(
+            store
+                .import_cli_session(&document(ID), KEY, &vec![0; CLI_IMPORT_BYTES + 1])
+                .is_err()
+        );
+        let mut bad = document(ID);
+        // Raw string fits, but JSON framing pushes the encoded document over.
+        bad["futureField"] = json!("x".repeat(CLI_IMPORT_BYTES));
+        assert!(store.import_cli_session(&bad, KEY, b"source").is_err());
+        let mut nested = Value::Null;
+        for _ in 0..129 {
+            nested = json!([nested]);
+        }
+        bad["futureField"] = nested;
+        assert!(store.import_cli_session(&bad, KEY, b"source").is_err());
+        assert_eq!(counts(&store), vec![0; 6]);
     }
 }
 
