@@ -56,7 +56,9 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
-- 4ae5db4 passed all five Rust CI jobs, including the Linux output-limit fixture
+- 95b0002 passed all five Rust CI jobs (run 42087816198): macOS GPUI build,
+  Linux/macOS/Windows core and Windows GPUI check. The prior 4ae5db4 checkpoint
+  also passed all five jobs, including the Linux output-limit fixture
   correction and fixed SQLite. Native Saved Usage/defaults acceptance passed
   real filtering, details, paging, exact project/global choices and invalid-default
   no-orphan behavior; source document hashes stayed unchanged. Native text-only
@@ -64,16 +66,23 @@ Latest verification and current gates:
   draft, duplicate-submit prevention and saved last-request usage. Reference
   Quote/cards passed, but context-only Send remains pending a real composer
   clipping fix and fresh native retest; offscreen action attempts are excluded.
-- The next batch connects ordinary Codex Plan/full-access modes with explicit
+- The 95b0002 batch connects ordinary Codex Plan/full-access modes with explicit
   model requirements, immutable bot/import restrictions and source-bound runtime
   policy. Its full core run passed 434 unit tests and all integration targets;
   desktop tests passed 295 unit tests and four integration targets, and strict
   core Clippy passed. Mode controls and the bounded composer layout still need
-  their own native acceptance and next-commit CI.
+  their own native acceptance; compilation and remote CI have passed.
 - A separate inherited-file-description writer-lock bug was reproduced with a
   deterministic duplicate-descriptor test. Recovery leases now explicitly unlock
   before closing, including constructor error paths; the regression and all
   eight recovery-store tests pass without sleeps or retries.
+- Browser callback lifetime accounting now separates invocation ACK from final
+  callback/block Drop and counts retained credential targets independently. The
+  ordinary Quit policy is unchanged; strict native release remains unconfirmed.
+  Nine focused shutdown tests passed, followed by all 299 desktop unit tests and
+  all four integration targets (19, 10, 14 and 11 tests). The first full-target
+  compile exposed a missing real shutdown-module registration in an integration
+  fixture; that registration was fixed without mocks or lint suppression.
 
 - Full-app native Quit passed on immutable 814e3c0 with fresh idle and active
   synthetic-Claude fixtures. Actual production CmdQ interrupted the active fake
@@ -84,25 +93,25 @@ Latest verification and current gates:
 - New ordinary-thread project/global defaults passed six tests. Codex usage
   capture retains source-bound latest-request snapshots with atomic history and
   transcript persistence; snapshots are not additive turn totals or costs.
-  Saved Usage Settings now has bounded background reads, filters and paging;
-  native presentation acceptance is pending.
+  Saved Usage Settings has bounded background reads, filters and paging;
+  its scoped native presentation acceptance passed at 4ae5db4.
 - Composer quote/reference editing, escaped provider envelopes, exact saved
   context, historical handoff and queue/schedule isolation passed eight scoped
-  tests, including an isolated fake-provider boundary. Native interaction is
-  pending. Codex-only text steering requires the active source turn's actual
-  acknowledgement and saved transcript; its explicit desktop control retains
-  drafts and awaits final integration checks.
+  tests, including an isolated fake-provider boundary. Native Quote/cards passed;
+  context-only Send awaits the bounded-layout native retest. Codex-only text
+  steering passed one actual fake-server acknowledgement on the same source turn,
+  saved transcript, exact retained draft and duplicate-submit prevention.
 - d4733f4 passed all five Rust CI jobs. On 814e3c0, four jobs passed and Linux
   core failed the existing GitHub output-limit fixture. A finite shell-builtin
   producer and explicit failure diagnostics replace its external infinite
-  producer; the next exact CI result must verify that change.
+  producer; both subsequent exact checkpoints passed Linux core CI.
 - A parallel Mac core run stalled in SQLite's Unix VFS global mutex. The bundled
   SQLite 3.51.1 has a matching upstream deadlock fixed in 3.51.2. The smallest
   supported dependency upgrade is rusqlite 0.39 / SQLite 3.51.3; only those two
   locked packages changed. With that fix, the normal parallel run passed all 429
   unit tests and all core integration targets. The final desktop run passed 289
   unit tests and all four integration targets. CI parallel coverage is retained;
-  the next pushed commit still needs its own remote results.
+  both subsequent exact checkpoints also passed remote CI.
 
 - The real Mac native Quit fixture passed: three unsaved CmdQ requests were
   vetoed; the synthetic draft was persisted and verified before the one-use quit
@@ -131,8 +140,9 @@ off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last fully green Rust remote checkpoint is 4ae5db4; newer local results do not stand
-in for CI on the next pushed commit.
+The last fully green Rust remote checkpoint is 95b0002. Newer browser lifetime
+accounting passed local desktop tests; those results do not stand in for CI on
+its next pushed checkpoint.
 
 ## Earlier parallel checkpoint (2026-11-05)
 
