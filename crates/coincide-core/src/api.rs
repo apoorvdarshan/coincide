@@ -262,8 +262,8 @@ impl Engine {
                 let request:Request=serde_json::from_value(p.clone())?;
                 let terminal=&mut self.terminals.get_mut(&request.terminal_id).context("Terminal not found")?.1;
                 let changed=terminal.scroll_checked(request.revision,request.scroll)?;
-                let frame=terminal.snapshot()?;
                 if changed {self.revision+=1;}
+                let frame=terminal.snapshot()?;
                 Ok(json!({"changed":changed,"frame":frame}))
             }
             "terminal.selection"=>{
