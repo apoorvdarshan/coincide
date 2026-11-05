@@ -1545,6 +1545,18 @@ mod tests {
         let before = fs::read(&old).unwrap();
         assert!(Store::open_existing_for_legacy_media(&old, &root).is_err());
         assert_eq!(fs::read(&old).unwrap(), before);
+        let incomplete = root.join("incomplete.sqlite");
+        let db = rusqlite::Connection::open(&incomplete).unwrap();
+        db.execute_batch("CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT);INSERT INTO metadata VALUES('schema','3');").unwrap();
+        drop(db);
+        let before = fs::read(&incomplete).unwrap();
+        assert!(Store::open_existing_for_legacy_media(&incomplete, &root).is_err());
+        assert_eq!(fs::read(&incomplete).unwrap(), before);
+        let alias = f.source.join("linked-data-directory");
+        symlink(&root, &alias).unwrap();
+        assert!(
+            Store::open_existing_for_legacy_media(&alias.join("state.sqlite"), &alias,).is_err()
+        );
         let held = open_regular_existing(&f.config.database_path).unwrap();
         let db = rusqlite::Connection::open_with_flags(
             &f.config.database_path,
@@ -1639,6 +1651,138 @@ mod tests {
                 .is_none()
         );
     }
+    #[test]
+    fn invalid_overlay_after_copy_retains_created_identity_and_original_local_value() {
+        let f = fixture();
+        let name = overlay_name(f.thread["id"].as_str().unwrap()).unwrap();
+        let invalid = json!({"version":1,"threadId":f.thread["id"],"entries":"invalid fixture"});
+        let db = rusqlite::Connection::open(&f.config.database_path).unwrap();
+        db.execute(
+            "INSERT INTO documents(name,document) VALUES (?1,?2)",
+            rusqlite::params![name, serde_json::to_string(&invalid).unwrap()],
+        )
+        .unwrap();
+        let (mut service, selection, cap) = setup(&f);
+        let (p, ids) = preview(&mut service, &selection, &cap);
+        let op = service.confirm(&selection, p, ids).unwrap();
+        let ServiceEvent::Finished { receipt_id, .. } = wait(&mut service, op) else {
+            panic!("receipt")
+        };
+        let receipt = service.receipt(receipt_id).unwrap();
+        assert!(!receipt.committed);
+        assert_eq!(receipt.error, Some(ServiceError::InvalidOverlay));
+        assert!(receipt.committed_candidate_ids.is_empty());
+        let image = receipt.batch.references[0].image.as_ref().unwrap();
+        assert!(image.path.is_file());
+        assert!(image.original_path.is_file());
+        assert_eq!(service.pending_recovery(), vec![receipt_id]);
+        let store = Store::open_existing_for_legacy_media(
+            &f.config.database_path,
+            &f.config.expected_data_directory,
+        )
+        .unwrap();
+        assert_eq!(store.local_document(&name).unwrap(), Some(invalid));
+        assert_eq!(
+            store.thread(f.thread["id"].as_str().unwrap()).unwrap(),
+            f.thread
+        );
+    }
+
+    #[test]
+    fn thread_change_after_materialize_retains_images_and_cannot_commit_stale_overlay() {
+        let f = fixture();
+        let (_front, selection, cap) = setup(&f);
+        let mut worker = Worker::open(f.config.clone()).unwrap();
+        let control = Control {
+            state: Arc::new(AtomicU8::new(RUNNING)),
+            selection,
+        };
+        let receipts: Receipts = Arc::new(Mutex::new(HashMap::new()));
+        let mut kept = false;
+        let ServiceEvent::Inspected {
+            plan_id,
+            candidates,
+            ..
+        } = worker
+            .execute(
+                OperationId(Uuid::new_v4()),
+                &control,
+                Command::Inspect(cap, 0),
+                &receipts,
+                &mut kept,
+            )
+            .unwrap()
+        else {
+            panic!("inspect")
+        };
+        let ids = candidates
+            .iter()
+            .map(|c| c.candidate_id.clone())
+            .collect::<Vec<_>>();
+        let ServiceEvent::Validated { preview_id, .. } = worker
+            .execute(
+                OperationId(Uuid::new_v4()),
+                &control,
+                Command::Validate(plan_id, ids.clone()),
+                &receipts,
+                &mut kept,
+            )
+            .unwrap()
+        else {
+            panic!("preview")
+        };
+        let config = f.config.clone();
+        let mut changed = f.thread.clone();
+        changed["draft"] = json!("edited after copying; retain this draft");
+        let expected = changed.clone();
+        worker.after_materialize = Some(Box::new(move || {
+            let mut other = Store::open_existing_for_legacy_media(
+                &config.database_path,
+                &config.expected_data_directory,
+            )
+            .unwrap();
+            other.save(&changed).unwrap();
+        }));
+        let ServiceEvent::Finished { receipt_id, .. } = worker
+            .execute(
+                OperationId(Uuid::new_v4()),
+                &control,
+                Command::Confirm(preview_id, ids),
+                &receipts,
+                &mut kept,
+            )
+            .unwrap()
+        else {
+            panic!("receipt")
+        };
+        assert!(kept);
+        let receipt = receipts.lock().unwrap().get(&receipt_id).unwrap().clone();
+        assert!(!receipt.committed);
+        assert_eq!(receipt.error, Some(ServiceError::ThreadChanged));
+        assert!(
+            receipt.batch.references[0]
+                .image
+                .as_ref()
+                .unwrap()
+                .path
+                .is_file()
+        );
+        assert!(
+            worker
+                .store
+                .local_document(&overlay_name(f.thread["id"].as_str().unwrap(),).unwrap())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            worker
+                .store
+                .thread(f.thread["id"].as_str().unwrap())
+                .unwrap(),
+            expected
+        );
+    }
+
     #[test]
     fn partial_success_commits_only_valid_entries_and_changed_managed_file_fails_render() {
         let mut f = fixture();
