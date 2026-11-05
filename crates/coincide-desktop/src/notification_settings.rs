@@ -15,7 +15,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread,
@@ -38,6 +38,9 @@ pub struct Status {
     pub busy: bool,
     pub outstanding: usize,
     pub stopped: bool,
+    pub native_worker_joined: bool,
+    pub reconciliation_error: Option<String>,
+    pub native_callbacks_unconfirmed: bool,
     pub error: Option<String>,
 }
 impl Default for Status {
@@ -51,6 +54,9 @@ impl Default for Status {
             busy: true,
             outstanding: 0,
             stopped: false,
+            native_worker_joined: false,
+            reconciliation_error: None,
+            native_callbacks_unconfirmed: false,
             error: None,
         }
     }
@@ -67,6 +73,53 @@ pub struct BridgeHandle {
     activity: Arc<Mutex<Option<DesktopActivity>>>,
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
+    join: BridgeJoin,
+}
+#[derive(Clone, Default)]
+struct BridgeJoin {
+    worker: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    outcome: Arc<AtomicU8>,
+}
+impl BridgeJoin {
+    fn observe(&self, worker: thread::JoinHandle<()>) {
+        *self.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
+        let owned = self.worker.clone();
+        let outcome = self.outcome.clone();
+        let spawned = thread::Builder::new()
+            .name("notification-bridge-join".into())
+            .spawn(move || {
+                let worker = owned.lock().unwrap_or_else(|e| e.into_inner()).take();
+                let joined = worker.is_some_and(|worker| worker.join().is_ok());
+                // Actual join includes bridge TLS teardown, not merely status.stopped.
+                outcome.store(if joined { 1 } else { 2 }, Ordering::Release);
+            });
+        if spawned.is_err() {
+            self.outcome.store(3, Ordering::Release);
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct BridgeShutdownStatus {
+    pub requested: bool,
+    pub bridge_joined: bool,
+    pub bridge_join_failed: bool,
+    pub stopped: bool,
+    pub native_worker_joined: bool,
+    pub claims_outstanding: usize,
+    pub reconciliation_error: Option<String>,
+    pub native_callbacks_unconfirmed: bool,
+}
+impl BridgeShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.requested
+            && self.bridge_joined
+            && !self.bridge_join_failed
+            && self.stopped
+            && self.native_worker_joined
+            && self.claims_outstanding == 0
+            && self.reconciliation_error.is_none()
+            && !self.native_callbacks_unconfirmed
+    }
 }
 impl BridgeHandle {
     pub fn try_action(&self, action: Action) -> bool {
@@ -85,6 +138,20 @@ impl BridgeHandle {
     }
     pub fn try_status(&self) -> Option<Status> {
         self.status.try_lock().ok().map(|s| s.clone())
+    }
+    pub fn try_shutdown_status(&self) -> Option<BridgeShutdownStatus> {
+        let status = self.try_status()?;
+        let outcome = self.join.outcome.load(Ordering::Acquire);
+        Some(BridgeShutdownStatus {
+            requested: self.stop.load(Ordering::Acquire),
+            bridge_joined: outcome == 1,
+            bridge_join_failed: matches!(outcome, 2 | 3),
+            stopped: status.stopped,
+            native_worker_joined: status.native_worker_joined,
+            claims_outstanding: status.outstanding,
+            reconciliation_error: status.reconciliation_error,
+            native_callbacks_unconfirmed: status.native_callbacks_unconfirmed,
+        })
     }
     pub fn request_shutdown(&self) {
         self.stop.store(true, Ordering::Release);
@@ -115,11 +182,12 @@ impl Bridge {
                 ..Status::default()
             })),
             stop: Arc::new(AtomicBool::new(false)),
+            join: BridgeJoin::default(),
         };
         let h = handle.clone();
-        // Detached join ownership is deliberate: the background thread owns and
-        // joins the native worker. Entity Drop only signals, never blocks GPUI.
-        thread::Builder::new()
+        // Bridge owns native worker joins; a separate observer joins this bridge.
+        // Entity Drop only signals, never blocks GPUI.
+        let bridge_worker = thread::Builder::new()
             .name("coincide-notification-bridge".into())
             .spawn(move || {
                 let run =
@@ -149,6 +217,10 @@ impl Bridge {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => status.error = Some(short(e)),
                     Err(_) => {
+                        status.reconciliation_error = Some(
+                            "Notification bridge panicked; claim ownership is unconfirmed".into(),
+                        );
+                        status.native_callbacks_unconfirmed = true;
                         status.error = Some(
                             "Notification bridge panicked; outstanding claims remain uncertain"
                                 .into(),
@@ -161,6 +233,7 @@ impl Bridge {
                 h.stop.store(true, Ordering::Release);
             })
             .context("start notification bridge")?;
+        handle.join.observe(bridge_worker);
         Ok(Self { handle })
     }
     pub fn handle(&self) -> BridgeHandle {
@@ -270,7 +343,9 @@ impl Pump {
     }
     fn ack(&mut self, engine: &mut impl Outbox, id: Identity, ack: NotificationAck) {
         if let Err(e) = engine.ack(id.claim, id.key, ack) {
-            self.status.error = Some(short(e));
+            let error = short(e);
+            self.status.reconciliation_error = Some(error.clone());
+            self.status.error = Some(error);
             self.failed_acks.push(PendingAck { id, ack });
         }
     }
@@ -335,6 +410,21 @@ impl Pump {
         }
     }
     fn receipt(&mut self, engine: &mut impl Outbox, receipt: Receipt) {
+        if self.status.native_compiled
+            && matches!(
+                &receipt.outcome,
+                Outcome::Notification {
+                    ack: worker::Ack::Delivered(Delivery::Uncertain),
+                    reason: worker::Reason::Attempted | worker::Reason::BackendPanic,
+                    ..
+                } | Outcome::Rejected(_)
+                    | Outcome::Cleared { error: Some(_), .. }
+                    | Outcome::Permission(Permission::Unknown)
+            )
+        {
+            // Native callback timeouts do not prove callback cancellation.
+            self.status.native_callbacks_unconfirmed = true;
+        }
         let Some(flight) = self.flights.remove(&receipt.command_id) else {
             self.status.error = Some("Unexpected notification receipt".into());
             return;
@@ -521,7 +611,9 @@ impl Pump {
     }
     fn finish(&mut self, engine: &mut impl Outbox) {
         self.cancel_pending(engine, None);
-        match self.runtime.shutdown() {
+        let exit = self.runtime.shutdown();
+        self.status.native_worker_joined = true;
+        match exit {
             Ok(exit) => {
                 while let Ok(receipt) = self.runtime.try_receipt() {
                     self.receipt(engine, receipt);
@@ -535,7 +627,10 @@ impl Pump {
                     }
                 }
             }
-            Err(e) => self.status.error = Some(short(e)),
+            Err(e) => {
+                self.status.native_callbacks_unconfirmed = true;
+                self.status.error = Some(short(e));
+            }
         }
         let remaining = std::mem::take(&mut self.flights);
         for flight in remaining.into_values() {
@@ -550,6 +645,9 @@ impl Pump {
             self.ack(engine, failed.id, failed.ack);
         }
         self.status.outstanding = self.failed_acks.len();
+        if self.failed_acks.is_empty() {
+            self.status.reconciliation_error = None;
+        }
         self.status.stopped = true;
         self.status.bridge_ready = false;
         self.status.busy = false;
@@ -605,6 +703,19 @@ impl NotificationSettingsPanel {
             _poll: poll,
         }
     }
+    pub fn request_shutdown(&self) {
+        if let Some(bridge) = &self.bridge {
+            bridge.handle.request_shutdown();
+        }
+    }
+    pub fn try_shutdown_status(&self) -> Option<BridgeShutdownStatus> {
+        match &self.bridge {
+            Some(bridge) => bridge.handle.try_shutdown_status(),
+            // Construction failure may include native startup failure; do not
+            // turn an absent owner into a successful shutdown acknowledgement.
+            None => None,
+        }
+    }
     pub fn bridge_handle(&self) -> Option<BridgeHandle> {
         self.bridge.as_ref().map(Bridge::handle)
     }
@@ -653,6 +764,7 @@ mod tests {
         writes: Vec<bool>,
         claims: VecDeque<NotificationClaim>,
         acks: Vec<(Uuid, NotificationAck)>,
+        fail_ack: bool,
     }
     struct FakeEngine(Arc<Mutex<EngineState>>);
     impl Outbox for FakeEngine {
@@ -671,6 +783,10 @@ mod tests {
             Ok(s.claims.drain(..count).collect())
         }
         fn ack(&mut self, id: Uuid, _: EventKey, ack: NotificationAck) -> Result<()> {
+            ensure!(
+                !self.0.lock().unwrap().fail_ack,
+                "synthetic reconciliation failed"
+            );
             self.0.lock().unwrap().acks.push((id, ack));
             Ok(())
         }
@@ -747,6 +863,122 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             thread::yield_now();
         }
+    }
+    #[::core::prelude::v1::test]
+    fn bridge_shutdown_requires_actual_join_after_stopped_and_tls_exit() {
+        use std::sync::Condvar;
+        struct Gate(Arc<(Mutex<bool>, Condvar)>, Arc<AtomicBool>);
+        impl Drop for Gate {
+            fn drop(&mut self) {
+                self.1.store(true, Ordering::Release);
+                let lock = self.0.0.lock().unwrap();
+                drop(self.0.1.wait_while(lock, |blocked| *blocked).unwrap());
+            }
+        }
+        thread_local! {static EXIT:std::cell::RefCell<Option<Gate>>=const {std::cell::RefCell::new(None)};}
+        let gate = Arc::new((Mutex::new(true), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = false;
+                self.0.1.notify_all();
+            }
+        }
+        let _release = Release(gate.clone());
+        let entered = Arc::new(AtomicBool::new(false));
+        let g = gate.clone();
+        let e = entered.clone();
+        let calls = Arc::new(Mutex::new(vec![]));
+        let probe = calls.clone();
+        let bridge = Bridge::start_with(
+            FakeEngine(Arc::default()),
+            move || {
+                EXIT.with(|slot| *slot.borrow_mut() = Some(Gate(g, e)));
+                NotificationRuntime::spawn(
+                    FakeBackend {
+                        calls: probe,
+                        result: Delivery::Accepted,
+                    },
+                    WINDOW,
+                )
+            },
+            true,
+        )
+        .unwrap();
+        let handle = bridge.handle();
+        handle.request_shutdown();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !entered.load(Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        let state = handle.try_shutdown_status().unwrap();
+        assert!(state.stopped);
+        assert!(state.native_worker_joined);
+        assert!(!state.bridge_joined);
+        assert!(!state.ready());
+        assert!(!handle.try_action(Action::AllowNotifications));
+        *gate.0.lock().unwrap() = false;
+        gate.1.notify_all();
+        while !handle
+            .try_shutdown_status()
+            .is_some_and(|status| status.ready())
+        {
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn shutdown_retains_exact_failed_claim_and_reconciliation_error() {
+        let (mut pump, mut engine, _) = setup(Delivery::Accepted, true);
+        engine.0.lock().unwrap().fail_ack = true;
+        let event = claim();
+        let id = Identity {
+            claim: event.claim_id,
+            key: event.alert.key,
+        };
+        pump.ack(
+            &mut engine,
+            id,
+            NotificationAck::Delivered(Delivery::Uncertain),
+        );
+        pump.finish(&mut engine);
+        assert_eq!(pump.failed_acks.len(), 1);
+        assert_eq!(pump.failed_acks[0].id.claim, event.claim_id);
+        assert_eq!(pump.status.outstanding, 1);
+        assert!(pump.status.reconciliation_error.is_some());
+        assert!(pump.status.native_worker_joined);
+        assert!(engine.0.lock().unwrap().acks.is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn uncertain_native_receipt_never_claims_callback_cancellation_on_shutdown() {
+        let (mut pump, mut engine, _) = setup(Delivery::Uncertain, true);
+        let event = claim();
+        let command = Uuid::new_v4();
+        pump.flights.insert(
+            command,
+            Flight::Event(Identity {
+                claim: event.claim_id,
+                key: event.alert.key,
+            }),
+        );
+        pump.receipt(
+            &mut engine,
+            Receipt {
+                command_id: command,
+                outcome: Outcome::Notification {
+                    claim_id: event.claim_id,
+                    key: event.alert.key,
+                    ack: worker::Ack::Delivered(Delivery::Uncertain),
+                    reason: worker::Reason::Attempted,
+                },
+            },
+        );
+        pump.finish(&mut engine);
+        assert!(pump.status.native_callbacks_unconfirmed);
+        assert_eq!(pump.status.outstanding, 0);
+        assert!(pump.status.native_worker_joined);
     }
     #[::core::prelude::v1::test]
     fn startup_reads_only_and_explicit_click_writes_without_permission_prompt() {
