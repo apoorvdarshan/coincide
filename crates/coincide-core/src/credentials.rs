@@ -124,17 +124,6 @@ impl CliCommand {
     #[cfg(unix)]
     fn capture(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>, Failure> {
         use std::os::{fd::AsRawFd, unix::process::CommandExt};
-        struct OwnedGroup(std::process::Child);
-        impl Drop for OwnedGroup {
-            fn drop(&mut self) {
-                // The child becomes its own process-group leader before exec.
-                // Tear down descendants even when the leader has already exited.
-                unsafe {
-                    libc::kill(-(self.0.id() as i32), libc::SIGKILL);
-                }
-                let _ = self.0.wait();
-            }
-        }
         let child = Command::new(&self.executable)
             .args(args)
             .process_group(0)
@@ -176,14 +165,55 @@ impl CliCommand {
             // Do not reap the leader until capture completes. This retains its
             // PID while group cleanup still needs the process-group identifier.
             if eof {
-                match group.0.try_wait().map_err(|_| Failure::Unavailable)? {
-                    Some(status) if status.success() => return Ok(bytes),
+                match group.exited_successfully()? {
+                    Some(true) => return Ok(bytes),
                     Some(_) => return Err(Failure::Unavailable),
                     None => {}
                 }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+/// Retain the unreaped leader until its process group has been signalled.
+#[cfg(unix)]
+struct OwnedGroup(std::process::Child);
+#[cfg(unix)]
+impl OwnedGroup {
+    fn exited_successfully(&self) -> Result<Option<bool>, Failure> {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.0.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result != 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                return Ok(None);
+            }
+            return Err(Failure::Unavailable);
+        }
+        if unsafe { info.si_pid() } == 0 {
+            return Ok(None);
+        }
+        Ok(Some(
+            info.si_code == libc::CLD_EXITED && unsafe { info.si_status() } == 0,
+        ))
+    }
+}
+#[cfg(unix)]
+impl Drop for OwnedGroup {
+    fn drop(&mut self) {
+        // No wait/try_wait may precede this signal. The unreaped leader pins
+        // the PID/PGID so a recycled unrelated group cannot receive SIGKILL.
+        unsafe {
+            libc::kill(-(self.0.id() as i32), libc::SIGKILL);
+        }
+        let _ = self.0.wait();
     }
 }
 
@@ -596,5 +626,36 @@ mod tests {
     fn unsupported_process_capture_fails_closed() {
         let cli = CliCommand::new(std::env::current_exe().unwrap()).unwrap();
         assert_eq!(cli.run(&[]), Err(Failure::Unavailable));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_keeps_leader_waitable_until_group_teardown() {
+        use std::os::unix::process::CommandExt;
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = OwnedGroup(child);
+        let pid = group.0.id() as i32;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while group.exited_successfully().unwrap().is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // WNOWAIT must allow repeated observation of the SAME exited leader.
+        // A reaping try_wait implementation fails this second observation.
+        assert_eq!(group.exited_successfully(), Ok(Some(true)));
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        drop(group); // group signal first, then leader reap
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
     }
 }
