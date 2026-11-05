@@ -4,7 +4,8 @@ use anyhow::{Context as _, Result, bail, ensure};
 use coincide_core::github_threads::{InlineComment, Page, ReviewThread, Scope};
 use gpui_kit::{
     App, AppContext, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, VisualContext, Window,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    VisualContext, Window,
     base::Disableable,
     component::{
         button::Button,
