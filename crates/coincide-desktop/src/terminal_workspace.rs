@@ -508,6 +508,14 @@ impl EntityInputHandler for PaneInput {
     }
 }
 
+const WAIT_FOR_TERMINAL_CREATION: &str = "Wait for terminal creation";
+
+fn clear_creation_notice(notice: &mut String, closing: bool) {
+    if !closing && notice == WAIT_FOR_TERMINAL_CREATION {
+        notice.clear();
+    }
+}
+
 struct Pane {
     terminal: Option<String>,
     frame: Option<Value>,
@@ -929,7 +937,7 @@ impl TerminalWorkspace {
             return false;
         };
         if pane.closing || pane.terminal.is_none() {
-            pane.notice = "Wait for terminal creation".into();
+            pane.notice = WAIT_FOR_TERMINAL_CREATION.into();
             cx.notify();
             return false;
         }
@@ -1043,6 +1051,7 @@ impl TerminalWorkspace {
                     Ok(id) => {
                         if let Some(p) = self.panes.get_mut(&key) {
                             p.terminal = Some(id);
+                            clear_creation_notice(&mut p.notice, p.closing);
                         }
                     }
                     Err(error) => {
@@ -2259,6 +2268,41 @@ mod tests {
             drop(self.rx);
             self.handle.join().unwrap();
         }
+    }
+    #[::core::prelude::v1::test]
+    fn worker_bound_clears_only_pending_creation_notice_and_keeps_real_failure() {
+        let w = FakeWorker::new();
+        let mut notice = WAIT_FOR_TERMINAL_CREATION.to_owned();
+        w.tx.send(Command::Create(10)).unwrap();
+        assert!(matches!(w.next(), Update::Bound(10, Ok(_))));
+        clear_creation_notice(&mut notice, false);
+        assert!(notice.is_empty());
+
+        w.tx.send(Command::Act(
+            10,
+            1,
+            Action::Input(TerminalInput::Text {
+                text: "fixture-rejected-input".into(),
+            }),
+        ))
+        .unwrap();
+        let Update::ActionFailed(10, failure) = w.next() else {
+            panic!("worker must report the rejected input");
+        };
+        assert!(failure.contains("fixture PTY queue full"));
+        notice = failure.clone();
+        w.tx.send(Command::Create(20)).unwrap();
+        assert!(matches!(w.next(), Update::Bound(20, Ok(_))));
+        clear_creation_notice(&mut notice, false);
+        assert_eq!(notice, failure);
+        // A close in flight must not lose its notice on a late Bound result.
+        notice = WAIT_FOR_TERMINAL_CREATION.into();
+        clear_creation_notice(&mut notice, true);
+        assert_eq!(notice, WAIT_FOR_TERMINAL_CREATION);
+        notice = "Terminal close failed: fixture refusal".into();
+        clear_creation_notice(&mut notice, false);
+        assert_eq!(notice, "Terminal close failed: fixture refusal");
+        w.finish();
     }
     #[::core::prelude::v1::test]
     fn worker_create_is_explicit_and_writes_remain_independently_bound() {
