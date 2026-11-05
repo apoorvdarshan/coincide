@@ -1,21 +1,52 @@
-//! Native-only browser sink. No agent JSON, page IPC, JavaScript source or logging.
-//! Existing Wry backends cannot atomically check a Rust permit at DOM mutation.
-//! Keep the capability off until a backend and its native acceptance prove that.
+//! Trusted native credential delivery; never an agent/browser JSON operation.
+//! macOS uses a private WebKit content world and argument dictionaries. The
+//! final native dispatch is the commit boundary; see the native bridge contract.
 use crate::credentials::{FillPermit, PrivateBrowserHook};
 use coincide_core::credentials::{Failure, PageBinding};
 
+#[cfg(target_os = "macos")]
+#[path = "browser_credentials_macos.rs"]
+mod native;
+#[cfg(target_os = "macos")]
+pub use native::NativeCredentialTarget;
+#[cfg(not(target_os = "macos"))]
+pub struct NativeCredentialTarget;
+#[cfg(not(target_os = "macos"))]
+impl NativeCredentialTarget {
+    pub fn new(
+        _view: &wry::WebView,
+        _navigation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Option<Self> {
+        None
+    }
+}
 pub fn credential_fill_available() -> bool {
-    false
+    #[cfg(target_os = "macos")]
+    {
+        native::available()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
-/// A fresh UI-thread lookup, restricted to the parent's selected thread/tab.
-/// The closure returns metadata only; it must never return page field values.
+/// Both arguments come from the selected thread/tab on the UI thread. The
+/// lookup exposes metadata only. The retained native target is never public IPC.
 pub struct BrowserCredentialSink<F> {
     lookup: F,
+    target: Option<NativeCredentialTarget>,
 }
 impl<F> BrowserCredentialSink<F> {
     pub fn new(lookup: F) -> Self {
-        Self { lookup }
+        Self {
+            lookup,
+            target: None,
+        }
+    }
+    pub fn with_target(mut self, target: Option<NativeCredentialTarget>) -> Self {
+        self.target = target;
+        self
     }
 }
 impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for BrowserCredentialSink<F> {
@@ -26,18 +57,34 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
         &mut self,
         binding: &PageBinding,
         permit: FillPermit,
-        _username: &str,
-        _password: &str,
-        _totp: Option<&str>,
+        username: &str,
+        password: &str,
+        totp: Option<&str>,
         completion: Box<dyn FnOnce(Result<(), Failure>)>,
     ) {
-        // Do not format, copy, evaluate, or log the supplied secrets, even on
-        // error. Availability is checked again at the sink, not only in UI.
-        let result = validate_delivery(binding, permit.is_valid(), (self.lookup)(&binding.tab));
-        completion(result);
+        if let Err(error) =
+            validate_delivery(binding, permit.is_valid(), (self.lookup)(&binding.tab))
+        {
+            completion(Err(error));
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(target) = &self.target {
+            target.fill(
+                binding.clone(),
+                permit,
+                username,
+                password,
+                totp,
+                completion,
+            );
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (&self.target, username, password, totp);
+        completion(Err(Failure::Unavailable));
     }
 }
-
 fn validate_delivery(
     expected: &PageBinding,
     permit_valid: bool,
@@ -49,12 +96,8 @@ fn validate_delivery(
     if current.as_ref() != Ok(expected) {
         return Err(Failure::StalePage);
     }
-    // This must remain unconditional until native mutation can atomically
-    // validate BOTH original document identity and the revocable FillPermit.
-    // A URL/epoch check followed by delayed Wry evaluation is insufficient.
-    Err(Failure::Unavailable)
+    Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,12 +105,11 @@ mod tests {
         PageBinding::new(tab.into(), navigation, url).unwrap()
     }
     #[test]
-    fn matching_binding_cannot_enable_unsupported_backend() {
-        assert!(!credential_fill_available());
+    fn matching_binding_is_only_a_delivery_precondition() {
         let expected = page("tab-a", 4, "https://example.test/login");
         assert_eq!(
             validate_delivery(&expected, true, Ok(expected.clone())),
-            Err(Failure::Unavailable)
+            Ok(())
         );
     }
     #[test]

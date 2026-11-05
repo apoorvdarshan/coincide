@@ -407,6 +407,62 @@ impl Coincide {
             .into_any_element()
     }
 
+    pub(super) fn refresh_awake_status(&mut self, cx: &mut Context<Self>) {
+        if let Ok(status) = call(&self.engine, "host.awake.status", json!({}))
+            && status != self.awake_status
+        {
+            self.awake_status = status;
+            cx.notify();
+        }
+    }
+    fn configure_awake(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        match call(
+            &self.engine,
+            "host.awake.configure",
+            json!({"enabled":enabled}),
+        ) {
+            Ok(status) => {
+                self.awake_status = status;
+                self.settings_status =
+                    "Idle-sleep preference saved. The status below shows backend acknowledgement."
+                        .into();
+            }
+            Err(error) => {
+                self.settings_status = format!("Idle-sleep preference was not saved: {error}")
+            }
+        }
+        cx.notify();
+    }
+    fn awake_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let enabled = self.awake_status["enabled"] == true;
+        let supported = self.awake_status["supported"] == true;
+        let pending = self.awake_status["workerStarted"] == true
+            && self.awake_status["requestedRevision"] != self.awake_status["acknowledgedRevision"];
+        let state = if let Some(error) = self.awake_status["error"].as_str() {
+            format!("Could not confirm idle-sleep state: {error}")
+        } else if !supported {
+            "Idle-sleep inhibition is unavailable on this platform.".into()
+        } else if pending {
+            "Waiting for the idle-sleep backend to acknowledge the change…".into()
+        } else if self.awake_status["lease"] == "held" {
+            "Temporary idle-sleep lease acknowledged by the backend.".into()
+        } else if enabled {
+            "Enabled. No idle-sleep lease is currently held.".into()
+        } else {
+            "Off. No idle-sleep lease is currently held.".into()
+        };
+        div().p_3().flex().flex_col().gap_2().border_b_1().border_color(self.color(0x29303d))
+            .child(div().flex().items_center().gap_3()
+                .child(div().flex_1().child("Keep awake during work"))
+                .child(Button::new("idle-sleep-toggle").label(if enabled {"Turn off"} else {"Turn on"})
+                    .disabled(!supported && !enabled)
+                    .on_click(cx.listener(move |this, _, _, cx| this.configure_awake(!enabled, cx)))))
+            .child(div().text_sm().child(state))
+            .child(div().text_sm().child("Prevents idle sleep while a turn or tracked workspace/image job is running, including on battery. Ends when work finishes or Coincide quits."))
+            .child(div().text_sm().child("24/7 operation, closed-lid behavior, battery-specific policy, and persistent power settings are not connected in this Rust preview."))
+            .into_any_element()
+    }
+
     pub(super) fn settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         let setting =
             |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
@@ -474,6 +530,7 @@ impl Coincide {
             .child(self.setting_choices("Send messages with", "sendOnReturn", setting("sendOnReturn",json!(true)), vec![("Return",json!(true)),("Command / Control + Return",json!(false))],cx))
             .child(div().p_3().child("Shift-Return always inserts a new line. Command / Control + Return sends from the message composer."))
             .child(div().p_3().child("Shortcuts: Command / Control + N — new conversation; + F — search; + comma — settings."))
+            .child(self.awake_settings(cx))
             .child(div().p_3().text_sm().child(self.settings_status.clone()));
         pane.into_any_element()
     }

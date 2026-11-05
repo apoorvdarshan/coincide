@@ -52,27 +52,32 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 Overall verified macOS parity remains approximately 30%. Windows/Linux feature
 parity and existing-macOS UI/UX matching remain open acceptance milestones.
 
-All seven first-round worker slices are integrated on rust-gpui-rewrite. Follow-up
-work is active or awaiting its allocated validation lane:
+All seven first-round worker slices and their delivered follow-ups are integrated.
+The broad feature groups above remain open until their complete behavior passes.
 
-| Owner | Completed evidence | Current work | Remaining acceptance |
-| --- | --- | --- | --- |
-| Terminal | 25 focused Mac tests passed at worker 0ebd9b7 | Revision-checked scroll UI integration | Native scroll UI; Windows PTY end-to-end; splits/shell/layout |
-| Browser | 13 Node contract tests passed | Async bounded uploads and native fixture integration | Mac WebKit byte/event acceptance; Windows uploads explicitly unavailable |
-| Organization | 15 focused Mac tests and strict core clippy passed at e08cef0 | Source schema investigation | Store/UI integration of Codex/Claude previews; bots/tasks/history parity |
-| Credentials | 6 vault + 2 dictation tests passed before latest cleanup-order fix | Unreaped-leader cleanup and native approval/sink module | Latest fix/test harness validation; real native fill; passkeys/capture |
-| Workspace | Primitives integrated; dispatch fixtures authored | API registration and timeout/mutation-exclusion correction | Combined tests; Git UI; live GitHub operations |
-| Host | Portable policy integrated; native sleep helper tests authored | Process cleanup review and test allocation | Engine worker hookup; native service/notifications/remote/iCloud |
-| Packaging | 11 Python tests and 6 real store rehearsal cases passed on Mac/Linux/Windows CI at worker 7ea58f2 | Integrated CI evidence collection | Desktop staging, signing/installers/updater/live cutover |
-| Coordinator | 234 integrated Linux test successes before second follow-ups; Antigravity cleanup fixture and native setup compile tests passed | Integration, shared-resource allocation, platform CI and native acceptance | Full acceptance checklist below |
+| Owner | Verified evidence | Current work / remaining acceptance |
+| --- | --- | --- |
+| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY and control integration each passed 1/1 at f9e0ca0 | Splits/shell parity; Windows GPUI compile job added, first result pending |
+| Browser | Native Mac upload fixture passed seven groups; 47 combined Mac desktop tests pass, including 10 private-channel cases | Private isolated-world WebKit fill implemented but capability remains disabled pending native acceptance; Windows uploads unavailable |
+| Organization | CLI import Store/API tests passed on Mac/Linux; native preview/import panel mounted with five passing tests | Native picker/confirmation acceptance; bots persistence and native editor underway |
+| Credentials | Six native-workflow fixture tests passed; local Whisper subprocess tests passed 5/5 plus strict clippy on Linux at cf90172 | Local transcription UI; real model/microphone, native fill, vault and passkey acceptance remain |
+| Workspace | Async checkpoint/worktree panel mounted; seven worker tests pass; exact-copy helper mounted with five pure tests | Native panel/copy acceptance; bounded live GitHub metadata API and panel underway |
+| Host | Runtime synthetic tests and four Engine idle-sleep tests passed on Linux; explicit Rust-owned opt-in wired | Native idle-sleep lifecycle acceptance; notifications delivery adapter; privileged power/remote/iCloud remain |
+| Packaging | d4a9de5 passed 22 tests per host on Mac/Linux/Windows (DMG explicitly skipped off Mac), plus real store rehearsal; actual Mac ZIP/DMG payload readback verified | Runtime dependencies, signatures, HFS/Finder behavior, launch/install/updater and release readiness remain unverified |
+| Coordinator | Full Mac desktop suite passed 47 tests including current import/transcript hooks; Windows long-destination handling corrected with explicit long-cwd limitation | Integrated Linux checks, native acceptance, CI triage and combined UI/UX parity |
 
-Integrated Linux clippy initially found two importer collapsible-if errors; worker
-e08cef0 fixes these and passes focused Mac tests/clippy. This is not yet evidence
-that the complete integrated follow-up batch passes. Windows named-pipe transport
-is implemented with owner-only ACL and framing/CLI fixtures, pending Windows CI.
-Native setup UI compiles and has synthetic discovery tests, but actual account
-sign-in/setup UI acceptance remains open. Worker commits and passing isolated
-checks never count as completing the broad feature groups below.
+Windows Core CI at f9e0ca0 passed the real ConPTY and private-pipe integration
+targets, then failed a long-path Git worktree test. The current fix distinguishes
+long destination support from Git for Windows' unsupported long working directory;
+its Windows CI result is still pending. The diagnostic job preserves the original
+full-suite failure while exposing PTY/control targets independently.
+
+The private macOS credential bridge uses named isolated-world WebKit argument
+objects, document/origin/deadline binding and a final native permit check. Revocation
+prevents dispatch; already-dispatched renderer work cannot be retracted. Capability
+remains disabled until native synthetic acceptance. These tests used no real vault,
+provider account, model inference or microphone. Copy helper pure tests establish
+byte/range handling, not native cross-message or offscreen selection acceptance.
 
 ## Verified so far
 
@@ -284,3 +289,14 @@ fail explicitly in that mode. `attach THREAD ABSOLUTE_IMAGE_PATH`,
 `detach THREAD ATTACHMENT_ID`, and `providers` expose the corresponding API flows.
 Use `terminal.read` with `styled:true`, `rowOffset`, and `rowLimit` (1–10) for styled
 pages; compare revisions when assembling multiple pages from a changing terminal.
+
+Windows Git path limitation: worktree reservations may create destinations longer
+than 260 UTF-16 code units from a shorter source checkout, with `core.longpaths`
+enabled for Git. Git for Windows still uses a `MAX_PATH` current-directory buffer;
+the Rust launcher therefore explicitly rejects project working directories of
+260 or more UTF-16 code units after canonicalization. Such a reserved worktree can
+be listed from its source checkout, but opening it as a Git workspace requires a
+shorter project path. Device namespaces and path components whose meaning changes
+when a verbatim prefix is removed remain rejected. The regression verifies real
+long-destination metadata, branch/commit identity and unchanged source files/index;
+Windows CI must pass before this fix is considered runtime-verified.

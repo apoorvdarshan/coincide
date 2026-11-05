@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[path = "idle_sleep.rs"]
+mod idle_sleep;
 #[path = "session_import_api.rs"]
 mod session_import_api;
 #[path = "workspace_api.rs"]
@@ -37,6 +39,7 @@ struct Running {
 }
 pub struct Engine {
     pub store: Store,
+    idle_sleep: idle_sleep::IdleSleep,
     runs: HashMap<String, Running>,
     pub revision: u64,
     pub requested_open: Option<String>,
@@ -73,8 +76,10 @@ impl Engine {
             let report = crate::provider_catalog::discover_installed_tools();
             let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
         });
+        let idle_sleep = idle_sleep::IdleSleep::new(&store);
         Self {
             store,
+            idle_sleep,
             runs: HashMap::new(),
             revision: 0,
             requested_open: None,
@@ -112,7 +117,9 @@ impl Engine {
         ) {
             self.poll();
         }
-        match self.execute(method, &request["params"]) {
+        let result = self.execute(method, &request["params"]);
+        self.idle_sleep.update(self.runs.len(), self.shutdown);
+        match result {
             Ok(result) => json!({"id":id,"result":result}),
             Err(e) => json!({"id":id,"error":{"message":e.to_string()}}),
         }
@@ -122,6 +129,7 @@ impl Engine {
             return self.workspace_command(method, p);
         }
         match method {
+            "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
             "cli.sessions.preview" => {
                 ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
                 session_import_api::preview(p)
@@ -148,7 +156,9 @@ impl Engine {
                 self.workspace_pending.insert(id.clone(),(thread,Instant::now()));
                 self.attachment_operations.insert(id.clone());
                 let tx=self.workspace_tx.clone();let operation=id.clone();
+                let activity = self.idle_sleep.background_job();
                 std::thread::spawn(move || {
+                    let _activity = activity;
                     let result=crate::attachments::ingest_image(&root,&source)
                         .and_then(|image|Ok(json!({"attachment":serde_json::to_value(image)?})))
                         .unwrap_or_else(|error|json!({"error":error.to_string()}));
@@ -204,7 +214,9 @@ impl Engine {
                 let id=Uuid::new_v4().to_string();
                 self.workspace_pending.insert(id.clone(),(thread.into(),Instant::now()));
                 let tx=self.workspace_tx.clone();let params=p.clone();let operation=id.clone();let method=method.to_owned();
+                let activity = self.idle_sleep.background_job();
                 std::thread::spawn(move || {
+                    let _activity = activity;
                     let result=(||->Result<Value>{
                         match method.as_str() {
                             "git.status"=>crate::workspace::status(&cwd),
@@ -313,7 +325,7 @@ impl Engine {
             "app.capabilities" => {
                 let mut methods = vec![
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list",
@@ -1340,6 +1352,7 @@ impl Engine {
                 Err(error) => self.schedule_error = Some(error.to_string()),
             }
         }
+        self.idle_sleep.update(self.runs.len(), self.shutdown);
     }
 }
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {

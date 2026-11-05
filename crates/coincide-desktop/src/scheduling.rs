@@ -223,6 +223,7 @@ impl Coincide {
                     self.schedule_status = format!("Scheduler: {error}");
                 }
             }
+            Err(error) if engine_busy(&error) => return,
             Err(error) => {
                 self.schedules.clear();
                 self.schedule_status = format!("Unable to load schedules: {error}");
@@ -252,14 +253,15 @@ impl Coincide {
             return;
         }
         let result = if action == "approve" {
-            match self.engine.lock() {
+            match try_state(&self.engine) {
                 Ok(mut engine) => check_schedule_revision(&mut engine, id, expected_revision)
                     .and_then(|_| engine.approve_schedule(id)),
-                Err(_) => Err(anyhow::anyhow!("App engine is unavailable")),
+                Err(error) => Err(error),
             }
         } else {
             call(&self.engine, action, json!({"scheduleId":id}))
         };
+        let succeeded = result.is_ok();
         self.schedule_status=match result {
             Ok(_)=>match action {
                 "approve"=>"Approved for execution in Coincide Rust.",
@@ -271,7 +273,10 @@ impl Coincide {
             }.into(),
             Err(error)=>format!("Schedule action failed: {error}"),
         };
-        if action == "schedules.delete" && self.schedule_editor.editing_id.as_deref() == Some(id) {
+        if succeeded
+            && action == "schedules.delete"
+            && self.schedule_editor.editing_id.as_deref() == Some(id)
+        {
             self.schedule_editor.open = false;
         }
         self.refresh_schedules(cx);
@@ -418,10 +423,7 @@ impl Coincide {
             );
             let recurrence = editor.recurrence(cx)?;
             if let Some(id) = &editor.editing_id {
-                let mut engine = self
-                    .engine
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                let mut engine = try_state(&self.engine)?;
                 check_schedule_revision(&mut engine, id, &editor.baseline_revision)?;
                 let response = engine.dispatch(json!({"method":"schedules.patch", "params":{
                     "scheduleId":id,"patch":{"name":name,"prompt":prompt,"recurrence":recurrence}

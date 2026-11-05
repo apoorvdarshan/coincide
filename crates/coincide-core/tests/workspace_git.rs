@@ -155,6 +155,7 @@ fn canonical_windows_paths_support_git_worktrees_beyond_max_path() {
     std::fs::create_dir_all(&parent).unwrap();
     assert!(parent.as_os_str().len() > 260);
     let before = workspace::status(&root).unwrap();
+    let original_index = run(source.path(), &["write-tree"]);
     let reserved =
         git::create_worktree(&root, &parent, "child", "feature/long-path", &head).unwrap();
     let path = reserved["path"].as_str().unwrap();
@@ -163,12 +164,51 @@ fn canonical_windows_paths_support_git_worktrees_beyond_max_path() {
     assert!(destination.join(".git").is_file());
     assert!(!destination.join("[literal].txt").exists());
     assert_eq!(workspace::status(&root).unwrap(), before);
-    // All reads also pass their canonical directory through the shared helper.
+    assert_eq!(run(source.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(run(source.path(), &["write-tree"]), original_index);
+    assert_eq!(
+        std::fs::read(root.join("[literal].txt")).unwrap(),
+        b"original\n"
+    );
+    // The long destination was really reserved, with correct Git metadata.
+    // Inspect it from the supported source directory: Git for Windows' cwd
+    // implementation itself is limited to MAX_PATH, even with core.longpaths.
+    let list = git::worktrees(&root).unwrap();
+    let linked = list["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["branch"] == "refs/heads/feature/long-path")
+        .unwrap();
+    assert_eq!(linked["HEAD"], head);
+    assert_eq!(
+        Path::new(linked["worktree"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        destination.canonicalize().unwrap()
+    );
+    let pointer = std::fs::read_to_string(destination.join(".git")).unwrap();
+    let admin = Path::new(pointer.trim().strip_prefix("gitdir: ").unwrap());
+    assert_eq!(
+        admin.canonicalize().unwrap(),
+        root.join(".git/worktrees/child").canonicalize().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(admin.join("HEAD")).unwrap().trim(),
+        "ref: refs/heads/feature/long-path"
+    );
+    assert_eq!(
+        run(
+            source.path(),
+            &["rev-parse", "refs/heads/feature/long-path"]
+        ),
+        head
+    );
+    let error = git::worktrees(&destination.canonicalize().unwrap()).unwrap_err();
     assert!(
-        git::worktrees(&destination.canonicalize().unwrap()).unwrap()["worktrees"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["branch"] == "refs/heads/feature/long-path")
+        error
+            .to_string()
+            .contains("working directory shorter than 260"),
+        "{error}"
     );
 }

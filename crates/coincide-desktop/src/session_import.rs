@@ -392,7 +392,7 @@ mod tests {
         json!({"provider":"codex","executable":false,"sha256":"a".repeat(64),"title":"Synthetic",
         "messageCount":1,"omittedRecords":3,"shortenedText":false,"messages":[{"role":"user","text":"hello"}]})
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn confirmation_uses_exact_preview_binding_and_never_repreviews() {
         let mut calls = Vec::new();
         let preview = match run(
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(calls[1].1["path"], "/synthetic/source.jsonl");
         assert!(calls[1].1["projectId"].is_null());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn display_is_bounded_and_omissions_preserved() {
         let mut value = reply();
         value["messages"][0]["text"] = json!("🦀".repeat(5000));
@@ -435,7 +435,7 @@ mod tests {
         value["provider"] = json!("claude");
         assert!(Preview::from_reply(selection(), value).is_err());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn failed_import_is_never_retried() {
         let preview = Preview::from_reply(selection(), reply()).unwrap();
         let mut count = 0;
@@ -477,7 +477,7 @@ mod fixture_tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn worker_uses_real_api_to_preview_and_import_synthetic_sources() {
         let fixture = FixtureDirectory::new();
         let engine = Arc::new(Mutex::new(Engine::new(
@@ -523,7 +523,7 @@ mod fixture_tests {
             );
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn worker_real_api_rejects_changed_source_after_review() {
         let fixture = FixtureDirectory::new();
         let engine = Arc::new(Mutex::new(Engine::new(

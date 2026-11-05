@@ -20,6 +20,35 @@ pub(crate) fn external_git_path(path: &Path) -> Result<OsString> {
     }
 }
 
+pub(crate) fn external_git_directory(path: &Path) -> Result<OsString> {
+    #[cfg(windows)]
+    {
+        use anyhow::Context;
+        // Validate the real location, not a short spelling of a symlink/junction.
+        let canonical = path
+            .canonicalize()
+            .context("Resolving Git working directory")?;
+        let path = external_git_path(&canonical)?;
+        validate_windows_git_directory(path.to_str().context("Git path is not valid UTF-8")?)?;
+        Ok(path)
+    }
+    #[cfg(not(windows))]
+    {
+        external_git_path(path)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn validate_windows_git_directory(path: &str) -> Result<()> {
+    // Git for Windows' mingw_getcwd uses MAX_PATH buffers. core.longpaths
+    // supports long file/destination arguments, but cannot fix a long cwd.
+    anyhow::ensure!(
+        path.encode_utf16().count() < 260,
+        "Git for Windows requires a working directory shorter than 260 UTF-16 code units; use a shorter project path. Long worktree destinations can still be reserved from a shorter checkout"
+    );
+    Ok(())
+}
+
 #[cfg(any(windows, test))]
 fn windows_git_path(path: &str) -> Result<String> {
     use anyhow::ensure;
@@ -121,6 +150,19 @@ fn is_drive_absolute(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn windows_working_directory_limit_is_distinct_from_long_destination_support() {
+        let prefix = format!("C:/{}/", "a".repeat(125));
+        let at_limit = format!("{prefix}{}", "b".repeat(259 - prefix.len()));
+        assert_eq!(at_limit.encode_utf16().count(), 259);
+        validate_windows_git_directory(&windows_git_path(&at_limit).unwrap()).unwrap();
+        let too_long = format!("{at_limit}b");
+        assert!(windows_git_path(&too_long).is_ok()); // Valid destination, unsupported cwd.
+        assert!(validate_windows_git_directory(&too_long).is_err());
+        let unicode = format!("{prefix}{}", "😀".repeat(66));
+        assert!(unicode.chars().count() < 260);
+        assert!(validate_windows_git_directory(&unicode).is_err());
+    }
     #[test]
     fn git_windows_paths_preserve_drive_unc_spaces_and_unicode() {
         for (input, expected) in [

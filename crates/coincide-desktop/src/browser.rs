@@ -16,7 +16,7 @@ use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
 use serde_json::{Value, json};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
@@ -39,6 +39,7 @@ struct Tab {
     url: String,
     loading: bool,
     console: Rc<RefCell<BrowserConsole>>,
+    credential_console_suppressed: Rc<Cell<bool>>,
     navigation: Arc<AtomicU64>,
 }
 struct PendingWait {
@@ -295,9 +296,13 @@ impl BrowserController {
                 );
                 Ok(None)
             }
-            BrowserAction::Console { clear } => Ok(Some(
-                self.tabs[thread][index].console.borrow_mut().read(*clear),
-            )),
+            BrowserAction::Console { clear } => {
+                let tab = &self.tabs[thread][index];
+                let mut result = tab.console.borrow_mut().read(*clear);
+                result["credentialCaptureSuppressed"] =
+                    json!(tab.credential_console_suppressed.get());
+                Ok(Some(result))
+            }
             BrowserAction::WaitFor { timeout, .. } => {
                 ensure!(
                     self.waits.len() < 32,
@@ -406,6 +411,10 @@ impl BrowserController {
         let completed_sender = self.sender.clone();
         let console = Rc::new(RefCell::new(BrowserConsole::default()));
         let console_handler = console.clone();
+        let credential_console_suppressed = Rc::new(Cell::new(false));
+        let console_suppressed = credential_console_suppressed.clone();
+        let load_console_suppressed = credential_console_suppressed.clone();
+        let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
         let navigation_handler = navigation.clone();
         let load_navigation = navigation.clone();
@@ -416,6 +425,9 @@ impl BrowserController {
             .with_clipboard(false)
             .with_initialization_script_for_main_only(CONSOLE_SCRIPT, false)
             .with_ipc_handler(move |message| {
+                if console_suppressed.get() {
+                    return;
+                }
                 console_handler
                     .borrow_mut()
                     .receive(message.body(), &message.uri().to_string());
@@ -471,6 +483,10 @@ impl BrowserController {
             .with_on_page_load_handler(move |event, url| {
                 if matches!(event, wry::PageLoadEvent::Started) {
                     load_navigation.fetch_add(1, Ordering::AcqRel);
+                } else if load_console_suppressed.replace(false) {
+                    // Keep old-document messages out while navigation is in
+                    // flight. Start the new committed page with an empty log.
+                    let _ = load_console.borrow_mut().read(true);
                 }
                 let _ = load_sender.try_send(NativeEvent::Load {
                     thread: load_thread.clone(),
@@ -499,6 +515,7 @@ impl BrowserController {
             url: url.into(),
             loading: url != "about:blank",
             console,
+            credential_console_suppressed,
             navigation,
         });
         self.active.insert(thread.into(), id.clone());
@@ -766,11 +783,27 @@ impl BrowserController {
     ) -> bool {
         let mut changed = false;
         for job in jobs.try_iter().take(2) {
+            let target = self.active.get(thread).and_then(|id| {
+                let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
+                if tab.loading {
+                    return None;
+                }
+                // A native approved job may trigger site input handlers that
+                // log its fields. Clear and suppress page console capture
+                // before any private renderer work, until the next navigation.
+                tab.credential_console_suppressed.set(true);
+                let _ = tab.console.borrow_mut().read(true);
+                credential_bridge::NativeCredentialTarget::new(
+                    tab.view.read(cx).raw(),
+                    tab.navigation.clone(),
+                )
+            });
             let mut sink = credential_bridge::BrowserCredentialSink::new(|tab: &str| {
                 self.credential_page(thread, cx)
                     .filter(|page| page.tab == tab)
                     .ok_or(Failure::StalePage)
-            });
+            })
+            .with_target(target);
             deliver_fill(job, &mut sink);
             changed = true;
         }

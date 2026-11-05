@@ -43,7 +43,7 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
             "protocol.allow=never",
             "-C",
         ])
-        .arg(external_git_path(directory)?)
+        .arg(path::external_git_directory(directory)?)
         .args(arguments)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")

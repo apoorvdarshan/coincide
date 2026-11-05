@@ -159,7 +159,9 @@ impl Engine {
         let tx = self.workspace_tx.clone();
         let operation = id.clone();
         let method = method.to_owned();
+        let activity = self.idle_sleep.background_job();
         std::thread::spawn(move || {
+            let _activity = activity;
             let result = (|| -> Result<Value> {
                 match method.as_str() {
                     "git.checkpoints.create" => workspace_git::create_checkpoint(

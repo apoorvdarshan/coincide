@@ -8,12 +8,14 @@ mod presentation;
 mod provider_settings;
 mod queue;
 mod scheduling;
+mod session_import;
 mod settings;
 mod terminal_selection;
+mod transcript;
 mod workspace;
 use browser::BrowserController;
 use coincide_core::{
-    api::{Engine, SharedEngine, call},
+    api::{Engine, SharedEngine},
     attachments::StoredImage,
     browser_protocol::BrowserAction,
     control,
@@ -33,6 +35,38 @@ use gpui_kit::{
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+#[derive(Debug)]
+struct EngineBusy;
+impl std::fmt::Display for EngineBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("App is busy processing another operation; try again shortly")
+    }
+}
+impl std::error::Error for EngineBusy {}
+fn engine_busy(error: &anyhow::Error) -> bool {
+    error.is::<EngineBusy>()
+}
+fn try_state<T>(state: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
+    state.try_lock().map_err(|error| match error {
+        std::sync::TryLockError::WouldBlock => EngineBusy.into(),
+        std::sync::TryLockError::Poisoned(_) => anyhow::anyhow!("App engine is unavailable"),
+    })
+}
+/// Native callbacks must never wait for a background import holding the engine.
+/// Busy means dispatch did not run, so callers can retain their current state.
+fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
+    let response = try_state(engine)?.dispatch(json!({"method":method,"params":params}));
+    if let Some(error) = response.get("error") {
+        anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+    }
+    Ok(response["result"].clone())
+}
+
+struct PendingDraft {
+    text: String,
+    retry: bool,
+}
 
 enum PreviewState {
     Checking,
@@ -132,6 +166,8 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    session_import_open: bool,
+    session_import_panel: Entity<session_import::SessionImportPanel>,
     credentials_open: bool,
     credential_panel: Entity<credential_settings::CredentialSettings>,
     credential_jobs: std::sync::mpsc::Receiver<credentials::FillJob>,
@@ -139,6 +175,7 @@ struct Coincide {
     workspace_panel: Entity<workspace::WorkspacePanel>,
     provider_settings: provider_settings::ProviderSettings,
     settings: Value,
+    awake_status: Value,
     settings_status: String,
     appearance_dark: bool,
     applied_theme: Option<(bool, String)>,
@@ -175,6 +212,7 @@ struct Coincide {
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
+    pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_binding: Option<(String, String, String)>,
@@ -194,10 +232,36 @@ struct Coincide {
     browser_address_page: Option<(String, String)>,
     browser_panels: std::collections::HashSet<String>,
     browser_ui_operations: std::collections::HashMap<String, String>,
+    browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Coincide {
+    fn save_pending_draft(&mut self, id: &str) {
+        let Some(pending) = self.pending_drafts.get(id).filter(|draft| draft.retry) else {
+            return;
+        };
+        match call(
+            &self.engine,
+            "threads.patch",
+            json!({"threadId":id,"patch":{"draft":pending.text}}),
+        ) {
+            Ok(_) => {
+                self.pending_drafts.remove(id);
+            }
+            Err(error) => {
+                // Only a failed try_lock guarantees no mutation happened. Keep
+                // other failures visible without automatically replaying them.
+                self.pending_drafts.get_mut(id).unwrap().retry = engine_busy(&error);
+                self.status = format!("Draft remains in this window; not yet saved: {error}");
+            }
+        }
+    }
+    fn preserve_pending_draft(&self, thread: &mut Value) {
+        if let Some(draft) = self.pending_drafts.get(&text(thread, "id")) {
+            thread["draft"] = json!(draft.text);
+        }
+    }
     fn new(
         engine: SharedEngine,
         profile_dir: std::path::PathBuf,
@@ -213,6 +277,8 @@ impl Coincide {
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
+        let session_import_panel =
+            cx.new(|cx| session_import::SessionImportPanel::new(engine.clone(), window, cx));
         // Discovery checks executable metadata only. Vault reads require a
         // password-manager button click in this native panel.
         let (credential_settings, credential_jobs) =
@@ -231,17 +297,55 @@ impl Coincide {
             Ok(browser) => (Some(browser), None),
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
-        if let Ok(mut engine) = engine.lock() {
+        if let Ok(mut engine) = engine.try_lock() {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe_in(
+                &session_import_panel,
+                window,
+                |this, _, event, window, cx| {
+                    let session_import::SessionImportEvent::Imported { thread_id } = event;
+                    this.session_import_open = false;
+                    this.workspace_open = false;
+                    this.schedules_open = false;
+                    let thread_id = thread_id.clone();
+                    let engine = this.engine.clone();
+                    let requested = thread_id.clone();
+                    // Queue navigation off the UI thread so a busy Engine cannot
+                    // lose a completed import's selection. Render retries it.
+                    let open = cx.background_executor().spawn(async move {
+                        coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
+                    });
+                    cx.spawn_in(window, async move |this, cx| {
+                        let result = open.await;
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            this.refresh(cx);
+                            match result {
+                                Ok(_) => {
+                                    this.select(&thread_id, window, cx);
+                                    this.status = "Imported a read-only conversation. Fork it before sending messages.".into();
+                                }
+                                Err(error) => this.status = format!("Session imported, but opening it failed: {error}"),
+                            }
+                            cx.notify();
+                        });
+                    }).detach();
+                    cx.notify();
+                },
+            ),
             cx.subscribe(&rename_input, |this, _, event, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) { this.save_rename(cx); }
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_rename(cx);
+                }
             }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { shift: false, .. })
                     && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
-                    && !this.settings_open && !this.schedules_open && !this.workspace_open
+                    && !this.settings_open
+                    && !this.schedules_open
+                    && !this.workspace_open
+                    && !this.session_import_open
                 {
                     this.send(window, cx);
                 }
@@ -259,12 +363,20 @@ impl Coincide {
             cx.subscribe(&composer, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     if let Some(v) = this.selected.as_mut() {
-                        let draft=this.composer.read(cx).value().to_string();
-                        if v["draft"].as_str()==Some(draft.as_str()) {return;}
-                        v["draft"]=json!(draft);
-                        if let Err(e) = call(&this.engine,"threads.patch",json!({"threadId":v["id"],"patch":{"draft":this.composer.read(cx).value().to_string()}})) {
-                            this.status=format!("Draft could not be saved: {e}");
+                        let draft = this.composer.read(cx).value().to_string();
+                        if v["draft"].as_str() == Some(draft.as_str()) {
+                            return;
                         }
+                        v["draft"] = json!(draft);
+                        let id = text(v, "id");
+                        this.pending_drafts.insert(
+                            id.clone(),
+                            PendingDraft {
+                                text: draft,
+                                retry: true,
+                            },
+                        );
+                        this.save_pending_draft(&id);
                     }
                 }
             }),
@@ -279,7 +391,7 @@ impl Coincide {
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         let attachment_root = engine
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -306,6 +418,8 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            session_import_open: false,
+            session_import_panel,
             credentials_open: false,
             credential_panel,
             credential_jobs,
@@ -313,6 +427,7 @@ impl Coincide {
             workspace_panel,
             provider_settings,
             settings,
+            awake_status: json!({}),
             settings_status: String::new(),
             appearance_dark: true,
             applied_theme: None,
@@ -349,6 +464,7 @@ impl Coincide {
             project_picker_open: false,
             project_path,
             selected: None,
+            pending_drafts: Default::default(),
             composer,
             model_input,
             model_binding: None,
@@ -368,6 +484,7 @@ impl Coincide {
             browser_address_page: None,
             browser_panels: Default::default(),
             browser_ui_operations: Default::default(),
+            browser_replies: Vec::new(),
             _subscriptions: subscriptions,
         };
         this.apply_appearance(window, cx);
@@ -417,7 +534,7 @@ impl Coincide {
     fn poll_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let requests = self
             .engine
-            .lock()
+            .try_lock()
             .map(|mut engine| engine.browser_requests.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
         let Some(browser) = &mut self.browser else {
@@ -444,9 +561,9 @@ impl Coincide {
         // API work for another thread may create a native surface; reconcile it
         // before yielding to the run loop so it never covers this conversation.
         browser.set_thread_visible(visible, cx);
-        let replies = browser.drain_replies();
-        for reply in replies {
-            if let Ok(mut engine) = self.engine.lock() {
+        self.browser_replies.extend(browser.drain_replies());
+        if let Ok(mut engine) = self.engine.try_lock() {
+            for reply in self.browser_replies.drain(..) {
                 engine.browser_reply(reply);
             }
         }
@@ -463,6 +580,7 @@ impl Coincide {
                     }
                     changed = true;
                 }
+                Err(error) if engine_busy(&error) => {}
                 Err(error) => {
                     self.browser_ui_operations.remove(&id);
                     self.status = format!("Browser: {error}");
@@ -639,23 +757,28 @@ impl Coincide {
                 .into_any_element(),
         )
     }
-    fn refresh(&mut self, cx: &mut Context<Self>) {
+    fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut complete = true;
         self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
         }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
+        } else {
+            complete = false;
         }
         match call(&self.engine,"threads.list",json!({"query":self.search.read(cx).value().to_string(),"includeArchived":self.show_archived})).and_then(|v|Ok(serde_json::from_value(v)?)) {
             Ok(threads) => self.threads = threads,
-            Err(e) => self.status = format!("Unable to load conversations: {e}"),
+            Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
         }
         cx.notify();
+        complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
-            Ok(v) => {
+            Ok(mut v) => {
+                self.preserve_pending_draft(&mut v);
                 let draft = text(&v, "draft");
                 if self
                     .selected
@@ -681,6 +804,10 @@ impl Coincide {
                 self.rename_target = None;
                 self.archive_confirmation = None;
                 self.pending_requests.clear();
+                self.schedules.clear();
+                self.queued_messages.clear();
+                self.queue_enabled = false;
+                self.queue_error.clear();
                 let visible = self.browser_panels.contains(id).then_some(id);
                 if let Some(browser) = &mut self.browser {
                     browser.set_thread_visible(visible, cx);
@@ -693,8 +820,11 @@ impl Coincide {
                     self.browser_address
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
-                if let Ok(mut engine) = self.engine.lock() {
+                if let Ok(mut engine) = self.engine.try_lock() {
                     engine.active_thread = Some(id.into());
+                    if engine.requested_open.as_deref() == Some(id) {
+                        engine.requested_open = None;
+                    }
                 }
                 self.terminal_id = None;
                 self.terminal_frame = None;
@@ -776,7 +906,7 @@ impl Coincide {
         if self.provider_settings.open {
             self.credentials_open = false;
         }
-        let visible = self.settings_open && self.credentials_open;
+        let visible = self.settings_open && self.credentials_open && !self.session_import_open;
         let thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         let (page, available) = if visible {
             self.browser
@@ -814,10 +944,21 @@ impl Coincide {
         }
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.engine.lock().is_ok_and(|engine| engine.shutdown) {
-            cx.quit();
-            return;
+        if let Ok(mut engine) = self.engine.try_lock() {
+            if engine.shutdown {
+                cx.quit();
+                return;
+            }
+            engine.ui_available = self.browser.is_some();
+            engine.active_thread = self.selected.as_ref().map(|v| text(v, "id"));
+            if self.attachment_root.is_none() {
+                self.attachment_root = engine.store.data_directory().ok();
+            }
         }
+        for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
+            self.save_pending_draft(&id);
+        }
+        self.refresh_awake_status(cx);
         self.apply_appearance(window, cx);
         if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {
             self.navigation_last_clock = Instant::now();
@@ -858,19 +999,23 @@ impl Coincide {
             }
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
-                self.revision = revision;
                 self.refresh_settings(window, cx);
                 if let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) {
-                    if let Ok(v) = call(&self.engine, "threads.read", json!({"threadId":id})) {
+                    if let Ok(mut v) = call(&self.engine, "threads.read", json!({"threadId":id})) {
+                        self.preserve_pending_draft(&mut v);
                         let count = v["items"].as_array().map_or(0, Vec::len);
                         let start = self.transcript_count.saturating_sub(1).min(count);
                         self.transcript_list
                             .splice(start..self.transcript_count, count - start);
                         self.transcript_count = count;
                         self.selected = Some(v);
+                    } else {
+                        return; // Retry this revision after the worker releases the engine.
                     }
                 }
-                self.refresh(cx);
+                if self.refresh(cx) {
+                    self.revision = revision;
+                }
             }
         }
         self.refresh_pending(window, cx);
@@ -1385,7 +1530,7 @@ impl Coincide {
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A hidden composer may retain focus after opening the Git pane.
-        if self.workspace_open {
+        if self.workspace_open || self.session_import_open {
             return;
         }
         if self
@@ -1409,12 +1554,16 @@ impl Coincide {
             ) {
                 Ok(_) => {
                     let id = text(v, "id");
+                    self.pending_drafts.remove(&id);
                     if !self.running.contains(&id) {
                         self.running.push(id);
                         self.transcript_list
                             .splice(0..self.transcript_count, self.transcript_count);
                     }
                     self.status = "Agent running · approval required for changes".into();
+                    if let Some(thread) = self.selected.as_mut() {
+                        thread["draft"] = json!("");
+                    }
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }
@@ -1658,7 +1807,9 @@ impl Coincide {
                             })),
                     )
                 })
-                .child(
+                .child(transcript::preserve_selected_copy(
+                    &source_id,
+                    &item_id,
                     TextView::markdown(
                         SharedString::from(format!("message-body-{source_id}-{item_id}")),
                         shown,
@@ -1678,7 +1829,7 @@ impl Coincide {
                                 == "newYork",
                         |view| view.font_family(settings::reply_font()),
                     ),
-                )
+                ))
                 .when(!previews.is_empty(), |view| {
                     view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
                 })
@@ -2614,17 +2765,25 @@ impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self
             .engine
-            .lock()
+            .try_lock()
             .ok()
-            .and_then(|mut engine| engine.requested_open.take());
+            .and_then(|engine| engine.requested_open.clone());
         if let Some(id) = open {
             self.select(&id, window, cx);
         }
         self.sync_credentials(cx);
+        let import_project = self.selected_project.clone();
+        self.session_import_panel
+            .update(cx, |panel, cx| panel.set_project(import_project, cx));
         let workspace_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_thread(workspace_thread, cx));
         self.sync_model_input(window, cx);
+        if let Some(thread) = self.selected.as_mut()
+            && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
+        {
+            thread["draft"] = json!(draft.text);
+        }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
             if self.composer.read(cx).value().as_ref() != draft {
@@ -2649,7 +2808,17 @@ impl Render for Coincide {
         })
         .flex_1()
         .min_h_0();
-        let conversation_content = if self.settings_open {
+        let conversation_content = if self.session_import_open {
+            div()
+                .id("session-import-surface")
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_h_0()
+                .min_w_0()
+                .overflow_hidden()
+                .child(self.session_import_panel.clone())
+                .into_any_element()
+        } else if self.settings_open {
             if self.credentials_open {
                 div()
                     .id("password-settings-surface")
@@ -2683,17 +2852,24 @@ impl Render for Coincide {
             transcript.into_any_element()
         };
         let browser_pane = self.browser_pane(cx);
-        let pending_pane = if self.workspace_open {
+        let pending_pane = if self.workspace_open || self.session_import_open {
             None
         } else {
             self.pending_pane(cx)
         };
-        let draft_images = if self.schedules_open || self.settings_open || self.workspace_open {
+        let draft_images = if self.schedules_open
+            || self.settings_open
+            || self.workspace_open
+            || self.session_import_open
+        {
             None
         } else {
             self.draft_images(window, cx)
         };
-        let show_composer = !self.schedules_open && !self.settings_open && !self.workspace_open;
+        let show_composer = !self.schedules_open
+            && !self.settings_open
+            && !self.workspace_open
+            && !self.session_import_open;
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         div()
@@ -2734,6 +2910,19 @@ impl Render for Coincide {
                                 ),
                             )
                             .child(
+                                Button::new("session-import-toggle")
+                                    .label(if self.session_import_open {
+                                        "Close import"
+                                    } else {
+                                        "Import CLI session"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.session_import_open = !this.session_import_open;
+                                        this.sync_credentials(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
                                 Button::new("password-settings-toggle")
                                     .label(if self.settings_open && self.credentials_open {
                                         "Close passwords"
@@ -2741,6 +2930,7 @@ impl Render for Coincide {
                                         "Passwords"
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        this.session_import_open = false;
                                         let open = !(this.settings_open && this.credentials_open);
                                         this.credentials_open = open;
                                         this.settings_open = open;
@@ -2759,6 +2949,7 @@ impl Render for Coincide {
                                         "Git workspace"
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        this.session_import_open = false;
                                         this.workspace_open = !this.workspace_open;
                                         this.settings_open = false;
                                         this.schedules_open = false;
@@ -2775,6 +2966,7 @@ impl Render for Coincide {
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.settings_open = false;
                                         this.workspace_open = false;
+                                        this.session_import_open = false;
                                         this.schedules_open = !this.schedules_open;
                                         if this.schedules_open {
                                             this.refresh_schedules(cx);
@@ -2822,9 +3014,12 @@ impl Render for Coincide {
                     })
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
-                    .when(self.terminal_id.is_some() && !self.workspace_open, |view| {
-                        view.child(self.terminal_pane(window, cx))
-                    })
+                    .when(
+                        self.terminal_id.is_some()
+                            && !self.workspace_open
+                            && !self.session_import_open,
+                        |view| view.child(self.terminal_pane(window, cx)),
+                    )
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -3067,4 +3262,51 @@ fn main() -> Result<()> {
         cx.activate(true);
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn native_call_reports_busy_without_dispatching_or_poisoning_engine() {
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("coincide-ui-lock-{}", uuid::Uuid::new_v4())),
+        );
+        let engine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&fixture.0.join("data.sqlite")).unwrap(),
+        )));
+        let held = engine.lock().unwrap();
+        let error = call(&engine, "threads.create", json!({})).unwrap_err();
+        assert!(engine_busy(&error));
+        drop(held);
+        assert!(
+            call(&engine, "threads.list", json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let created = call(
+            &engine,
+            "threads.create",
+            json!({"title":"after contention"}),
+        )
+        .unwrap();
+        assert!(created["id"].is_string());
+        assert_eq!(
+            call(&engine, "threads.list", json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
 }

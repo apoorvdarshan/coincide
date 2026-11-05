@@ -173,11 +173,17 @@ impl Coincide {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let outcome: Result<usize> = async {
-                let data_directory = engine
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
-                    .store
-                    .data_directory()?;
+                let data_engine = engine.clone();
+                let data_directory = cx
+                    .background_executor()
+                    .spawn(async move {
+                        data_engine
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                            .store
+                            .data_directory()
+                    })
+                    .await?;
                 let mut imported = 0;
                 for image in images {
                     this.update(cx, |_, _| ())?;
@@ -195,20 +201,26 @@ impl Coincide {
                             (staged.path().to_owned(), Some(staged))
                         }
                     };
-                    let operation = call(
-                        &engine,
-                        "attachments.add",
-                        json!({"threadId":thread,"path":path}),
-                    )?;
+                    let import_engine = engine.clone();
+                    let params = json!({"threadId":thread,"path":path});
+                    let operation = cx
+                        .background_executor()
+                        .spawn(async move {
+                            coincide_core::api::call(&import_engine, "attachments.add", params)
+                        })
+                        .await?;
                     let operation_id = operation["operationId"].as_str().ok_or_else(|| {
                         anyhow::anyhow!("Image import did not return an operation ID")
                     })?;
                     loop {
-                        let result = call(
-                            &engine,
-                            "workspace.result",
-                            json!({"threadId":thread,"operationId":operation_id}),
-                        )?;
+                        let poll_engine = engine.clone();
+                        let params = json!({"threadId":thread,"operationId":operation_id});
+                        let result = cx
+                            .background_executor()
+                            .spawn(async move {
+                                coincide_core::api::call(&poll_engine, "workspace.result", params)
+                            })
+                            .await?;
                         if result["ready"] == true {
                             if let Some(error) = result["result"]["error"].as_str() {
                                 anyhow::bail!("{error}");

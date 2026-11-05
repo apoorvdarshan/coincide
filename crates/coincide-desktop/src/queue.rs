@@ -13,6 +13,7 @@ impl Coincide {
                 self.queue_enabled = value["enabled"] == true;
                 self.queue_error = value["error"].as_str().unwrap_or_default().to_owned();
             }
+            Err(error) if engine_busy(&error) => return,
             Err(error) => {
                 // Never retain another thread's pending messages after selection.
                 self.queued_messages.clear();
@@ -58,6 +59,7 @@ impl Coincide {
                     json!({"threadId":id,"patch":{"draft":""}}),
                 ) {
                     Ok(thread) => {
+                        self.pending_drafts.remove(&id);
                         self.selected = Some(thread);
                         self.composer
                             .update(cx, |input, cx| input.set_value("", window, cx));

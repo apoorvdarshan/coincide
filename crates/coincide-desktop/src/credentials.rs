@@ -130,8 +130,9 @@ pub struct FillJob {
     permit: FillPermit,
     reply: SyncSender<Result<(), Failure>>,
 }
-/// Browser callbacks must retain this permit and check it immediately before
-/// changing fields. A worker timeout revokes it even after UI dispatch.
+/// Native callbacks retain and check this permit before committing a fill.
+/// Revocation blocks dispatch. An already dispatched renderer operation cannot
+/// be retracted; its document binding and deadline still apply.
 #[derive(Clone)]
 pub struct FillPermit {
     deadline: Instant,
@@ -139,6 +140,11 @@ pub struct FillPermit {
     scope: Arc<AtomicBool>,
 }
 impl FillPermit {
+    pub fn remaining(&self) -> Option<Duration> {
+        self.is_valid()
+            .then(|| self.deadline.saturating_duration_since(Instant::now()))
+            .filter(|remaining| !remaining.is_zero())
+    }
     pub fn is_valid(&self) -> bool {
         Instant::now() < self.deadline
             && !self.cancelled.load(Ordering::Acquire)
