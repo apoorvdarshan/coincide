@@ -88,8 +88,12 @@ The parent must resolve and commit this standalone test lock before enabling
 the locked CI invocation; the recorded upstream lock hash remains provenance
 for the original published file, not an assertion about a locally resolved test
 lock. No new dependencies or fake backend feature are added by registration.
-Both existing Mac/Linux jobs add this invocation and require all eight tests
-passed with none ignored. The previous desktop source-inclusion fixture remains
-in place until the own-manifest invocation is actually verified; it must not be
-removed before equivalent coverage passes. No worker Cargo/native execution
-was performed when preparing this registration.
+The original published lock SHA-256 is
+`e88639059eee4a85bd5cdb9c4033dff8776854a83c0988b4493f5cf77e7a59ba`.
+The standalone test lock was resolved offline from the application lock graph
+with the real PRE path patch. The application lock is unchanged.
+
+The own-manifest invocation passed all eight tests locally. Both Mac/Linux jobs
+require eight passed and none ignored; this replaces the desktop source-inclusion
+fixture so feature checks execute in the actual package context. No test was
+removed from the release module. Native deallocation remains Unknown.

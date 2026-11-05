@@ -43,7 +43,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', 'vendor/gpui-webview/Cargo.lock', '.cargo/**') }}
           # A lockfile change rebuilds changed dependencies, not the entire graph.
           # The last prefix also migrates existing caches; Cargo checks fingerprints.
           restore-keys: |
@@ -82,7 +82,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', 'vendor/gpui-webview/Cargo.lock', '.cargo/**') }}
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
@@ -122,7 +122,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', 'vendor/gpui-webview/Cargo.lock', '.cargo/**') }}
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
@@ -153,15 +153,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', 'vendor/gpui-webview/Cargo.lock', '.cargo/**') }}
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
-      - name: Test WebView release receipts without a native window
-        run: cargo test -p coincide-desktop --locked --test webview_release_integration
       - name: Test actual vendored WebView release unit module
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
