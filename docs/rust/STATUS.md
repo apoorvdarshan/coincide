@@ -501,3 +501,16 @@ activation, mouse/keyboard input, screenshots or GUI launches. All known task
 fixture apps are stopped, Computer Use control is released, and original apps
 remain running. Continue source, CLI/API, fake-platform tests and GitHub Actions.
 Desktop-only acceptance stays pending until explicitly authorized later.
+
+Pending draft persistence now precedes window removal and API-requested quit.
+Any remaining draft blocks those paths, including a previous uncertain save;
+only an explicit Retry save action re-enables that write. Two focused headless
+workflow fixtures pass, covering exact text preservation, busy versus uncertain
+failures, no automatic replay and multiple pending threads. This does not add
+an OS/Dock quit veto or establish full updater quiescence.
+
+The next updater transport remains unavailable by default. Its trusted core
+reuse is limited to deriving the actual preview launcher context, preparing and
+reverifying a private helper copy, validating the spawned helper's running
+identity and reusing bounded anonymous-pipe IO. Native preparation and launch
+belong only in its worker thread; current validation uses fakes.

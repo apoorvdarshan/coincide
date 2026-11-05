@@ -41,7 +41,6 @@ mod updater_lifecycle;
 mod updater_settings;
 mod workspace;
 use browser::BrowserController;
-use draft_close::PendingDraft;
 use coincide_core::{
     api::{Engine, SharedEngine},
     attachments::StoredImage,
@@ -49,6 +48,7 @@ use coincide_core::{
     control,
     store::{Store, ThreadSummary, text},
 };
+use draft_close::PendingDraft;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
@@ -561,9 +561,13 @@ impl Coincide {
     fn save_pending_draft(&mut self, id: &str) {
         let engine = self.engine.clone();
         if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
-            call(&engine, "threads.patch", json!({"threadId":id,"patch":{"draft":text}}))
-                .map(|_| ())
-                .map_err(|error| (engine_busy(&error), error.to_string()))
+            call(
+                &engine,
+                "threads.patch",
+                json!({"threadId":id,"patch":{"draft":text}}),
+            )
+            .map(|_| ())
+            .map_err(|error| (engine_busy(&error), error.to_string()))
         }) {
             self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
@@ -2101,7 +2105,9 @@ impl Coincide {
                     window.remove_window();
                 }
             } else if !drafts_saved {
-                self.status = "Closing is waiting for drafts to save. Failed saves require Retry save.".into();
+                self.status =
+                    "Closing is waiting for drafts to save. Failed saves require Retry save."
+                        .into();
                 cx.notify();
             } else if !self.media_shutdown_ready(cx) {
                 self.computer_use_open = false;
@@ -3460,16 +3466,30 @@ impl Render for Coincide {
                     .min_w_0()
                     .h_full()
                     .when(!self.pending_drafts.is_empty(), |view| {
-                        view.child(div().p_2().flex().items_center().gap_2()
-                            .child("Drafts are not saved yet. Keep this window open.")
-                            .when(self.pending_drafts.values().any(|draft| !draft.retry), |view| {
-                                view.child(Button::new("retry-draft-save").label("Retry save")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        draft_close::retry_failed(&mut this.pending_drafts);
-                                        this.flush_pending_drafts();
-                                        cx.notify();
-                                    })))
-                            }))
+                        view.child(
+                            div()
+                                .p_2()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child("Drafts are not saved yet. Keep this window open.")
+                                .when(
+                                    self.pending_drafts.values().any(|draft| !draft.retry),
+                                    |view| {
+                                        view.child(
+                                            Button::new("retry-draft-save")
+                                                .label("Retry save")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    draft_close::retry_failed(
+                                                        &mut this.pending_drafts,
+                                                    );
+                                                    this.flush_pending_drafts();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    },
+                                ),
+                        )
                     })
                     .child(
                         div()
