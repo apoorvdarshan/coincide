@@ -8,6 +8,48 @@ use std::sync::{
 pub(super) struct Callbacks {
     pub closed: Arc<AtomicBool>,
     pending: Arc<AtomicUsize>,
+    lifetimes: NativeLifetimes,
+}
+/// These counters describe actual captured Rust ownership, not evaluation ACKs,
+/// WebKit superclass deallocation, or whole-app/native release.
+#[derive(Clone, Default)]
+pub(super) struct NativeLifetimes {
+    blocks: Arc<AtomicUsize>,
+    targets: Arc<AtomicUsize>,
+}
+pub(super) struct NativeLease {
+    count: Arc<AtomicUsize>,
+}
+impl NativeLease {
+    fn new(count: Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::AcqRel);
+        Self { count }
+    }
+}
+impl Clone for NativeLease {
+    fn clone(&self) -> Self {
+        Self::new(self.count.clone())
+    }
+}
+impl Drop for NativeLease {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+impl NativeLifetimes {
+    pub fn block(&self) -> NativeLease {
+        NativeLease::new(self.blocks.clone())
+    }
+    #[cfg(any(target_os = "macos", test))]
+    pub fn target(&self) -> NativeLease {
+        NativeLease::new(self.targets.clone())
+    }
+    fn blocks_pending(&self) -> usize {
+        self.blocks.load(Ordering::Acquire)
+    }
+    fn targets_pending(&self) -> usize {
+        self.targets.load(Ordering::Acquire)
+    }
 }
 #[derive(Clone)]
 pub(super) struct CallbackAck {
@@ -22,6 +64,9 @@ impl CallbackAck {
     }
 }
 impl Callbacks {
+    pub fn lifetimes(&self) -> NativeLifetimes {
+        self.lifetimes.clone()
+    }
     pub fn begin(&self) -> CallbackAck {
         self.pending.fetch_add(1, Ordering::AcqRel);
         CallbackAck {
@@ -52,10 +97,14 @@ impl TrackedEvaluation for wry::WebView {
         callback: impl Fn(String) + Send + 'static,
     ) -> wry::Result<()> {
         let ack = callbacks.begin();
+        let block_lease = callbacks.lifetimes.block();
         let closed = callbacks.closed.clone();
         // A synchronous error or dropped closure is not native completion proof.
         // If no callback arrives, retain the unknown pending owner.
         self.evaluate_script_with_callback(source, move |payload| {
+            // Borrow, never consume: Fn invocation may precede final native
+            // RcBlock/closure release. Drop is deliberately not an ACK.
+            let _held_block = &block_lease;
             if !closed.load(Ordering::Acquire) {
                 callback(payload);
             }
@@ -82,6 +131,12 @@ pub struct BrowserShutdownStatus {
     pub upload_workers_joined: usize,
     pub upload_workers_failed: usize,
     pub callbacks_pending: usize,
+    /// Captured callback closures/blocks not yet finally dropped, including
+    /// private-fill probe and final-mutation blocks independently.
+    pub callback_blocks_pending: usize,
+    /// Retained NativeCredentialTarget instances/clones not yet dropped.
+    /// This is not a count or deallocation receipt for WKWebView objects.
+    pub native_targets_pending: usize,
     pub downloads_pending: usize,
     pub owned_views: usize,
     pub owned_contexts: usize,
@@ -97,6 +152,8 @@ impl BrowserShutdownStatus {
     }
     pub fn ready(&self) -> bool {
         self.owners_drained()
+            && self.callback_blocks_pending == 0
+            && self.native_targets_pending == 0
             && !self.native_release_unconfirmed
             && self.owned_views == 0
             && self.owned_contexts == 0
@@ -155,6 +212,8 @@ impl Shutdown {
                     .filter(|worker| worker.outcome.load(Ordering::Acquire) == 3)
                     .count(),
             callbacks_pending: self.callbacks.pending(),
+            callback_blocks_pending: self.callbacks.lifetimes.blocks_pending(),
+            native_targets_pending: self.callbacks.lifetimes.targets_pending(),
             downloads_pending,
             owned_views,
             owned_contexts,
@@ -170,6 +229,132 @@ mod tests {
         sync::Condvar,
         time::{Duration, Instant},
     };
+    #[test]
+    fn callback_invocation_ack_precedes_actual_closure_release() {
+        let mut owner = Shutdown::default();
+        let ack = owner.callbacks.begin();
+        let lease = owner.callbacks.lifetimes().block();
+        let callback: Box<dyn Fn()> = Box::new(move || {
+            let _held = &lease;
+            ack.ack();
+        });
+        owner.close();
+        assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 1);
+        callback();
+        let invoked = owner.status(0, 0, 0);
+        assert_eq!(invoked.callbacks_pending, 0);
+        assert_eq!(invoked.callback_blocks_pending, 1);
+        assert!(
+            invoked.owners_drained(),
+            "ordinary process-exit policy remains unchanged"
+        );
+        assert!(!invoked.ready());
+        drop(callback);
+        assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 0);
+        assert!(owner.status(0, 0, 0).ready());
+    }
+    #[test]
+    fn dropped_uninvoked_block_releases_lease_but_never_creates_ack() {
+        let mut owner = Shutdown::default();
+        let ack = owner.callbacks.begin();
+        let lease = owner.callbacks.lifetimes().block();
+        let callback = move || {
+            let _held = &lease;
+            ack.ack();
+        };
+        owner.close();
+        drop(callback);
+        let dropped = owner.status(0, 0, 0);
+        assert_eq!(dropped.callback_blocks_pending, 0);
+        assert_eq!(dropped.callbacks_pending, 1);
+        assert!(!dropped.owners_drained());
+        assert!(!dropped.ready());
+    }
+    #[test]
+    fn nested_probe_and_mutation_blocks_keep_independent_lifetimes() {
+        let mut owner = Shutdown::default();
+        let lifetimes = owner.callbacks.lifetimes();
+        let probe = lifetimes.block();
+        let target = lifetimes.target();
+        let ack = owner.callbacks.begin();
+        let outer: Box<dyn Fn() -> Box<dyn Fn()>> = Box::new(move || {
+            let _probe = &probe;
+            let _direct_native_target = &target;
+            let mutation = lifetimes.block();
+            let ack = ack.clone();
+            Box::new(move || {
+                let _held_mutation = &mutation;
+                ack.ack();
+            })
+        });
+        owner.close();
+        let inner = outer();
+        assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 2);
+        assert_eq!(owner.status(0, 0, 0).native_targets_pending, 1);
+        inner();
+        assert!(owner.status(0, 0, 0).owners_drained());
+        assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 2);
+        drop(outer);
+        let probe_released = owner.status(0, 0, 0);
+        assert_eq!(probe_released.callback_blocks_pending, 1);
+        assert_eq!(probe_released.native_targets_pending, 0);
+        assert!(!probe_released.ready());
+        drop(inner);
+        assert!(owner.status(0, 0, 0).ready());
+    }
+    #[test]
+    fn direct_retained_target_clones_are_counted_until_each_view_release_returns() {
+        struct FakeView {
+            lifetimes: NativeLifetimes,
+            released: Arc<AtomicUsize>,
+        }
+        impl Drop for FakeView {
+            fn drop(&mut self) {
+                assert!(
+                    self.lifetimes.targets_pending() > 0,
+                    "lease must outlive retained-view release"
+                );
+                self.released.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        struct Target {
+            _view: FakeView,
+            _lease: NativeLease,
+        }
+        let mut owner = Shutdown::default();
+        let lifetimes = owner.callbacks.lifetimes();
+        let released = Arc::new(AtomicUsize::new(0));
+        let target = Target {
+            _view: FakeView {
+                lifetimes: lifetimes.clone(),
+                released: released.clone(),
+            },
+            _lease: lifetimes.target(),
+        };
+        let captured = Target {
+            _view: FakeView {
+                lifetimes: lifetimes.clone(),
+                released: released.clone(),
+            },
+            _lease: target._lease.clone(),
+        };
+        owner.close();
+        assert_eq!(owner.status(0, 0, 0).native_targets_pending, 2);
+        drop(target);
+        assert_eq!(owner.status(0, 0, 0).native_targets_pending, 1);
+        assert_eq!(released.load(Ordering::Acquire), 1);
+        assert!(owner.status(0, 0, 0).owners_drained());
+        assert!(!owner.status(0, 0, 0).ready());
+        drop(captured);
+        assert_eq!(released.load(Ordering::Acquire), 2);
+        assert_eq!(owner.status(0, 0, 0).native_targets_pending, 0);
+        assert!(owner.status(0, 0, 0).ready());
+        owner.ever_native = true;
+        assert!(
+            !owner.status(0, 0, 0).ready(),
+            "lease facts do not establish native WebKit release"
+        );
+    }
     #[test]
     fn missing_callback_ack_stays_pending_even_when_closure_is_dropped() {
         let mut owner = Shutdown::default();

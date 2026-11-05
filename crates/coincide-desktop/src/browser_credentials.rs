@@ -19,6 +19,9 @@ impl NativeCredentialTarget {
     ) -> Option<Self> {
         None
     }
+    pub(super) fn with_lifetimes(self, _lifetimes: super::shutdown::NativeLifetimes) -> Self {
+        self
+    }
 }
 pub fn credential_fill_available() -> bool {
     #[cfg(target_os = "macos")]
