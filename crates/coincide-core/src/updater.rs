@@ -1068,6 +1068,84 @@ pub(crate) struct InstallCandidate {
     pub(crate) anchor: String,
 }
 impl Updater {
+    /// Independent helper bootstrap: selection is a UUID and release from the
+    /// authenticated native parent, never an arbitrary path or verified flag.
+    /// No network. This state confers NO integrity/signature/installation proof;
+    /// fresh_install_candidate rehashes/copies/decodes, and Installer verifies code.
+    #[cfg(feature = "preview-updater-helper")]
+    pub(crate) fn reopen_for_helper(
+        config: Config,
+        dependencies: Dependencies,
+        job: Uuid,
+        release: Release,
+    ) -> Result<Self> {
+        ensure!(!job.is_nil(), "Invalid private stage UUID");
+        let updater = Self::configured(config, dependencies)?;
+        let config = updater.config.as_ref().expect("configured updater");
+        ensure!(
+            config.platform == Platform::Macos
+                && release.platform == config.platform
+                && release.architecture == config.architecture,
+            "Not the native preview platform/architecture"
+        );
+        ensure!(
+            version(&release.version)? > version(&config.current_version)?,
+            "Only newer preview versions may be reopened"
+        );
+        let url = Url::parse(&release.url)?;
+        let expected =
+            config
+                .artifact_base
+                .join(&format!("{}/{}", release.version, asset_name(config)))?;
+        let request = RequestPolicy {
+            hosts: config.allowed_hosts.clone(),
+            maximum_bytes: config.limits.archive_bytes,
+            deadline: Instant::now(),
+        };
+        ensure!(
+            request.allows(&url) && url == expected,
+            "Not the configured Rust preview artifact"
+        );
+        ensure!(
+            release.size > 0
+                && release.size <= config.limits.archive_bytes
+                && release.sha256.len() == 64
+                && release
+                    .sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "Invalid selected archive bounds/hash"
+        );
+        let path = config.cache_root.join(job.to_string());
+        private_directory(&path)?;
+        updater
+            .dependencies
+            .as_ref()
+            .expect("configured dependencies")
+            .disk
+            .verify_private(&path)?;
+        let archive = fs::symlink_metadata(path.join("release.zip"))?;
+        ensure!(
+            archive.is_file() && archive.len() == release.size,
+            "Private staged archive differs"
+        );
+        // Mutable stage receipts/expanded files and their signature booleans are
+        // intentionally unused; selected archive bytes are checked afresh later.
+        updater
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Updater lock failed"))?
+            .state = State::Staged(Stage {
+            job: path,
+            release,
+            archive_sha256_verified: false,
+            signature: SignatureStatus::Pending {
+                reason: "Independent helper fresh verification required".into(),
+            },
+            install_authorized: false,
+        });
+        Ok(updater)
+    }
     pub(crate) fn fresh_install_candidate(&self) -> Result<InstallCandidate> {
         let config = self.config.as_ref().context("Updates are disabled")?;
         let deps = self.dependencies.as_ref().context("Updates are disabled")?;
