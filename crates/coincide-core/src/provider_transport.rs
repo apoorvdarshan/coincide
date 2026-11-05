@@ -1,4 +1,5 @@
-//! A process owns its pipes and is reaped even when initialization or decoding fails.
+//! Reap the owned process, disconnect its queues, then join every pipe worker.
+//! Provider completion therefore includes pipe-thread TLS exit, even on startup errors.
 use super::*;
 use std::{collections::VecDeque, process::Command, sync::mpsc::SyncSender};
 
@@ -41,13 +42,53 @@ pub(super) fn isolate_environment(command: &mut Command) {
 }
 
 pub(super) struct Transport {
-    child: OwnedChild,
-    writes: SyncSender<(u64, Vec<u8>)>,
-    written: Receiver<(u64, std::result::Result<(), String>)>,
+    child: Option<OwnedChild>,
+    io: PipeWorkers,
     pending: VecDeque<PendingWrite>,
     queued_bytes: usize,
     sequence: u64,
+}
+
+struct PipeChannels {
+    writes: SyncSender<(u64, Vec<u8>)>,
+    written: Receiver<(u64, std::result::Result<(), String>)>,
     frames: Receiver<std::result::Result<Value, String>>,
+}
+struct PipeWorkers {
+    channels: Option<PipeChannels>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+impl PipeWorkers {
+    fn channels(&self) -> &PipeChannels {
+        self.channels.as_ref().expect("Live provider pipe channels")
+    }
+    /// Runs only on the provider background worker. Terminate/reap its process
+    /// before joining blocked pipe I/O, then release every bounded queue endpoint.
+    fn finish(&mut self, stop_child: impl FnOnce()) {
+        stop_child();
+        drop(self.channels.take());
+        let mut panic = None;
+        for worker in self.workers.drain(..) {
+            if let Err(payload) = worker.join()
+                && panic.is_none()
+            {
+                panic = Some(payload);
+            }
+        }
+        // Join all siblings first. Preserve an existing unwind instead of causing
+        // a double-panic abort; otherwise classify an I/O panic as provider panic.
+        if let Some(payload) = panic
+            && !thread::panicking()
+        {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+impl Drop for Transport {
+    fn drop(&mut self) {
+        let child = self.child.take();
+        self.io.finish(move || drop(child));
+    }
 }
 
 impl Transport {
@@ -97,95 +138,122 @@ impl Transport {
         let stdout = child.0.stdout.take().context("Missing provider stdout")?;
         // A small bounded queue prevents an agent from flooding retained output.
         let (tx, frames) = mpsc::sync_channel(8);
-        if let Some(stderr) = child.0.stderr.take() {
-            let errors = tx.clone();
-            thread::spawn(move || {
-                if !antigravity {
-                    let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
-                    return;
-                }
-                let mut reader = BufReader::new(stderr);
-                loop {
-                    let mut line = Vec::new();
-                    match reader.by_ref().take(8193).read_until(b'\n', &mut line) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) if antigravity_auth_line(&line) => {
-                            let _ = errors.send(Err(super::antigravity::AUTH_FAILURE.into()));
-                            break;
-                        }
-                        Ok(n) if n > 8192 => {
-                            let _ = errors
-                                .send(Err("Antigravity diagnostic exceeds its size limit".into()));
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            });
-        }
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut line = Vec::new();
-                let result = match reader
-                    .by_ref()
-                    .take(MAX_INBOUND_FRAME as u64 + 1)
-                    .read_until(b'\n', &mut line)
-                {
-                    Ok(0) => break,
-                    Ok(n) if n <= MAX_INBOUND_FRAME => {
-                        if line.iter().all(u8::is_ascii_whitespace) {
-                            continue;
-                        }
-                        if antigravity && antigravity_auth_line(&line) {
-                            Err(super::antigravity::AUTH_FAILURE.into())
-                        } else if antigravity
-                            && line.len() <= 8192
-                            && !line
-                                .iter()
-                                .copied()
-                                .find(|byte| !byte.is_ascii_whitespace())
-                                .is_some_and(|byte| matches!(byte, b'{' | b'['))
-                        {
-                            continue;
-                        } else {
-                            serde_json::from_slice(&line)
-                                .map_err(|_| "Invalid provider JSON frame".to_owned())
-                        }
-                    }
-                    _ => Err("Invalid or oversized provider frame".into()),
-                };
-                let failed = result.is_err();
-                if tx.send(result).is_err() || failed {
-                    break;
-                }
-            }
-        });
-        // The worker owning the child never performs blocking pipe writes. Stop
-        // and deadlines remain observable even when the agent stops reading stdin.
         let (writes, queued) = mpsc::sync_channel::<(u64, Vec<u8>)>(4);
         let (acknowledge, written) = mpsc::channel();
-        thread::spawn(move || {
-            while let Ok((sequence, bytes)) = queued.recv() {
-                let result = stdin
-                    .write_all(&bytes)
-                    .and_then(|()| stdin.flush())
-                    .map_err(|error| format!("Provider stdin write failed: {error}"));
-                let failed = result.is_err();
-                if acknowledge.send((sequence, result)).is_err() || failed {
-                    break;
-                }
-            }
-        });
-        Ok(Self {
-            child,
-            writes,
-            written,
+        let stderr = child.0.stderr.take();
+        // Own cleanup before the first fallible spawn. Partial initialization
+        // follows exactly the same child/queue/join order as ordinary Stop.
+        let mut transport = Self {
+            child: Some(child),
+            io: PipeWorkers {
+                channels: Some(PipeChannels {
+                    writes,
+                    written,
+                    frames,
+                }),
+                workers: Vec::new(),
+            },
             pending: VecDeque::new(),
             queued_bytes: 0,
             sequence: 0,
-            frames,
-        })
+        };
+        if let Some(stderr) = stderr {
+            let errors = tx.clone();
+            transport.io.workers.push(
+                thread::Builder::new()
+                    .name("provider-stderr".into())
+                    .spawn(move || {
+                        if !antigravity {
+                            let _ =
+                                std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
+                            return;
+                        }
+                        let mut reader = BufReader::new(stderr);
+                        loop {
+                            let mut line = Vec::new();
+                            match reader.by_ref().take(8193).read_until(b'\n', &mut line) {
+                                Ok(0) | Err(_) => break,
+                                Ok(_) if antigravity_auth_line(&line) => {
+                                    let _ =
+                                        errors.send(Err(super::antigravity::AUTH_FAILURE.into()));
+                                    break;
+                                }
+                                Ok(n) if n > 8192 => {
+                                    let _ = errors.send(Err(
+                                        "Antigravity diagnostic exceeds its size limit".into(),
+                                    ));
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    })
+                    .context("Start provider stderr reader")?,
+            );
+        }
+        transport.io.workers.push(
+            thread::Builder::new()
+                .name("provider-stdout".into())
+                .spawn(move || {
+                    let mut reader = BufReader::new(stdout);
+                    loop {
+                        let mut line = Vec::new();
+                        let result = match reader
+                            .by_ref()
+                            .take(MAX_INBOUND_FRAME as u64 + 1)
+                            .read_until(b'\n', &mut line)
+                        {
+                            Ok(0) => break,
+                            Ok(n) if n <= MAX_INBOUND_FRAME => {
+                                if line.iter().all(u8::is_ascii_whitespace) {
+                                    continue;
+                                }
+                                if antigravity && antigravity_auth_line(&line) {
+                                    Err(super::antigravity::AUTH_FAILURE.into())
+                                } else if antigravity
+                                    && line.len() <= 8192
+                                    && !line
+                                        .iter()
+                                        .copied()
+                                        .find(|byte| !byte.is_ascii_whitespace())
+                                        .is_some_and(|byte| matches!(byte, b'{' | b'['))
+                                {
+                                    continue;
+                                } else {
+                                    serde_json::from_slice(&line)
+                                        .map_err(|_| "Invalid provider JSON frame".to_owned())
+                                }
+                            }
+                            _ => Err("Invalid or oversized provider frame".into()),
+                        };
+                        let failed = result.is_err();
+                        if tx.send(result).is_err() || failed {
+                            break;
+                        }
+                    }
+                })
+                .context("Start provider stdout reader")?,
+        );
+        // The worker owning the child never performs blocking pipe writes. Stop
+        // and deadlines remain observable even when the agent stops reading stdin.
+        transport.io.workers.push(
+            thread::Builder::new()
+                .name("provider-stdin".into())
+                .spawn(move || {
+                    while let Ok((sequence, bytes)) = queued.recv() {
+                        let result = stdin
+                            .write_all(&bytes)
+                            .and_then(|()| stdin.flush())
+                            .map_err(|error| format!("Provider stdin write failed: {error}"));
+                        let failed = result.is_err();
+                        if acknowledge.send((sequence, result)).is_err() || failed {
+                            break;
+                        }
+                    }
+                })
+                .context("Start provider stdin writer")?,
+        );
+        Ok(transport)
     }
 
     pub(super) fn write(&mut self, frame: &Value) -> Result<()> {
@@ -206,7 +274,7 @@ impl Transport {
             bytes: bytes.len(),
             queued: Instant::now(),
         };
-        match self.writes.try_send((self.sequence, bytes)) {
+        match self.io.channels().writes.try_send((self.sequence, bytes)) {
             Ok(()) => {
                 self.queued_bytes += pending.bytes;
                 self.pending.push_back(pending);
@@ -219,7 +287,7 @@ impl Transport {
 
     fn poll_writes(&mut self) -> Result<()> {
         loop {
-            match self.written.try_recv() {
+            match self.io.channels().written.try_recv() {
                 Ok((sequence, result)) => {
                     result.map_err(anyhow::Error::msg)?;
                     let pending = self
@@ -257,14 +325,25 @@ impl Transport {
     /// None means no frame yet, not a successful provider completion.
     pub(super) fn next(&mut self) -> Result<Option<Value>> {
         self.poll_writes()?;
-        match self.frames.recv_timeout(Duration::from_millis(30)) {
+        match self
+            .io
+            .channels()
+            .frames
+            .recv_timeout(Duration::from_millis(30))
+        {
             Ok(Ok(frame)) => Ok(Some(frame)),
             Ok(Err(error)) => bail!("{error}"),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 bail!("Provider disconnected before completing the turn")
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(status) = self.child.0.try_wait()? {
+                if let Some(status) = self
+                    .child
+                    .as_mut()
+                    .context("Provider child is unavailable")?
+                    .0
+                    .try_wait()?
+                {
                     bail!("Provider exited before completing the turn: {status}");
                 }
                 Ok(None)
@@ -316,6 +395,214 @@ fn antigravity_auth_line(line: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::{
+        cell::RefCell,
+        sync::{
+            Condvar,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    struct ReleaseGate(Arc<(Mutex<bool>, Condvar)>);
+    impl ReleaseGate {
+        fn open(&self) {
+            *self.0.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            self.0.1.notify_all();
+        }
+    }
+    impl Drop for ReleaseGate {
+        fn drop(&mut self) {
+            self.open();
+        }
+    }
+    struct ExitGate {
+        release: Arc<(Mutex<bool>, Condvar)>,
+        entered: Sender<()>,
+    }
+    impl Drop for ExitGate {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let mut ready = self.release.0.lock().unwrap_or_else(|e| e.into_inner());
+            while !*ready {
+                ready = self
+                    .release
+                    .1
+                    .wait(ready)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+        }
+    }
+    thread_local! { static IO_EXIT_GATE: RefCell<Option<ExitGate>> = const { RefCell::new(None) }; }
+    fn exit_gate() -> (ReleaseGate, Receiver<()>, ExitGate) {
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (entered, observed) = mpsc::channel();
+        (
+            ReleaseGate(release.clone()),
+            observed,
+            ExitGate { release, entered },
+        )
+    }
+    fn observe(worker: thread::JoinHandle<()>) -> (WorkerCompletion, Receiver<()>) {
+        let (done, observed) = mpsc::channel();
+        let completion = WorkerCompletion::observe_with(worker, |observer| {
+            thread::Builder::new().spawn(move || {
+                observer();
+                let _ = done.send(());
+            })
+        });
+        (completion, observed)
+    }
+
+    #[test]
+    fn stop_ack_waits_for_io_tls_and_disconnects_saturated_queues() {
+        let (release, exiting, gate) = exit_gate();
+        let reaped = Arc::new(AtomicBool::new(false));
+        let (frames_tx, frames) = mpsc::sync_channel(1);
+        frames_tx
+            .send(Ok(json!({"synthetic":"already full"})))
+            .unwrap();
+        let (writes, queued) = mpsc::sync_channel::<(u64, Vec<u8>)>(1);
+        let (_acknowledge, written) = mpsc::channel();
+        let (ready, started) = mpsc::channel();
+        let mut workers = Vec::new();
+        for (tx, tls) in [(frames_tx.clone(), Some(gate)), (frames_tx, None)] {
+            let ready = ready.clone();
+            let reaped = reaped.clone();
+            workers.push(thread::spawn(move || {
+                if let Some(gate) = tls {
+                    IO_EXIT_GATE.with(|slot| *slot.borrow_mut() = Some(gate));
+                }
+                ready.send(()).unwrap();
+                assert!(tx.send(Err("synthetic pipe frame".into())).is_err());
+                assert!(
+                    reaped.load(Ordering::Acquire),
+                    "Child cleanup must precede receiver disconnect"
+                );
+            }));
+        }
+        let writer_reaped = reaped.clone();
+        workers.push(thread::spawn(move || {
+            ready.send(()).unwrap();
+            assert!(queued.recv().is_err());
+            assert!(
+                writer_reaped.load(Ordering::Acquire),
+                "Child cleanup must precede writer wakeup"
+            );
+        }));
+        for _ in 0..3 {
+            started.recv().unwrap();
+        }
+        let mut io = PipeWorkers {
+            channels: Some(PipeChannels {
+                writes,
+                written,
+                frames,
+            }),
+            workers,
+        };
+        let (stop, commands) = mpsc::channel();
+        let (returned, after_finish) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            assert!(matches!(commands.recv().unwrap(), Control::Stop));
+            io.finish(|| reaped.store(true, Ordering::Release));
+            returned.send(()).unwrap();
+        });
+        let (completion, joined) = observe(worker);
+        stop.send(Control::Stop).unwrap();
+        exiting.recv().unwrap(); // Actual pipe-thread TLS is now gated after its body returned.
+        assert_eq!(completion.status(), WorkerThreadStatus::Running);
+        assert!(matches!(
+            after_finish.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        release.open();
+        after_finish.recv().unwrap();
+        joined.recv().unwrap();
+        assert_eq!(completion.status(), WorkerThreadStatus::Returned);
+    }
+
+    #[test]
+    fn io_panic_joins_sibling_tls_before_provider_panic_classification() {
+        let (release, exiting, gate) = exit_gate();
+        let failed = thread::spawn(|| panic!("synthetic stdout panic"));
+        let sibling =
+            thread::spawn(move || IO_EXIT_GATE.with(|slot| *slot.borrow_mut() = Some(gate)));
+        let worker = thread::spawn(move || {
+            let mut io = PipeWorkers {
+                channels: None,
+                workers: vec![failed, sibling],
+            };
+            let error = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| io.finish(|| {})))
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<&str>(),
+                Some(&"synthetic stdout panic")
+            );
+            std::panic::resume_unwind(error);
+        });
+        let (completion, joined) = observe(worker);
+        exiting.recv().unwrap();
+        assert_eq!(completion.status(), WorkerThreadStatus::Running);
+        release.open();
+        joined.recv().unwrap();
+        assert_eq!(completion.status(), WorkerThreadStatus::Panicked);
+    }
+
+    #[test]
+    fn partial_startup_error_retains_and_joins_started_io() {
+        let (release, exiting, gate) = exit_gate();
+        let reader = thread::spawn(move || {
+            IO_EXIT_GATE.with(|slot| *slot.borrow_mut() = Some(gate));
+        });
+        let worker = thread::spawn(move || -> std::result::Result<(), &'static str> {
+            let _partial = Transport {
+                child: None,
+                io: PipeWorkers {
+                    channels: None,
+                    workers: vec![reader],
+                },
+                pending: VecDeque::new(),
+                queued_bytes: 0,
+                sequence: 0,
+            };
+            Err("synthetic pipe-worker spawn failure")
+        });
+        exiting.recv().unwrap();
+        release.open();
+        assert_eq!(
+            worker.join().unwrap(),
+            Err("synthetic pipe-worker spawn failure")
+        );
+    }
+
+    #[test]
+    fn partial_startup_unwind_joins_started_io_and_preserves_original_panic() {
+        let (release, exiting, gate) = exit_gate();
+        let reader =
+            thread::spawn(move || IO_EXIT_GATE.with(|slot| *slot.borrow_mut() = Some(gate)));
+        let failed = thread::spawn(|| panic!("synthetic secondary I/O panic"));
+        let worker = thread::spawn(move || {
+            let _partial = Transport {
+                child: None,
+                io: PipeWorkers {
+                    channels: None,
+                    workers: vec![failed, reader],
+                },
+                pending: VecDeque::new(),
+                queued_bytes: 0,
+                sequence: 0,
+            };
+            panic!("synthetic provider startup panic");
+        });
+        exiting.recv().unwrap();
+        release.open();
+        let error = worker.join().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<&str>(),
+            Some(&"synthetic provider startup panic")
+        );
+    }
 
     #[test]
     fn isolation_removes_parent_bindings_without_changing_provider_account() {
