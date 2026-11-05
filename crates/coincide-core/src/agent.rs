@@ -5,7 +5,11 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -108,9 +112,47 @@ pub enum Control {
     Stop,
     Reply { id: Value, result: Value },
 }
+/// Rust-thread ownership only: Returned does not prove provider success or
+/// successful child/process-group cleanup. No status waits for a worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerThreadStatus {
+    Running,
+    Returned,
+    Panicked,
+    Unclassified,
+}
+
+/// Independent observer; dropping a Session cannot discard this ownership.
+/// The handle is never joined here, including when the observer is dropped.
+#[derive(Clone)]
+pub struct WorkerCompletion {
+    worker: Arc<thread::JoinHandle<()>>,
+    outcome: Arc<AtomicU8>,
+}
+impl WorkerCompletion {
+    pub fn status(&self) -> WorkerThreadStatus {
+        if !self.worker.is_finished() {
+            return WorkerThreadStatus::Running;
+        }
+        match self.outcome.load(Ordering::Acquire) {
+            1 => WorkerThreadStatus::Returned,
+            2 => WorkerThreadStatus::Panicked,
+            _ => WorkerThreadStatus::Unclassified,
+        }
+    }
+}
+struct WorkerExit(Arc<AtomicU8>);
+impl Drop for WorkerExit {
+    fn drop(&mut self) {
+        self.0
+            .store(if thread::panicking() { 2 } else { 1 }, Ordering::Release);
+    }
+}
+
 pub struct Session {
     pub events: Receiver<Event>,
     control: Sender<Control>,
+    completion: WorkerCompletion,
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
@@ -137,18 +179,16 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
     ) -> Self {
-        let (events_tx, events) = mpsc::channel();
-        let (control, commands) = mpsc::channel();
-        thread::spawn(move || {
+        Self::spawn_worker(move |commands, events_tx| {
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| validate_images(&provider, &images))
                 .and_then(|()| match provider {
-                    Provider::Codex => run(launch, images, instructions, commands, &events_tx),
+                    Provider::Codex => run(launch, images, instructions, commands, events_tx),
                     Provider::Claude => {
-                        claude::run(launch, images, instructions, commands, &events_tx)
+                        claude::run(launch, images, instructions, commands, events_tx)
                     }
-                    Provider::Grok => grok::run(launch, images, commands, &events_tx),
-                    Provider::OpenCode => opencode::run(launch, images, commands, &events_tx),
+                    Provider::Grok => grok::run(launch, images, commands, events_tx),
+                    Provider::OpenCode => opencode::run(launch, images, commands, events_tx),
                     Provider::Antigravity {
                         profile,
                         source_profile,
@@ -160,20 +200,46 @@ impl Session {
                         source_profile,
                         risk_acknowledged,
                         commands,
-                        &events_tx,
+                        events_tx,
                     ),
                     Provider::Cursor { profile } => {
-                        cursor::run(launch, images, profile, commands, &events_tx)
+                        cursor::run(launch, images, profile, commands, events_tx)
                     }
                     Provider::AcpV1 { arguments } => {
-                        acp::run(launch, arguments, images, commands, &events_tx)
+                        acp::run(launch, arguments, images, commands, events_tx)
                     }
                 });
             if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));
             }
+        })
+    }
+    fn spawn_worker(work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static) -> Self {
+        let (events_tx, events) = mpsc::channel();
+        let (control, commands) = mpsc::channel();
+        let outcome = Arc::new(AtomicU8::new(0));
+        let worker_outcome = outcome.clone();
+        let worker = thread::spawn(move || {
+            let _exit = WorkerExit(worker_outcome);
+            work(commands, &events_tx);
         });
-        Self { events, control }
+        Self {
+            events,
+            control,
+            completion: WorkerCompletion {
+                worker: Arc::new(worker),
+                outcome,
+            },
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_worker(
+        work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static,
+    ) -> Self {
+        Self::spawn_worker(work)
+    }
+    pub fn worker_completion(&self) -> WorkerCompletion {
+        self.completion.clone()
     }
     pub fn stop(&self) {
         let _ = self.control.send(Control::Stop);
