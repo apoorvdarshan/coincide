@@ -673,7 +673,8 @@ impl Engine {
         );
         let data = self.store.data_directory()?;
         let antigravity_executable = if provider == "antigravity" {
-            let (configured, executable) = self.antigravity_launch(&id, &v["selection"])?;
+            let launch_selection = crate::composer_selection::launch_selection(&v["selection"])?;
+            let (configured, executable) = self.antigravity_launch(&id, &launch_selection)?;
             adapter = configured;
             Some(executable)
         } else {

@@ -157,3 +157,17 @@ pub fn launch_model(selection: &Value) -> Result<Option<String>> {
     validate_model(model)?;
     Ok((model != "default").then(|| model.to_owned()))
 }
+
+/// Adapter-only copy: older stored selections may spell the default account as
+/// null, empty text or "default". Preserve the stored object/snapshot exactly;
+/// resolve only those aliases before provider-specific account validation.
+pub fn launch_selection(selection: &Value) -> Result<Value> {
+    let mut selection = selection
+        .as_object()
+        .context("Invalid provider selection")?
+        .clone();
+    if selection.get("accountID").is_none_or(default_account) {
+        selection.remove("accountID");
+    }
+    Ok(Value::Object(selection))
+}
