@@ -598,6 +598,14 @@ struct PreviewRecord {
     validated: Vec<String>,
     expires: Instant,
 }
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConfirmFault {
+    AfterCopy,
+    AfterCommit,
+    BeforePublish,
+    FinalJournal,
+}
 struct Worker {
     store: Store,
     config: ServiceConfig,
@@ -608,6 +616,8 @@ struct Worker {
     consumed: Vec<PreviewId>,
     #[cfg(test)]
     after_materialize: Option<Box<dyn FnOnce() + Send>>,
+    #[cfg(test)]
+    confirm_fault: Option<ConfirmFault>,
 }
 impl Worker {
     fn open(config: ServiceConfig) -> Result<Self> {
@@ -635,6 +645,8 @@ impl Worker {
             consumed: Vec::new(),
             #[cfg(test)]
             after_materialize: None,
+            #[cfg(test)]
+            confirm_fault: None,
         })
     }
     fn database_ok(&self) -> ServiceResult<()> {
@@ -809,11 +821,40 @@ impl Worker {
                 if self.consumed.len() > 64 {
                     self.consumed.remove(0);
                 }
-                let batch = media::materialize(&preview.preview, &ids, &self.data)
-                    .map_err(|_| ServiceError::InvalidCandidates)?;
+                let receipt_id = ReceiptId(Uuid::new_v4());
+                let mut journal = crate::legacy_media_recovery::IngestionStore::open(&self.config)
+                    .map_err(|_| ServiceError::RecoveryRequired)?;
+                let ingestion = crate::legacy_media_recovery::IngestionContext {
+                    operation_id: id.to_string(),
+                    reserved_receipt_id: receipt_id.to_string(),
+                    thread_id: thread_id.clone(),
+                    generation: control.selection.generation,
+                };
+                let batch = media::materialize_with_ownership(
+                    &preview.preview,
+                    &ids,
+                    &self.data,
+                    |reference, image| {
+                        journal
+                            .allocate(
+                                &ingestion,
+                                &reference.candidate.candidate_id,
+                                reference.source_sha256.as_deref().unwrap_or(""),
+                                image,
+                            )
+                            .map_err(|_| {
+                                anyhow::anyhow!("Managed image ownership could not be persisted")
+                            })
+                    },
+                )
+                .map_err(|_| ServiceError::InvalidCandidates)?;
                 #[cfg(test)]
                 if let Some(hook) = self.after_materialize.take() {
                     hook();
+                }
+                #[cfg(test)]
+                if self.confirm_fault == Some(ConfirmFault::AfterCopy) {
+                    panic!("injected after copy");
                 }
                 // No fallible early return after materialization: every created ID
                 // must reach a retained receipt even on cancellation/commit errors.
@@ -888,8 +929,11 @@ impl Worker {
                     Ok(ids) => (true, None, ids),
                     Err(error) => (false, Some(error), Vec::new()),
                 };
-                let receipt_id = ReceiptId(Uuid::new_v4());
-                let receipt = CompletionReceipt {
+                #[cfg(test)]
+                if self.confirm_fault == Some(ConfirmFault::AfterCommit) {
+                    panic!("injected after commit");
+                }
+                let mut receipt = CompletionReceipt {
                     operation_id: id,
                     thread_id,
                     generation: control.selection.generation,
@@ -898,6 +942,21 @@ impl Worker {
                     batch,
                     committed_candidate_ids: committed_ids,
                 };
+                #[cfg(test)]
+                let final_failed = self.confirm_fault == Some(ConfirmFault::FinalJournal);
+                #[cfg(not(test))]
+                let final_failed = false;
+                if final_failed || journal.complete(receipt_id, &receipt).is_err() {
+                    // Allocated IDs remain durably owned with unknown outcome. Never
+                    // claim committed success when final ownership sync is uncertain.
+                    receipt.committed = false;
+                    receipt.error = Some(ServiceError::CommitUnknown);
+                    receipt.committed_candidate_ids.clear();
+                }
+                #[cfg(test)]
+                if self.confirm_fault == Some(ConfirmFault::BeforePublish) {
+                    panic!("injected before receipt publication");
+                }
                 receipts
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -1229,6 +1288,117 @@ mod tests {
     use image::{DynamicImage, ImageFormat};
     use std::{fs, os::unix::fs::symlink};
     const ITEM: &str = "00000000-0000-4000-8000-000000000002";
+    #[test]
+    fn ingestion_crash_boundaries_reopen_exact_allocations_and_final_sync_fails_closed() {
+        for fault in [
+            ConfirmFault::AfterCopy,
+            ConfirmFault::AfterCommit,
+            ConfirmFault::BeforePublish,
+            ConfirmFault::FinalJournal,
+        ] {
+            let f = fixture();
+            let original_source = fs::read(f.source.join("image.png")).unwrap();
+            let (_front, selection, cap) = setup(&f);
+            let mut worker = Worker::open(f.config.clone()).unwrap();
+            let control = Control {
+                state: Arc::new(AtomicU8::new(RUNNING)),
+                selection,
+            };
+            let receipts: Receipts = Arc::new(Mutex::new(HashMap::new()));
+            let mut kept = false;
+            let ServiceEvent::Inspected {
+                plan_id,
+                candidates,
+                ..
+            } = worker
+                .execute(
+                    OperationId(Uuid::new_v4()),
+                    &control,
+                    Command::Inspect(cap, 0),
+                    &receipts,
+                    &mut kept,
+                )
+                .unwrap()
+            else {
+                panic!("inspect")
+            };
+            let ids = candidates
+                .iter()
+                .map(|candidate| candidate.candidate_id.clone())
+                .collect::<Vec<_>>();
+            let ServiceEvent::Validated { preview_id, .. } = worker
+                .execute(
+                    OperationId(Uuid::new_v4()),
+                    &control,
+                    Command::Validate(plan_id, ids.clone()),
+                    &receipts,
+                    &mut kept,
+                )
+                .unwrap()
+            else {
+                panic!("validate")
+            };
+            worker.confirm_fault = Some(fault);
+            let operation = OperationId(Uuid::new_v4());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                worker.execute(
+                    operation,
+                    &control,
+                    Command::Confirm(preview_id, ids),
+                    &receipts,
+                    &mut kept,
+                )
+            }));
+            if fault == ConfirmFault::FinalJournal {
+                assert!(result.unwrap().is_ok());
+                assert!(kept);
+                let receipt = receipts.lock().unwrap().values().next().unwrap().clone();
+                assert!(!receipt.committed);
+                assert_eq!(receipt.error, Some(ServiceError::CommitUnknown));
+                assert!(receipt.committed_candidate_ids.is_empty());
+            } else {
+                assert!(result.is_err());
+                assert!(receipts.lock().unwrap().is_empty());
+            }
+            drop(worker);
+            let journal = crate::legacy_media_recovery::IngestionStore::open(&f.config).unwrap();
+            let records = journal.retained().unwrap();
+            let allocations = records
+                .iter()
+                .filter(|entry| entry.record["kind"] == "allocated")
+                .collect::<Vec<_>>();
+            assert_eq!(allocations.len(), 1);
+            let record = &allocations[0].record;
+            assert_eq!(record["operationId"], operation.to_string());
+            assert_eq!(record["threadId"], f.thread["id"]);
+            let image: StoredImage = serde_json::from_value(record["image"].clone()).unwrap();
+            assert!(image.original_path.is_file());
+            assert!(image.path.is_file());
+            assert_eq!(record["receiptId"], image.id);
+            assert_eq!(record["outcome"], "unknown");
+            assert_eq!(
+                records
+                    .iter()
+                    .filter(|entry| entry.record["kind"] == "completed")
+                    .count(),
+                usize::from(fault == ConfirmFault::BeforePublish)
+            );
+            assert_eq!(
+                fs::read(f.source.join("image.png")).unwrap(),
+                original_source
+            );
+            assert_eq!(
+                Store::open_existing_for_legacy_media(
+                    &f.config.database_path,
+                    &f.config.expected_data_directory
+                )
+                .unwrap()
+                .thread(f.thread["id"].as_str().unwrap())
+                .unwrap(),
+                f.thread
+            );
+        }
+    }
     #[test]
     fn explicit_shutdown_drains_worker_without_reopening_admissions_or_mutating_source() {
         let fixture = fixture();

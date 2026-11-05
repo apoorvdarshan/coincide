@@ -548,6 +548,14 @@ pub fn materialize(
     candidate_ids: &[String],
     data_directory: &Path,
 ) -> Result<MediaBatch> {
+    materialize_with_ownership(preview, candidate_ids, data_directory, |_, _| Ok(()))
+}
+pub(crate) fn materialize_with_ownership(
+    preview: &MediaPreview,
+    candidate_ids: &[String],
+    data_directory: &Path,
+    mut own: impl FnMut(&CheckedReference, &StoredImage) -> Result<()>,
+) -> Result<MediaBatch> {
     ensure!(
         candidate_ids.len() <= MAX_BATCH_FILES,
         "Select at most20 references"
@@ -635,8 +643,16 @@ pub fn materialize(
             continue;
         }
         let ingested = (|| -> Result<StoredImage> {
-            let stage = attachments::stage_clipboard_image(data_directory, &bytes)?;
-            attachments::ingest_image(data_directory, stage.path())
+            let name = original
+                .candidate
+                .relative_path
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Historical image".into());
+            attachments::ingest_image_bytes_owned(data_directory, &bytes, &name, |image| {
+                own(original, image)
+            })
         })();
         match ingested {
             Err(error) => {

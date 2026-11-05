@@ -1,4 +1,4 @@
-//! Native-only explicit post-copy ownership. Not an ingestion journal or cleanup authority.
+//! Native-only durable ownership: completed receipts and separate write-ahead allocations.
 //! Records contain private paths. Never route them through Engine, providers or drafts.
 use crate::legacy_media_service::{CompletionReceipt, ReceiptId, ServiceConfig};
 use serde::{Deserialize, Serialize};
@@ -178,6 +178,59 @@ fn validate_receipt(v: &Value) -> RecoveryResult<()> {
     Ok(())
 }
 
+const INGESTION_DIRECTORY: &str = "legacy-media-ingestion-v1";
+fn validate_ingestion(value: &Value) -> RecoveryResult<()> {
+    if !canonical_uuid(&value["receiptId"])
+        || !canonical_uuid(&value["operationId"])
+        || !canonical_uuid(&value["reservedReceiptId"])
+        || !canonical_thread_uuid(&value["threadId"])
+        || !value["generation"].is_u64()
+    {
+        return Err(RecoveryError::InvalidRecord);
+    }
+    match value["kind"].as_str() {
+        Some("allocated") => {
+            let image: crate::attachments::StoredImage =
+                serde_json::from_value(value["image"].clone())
+                    .map_err(|_| RecoveryError::InvalidRecord)?;
+            if !canonical_uuid(&json!(&image.id))
+                || value["receiptId"] != image.id
+                || !value["candidateId"].is_string()
+                || !value["sourceSha256"]
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err(RecoveryError::InvalidRecord);
+            }
+        }
+        Some("completed") => {
+            validate_receipt(&value["completion"])?;
+            for (outer, inner) in [
+                ("reservedReceiptId", "receiptId"),
+                ("operationId", "operationId"),
+                ("threadId", "threadId"),
+                ("generation", "generation"),
+            ] {
+                if value[outer] != value["completion"][inner] {
+                    return Err(RecoveryError::InvalidRecord);
+                }
+            }
+        }
+        _ => return Err(RecoveryError::InvalidRecord),
+    }
+    Ok(())
+}
+pub struct IngestionContext {
+    pub operation_id: String,
+    pub reserved_receipt_id: String,
+    pub thread_id: String,
+    pub generation: u64,
+}
+/// Diagnostic only; never an authority to reopen or delete any recorded path.
+pub struct IngestionRecord {
+    pub record: Value,
+    pub database_identity_current: bool,
+}
 #[cfg(unix)]
 mod platform {
     use super::*;
@@ -260,11 +313,20 @@ mod platform {
         directory: File,
         database: File,
         _lock: File,
+        directory_name: &'static str,
+        validate_record: fn(&Value) -> RecoveryResult<()>,
         #[cfg(test)]
         fail_after_publish: bool,
     }
     impl RecoveryStore {
         pub fn open(config: &ServiceConfig) -> RecoveryResult<Self> {
+            Self::open_kind(config, DIRECTORY, validate_receipt)
+        }
+        fn open_kind(
+            config: &ServiceConfig,
+            directory_name: &'static str,
+            validate_record: fn(&Value) -> RecoveryResult<()>,
+        ) -> RecoveryResult<Self> {
             let root = absolute_directory(&config.expected_data_directory)?;
             if config.database_path.parent() != Some(config.expected_data_directory.as_path()) {
                 return Err(RecoveryError::IdentityChanged);
@@ -277,7 +339,7 @@ mod platform {
             if !io(database.metadata())?.is_file() {
                 return Err(RecoveryError::IdentityChanged);
             }
-            let n = CString::new(DIRECTORY).unwrap();
+            let n = CString::new(directory_name).unwrap();
             let result = unsafe { libc::mkdirat(root.as_raw_fd(), n.as_ptr(), 0o700) };
             if result < 0
                 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
@@ -286,7 +348,7 @@ mod platform {
             }
             let directory = open_at(
                 &root,
-                DIRECTORY.as_ref(),
+                directory_name.as_ref(),
                 libc::O_RDONLY | libc::O_DIRECTORY,
                 0,
             )?;
@@ -308,6 +370,8 @@ mod platform {
                 directory,
                 database,
                 _lock: lock,
+                directory_name,
+                validate_record,
                 #[cfg(test)]
                 fail_after_publish: false,
             };
@@ -318,7 +382,7 @@ mod platform {
             let root = absolute_directory(&self.config.expected_data_directory)?;
             let directory = open_at(
                 &root,
-                DIRECTORY.as_ref(),
+                self.directory_name.as_ref(),
                 libc::O_RDONLY | libc::O_DIRECTORY,
                 0,
             )?;
@@ -345,7 +409,9 @@ mod platform {
             let mut files = Vec::new();
             let mut bytes = 0u64;
             for entry in io(fs::read_dir(
-                self.config.expected_data_directory.join(DIRECTORY),
+                self.config
+                    .expected_data_directory
+                    .join(self.directory_name),
             ))? {
                 let entry = io(entry)?;
                 let n = entry
@@ -387,7 +453,7 @@ mod platform {
             {
                 return Err(RecoveryError::InvalidRecord);
             }
-            validate_receipt(&envelope.payload.receipt)?;
+            (self.validate_record)(&envelope.payload.receipt)?;
             if filename
                 != format!(
                     "{}.json",
@@ -413,7 +479,7 @@ mod platform {
             self.persist_value(snapshot(id, receipt)?)
         }
         fn persist_value(&mut self, receipt: Value) -> RecoveryResult<DurableOwnership> {
-            validate_receipt(&receipt)?;
+            (self.validate_record)(&receipt)?;
             let files = self.files()?;
             let filename = format!(
                 "{}.json",
@@ -520,6 +586,56 @@ mod platform {
         }
     }
 
+    /// Separate lock and immutable record namespace; never exposes receipt tokens.
+    pub struct IngestionStore(RecoveryStore);
+    impl IngestionStore {
+        pub fn open(config: &ServiceConfig) -> RecoveryResult<Self> {
+            RecoveryStore::open_kind(config, INGESTION_DIRECTORY, validate_ingestion).map(Self)
+        }
+        pub fn allocate(
+            &mut self,
+            context: &IngestionContext,
+            candidate: &str,
+            source_sha256: &str,
+            image: &crate::attachments::StoredImage,
+        ) -> RecoveryResult<()> {
+            let parent = self
+                .0
+                .config
+                .expected_data_directory
+                .join("attachments")
+                .join(&image.id);
+            if image.path.parent() != Some(parent.as_path())
+                || image.original_path.parent() != Some(parent.as_path())
+            {
+                return Err(RecoveryError::IdentityChanged);
+            }
+            let record = json!({"kind":"allocated","receiptId":image.id,"reservedReceiptId":context.reserved_receipt_id,"operationId":context.operation_id,
+                "threadId":context.thread_id,"generation":context.generation,"candidateId":candidate,"sourceSha256":source_sha256,"image":image,"outcome":"unknown"});
+            self.0.persist_value(record).map(|_| ())
+        }
+        pub fn complete(
+            &mut self,
+            id: ReceiptId,
+            receipt: &CompletionReceipt,
+        ) -> RecoveryResult<()> {
+            let record = json!({"kind":"completed","receiptId":uuid::Uuid::new_v4().to_string(),"reservedReceiptId":id.to_string(),
+                "operationId":receipt.operation_id.to_string(),"threadId":receipt.thread_id,"generation":receipt.generation,
+                "completion":snapshot(id,receipt)?});
+            self.0.persist_value(record).map(|_| ())
+        }
+        pub fn retained(&self) -> RecoveryResult<Vec<IngestionRecord>> {
+            self.0.retained().map(|records| {
+                records
+                    .into_iter()
+                    .map(|record| IngestionRecord {
+                        database_identity_current: record.database_identity_current,
+                        record: record.payload.receipt,
+                    })
+                    .collect()
+            })
+        }
+    }
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -538,6 +654,53 @@ mod platform {
         }
         fn receipt() -> Value {
             json!({"receiptId":uuid::Uuid::new_v4().to_string(),"operationId":uuid::Uuid::new_v4().to_string(),"threadId":uuid::Uuid::new_v4().to_string(),"generation":9,"committed":false,"error":"CommitUnknown","committedCandidateIds":[],"batch":{"threadSha256":"a".repeat(64),"references":[]}})
+        }
+        #[test]
+        fn ingestion_owned_copy_fault_retains_exact_allocation_after_reopen() {
+            let (_dir, cfg) = fixture();
+            let context = IngestionContext {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                reserved_receipt_id: uuid::Uuid::new_v4().to_string(),
+                thread_id: uuid::Uuid::new_v4().to_string(),
+                generation: 7,
+            };
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(2, 2)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            let bytes = bytes.into_inner();
+            let mut journal = IngestionStore::open(&cfg).unwrap();
+            // Post-copy recovery owner can hold its independent lock concurrently.
+            let _receipt_owner = RecoveryStore::open(&cfg).unwrap();
+            let mut expected = None;
+            let result = crate::attachments::ingest_owned_copy_fault(
+                &cfg.expected_data_directory,
+                &bytes,
+                |image| {
+                    assert!(!image.path.exists());
+                    assert!(!image.original_path.exists());
+                    journal
+                        .allocate(&context, "candidate", &"a".repeat(64), image)
+                        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                    expected = Some(serde_json::to_value(image).unwrap());
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            let expected = expected.unwrap();
+            assert!(std::path::Path::new(expected["originalPath"].as_str().unwrap()).is_file());
+            assert!(!std::path::Path::new(expected["path"].as_str().unwrap()).exists());
+            drop(journal);
+            let reopened = IngestionStore::open(&cfg).unwrap();
+            let records = reopened.retained().unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].record["image"], expected);
+            assert_eq!(
+                records[0].record["reservedReceiptId"],
+                context.reserved_receipt_id
+            );
+            assert_eq!(records[0].record["outcome"], "unknown");
+            assert!(records[0].database_identity_current);
         }
         #[test]
         fn durable_roundtrip_idempotence_conflict_and_private_modes() {
@@ -697,7 +860,7 @@ mod platform {
     }
 }
 #[cfg(unix)]
-pub use platform::RecoveryStore;
+pub use platform::{IngestionStore, RecoveryStore};
 #[cfg(not(unix))]
 pub struct RecoveryStore;
 #[cfg(not(unix))]
@@ -713,6 +876,30 @@ impl RecoveryStore {
         Err(RecoveryError::Unsupported)
     }
     pub fn retained(&self) -> RecoveryResult<Vec<RecoveryRecord>> {
+        Err(RecoveryError::Unsupported)
+    }
+}
+
+#[cfg(not(unix))]
+pub struct IngestionStore;
+#[cfg(not(unix))]
+impl IngestionStore {
+    pub fn open(_: &ServiceConfig) -> RecoveryResult<Self> {
+        Err(RecoveryError::Unsupported)
+    }
+    pub fn allocate(
+        &mut self,
+        _: &IngestionContext,
+        _: &str,
+        _: &str,
+        _: &crate::attachments::StoredImage,
+    ) -> RecoveryResult<()> {
+        Err(RecoveryError::Unsupported)
+    }
+    pub fn complete(&mut self, _: ReceiptId, _: &CompletionReceipt) -> RecoveryResult<()> {
+        Err(RecoveryError::Unsupported)
+    }
+    pub fn retained(&self) -> RecoveryResult<Vec<IngestionRecord>> {
         Err(RecoveryError::Unsupported)
     }
 }
