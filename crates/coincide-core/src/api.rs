@@ -93,7 +93,7 @@ impl Engine {
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         match method {
-            "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":["codex","claude"],"discoveryOnly":true})),
+            "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
                 ensure!(self.workspace_pending.len()<32 && self.attachment_operations.len()<4,"Too many attachment imports; wait for existing imports to finish");
                 let thread=required(p,"threadId")?.to_owned();
@@ -337,10 +337,12 @@ impl Engine {
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let provider = required(p, "provider")?;
-                ensure!(["codex", "claude"].contains(&provider), "Provider not connected in this preview");
+                Provider::from_name(provider)?;
+                let model = p["model"].as_str().unwrap_or("default");
+                ensure!(model.len() <= 512 && !model.chars().any(char::is_control), "Invalid model ID");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
-                v["selection"] = json!({"provider":provider,"modelID":p["model"].as_str().unwrap_or("default")});
+                v["selection"] = json!({"provider":provider,"modelID":model});
                 self.store.save(&v)?; self.revision += 1;
                 Ok(v)
             }
@@ -457,11 +459,7 @@ impl Engine {
             "This preview supports approval/build mode only; fork this conversation to use supported defaults"
         );
         let provider = text(&v["selection"], "provider");
-        let adapter = match provider.as_str() {
-            "codex" => Provider::Codex,
-            "claude" => Provider::Claude,
-            _ => bail!("Provider not connected in this preview; fork and choose Codex or Claude"),
-        };
+        let adapter = Provider::from_name(&provider)?;
         ensure!(
             v["selection"]["accountID"].is_null(),
             "Alternate provider accounts are not connected yet"
@@ -554,13 +552,15 @@ impl Engine {
             .as_str()
             .filter(|m| !m.is_empty() && *m != "default")
             .map(str::to_owned);
-        let executable = std::env::var_os(if provider == "claude" {
-            "COINCIDE_CLAUDE_EXECUTABLE"
-        } else {
-            "COINCIDE_CODEX_EXECUTABLE"
-        })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| provider.clone().into());
+        let executable_variable = match provider.as_str() {
+            "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
+            "codex" => "COINCIDE_CODEX_EXECUTABLE",
+            "grok" => "COINCIDE_GROK_EXECUTABLE",
+            _ => bail!("Provider executable is not configured"),
+        };
+        let executable = std::env::var_os(executable_variable)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| provider.clone().into());
         append(&mut v, "user", prompt, None);
         if !draft_images.is_empty() {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
@@ -1154,5 +1154,46 @@ mod tests {
             json!({"method":"threads.patch","params":{"threadId":id,"patch":{"sessions":{}}}}),
         );
         assert!(reply.get("error").is_some());
+    }
+    #[test]
+    fn provider_selection_matches_runtime_support_and_rejects_invalid_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("data.sqlite")).unwrap());
+        let created = engine.execute("threads.create", &json!({})).unwrap();
+        let id = created["id"].clone();
+        let catalog = engine.execute("providers.list", &json!({})).unwrap();
+        assert_eq!(
+            catalog["runtimeConnected"],
+            json!(Provider::supported_names())
+        );
+        for provider in Provider::supported_names() {
+            let selected = engine
+                .execute(
+                    "agent.select",
+                    &json!({"threadId":id,"provider":provider,"model":"fixture-model"}),
+                )
+                .unwrap();
+            assert_eq!(selected["selection"]["provider"], *provider);
+            assert_eq!(selected["selection"]["modelID"], "fixture-model");
+        }
+        let before = engine.store.thread(id.as_str().unwrap()).unwrap();
+        for provider in ["cursor", "opencode", "antigravity", "unknown"] {
+            assert!(
+                engine
+                    .execute("agent.select", &json!({"threadId":id,"provider":provider}))
+                    .is_err()
+            );
+        }
+        for model in ["bad\nmodel".to_owned(), "x".repeat(513)] {
+            assert!(
+                engine
+                    .execute(
+                        "agent.select",
+                        &json!({"threadId":id,"provider":"codex","model":model})
+                    )
+                    .is_err()
+            );
+        }
+        assert_eq!(engine.store.thread(id.as_str().unwrap()).unwrap(), before);
     }
 }

@@ -100,6 +100,20 @@ impl Mapper {
     }
 }
 
+enum PendingRequest {
+    Permission(Value),
+    Questions(Vec<grok::Question>),
+}
+
+pub(super) fn run_grok(
+    launch: Launch,
+    images: Vec<ImageAttachment>,
+    commands: Receiver<Control>,
+    events: &Sender<Event>,
+) -> Result<()> {
+    run_flavored(launch, grok::arguments(), images, commands, events, true)
+}
+
 pub(super) fn run(
     launch: Launch,
     arguments: Vec<String>,
@@ -107,20 +121,35 @@ pub(super) fn run(
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
+    run_flavored(launch, arguments, images, commands, events, false)
+}
+
+fn run_flavored(
+    launch: Launch,
+    arguments: Vec<String>,
+    images: Vec<ImageAttachment>,
+    commands: Receiver<Control>,
+    events: &Sender<Event>,
+    is_grok: bool,
+) -> Result<()> {
     let has_images = !images.is_empty();
     let mut prompt = Some(images::acp_content(&launch.prompt, &images));
     drop(images);
     let mut transport = Transport::spawn(&launch, &arguments, &[])?;
-    transport.write(&rpc(
-        1,
-        "initialize",
-        json!({"protocolVersion":1,
+    let mut initialize = json!({"protocolVersion":1,
         "clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},
-        "clientInfo":{"name":"Coincide","version":env!("CARGO_PKG_VERSION")}}),
-    ))?;
+        "clientInfo":{"name":"Coincide","version":env!("CARGO_PKG_VERSION")}});
+    if is_grok {
+        initialize["_meta"] = json!({"clientType":"extension"});
+    }
+    transport.write(&rpc(1, "initialize", initialize))?;
     let mut stage = 1;
     let mut session_id: Option<String> = None;
-    let mut pending = HashMap::<String, Value>::new();
+    let mut pending = HashMap::<String, PendingRequest>::new();
+    let mut auth_method = None;
+    let mut authentication_attempted = false;
+    let mut session_request = None;
+    let prompt_id = uuid::Uuid::new_v4().to_string();
     let mut mapper = Mapper::default();
     let started = Instant::now();
     let mut stopping: Option<Instant> = None;
@@ -129,6 +158,12 @@ pub(super) fn run(
         while let Ok(command) = commands.try_recv() {
             match command {
                 Control::Stop if stopping.is_none() => {
+                    if is_grok {
+                        // Grok schedules background wake-ups; ending its process tree is
+                        // the only cancellation that prevents an old turn from continuing.
+                        events.send(Event::Finished)?;
+                        return Ok(());
+                    }
                     if let Some(id) = &session_id {
                         let _ = transport.write(&json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":id}}));
                     }
@@ -137,7 +172,13 @@ pub(super) fn run(
                 Control::Stop => {}
                 Control::Reply { id, result } if stopping.is_none() => {
                     if let Some(params) = pending.get(&id.to_string()) {
-                        match permission_reply(params, &result) {
+                        let response = match params {
+                            PendingRequest::Permission(params) => permission_reply(params, &result),
+                            PendingRequest::Questions(questions) => {
+                                grok::answer(questions, &result)
+                            }
+                        };
+                        match response {
                             Ok(result) => {
                                 transport
                                     .write(&json!({"jsonrpc":"2.0","id":id,"result":result}))?;
@@ -173,7 +214,7 @@ pub(super) fn run(
             return Ok(());
         }
         ensure!(
-            stage >= 4 || started.elapsed() < Duration::from_secs(120),
+            stage == 4 || started.elapsed() < Duration::from_secs(120),
             "ACP startup timed out"
         );
         let frame = match transport.next() {
@@ -185,7 +226,18 @@ pub(super) fn run(
             }
             Err(error) => return Err(error),
         };
-        raw(events, "acp", &frame)?;
+        // Authentication responses can contain credential material; never persist them.
+        if !is_grok || (stage != 5 && frame["error"]["code"] != -32000) {
+            raw(events, if is_grok { "grok" } else { "acp" }, &frame)?;
+        }
+        if is_grok
+            && stage == 4
+            && stopping.is_none()
+            && grok::completion(&frame, session_id.as_deref().unwrap_or(""), &prompt_id)?
+        {
+            completed = true;
+            continue;
+        }
         if frame.get("method").is_some() && frame.get("id").is_some() {
             let id = &frame["id"];
             if frame["method"] == "session/request_permission" && stopping.is_none() {
@@ -205,10 +257,50 @@ pub(super) fn run(
                     !pending.contains_key(&id.to_string()),
                     "ACP reused a pending request ID"
                 );
-                pending.insert(id.to_string(), params.clone());
+                pending.insert(id.to_string(), PendingRequest::Permission(params.clone()));
                 events.send(Event::Frame(json!({"id":id,"method":"item/commandExecution/requestApproval","params":{
                     "toolCall":params["toolCall"],"availableDecisions":decisions,"providerFrame":frame
                 }})))?;
+            } else if is_grok
+                && stage == 4
+                && stopping.is_none()
+                && matches!(
+                    grok::method(frame["method"].as_str().unwrap_or("")),
+                    Some("ask_user_question" | "exit_plan_mode")
+                )
+            {
+                let params = grok::unwrap_params(&frame["params"]);
+                ensure!(
+                    params["sessionId"]
+                        .as_str()
+                        .is_none_or(|id| Some(id) == session_id.as_deref()),
+                    "Grok request belongs to another session"
+                );
+                ensure!(
+                    !pending.contains_key(&id.to_string()),
+                    "Grok reused a pending request ID"
+                );
+                if grok::method(frame["method"].as_str().unwrap_or("")) == Some("ask_user_question")
+                {
+                    match grok::questions(params) {
+                        Ok(questions) => {
+                            let normalized = grok::question_params(&questions, &frame);
+                            pending.insert(id.to_string(), PendingRequest::Questions(questions));
+                            events.send(Event::Frame(json!({"id":id,"method":"item/tool/requestUserInput","params":normalized})))?;
+                        }
+                        Err(error) => transport.write(&json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":error.to_string()}}))?,
+                    }
+                } else {
+                    if let Some(plan) = params["planContent"].as_str() {
+                        event(
+                            events,
+                            "item/completed",
+                            json!({"item":{"id":format!("grok-plan-{prompt_id}"),"type":"plan","text":plan},"providerFrame":frame}),
+                        )?;
+                    }
+                    // Capturing a plan is not consent to implement it.
+                    transport.write(&json!({"jsonrpc":"2.0","id":id,"result":{"outcome":"abandoned","feedback":"The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."}}))?;
+                }
             } else {
                 transport.write(&json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Client capability is not supported"}}))?;
             }
@@ -220,6 +312,7 @@ pub(super) fn run(
             if stage == 4
                 && stopping.is_none()
                 && frame["params"]["sessionId"].as_str() == session_id.as_deref()
+                && (!is_grok || grok::foreground_update(&frame["params"], &prompt_id))
                 && frame["params"]["_meta"]["isReplay"] != true
                 && frame["params"]["update"]["_meta"]["isReplay"] != true
             {
@@ -234,6 +327,22 @@ pub(super) fn run(
             if stopping.is_some() {
                 events.send(Event::Finished)?;
                 return Ok(());
+            }
+            if is_grok
+                && stage == 2
+                && frame["error"]["code"] == -32000
+                && !authentication_attempted
+            {
+                let method = auth_method.as_ref().context("Grok requires a configured non-interactive authentication method; sign in with its CLI first")?;
+                authentication_attempted = true;
+                transport.write(&rpc(5, "authenticate", json!({"methodId":method})))?;
+                stage = 5;
+                continue;
+            }
+            if is_grok && (stage == 5 || frame["error"]["code"] == -32000) {
+                bail!(
+                    "Grok authentication failed; sign in with the configured Grok CLI account first"
+                );
             }
             bail!("ACP rejected request: {}", frame["error"]);
         }
@@ -250,9 +359,14 @@ pub(super) fn run(
                 );
                 ensure!(
                     !has_images
+                        || is_grok
                         || result["agentCapabilities"]["promptCapabilities"]["image"] == true,
                     "ACP server does not advertise image prompt support; no prompt was sent"
                 );
+                if is_grok {
+                    auth_method =
+                        grok::authentication_method(result, grok::configured_authentication());
+                }
                 let mut params = json!({"cwd":launch.cwd,"mcpServers":[]});
                 let method = if let Some(id) = &launch.session {
                     ensure!(
@@ -264,7 +378,9 @@ pub(super) fn run(
                 } else {
                     "session/new"
                 };
-                transport.write(&rpc(2, method, params))?;
+                let request = rpc(2, method, params);
+                transport.write(&request)?;
+                session_request = Some(request);
                 stage = 2;
             }
             2 => {
@@ -286,11 +402,17 @@ pub(super) fn run(
                 };
                 events.send(Event::Session(id.clone()))?;
                 session_id = Some(id.clone());
-                if let Some(model) = &launch.model {
+                if let Some(model) = launch
+                    .model
+                    .as_ref()
+                    .filter(|model| !is_grok || !matches!(model.as_str(), "default" | "grok-build"))
+                {
                     let available = result["models"]["availableModels"].as_array();
                     ensure!(
-                        available
-                            .is_some_and(|models| models.iter().any(|m| m["modelId"] == *model)),
+                        is_grok
+                            || available.is_some_and(|models| models
+                                .iter()
+                                .any(|m| m["modelId"] == *model)),
                         "ACP server did not advertise the requested model"
                     );
                     if result["models"]["currentModelId"] != *model {
@@ -306,7 +428,12 @@ pub(super) fn run(
                 transport.write(&rpc(
                     4,
                     "session/prompt",
-                    json!({"sessionId":id,"prompt":prompt.take().context("ACP prompt was already sent")?}),
+                    prompt_params(
+                        json!(id),
+                        prompt.take().context("ACP prompt was already sent")?,
+                        is_grok,
+                        &prompt_id,
+                    ),
                 ))?;
                 stage = 4;
             }
@@ -314,7 +441,12 @@ pub(super) fn run(
                 transport.write(&rpc(
                     4,
                     "session/prompt",
-                    json!({"sessionId":session_id,"prompt":prompt.take().context("ACP prompt was already sent")?}),
+                    prompt_params(
+                        json!(session_id),
+                        prompt.take().context("ACP prompt was already sent")?,
+                        is_grok,
+                        &prompt_id,
+                    ),
                 ))?;
                 stage = 4;
             }
@@ -323,11 +455,33 @@ pub(super) fn run(
                     result["stopReason"].is_string(),
                     "ACP prompt response has no stop reason; asynchronous ACP v2 is not supported by this adapter"
                 );
+                if is_grok {
+                    grok::validate_stop_reason(
+                        result["stopReason"].as_str().unwrap_or(""),
+                        result["agentResult"].as_str(),
+                    )?;
+                }
                 completed = true;
+            }
+            5 => {
+                transport.write(
+                    session_request
+                        .as_ref()
+                        .context("Grok authentication lost its session request")?,
+                )?;
+                stage = 2;
             }
             _ => unreachable!(),
         }
     }
+}
+
+fn prompt_params(session_id: Value, prompt: Value, is_grok: bool, prompt_id: &str) -> Value {
+    let mut params = json!({"sessionId":session_id,"prompt":prompt});
+    if is_grok {
+        params["_meta"] = json!({"promptId":prompt_id,"requestId":prompt_id});
+    }
+    params
 }
 
 #[cfg(test)]

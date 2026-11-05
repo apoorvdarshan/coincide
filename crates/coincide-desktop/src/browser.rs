@@ -2,15 +2,17 @@
 //! callbacks return bounded payloads without holding an engine mutex.
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
-    BrowserAction, BrowserReply, BrowserRequest, script, validate_url,
+    BrowserAction, BrowserReply, BrowserRequest, DownloadRegistry, script, validate_url,
 };
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
+    rc::Rc,
     sync::mpsc::{self, Receiver, SyncSender},
 };
 use uuid::Uuid;
@@ -25,6 +27,7 @@ struct Tab {
     loading: bool,
 }
 enum NativeEvent {
+    DownloadsChanged,
     Reply(BrowserReply),
     Title {
         thread: String,
@@ -51,6 +54,7 @@ pub struct BrowserController {
     events: Receiver<NativeEvent>,
     sender: SyncSender<NativeEvent>,
     context: wry::WebContext,
+    downloads: Rc<RefCell<DownloadRegistry>>,
     #[cfg(target_os = "macos")]
     profile_id: [u8; 16],
 }
@@ -101,6 +105,9 @@ impl BrowserController {
             events,
             sender,
             context: wry::WebContext::new(Some(profile_dir.join("web-context"))),
+            downloads: Rc::new(RefCell::new(DownloadRegistry::new(
+                profile_dir.join("downloads"),
+            )?)),
             #[cfg(target_os = "macos")]
             profile_id,
         })
@@ -134,6 +141,18 @@ impl BrowserController {
         let thread = &request.thread_id;
         match &request.action {
             BrowserAction::Tabs => return Ok(Some(self.tab_list(thread))),
+            BrowserAction::Downloads => {
+                // No tab means all of this thread's retained downloads, including
+                // closed tabs. Explicit tab filtering never crosses thread ownership.
+                let mut result = self.downloads.borrow().list(thread, request.tab.as_deref());
+                if cfg!(target_os = "linux") {
+                    result["acceptingDownloads"] = json!(false);
+                    result["platformLimitation"] = json!(
+                        "Native downloads are disabled on Linux: this Wry version cannot safely attribute downloads to tabs sharing a browser profile."
+                    );
+                }
+                return Ok(Some(result));
+            }
             BrowserAction::NewTab { url } => {
                 let id =
                     self.create_tab(thread, url.as_deref().unwrap_or("about:blank"), window, cx)?;
@@ -177,6 +196,7 @@ impl BrowserController {
                 Ok(Some(self.tab_list(thread)))
             }
             BrowserAction::CloseTab => {
+                self.downloads.borrow_mut().tab_closed(thread, &target);
                 let tabs = self.tabs.get_mut(thread).context("No such thread")?;
                 let removed = tabs.remove(index);
                 removed.view.update(cx, |view, _| view.hide());
@@ -251,14 +271,54 @@ impl BrowserController {
         let load_id = id.clone();
         let popup_sender = self.sender.clone();
         let popup_thread = thread.to_owned();
+        let start_downloads = self.downloads.clone();
+        let start_thread = thread.to_owned();
+        let start_tab = id.clone();
+        let start_sender = self.sender.clone();
+        let completed_downloads = self.downloads.clone();
+        let completed_thread = thread.to_owned();
+        let completed_tab = id.clone();
+        let completed_sender = self.sender.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
             .with_devtools(false)
             .with_autoplay(false)
             .with_clipboard(false)
             .with_navigation_handler(|url| url == "about:blank" || validate_url(&url).is_ok())
-            // Downloads need destination/approval/reporting parity before enabling.
-            .with_download_started_handler(|_, _| false)
+            .with_download_started_handler(move |url, destination| {
+                // Wry 0.53 registers GTK callbacks on the shared context without
+                // matching the source webview. Fail closed until that is fixed.
+                if cfg!(target_os = "linux") {
+                    return false;
+                }
+                let result = start_downloads.borrow_mut().start(
+                    &start_thread,
+                    &start_tab,
+                    &url,
+                    destination,
+                );
+                let _ = start_sender.try_send(NativeEvent::DownloadsChanged);
+                match result {
+                    Ok(path) => {
+                        *destination = path;
+                        true
+                    }
+                    Err(_) => false,
+                }
+            })
+            .with_download_completed_handler(move |url, path, success| {
+                if cfg!(target_os = "linux") {
+                    return;
+                }
+                completed_downloads.borrow_mut().complete(
+                    &completed_thread,
+                    &completed_tab,
+                    &url,
+                    path.as_deref(),
+                    success,
+                );
+                let _ = completed_sender.try_send(NativeEvent::DownloadsChanged);
+            })
             .with_document_title_changed_handler(move |title| {
                 let _ = title_sender.try_send(NativeEvent::Title {
                     thread: title_thread.clone(),
@@ -306,6 +366,7 @@ impl BrowserController {
         let changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::DownloadsChanged => {}
                 NativeEvent::Reply(reply) => self.replies.push_back(reply),
                 NativeEvent::Title { thread, tab, title } => {
                     if let Some(tab) = self
@@ -367,6 +428,6 @@ impl BrowserController {
     }
     pub fn tab_list(&self, thread: &str) -> Value {
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":tab.title,"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
-            "visible":self.visible.as_deref()==Some(thread),"unsupported":["downloads","upload","frames","password-manager","dialogs","native-key-events","screenshots"]})
+            "visible":self.visible.as_deref()==Some(thread),"unsupported":["download-progress","download-cancel","download-resume","blob-downloads","upload","frames","password-manager","dialogs","native-key-events","screenshots"]})
     }
 }

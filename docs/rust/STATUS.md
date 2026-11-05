@@ -73,7 +73,7 @@ footers remain visible while long details scroll. Buttons and inputs appear in t
 accessibility tree after initialization; full keyboard/accessibility acceptance is
 still outstanding.
 
-The current portable batch passes 97 tests with strict core clippy, including actual
+The previous portable batch passed 97 tests with strict core clippy, including actual
 headless CLI/server restart persistence, real PTYs, schedule execution through fake
 providers, draft preservation during scheduled sends, safe image normalization and
 provider image delivery. Mac GPUI compilation passes. Native image thumbnails and
@@ -81,25 +81,38 @@ Send were checked against a synthetic provider. Native schedule approval and Run
 completed while preserving an unsent text/image draft. Visual acceptance exposed a
 clipped schedule action row; the schedule view now uses the full panel, preserving
 the hidden composer state. No real provider account has been accepted yet.
-Checkpoint `fd2b758` passed every applicable GitHub check; the next checkpoint's CI
-result must be verified after push.
+Checkpoint `a294263` passed all applicable GitHub checks. The following feature
+batch passed 116 portable tests, strict core clippy and Linux desktop compilation;
+one additional Grok completion regression passed separately on both hosts (117
+unique tests validated). Mac focused image/Grok/download tests and GPUI compilation
+passed. Native fixture checks verified a hidden WebKit download with exact bytes
+and private permissions, styled terminal cells, and terminal creation/selection/close.
+The feature batch still needs its own CI result before increasing the estimate.
 
 CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
 changes. Rust-only files are excluded from Swift's change classifier; changes to that
 classifier itself still run Swift CI. Existing test/lint/platform coverage is retained.
-Baseline Rust runs 41991737611 / 41993318402 took 293 / 73 seconds; two post-change
-runs are required before attributing a speedup to these changes.
+Baseline Rust runs 41991737611 / 41993318402 took 293 / 73 seconds overall.
+For checkpoint a294263, successful GPUI jobs took 29 seconds twice, compared with
+62 seconds for the earlier warm GPUI job. One intervening attempt failed downloading
+a GitHub action because codeload.github.com DNS failed; its failed job was rerun.
+Core timings varied and coverage increased, so these observations do not establish
+an overall pipeline speedup percentage. Continue independent work while CI runs.
 
 Implemented foundations are deliberately narrower than full feature groups:
 
 - Shared CLI/API supports project CRUD, settings-document patches, thread actions,
-  Codex/Claude selection, pending approvals/questions, and explicit responses.
+  Codex/Claude/Grok selection, pending approvals/questions, and explicit responses.
 - Browser has a separate persistent profile and thread-scoped tabs. Frames,
-  downloads/uploads, passwords, passkeys, dialogs, screenshots and native-key actions
-  still need implementation. Existing Swift browser profiles are not migrated.
-- Terminal has a real PTY and monochrome desktop grid. API clients can request
+  uploads, passwords, passkeys, dialogs, screenshots and native-key actions
+  still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
+  thread-scoped session history and private verified destinations on Mac. Linux
+  downloads fail closed because upstream shared-profile callbacks misattribute tabs.
+  Progress/cancel/resume, blob downloads and persistent history remain.
+- Terminal has real PTYs, native create/select/close tabs and a styled desktop grid. API clients can request
   paged RGB/style/cursor snapshots (at most ten rows); plain polling stays lightweight.
-  Styled desktop rendering, selection, splits, tabs and shell integration remain.
+  The desktop assembles coherent revision-matched pages, capped at 40 visible rows.
+  Selection, splits and shell integration remain.
   Candidate child processes cannot inherit the running Swift conversation's bindings.
 - Claude and generic ACP protocol adapters have fixture coverage. ACP is not exposed
   as a named provider until its launch/account/mode integration is implemented.
@@ -121,8 +134,10 @@ Implemented foundations are deliberately narrower than full feature groups:
   Claude/Codex and generic ACP image transport have fixture coverage; HEIC/TIFF,
   PDFs, image editing, clipboard/paste/drop and broader media parity remain.
 - Six legacy providers have a filesystem-only discovery catalog. Discovery does not
-  verify authentication, versions, models or runtime support; only Codex/Claude are
-  connected in the preview. Successful native sessions record transcript progress;
+  verify authentication, versions, models or runtime support; Codex/Claude/Grok are
+  connected in the preview. Grok authentication, resume, explicit models, images,
+  questions/approvals, plan capture and cancellation have synthetic fixture coverage;
+  real accounts, usage/effort and background-task UI remain unverified. Successful native sessions record transcript progress;
   subsequent provider handoffs include missed messages/images within bounded limits.
 - Transcripts use a virtualized list with validated image previews, but selectable
   text and full media behavior remain unfinished.

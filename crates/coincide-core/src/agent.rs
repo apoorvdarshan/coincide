@@ -14,6 +14,8 @@ use std::{
 mod acp;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "provider_grok.rs"]
+mod grok;
 #[path = "provider_images.rs"]
 mod images;
 #[path = "provider_transport.rs"]
@@ -26,11 +28,43 @@ pub use images::{ImageAttachment, validate_images};
 pub enum Provider {
     Codex,
     Claude,
+    Grok,
     /// An explicitly configured ACP v1 server. Provider-specific discovery, login,
     /// modes and extensions are not implied by support for its wire protocol.
     AcpV1 {
         arguments: Vec<String>,
     },
+}
+
+impl Provider {
+    pub fn supported_names() -> &'static [&'static str] {
+        &["codex", "claude", "grok"]
+    }
+    pub fn from_name(name: &str) -> Result<Self> {
+        match name {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            "grok" => Ok(Self::Grok),
+            "cursor" => bail!(
+                "Cursor requires an isolated configuration before its Rust adapter can run without changing the existing app's model defaults"
+            ),
+            "opencode" => bail!(
+                "OpenCode requires its authenticated HTTP/SSE transport; the Rust adapter is not connected yet"
+            ),
+            "antigravity" => bail!(
+                "Antigravity requires its private signed-in profile, runtime and ACP extensions; the Rust adapter is not connected yet"
+            ),
+            _ => bail!("Unknown provider: {name}"),
+        }
+    }
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+            Self::Grok => "grok",
+            Self::AcpV1 { .. } => "acp",
+        }
+    }
 }
 
 pub struct Launch {
@@ -75,6 +109,7 @@ impl Session {
             let result = validate_images(&provider, &images).and_then(|()| match provider {
                 Provider::Codex => run(launch, images, commands, &events_tx),
                 Provider::Claude => claude::run(launch, images, commands, &events_tx),
+                Provider::Grok => grok::run(launch, images, commands, &events_tx),
                 Provider::AcpV1 { arguments } => {
                     acp::run(launch, arguments, images, commands, &events_tx)
                 }

@@ -20,7 +20,7 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 enum PreviewState {
     Checking,
@@ -30,6 +30,83 @@ enum PreviewState {
 struct ImagePreview {
     state: PreviewState,
     rows: Vec<(String, usize)>,
+}
+
+const TERMINAL_PAGE_ROWS: usize = 40;
+const TERMINAL_CELL_WIDTH: f32 = 8.;
+const TERMINAL_CELL_HEIGHT: f32 = 18.;
+
+fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
+    let Some(parts) = value.as_array().filter(|v| v.len() == 3) else {
+        return rgb(fallback);
+    };
+    match (parts[0].as_u64(), parts[1].as_u64(), parts[2].as_u64()) {
+        (Some(r), Some(g), Some(b)) if r <= 255 && g <= 255 && b <= 255 => {
+            rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+        }
+        _ => rgb(fallback),
+    }
+}
+
+/// Publish pages only as one coherent bounded viewport. New output between API
+/// calls invalidates the candidate frame; the last complete frame stays visible.
+fn read_terminal_frame(engine: &SharedEngine, id: &str, offset: usize) -> Result<Option<Value>> {
+    let mut frame = call(
+        engine,
+        "terminal.read",
+        json!({"terminalId":id,"styled":true,"rowOffset":offset,"rowLimit":10}),
+    )?;
+    let rows = frame["rows"].as_u64().unwrap_or(0) as usize;
+    let cols = frame["cols"].as_u64().unwrap_or(0) as usize;
+    anyhow::ensure!(
+        rows <= 300 && cols <= 500 && offset <= rows,
+        "Invalid terminal viewport"
+    );
+    let end = (offset + TERMINAL_PAGE_ROWS).min(rows);
+    let revision = frame["revision"].clone();
+    let mut grid = Vec::new();
+    let mut truncated = false;
+    let mut next = offset;
+    loop {
+        anyhow::ensure!(
+            frame["rowOffset"].as_u64() == Some(next as u64),
+            "Invalid terminal page offset"
+        );
+        let page = frame["grid"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Terminal page has no cells"))?;
+        anyhow::ensure!(
+            page.len() == 10.min(end - next)
+                && page
+                    .iter()
+                    .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
+            "Invalid terminal page dimensions"
+        );
+        grid.extend(page.iter().cloned());
+        truncated |= frame["truncated"] == true;
+        next += page.len();
+        if next >= end {
+            break;
+        }
+        let page = call(
+            engine,
+            "terminal.read",
+            json!({"terminalId":id,"styled":true,"rowOffset":next,"rowLimit":10.min(end-next)}),
+        )?;
+        if page["revision"] != revision
+            || page["rows"].as_u64() != Some(rows as u64)
+            || page["cols"].as_u64() != Some(cols as u64)
+        {
+            return Ok(None);
+        }
+        frame = page;
+    }
+    frame.as_object_mut().unwrap().remove("lines");
+    frame["grid"] = json!(grid);
+    frame["rowOffset"] = json!(offset);
+    frame["rowCount"] = json!(end - offset);
+    frame["truncated"] = json!(truncated);
+    Ok(Some(frame))
 }
 
 struct Coincide {
@@ -49,7 +126,14 @@ struct Coincide {
     schedule_status: String,
     _poll: Task<()>,
     terminal_id: Option<String>,
-    terminal_text: String,
+    terminal_frame: Option<Value>,
+    terminal_tabs: Vec<Value>,
+    terminal_selected: std::collections::HashMap<String, String>,
+    terminal_row_offset: usize,
+    terminal_tabs_last_poll: Instant,
+    terminal_blink_origin: Instant,
+    terminal_blink_on: bool,
+    terminal_status: String,
     terminal_focus: FocusHandle,
     transcript_list: ListState,
     transcript_count: usize,
@@ -61,6 +145,8 @@ struct Coincide {
     project_path: Entity<InputState>,
     selected: Option<Value>,
     composer: Entity<TextareaState>,
+    model_input: Entity<InputState>,
+    model_binding: Option<(String, String, String)>,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -88,6 +174,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(|cx| TextareaState::new(window, cx).placeholder("Write a message…"));
+        let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_name = cx.new(|cx| InputState::new(window, cx).placeholder("Schedule name"));
         let schedule_prompt = cx.new(|cx| {
             TextareaState::new(window, cx).placeholder("Message to send to this conversation")
@@ -170,7 +257,14 @@ impl Coincide {
             schedule_status: String::new(),
             _poll: poll,
             terminal_id: None,
-            terminal_text: String::new(),
+            terminal_frame: None,
+            terminal_tabs: Vec::new(),
+            terminal_selected: Default::default(),
+            terminal_row_offset: 0,
+            terminal_tabs_last_poll: Instant::now(),
+            terminal_blink_origin: Instant::now(),
+            terminal_blink_on: true,
+            terminal_status: String::new(),
             terminal_focus: cx.focus_handle(),
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
@@ -182,6 +276,8 @@ impl Coincide {
             project_path,
             selected: None,
             composer,
+            model_input,
+            model_binding: None,
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -519,7 +615,10 @@ impl Coincide {
                     engine.active_thread = Some(id.into());
                 }
                 self.terminal_id = None;
-                self.terminal_text.clear();
+                self.terminal_frame = None;
+                self.terminal_tabs.clear();
+                self.terminal_row_offset = 0;
+                self.terminal_status.clear();
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
@@ -825,24 +924,7 @@ impl Coincide {
             return;
         }
         self.poll_browser(window, cx);
-        if let Some(id) = self.terminal_id.as_ref() {
-            if let Ok(snapshot) = call(&self.engine, "terminal.read", json!({"terminalId":id})) {
-                let text = snapshot["lines"]
-                    .as_array()
-                    .map(|lines| {
-                        lines
-                            .iter()
-                            .filter_map(|s| s.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .unwrap_or_default();
-                if self.terminal_text != text {
-                    self.terminal_text = text;
-                    cx.notify();
-                }
-            }
-        }
+        self.poll_terminal(cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
             let was_running = selected_thread
@@ -1478,7 +1560,53 @@ impl Coincide {
         ) {
             Ok(thread) => {
                 self.selected = Some(thread);
+                self.model_binding = None;
                 self.status = format!("Selected {provider}");
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        cx.notify();
+    }
+    fn sync_model_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let binding = self.selected.as_ref().map(|thread| {
+            (
+                text(thread, "id"),
+                text(&thread["selection"], "provider"),
+                text(&thread["selection"], "modelID"),
+            )
+        });
+        if self.model_binding == binding {
+            return;
+        }
+        let model = binding
+            .as_ref()
+            .map(|(_, _, model)| model.clone())
+            .filter(|model| model != "default")
+            .unwrap_or_default();
+        self.model_input
+            .update(cx, |input, cx| input.set_value(model, window, cx));
+        self.model_binding = binding;
+    }
+    fn apply_model(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let model = self.model_input.read(cx).value().to_string();
+        if model.len() > 512 || model.chars().any(char::is_control) {
+            self.status = "Model ID must be at most 512 bytes without control characters.".into();
+            cx.notify();
+            return;
+        }
+        let model = model.trim();
+        match call(
+            &self.engine,
+            "agent.select",
+            json!({"threadId":thread["id"],"provider":thread["selection"]["provider"],"model":if model.is_empty(){"default"}else{model}}),
+        ) {
+            Ok(thread) => {
+                self.selected = Some(thread);
+                self.model_binding = None;
+                self.status = "Model selection saved.".into();
             }
             Err(error) => self.status = error.to_string(),
         }
@@ -1551,28 +1679,407 @@ impl Coincide {
             })
             .into_any_element()
     }
+    fn refresh_terminal_tabs(&mut self) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        match call(&self.engine, "terminal.list", json!({"threadId":thread})) {
+            Ok(value) => {
+                let old_ids = self
+                    .terminal_tabs
+                    .iter()
+                    .map(|tab| text(tab, "terminalId"))
+                    .collect::<Vec<_>>();
+                let mut tabs = value.as_array().cloned().unwrap_or_default();
+                tabs.sort_by_key(|tab| {
+                    let id = text(tab, "terminalId");
+                    (
+                        old_ids
+                            .iter()
+                            .position(|old| old == &id)
+                            .unwrap_or(usize::MAX),
+                        id,
+                    )
+                });
+                self.terminal_tabs = tabs;
+                if self.terminal_id.as_ref().is_some_and(|id| {
+                    !self
+                        .terminal_tabs
+                        .iter()
+                        .any(|tab| tab["terminalId"] == *id)
+                }) {
+                    self.terminal_id = self
+                        .terminal_tabs
+                        .first()
+                        .map(|tab| text(tab, "terminalId"));
+                    self.terminal_frame = None;
+                    self.terminal_row_offset = 0;
+                    if let Some(id) = &self.terminal_id {
+                        self.terminal_selected.insert(thread, id.clone());
+                    }
+                }
+            }
+            Err(error) => self.terminal_status = error.to_string(),
+        }
+        self.terminal_tabs_last_poll = Instant::now();
+    }
+    fn select_terminal(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) {
+            self.terminal_selected.insert(thread, id.clone());
+        }
+        self.terminal_id = Some(id);
+        self.terminal_frame = None;
+        self.terminal_row_offset = 0;
+        self.terminal_status.clear();
+        self.terminal_blink_origin = Instant::now();
+        self.terminal_blink_on = true;
+        window.focus(&self.terminal_focus, cx);
+        cx.notify();
+    }
+    fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        match call(&self.engine, "terminal.create", json!({"threadId":thread})) {
+            Ok(value) => {
+                self.refresh_terminal_tabs();
+                self.select_terminal(text(&value, "terminalId"), window, cx);
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+            }
+        }
+    }
+    fn close_terminal(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let was_active = self.terminal_id.as_deref() == Some(id);
+        match call(&self.engine, "terminal.close", json!({"terminalId":id})) {
+            Ok(_) => {
+                self.terminal_selected.retain(|_, selected| selected != id);
+                self.refresh_terminal_tabs();
+                if was_active {
+                    if let Some(active) = self.terminal_id.clone() {
+                        self.select_terminal(active, window, cx);
+                    }
+                } else {
+                    window.focus(&self.terminal_focus, cx);
+                }
+            }
+            Err(error) => self.terminal_status = error.to_string(),
+        }
+        cx.notify();
+    }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_id.is_some() {
             self.terminal_id = None;
+            self.terminal_frame = None;
             cx.notify();
             return;
         }
-        if let Some(v) = self.selected.as_ref() {
-            let params = json!({"threadId":v["id"]});
-            let existing = call(&self.engine, "terminal.list", params.clone())
-                .ok()
-                .and_then(|v| v[0]["terminalId"].as_str().map(str::to_owned));
-            match existing.map(Ok).unwrap_or_else(|| {
-                call(&self.engine, "terminal.create", params).map(|v| text(&v, "terminalId"))
-            }) {
-                Ok(id) => {
-                    self.terminal_id = Some(id);
-                    window.focus(&self.terminal_focus, cx);
-                }
-                Err(e) => self.status = e.to_string(),
+        self.refresh_terminal_tabs();
+        let preferred = self
+            .selected
+            .as_ref()
+            .and_then(|thread| self.terminal_selected.get(&text(thread, "id")))
+            .cloned();
+        let existing = preferred
+            .filter(|id| {
+                self.terminal_tabs
+                    .iter()
+                    .any(|tab| tab["terminalId"] == *id)
+            })
+            .or_else(|| {
+                self.terminal_tabs
+                    .first()
+                    .map(|tab| text(tab, "terminalId"))
+            });
+        if let Some(id) = existing {
+            self.select_terminal(id, window, cx);
+        } else {
+            self.new_terminal(window, cx);
+        }
+    }
+    fn poll_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_id.is_none() {
+            return;
+        }
+        if self.terminal_tabs_last_poll.elapsed() >= Duration::from_secs(1) {
+            let before = self.terminal_tabs.clone();
+            self.refresh_terminal_tabs();
+            if self.terminal_tabs != before {
+                cx.notify();
             }
         }
-        cx.notify();
+        let Some(id) = self.terminal_id.clone() else {
+            return;
+        };
+        match call(&self.engine, "terminal.read", json!({"terminalId":id})) {
+            Ok(plain) => {
+                let rows = plain["rows"].as_u64().unwrap_or(0) as usize;
+                self.terminal_row_offset = self
+                    .terminal_row_offset
+                    .min(rows.saturating_sub(1) / TERMINAL_PAGE_ROWS * TERMINAL_PAGE_ROWS);
+                let needs_frame = self.terminal_frame.as_ref().is_none_or(|frame| {
+                    frame["revision"] != plain["revision"]
+                        || frame["exitCode"] != plain["exitCode"]
+                        || frame["rowOffset"].as_u64() != Some(self.terminal_row_offset as u64)
+                });
+                if needs_frame {
+                    match read_terminal_frame(&self.engine, &id, self.terminal_row_offset) {
+                        Ok(Some(frame)) => {
+                            self.terminal_frame = Some(frame);
+                            self.terminal_status.clear();
+                            self.terminal_blink_origin = Instant::now();
+                            self.terminal_blink_on = true;
+                            cx.notify();
+                        }
+                        Ok(None) => {} // Output changed between pages; retain the last coherent frame.
+                        Err(error) => {
+                            self.terminal_status = error.to_string();
+                            cx.notify();
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                self.terminal_status = error.to_string();
+                cx.notify();
+            }
+        }
+        let blink = (self.terminal_blink_origin.elapsed().as_millis() / 500).is_multiple_of(2);
+        if blink != self.terminal_blink_on {
+            self.terminal_blink_on = blink;
+            if self
+                .terminal_frame
+                .as_ref()
+                .is_some_and(|frame| frame["cursor"]["blinking"] == true)
+            {
+                cx.notify();
+            }
+        }
+    }
+    fn terminal_pane(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut tabs = div()
+            .id("terminal-tabs")
+            .flex()
+            .gap_1()
+            .items_center()
+            .overflow_x_scroll()
+            .h(px(42.));
+        for (index, tab) in self.terminal_tabs.iter().enumerate() {
+            let id = text(tab, "terminalId");
+            let close = id.clone();
+            let active = self.terminal_id.as_deref() == Some(id.as_str());
+            let title = text(tab, "title");
+            let label = format!(
+                "{}{}",
+                if active { "● " } else { "" },
+                if title.trim().is_empty() {
+                    format!("Terminal {}", index + 1)
+                } else {
+                    title.chars().take(28).collect()
+                }
+            );
+            tabs = tabs.child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!("terminal-tab-{id}")))
+                            .label(label)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.select_terminal(id.clone(), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("terminal-close-{close}")))
+                            .label("×")
+                            .tooltip("Close this terminal and its shell")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.close_terminal(&close, window, cx)
+                            })),
+                    ),
+            );
+        }
+        tabs = tabs
+            .child(
+                Button::new("terminal-new-tab")
+                    .label("New terminal")
+                    .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))),
+            )
+            .child(
+                Button::new("terminal-hide")
+                    .label("Hide")
+                    .on_click(cx.listener(|this, _, window, cx| this.terminal(window, cx))),
+            );
+        let mut body = div()
+            .id("terminal-grid-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_scroll()
+            .p_2()
+            .bg(rgb(0x0c0c0c))
+            .track_focus(&self.terminal_focus)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| window.focus(&this.terminal_focus, cx)),
+            )
+            .on_key_down(cx.listener(|this, event, _, cx| this.terminal_key(event, cx)))
+            .font_family(if cfg!(target_os = "macos") {
+                "Menlo"
+            } else {
+                "monospace"
+            })
+            .text_size(px(12.))
+            .line_height(px(TERMINAL_CELL_HEIGHT));
+        let mut footer = div().flex().gap_2().items_center().text_sm();
+        if let Some(frame) = &self.terminal_frame {
+            let cols = frame["cols"].as_u64().unwrap_or(0) as usize;
+            let offset = frame["rowOffset"].as_u64().unwrap_or(0) as usize;
+            let rows = frame["rows"].as_u64().unwrap_or(0) as usize;
+            let grid = frame["grid"].as_array();
+            let count = grid.map_or(0, Vec::len);
+            let focused = self.terminal_focus.is_focused(window);
+            if let Some(grid) = grid {
+                let mut canvas = div()
+                    .flex()
+                    .flex_col()
+                    .w(px(cols as f32 * TERMINAL_CELL_WIDTH))
+                    .flex_shrink_0();
+                for (index, cells) in grid.iter().enumerate() {
+                    let mut row = div()
+                        .relative()
+                        .flex()
+                        .flex_shrink_0()
+                        .h(px(TERMINAL_CELL_HEIGHT))
+                        .w_full();
+                    if let Some(cells) = cells.as_array() {
+                        for (column, cell) in cells.iter().enumerate() {
+                            if cell["continuation"] == true
+                                && column > 0
+                                && cells[column - 1]["width"] == 2
+                            {
+                                continue;
+                            }
+                            let width = cell["width"].as_u64().unwrap_or(1).clamp(1, 2) as f32;
+                            row = row.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(width * TERMINAL_CELL_WIDTH))
+                                    .h(px(TERMINAL_CELL_HEIGHT))
+                                    .overflow_hidden()
+                                    .bg(terminal_rgb(&cell["background"], 0x0c0c0c))
+                                    .text_color(terminal_rgb(&cell["foreground"], 0xd4d4d4))
+                                    .when(cell["bold"] == true, |view| {
+                                        view.font_weight(FontWeight::BOLD)
+                                    })
+                                    .when(cell["italic"] == true, |view| view.italic())
+                                    .when(cell["underline"] == true, |view| view.underline())
+                                    .when(cell["strikethrough"] == true, |view| view.line_through())
+                                    .child(text(cell, "text")),
+                            );
+                        }
+                    }
+                    let cursor = &frame["cursor"];
+                    let show = cursor["visible"] == true
+                        && cursor["row"].as_u64() == Some((offset + index) as u64)
+                        && (!focused || cursor["blinking"] != true || self.terminal_blink_on);
+                    if show {
+                        let shape = if focused {
+                            cursor["shape"].as_str().unwrap_or("block")
+                        } else {
+                            "hollowBlock"
+                        };
+                        let cursor = div()
+                            .absolute()
+                            .left(px(
+                                cursor["col"].as_u64().unwrap_or(0) as f32 * TERMINAL_CELL_WIDTH
+                            ))
+                            .bottom_0()
+                            .w(px(if shape == "beam" {
+                                2.
+                            } else {
+                                TERMINAL_CELL_WIDTH
+                            }))
+                            .h(px(if shape == "underline" {
+                                2.
+                            } else {
+                                TERMINAL_CELL_HEIGHT
+                            }))
+                            .when(shape == "hollowBlock", |view| {
+                                view.border_1().border_color(rgb(0xb4cbff))
+                            })
+                            .when(shape != "hollowBlock", |view| {
+                                view.bg(rgba(if shape == "block" {
+                                    0xb4cbff70
+                                } else {
+                                    0xb4cbffff
+                                }))
+                            });
+                        row = row.child(cursor);
+                    }
+                    canvas = canvas.child(row);
+                }
+                body = body.child(canvas);
+            }
+            footer = footer.child(div().child(format!(
+                    "{} columns · rows {}–{} of {}{}",
+                    cols,
+                    offset + usize::from(count > 0),
+                    offset + count,
+                    rows,
+                    frame["exitCode"]
+                        .as_i64()
+                        .map(|code| format!(" · exited {code}"))
+                        .unwrap_or_default()
+                )));
+            if rows > TERMINAL_PAGE_ROWS {
+                footer = footer
+                    .child(
+                        Button::new("terminal-page-up")
+                            .label("Earlier rows")
+                            .disabled(offset == 0)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.terminal_row_offset =
+                                    this.terminal_row_offset.saturating_sub(TERMINAL_PAGE_ROWS);
+                                this.terminal_frame = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("terminal-page-down")
+                            .label("Later rows")
+                            .disabled(offset + count >= rows)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.terminal_row_offset += TERMINAL_PAGE_ROWS;
+                                this.terminal_frame = None;
+                                cx.notify();
+                            })),
+                    );
+            }
+            if frame["truncated"] == true {
+                footer = footer.child(div().child("Long cell text or title clipped"));
+            }
+        } else {
+            body = body.child("Waiting for terminal output…");
+        }
+        div()
+            .id("terminal-pane")
+            .flex()
+            .flex_col()
+            .h(px(300.))
+            .min_h_0()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(rgb(0x29303d))
+            .child(div().p_2().child(tabs))
+            .child(body)
+            .child(div().p_2().child(footer))
+            .when(!self.terminal_status.is_empty(), |view| {
+                view.child(div().px_2().text_sm().child(self.terminal_status.clone()))
+            })
+            .into_any_element()
     }
     fn terminal_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let Some(id) = self.terminal_id.as_ref() else {
@@ -1612,6 +2119,9 @@ impl Coincide {
         ) {
             self.status = e.to_string();
         }
+        self.terminal_blink_origin = Instant::now();
+        self.terminal_blink_on = true;
+        cx.notify();
         cx.stop_propagation();
     }
     fn fork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1636,6 +2146,7 @@ impl Render for Coincide {
         if let Some(id) = open {
             self.select(&id, window, cx);
         }
+        self.sync_model_input(window, cx);
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
             if self.composer.read(cx).value().as_ref() != draft {
@@ -1848,31 +2359,7 @@ impl Render for Coincide {
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when(self.terminal_id.is_some(), |view| {
-                        view.child(
-                            div()
-                                .id("terminal-pane")
-                                .h(px(250.))
-                                .overflow_y_scroll()
-                                .p_3()
-                                .bg(rgb(0x090d13))
-                                .track_focus(&self.terminal_focus)
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, window, cx| {
-                                        window.focus(&this.terminal_focus, cx)
-                                    }),
-                                )
-                                .on_key_down(
-                                    cx.listener(|this, event, _, cx| this.terminal_key(event, cx)),
-                                )
-                                .font_family(if cfg!(target_os = "macos") {
-                                    "Menlo"
-                                } else {
-                                    "monospace"
-                                })
-                                .text_size(px(12.))
-                                .child(self.terminal_text.clone()),
-                        )
+                        view.child(self.terminal_pane(window, cx))
                     })
                     .when(!self.schedules_open, |view| {
                         view.child(
@@ -1899,6 +2386,11 @@ impl Render for Coincide {
                                                     this.select_provider("claude", cx)
                                                 })),
                                         )
+                                        .child(Button::new("provider-grok").label("Grok").on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.select_provider("grok", cx)
+                                            }),
+                                        ))
                                         .child(
                                             div().text_sm().child(
                                                 self.selected
@@ -1906,6 +2398,32 @@ impl Render for Coincide {
                                                     .map(|v| text(&v["selection"], "provider"))
                                                     .unwrap_or_default(),
                                             ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .mb_2()
+                                        .child(div().text_sm().child("Model ID"))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(Input::new(&self.model_input)),
+                                        )
+                                        .child(
+                                            Button::new("apply-model")
+                                                .label("Apply model")
+                                                .disabled(self.selected.as_ref().is_none_or(
+                                                    |thread| {
+                                                        self.running.contains(&text(thread, "id"))
+                                                    },
+                                                ))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.apply_model(cx)
+                                                })),
                                         ),
                                 )
                                 .when_some(draft_images, |view, images| view.child(images))

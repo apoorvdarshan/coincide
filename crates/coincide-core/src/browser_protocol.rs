@@ -39,6 +39,7 @@ pub enum BrowserAction {
     Forward,
     Reload,
     Tabs,
+    Downloads,
     NewTab {
         #[serde(default)]
         url: Option<String>,
@@ -111,6 +112,301 @@ fn validate_selector(selector: &str) -> Result<()> {
         !selector.trim().is_empty() && selector.len() <= 4096,
         "Selector must contain 1–4096 bytes"
     );
+    Ok(())
+}
+
+/// Native download callbacks do not provide an ID on macOS. Permit only one
+/// accepted transfer per (thread, tab, URL), and account for callbacks from
+/// rejected starts before accepting that URL again. Never expose request URLs.
+pub struct DownloadRegistry {
+    directory: std::path::PathBuf,
+    records: Vec<DownloadRecord>,
+    rejected: std::collections::HashMap<(String, String, String), u32>,
+    last_errors: std::collections::VecDeque<(String, String)>,
+    correlation_exhausted: bool,
+}
+struct DownloadRecord {
+    id: String,
+    thread: String,
+    tab: String,
+    url: String,
+    destination: std::path::PathBuf,
+    state: &'static str,
+    error: Option<String>,
+}
+impl DownloadRegistry {
+    pub fn new(directory: std::path::PathBuf) -> Result<Self> {
+        ensure!(
+            directory.is_absolute(),
+            "Download directory must be absolute"
+        );
+        std::fs::create_dir_all(&directory)?;
+        require_download_directory(&directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(Self {
+            directory: directory.canonicalize()?,
+            records: Vec::new(),
+            rejected: Default::default(),
+            last_errors: Default::default(),
+            correlation_exhausted: false,
+        })
+    }
+
+    pub fn start(
+        &mut self,
+        thread: &str,
+        tab: &str,
+        url: &str,
+        suggested: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        let result = self.start_inner(thread, tab, url, suggested);
+        if let Err(error) = &result {
+            self.refuse(thread, &error.to_string());
+        }
+        result
+    }
+
+    /// Record only bounded, application-generated explanations, never a request
+    /// URL or a native backend error that could contain page/private content.
+    pub fn refuse(&mut self, thread: &str, reason: &str) {
+        self.last_errors.retain(|(owner, _)| owner != thread);
+        if self.last_errors.len() >= 128 {
+            self.last_errors.pop_front();
+        }
+        self.last_errors
+            .push_back((thread.to_owned(), reason.chars().take(512).collect()));
+    }
+
+    fn start_inner(
+        &mut self,
+        thread: &str,
+        tab: &str,
+        url: &str,
+        suggested: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        validate_url(url)?;
+        uuid::Uuid::parse_str(thread)?;
+        uuid::Uuid::parse_str(tab)?;
+        let key = (thread.to_owned(), tab.to_owned(), url.to_owned());
+        let result = (|| -> Result<std::path::PathBuf> {
+            ensure!(
+                !self.correlation_exhausted,
+                "Download callback tracking is full; restart the browser before downloading more files"
+            );
+            ensure!(
+                !self.rejected.contains_key(&key),
+                "Waiting for a refused download's cancellation callback; use a new tab to retry"
+            );
+            ensure!(
+                !self.records.iter().any(|r| r.thread == thread
+                    && r.tab == tab
+                    && r.url == url
+                    && matches!(r.state, "downloading" | "unconfirmed")),
+                "This URL already has an active download in this tab"
+            );
+            ensure!(
+                self.records
+                    .iter()
+                    .filter(|r| matches!(r.state, "downloading" | "unconfirmed"))
+                    .count()
+                    < 8,
+                "At most 8 native downloads may be active"
+            );
+            if self.records.len() >= 50 {
+                let removable = self
+                    .records
+                    .iter()
+                    .position(|r| !matches!(r.state, "downloading" | "unconfirmed"));
+                ensure!(removable.is_some(), "Download history is full");
+                self.records.remove(removable.expect("checked record"));
+            }
+            require_download_directory(&self.directory)?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let folder = self.directory.join(&id);
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(&folder)?;
+            let destination = folder.join(download_filename(&suggested.to_string_lossy()));
+            self.records.push(DownloadRecord {
+                id,
+                thread: thread.into(),
+                tab: tab.into(),
+                url: url.into(),
+                destination: destination.clone(),
+                state: "downloading",
+                error: None,
+            });
+            Ok(destination)
+        })();
+        if result.is_err() {
+            // A denied start may still trigger a failure callback. Without this
+            // ledger it could incorrectly fail a later accepted same-URL retry.
+            if self.rejected.len() >= 128 && !self.rejected.contains_key(&key) {
+                self.correlation_exhausted = true;
+            } else {
+                let count = self.rejected.entry(key).or_default();
+                if *count >= 1024 {
+                    self.correlation_exhausted = true;
+                } else {
+                    *count += 1;
+                }
+            }
+        }
+        result
+    }
+
+    pub fn complete(
+        &mut self,
+        thread: &str,
+        tab: &str,
+        url: &str,
+        path: Option<&std::path::Path>,
+        success: bool,
+    ) {
+        let key = (thread.to_owned(), tab.to_owned(), url.to_owned());
+        let index = self.records.iter().position(|record| {
+            record.thread == thread
+                && record.tab == tab
+                && record.url == url
+                && matches!(record.state, "downloading" | "unconfirmed")
+                && path.is_none_or(|path| {
+                    path == record.destination
+                        // WebView2 removes the Windows verbatim prefix when
+                        // saving; our root was canonicalized with that prefix.
+                        || (cfg!(windows)
+                            && path.canonicalize().ok().as_ref() == Some(&record.destination))
+                })
+        });
+        // A backend-provided destination exactly identifies an accepted record.
+        // macOS sends no path: consume expected rejection failures first.
+        if !success
+            && (path.is_none() || index.is_none())
+            && let Some(count) = self.rejected.get_mut(&key)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.rejected.remove(&key);
+            }
+            return;
+        }
+        let Some(index) = index else {
+            return;
+        };
+        let record = &mut self.records[index];
+        if !success {
+            record.state = "failed";
+            record.error =
+                Some("Native browser reported that the download failed or was cancelled.".into());
+            return;
+        }
+        match finish_download(&self.directory, &record.destination) {
+            Ok(()) => {
+                record.state = "finished";
+                record.error = None;
+            }
+            Err(error) => {
+                record.state = "failed";
+                record.error = Some(format!("Downloaded file could not be verified: {error}"));
+            }
+        }
+    }
+
+    pub fn tab_closed(&mut self, thread: &str, tab: &str) {
+        for record in &mut self.records {
+            if record.thread == thread && record.tab == tab && record.state == "downloading" {
+                record.state = "unconfirmed";
+                record.error = Some(
+                    "Tab closed before a completion callback; partial files are retained.".into(),
+                );
+            }
+        }
+    }
+
+    pub fn list(&self, thread: &str, tab: Option<&str>) -> Value {
+        let downloads=self.records.iter().filter(|r|r.thread==thread && tab.is_none_or(|tab|r.tab==tab)).map(|r| {
+            let mut value=serde_json::json!({"id":r.id,"tab":r.tab,"state":r.state,"name":r.destination.file_name().map(|name|name.to_string_lossy())});
+            if r.state=="finished" {value["path"]=serde_json::json!(r.destination);}
+            if let Some(error)=&r.error {value["error"]=serde_json::json!(error.chars().take(2000).collect::<String>());}
+            value
+        }).collect::<Vec<_>>();
+        serde_json::json!({"downloads":downloads,"acceptingDownloads":!self.correlation_exhausted,
+            "lastError":self.last_errors.iter().find(|(owner,_)|owner==thread).map(|(_,error)|error),
+            "pendingCancellationCallbacks":self.rejected.iter().filter(|((owner,owner_tab,_),_)|owner==thread && tab.is_none_or(|tab|owner_tab==tab)).map(|(_,count)|u64::from(*count)).sum::<u64>(),
+            "limitations":["No progress bytes, cancellation or resume API","Files and partial downloads remain on disk; history is session-only","Only HTTP(S) downloads; at most 8 active and 50 retained records","Missing cancellation callbacks can block same-URL retries in a tab"]})
+    }
+}
+
+/// Server-supplied suggestions are filenames, never trusted paths. Match both
+/// separator styles on every host and keep names valid on Windows as well.
+pub fn download_filename(suggestion: &str) -> String {
+    let leaf = suggestion.rsplit(['/', '\\']).next().unwrap_or("");
+    let mut name = String::new();
+    for ch in leaf.chars().filter(|ch|!ch.is_control() && !matches!(ch,'<'|'>'|':'|'"'|'|'|'?'|'*'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}')) {
+        if name.len()+ch.len_utf8()>180 {break;}
+        name.push(ch);
+    }
+    name = name.trim_end_matches([' ', '.']).to_owned();
+    if name.is_empty() {
+        return "download".into();
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+    {
+        name.insert(0, '_');
+    }
+    name
+}
+fn require_download_directory(path: &std::path::Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "Download directory must be a real directory"
+    );
+    Ok(())
+}
+fn finish_download(root: &std::path::Path, destination: &std::path::Path) -> Result<()> {
+    require_download_directory(root)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Download has no parent"))?;
+    ensure!(
+        parent.parent() == Some(root),
+        "Download escaped its UUID directory"
+    );
+    require_download_directory(parent)?;
+    let metadata = std::fs::symlink_metadata(destination)?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "Download must be a regular file"
+    );
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(destination)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "Download must be a regular file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     Ok(())
 }
 
