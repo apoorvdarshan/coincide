@@ -339,9 +339,6 @@
   <data name="Text_236af47b384b6ef4" xml:space="preserve">
     <value>Review setup</value>
   </data>
-  <data name="Text_23999f07a784c4f4" xml:space="preserve">
-    <value>Ready. Record starts the microphone only after you choose it.</value>
-  </data>
   <data name="Text_240732794d597f70" xml:space="preserve">
     <value>Tuesday</value>
   </data>
@@ -456,6 +453,9 @@
   <data name="Text_381a70a025ce4cb2" xml:space="preserve">
     <value>Balance: Unavailable · Rate limits: Unavailable</value>
   </data>
+  <data name="Text_384f99c5604d2918" xml:space="preserve">
+    <value>Tap to start or stop</value>
+  </data>
   <data name="Text_38c0cd9b7a567b9d" xml:space="preserve">
     <value>Agent tools</value>
   </data>
@@ -500,6 +500,9 @@
   </data>
   <data name="Text_3fd70a61149c0ed1" xml:space="preserve">
     <value>Loading pull request…</value>
+  </data>
+  <data name="Text_40b3c768c0e93eb9" xml:space="preserve">
+    <value>Hold to dictate</value>
   </data>
   <data name="Text_41431c2bbdc5f824" xml:space="preserve">
     <value>附加</value>
@@ -549,11 +552,17 @@
   <data name="Text_4890edb184128d64" xml:space="preserve">
     <value>Schedule proposals always require your approval in the Schedules panel. Computer Use permissions are managed separately in Settings.</value>
   </data>
+  <data name="Text_492999a0f2761cbc" xml:space="preserve">
+    <value>Voice shortcut settings could not be loaded. The global shortcut remains off.</value>
+  </data>
   <data name="Text_499f3644e41825d9" xml:space="preserve">
     <value>Keep Awake uses an app-owned sleep request. Windows, the lid policy or ASUS software can still request hibernation. Quit releases the request.</value>
   </data>
   <data name="Text_4a2f004629efd538" xml:space="preserve">
     <value>正在載入提取要求…</value>
+  </data>
+  <data name="Text_4abd41415f9f81fd" xml:space="preserve">
+    <value>Ready. Choose Record or use an enabled dictation shortcut.</value>
   </data>
   <data name="Text_4baba93d34a3603b" xml:space="preserve">
     <value>Refresh manager status</value>
@@ -728,6 +737,9 @@
   </data>
   <data name="Text_661045907dd942bc" xml:space="preserve">
     <value>提交</value>
+  </data>
+  <data name="Text_661ae80fb885f4ca" xml:space="preserve">
+    <value>Dictation shortcut behavior</value>
   </data>
   <data name="Text_66242229134ba7c5" xml:space="preserve">
     <value>Saving conversations and stopping background work…</value>
@@ -1159,6 +1171,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_a86d72b46f54703d" xml:space="preserve">
     <value>An empty folder uses Home. Automatic checkpoints are disabled for Home, its parent and disk roots.</value>
   </data>
+  <data name="Text_a8d1061cbbd2d485" xml:space="preserve">
+    <value>The global shortcut is off by default. When Voice and this shortcut are enabled, use it from any app to dictate into the selected Coincide conversation. Release a held shortcut to transcribe, or tap again in tap mode. Text is never sent automatically.</value>
+  </data>
   <data name="Text_ab7d3a22ccbf21a0" xml:space="preserve">
     <value>Loading instructions…</value>
   </data>
@@ -1188,6 +1203,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_aed9c16a7eddcb50" xml:space="preserve">
     <value>Review the conversation to check what already ran. Resuming schedules only future occurrences.</value>
+  </data>
+  <data name="Text_aedbbe4427ec59b4" xml:space="preserve">
+    <value>The global dictation shortcut is unavailable or already used by another action or app.</value>
   </data>
   <data name="Text_af683e4e2d718d32" xml:space="preserve">
     <value>Open message</value>
@@ -1365,6 +1383,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d0680e7343dedb27" xml:space="preserve">
     <value>拒絕</value>
+  </data>
+  <data name="Text_d0dffd856ea5557e" xml:space="preserve">
+    <value>Global dictation shortcut: Ctrl+Shift+Space</value>
   </data>
   <data name="Text_d1bb1f13cc349256" xml:space="preserve">
     <value>引導</value>
@@ -1590,6 +1611,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_f4fbdbee8845e29a" xml:space="preserve">
     <value>Manager is ready. Each fill still needs Allow once.</value>
+  </data>
+  <data name="Text_f561f99a9226bc57" xml:space="preserve">
+    <value>Saved. The global dictation shortcut is unavailable or already used by another action or app.</value>
   </data>
   <data name="Text_f5af49563512943c" xml:space="preserve">
     <value>新增對話</value>

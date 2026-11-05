@@ -36,6 +36,7 @@
 #include "ProviderAccountsPanel.h"
 #include "../Runtime/WindowsNotifications.h"
 #include "VoicePanel.h"
+#include "../Runtime/GlobalVoiceShortcut.h"
 #include "../Runtime/ComputerUseNative.h"
 #include "../Runtime/ComputerUseProcess.h"
 #include "ComputerUsePanel.h"
@@ -144,6 +145,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     std::shared_ptr<coincide::ImportPanel> import_panel;
     std::shared_ptr<coincide::ProviderAccountsPanel> accounts_panel;
     std::shared_ptr<coincide::VoicePanel> voice_panel;
+    std::unique_ptr<coincide::GlobalVoiceShortcut> voice_shortcut;
     std::uint64_t draft_revision{};
     std::shared_ptr<coincide::WindowsNotifications> notifications;
     std::shared_ptr<coincide::computer_use::Controller> computer_use;
@@ -500,7 +502,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         platform_timer=window.DispatcherQueue().CreateTimer();platform_timer.Interval(std::chrono::seconds(1));
         platform_timer.Tick([this](const auto&,const auto&){platform_tick();});
         window.AppWindow().Closing([this](const auto&,const winrt::Microsoft::UI::Windowing::AppWindowClosingEventArgs& args){
-            close_voice();
+            cancel_voice();
             if(repository_mutating()){
                 args.Cancel(true);
                 if(!quitting&&preferences.background&&desktop&&desktop->tray_available()){hide_tools();window.AppWindow().Hide();}
@@ -515,6 +517,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         window.Closed([this](const auto&, const auto&) {
             if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
             closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
+            if(voice_shortcut)voice_shortcut->close();
             if(thread_find)thread_find->close(false);
             if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
@@ -541,6 +544,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         diagnostic(L"Window activated");
         refresh_sidebar();
         if (!visible.empty()) open_thread(visible.front());
+        if(!fixture_preview)configure_voice_shortcut();
     }
 
     void refresh_sidebar() {
@@ -1146,7 +1150,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(before.executable!=after.executable||before.enabled!=after.enabled||before.profile_id!=after.profile_id){at->second.session->shutdown();at=running.erase(at);}else ++at;
         }
         const bool notification_change=preferences.notifications!=value.notifications;
-        preferences=std::move(value);apply_appearance();install_shortcuts();if(notification_change)configure_notifications();
+        preferences=std::move(value);apply_appearance();install_shortcuts();if(notification_change)configure_notifications();if(!fixture_preview)configure_voice_shortcut();
         if(!fixture_preview){try{power_request.update({preferences.keep_awake,preferences.awake_on_battery,preferences.keep_display});platform_error.clear();}catch(const std::exception& error){platform_error=error.what();show_error(winrt::to_hstring(platform_error));}}
         if(!selected.empty())open_thread(selected);
     }
@@ -1189,7 +1193,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void show_window(){if(!closing){window.AppWindow().Show();window.Activate();if(composer&&composer.IsEnabled())composer.Focus(xaml::FocusState::Programmatic);}}
     void quit_app(){
-        if(closing||quit_task_active)return;quitting=true;update_composer();
+        if(closing||quit_task_active)return;quitting=true;cancel_voice();update_composer();
         if(repository_mutating()){quit_when_safe=true;state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));return;}
         quit_when_safe=false;finish_quit();
     }
@@ -1227,6 +1231,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }catch(...){quit_task_active=false;quitting=false;quit_when_safe=false;report_exception();update_composer();}
     }
     bool background_work()const{
+        if(voice_shortcut&&voice_shortcut->registered())return true;
         if(preferences.keep_awake||repository_mutating())return true;
         for(const auto& thread:workspace.threads)if(thread_busy(thread.id)||active_terminal(thread.id))return true;
         if(schedule_panel)for(const auto& task:schedule_panel->store().tasks())if(task.in_flight||(task.active()&&task.next_run))return true;
@@ -1378,6 +1383,22 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }catch(...){report_exception();}
     }
 
+    void cancel_voice(){if(voice_shortcut)voice_shortcut->cancel();if(voice_panel&&voice_panel->active())voice_panel->cancel();}
+    bool configure_voice_shortcut(const coincide::OfflineVoiceSettings* saved=nullptr){
+        if(fixture_preview||closing)return false;
+        try{
+            const auto settings=saved?*saved:coincide::OfflineVoiceSettingsStore(data_directory()/L"Voice").open();
+            bool enabled=settings.enabled&&settings.shortcut_enabled,conflict{};
+            if(enabled)for(const auto& [action,text]:preferences.shortcuts){(void)action;const auto value=coincide::parse_shortcut(text);if(value.key==VK_SPACE&&value.control&&value.shift&&!value.alt){enabled=false;conflict=true;break;}}
+            if(!voice_shortcut){const auto weak=get_weak();voice_shortcut=std::make_unique<coincide::GlobalVoiceShortcut>([weak](coincide::VoiceShortcutAction action){const auto self=weak.get();if(!self)return false;
+                if(action==coincide::VoiceShortcutAction::cancel){if(self->voice_panel)self->voice_panel->cancel();return true;}
+                if(action==coincide::VoiceShortcutAction::finish){if(self->voice_panel)self->voice_panel->shortcut_finish();return true;}
+                if(self->closing||self->quitting||self->dialog_open||!self->writable||self->selected.empty())return false;HWND owner{};winrt::check_hresult(self->window.as<IWindowNative>()->get_WindowHandle(&owner));if(!IsWindowEnabled(owner))return false;self->show_window();self->show_voice();return self->voice_panel&&self->voice_panel->shortcut_begin();
+            },[weak]{const auto self=weak.get();return self&&self->voice_panel&&self->voice_panel->active();});}
+            const bool registered=voice_shortcut->configure(enabled,settings.shortcut_mode)&&!conflict;
+            if(!registered)state.Text(coincide::ui_text(L"The global dictation shortcut is unavailable or already used by another action or app."));return registered;
+        }catch(...){if(voice_shortcut)try{voice_shortcut->configure(false,coincide::VoiceShortcutMode::hold);}catch(...){}state.Text(coincide::ui_text(L"Voice shortcut settings could not be loaded. The global shortcut remains off."));return false;}
+    }
     void close_voice(){
         if(!voice_panel)return;if(visible_tool=="voice")hide_tools();voice_panel->close();std::uint32_t index{};if(tool_views&&tool_views.Children().IndexOf(voice_panel->view(),index))tool_views.Children().RemoveAt(index);voice_panel.reset();
     }
@@ -1388,11 +1409,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(!voice_panel){const auto weak=get_weak();HWND owner{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&owner));
                 voice_panel=coincide::VoicePanel::create(data_directory()/L"Voice",[weak]{const auto self=weak.get();if(!self||self->closing||!self->writable||self->selected.empty()||self->workspace.thread(self->selected).deleted_at)throw std::runtime_error("Select an available conversation before recording.");return coincide::VoiceDestination{self->selected,self->draft_revision};},
                 [weak](const coincide::VoiceDestination& destination,const std::string& text){const auto self=weak.get();if(!self||self->closing||!self->writable||self->selected!=destination.thread_id||self->draft_revision!=destination.draft_revision)return false;
-                    auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at||text.empty()||text.size()>256*1024||text.find('\0')!=std::string::npos||!coincide::local_file::utf8(text)||thread.draft.size()>4*1024*1024-text.size())return false;
-                    const auto previous=thread.draft;thread.draft+=previous.empty()||std::isspace(static_cast<unsigned char>(previous.back()))?text:" "+text;
+                    auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at||text.empty()||text.size()>256*1024||text.find('\0')!=std::string::npos||!coincide::local_file::utf8(text))return false;
+                    const auto previous=thread.draft;const bool separator=!previous.empty()&&!std::isspace(static_cast<unsigned char>(previous.back()));if(previous.size()>4*1024*1024-text.size()-static_cast<std::size_t>(separator))return false;thread.draft+=separator?" "+text:text;
                     try{self->save_thread_durably(thread);}catch(...){thread.draft=previous;throw;}
                     self->selecting=true;try{self->composer.Text(winrt::to_hstring(thread.draft));}catch(...){self->selecting=false;throw;}self->selecting=false;self->update_composer();return true;
-                },owner);tool_views.Children().Append(voice_panel->view());}
+                },owner,{},[weak](const coincide::OfflineVoiceSettings& settings){const auto self=weak.get();return self&&!self->closing&&self->configure_voice_shortcut(&settings);});tool_views.Children().Append(voice_panel->view());}
             select_tool("voice",voice_panel->view(),label(L"Voice",L"Voice"));
         }catch(...){report_exception();}
     }
