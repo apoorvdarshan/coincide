@@ -240,6 +240,14 @@ fn transcript_find_shortcut_routes(
         .and_then(|thread| thread["id"].as_str())
         .is_some_and(|id| !browser_panels.contains(id))
 }
+fn consume_open_activation(requested: &mut Option<String>, selected: &str) -> bool {
+    if requested.as_deref() == Some(selected) {
+        *requested = None;
+        true
+    } else {
+        false
+    }
+}
 fn github_threads_method_allowed(method: &str) -> bool {
     matches!(
         method,
@@ -1294,11 +1302,17 @@ impl Coincide {
                     self.browser_address
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
-                if let Ok(mut engine) = self.engine.try_lock() {
+                let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
                     engine.active_thread = Some(id.into());
-                    if engine.requested_open.as_deref() == Some(id) {
-                        engine.requested_open = None;
-                    }
+                    consume_open_activation(&mut engine.requested_open, id)
+                } else {
+                    false
+                };
+                if activate_requested {
+                    // Explicit threads.open, consumed once after a successful
+                    // load. Polls and ordinary selection never steal focus.
+                    cx.activate(true);
+                    window.activate_window();
                 }
                 self.terminal_open = false;
                 self.sync_terminal_workspace(window, cx);
@@ -3733,5 +3747,16 @@ mod find_mount_tests {
         ] {
             assert!(!github_threads_method_allowed(method));
         }
+    }
+    #[::core::prelude::v1::test]
+    fn native_activation_consumes_only_matching_explicit_open_once() {
+        let mut requested = None;
+        assert!(!consume_open_activation(&mut requested, "thread"));
+        requested = Some("other".into());
+        assert!(!consume_open_activation(&mut requested, "thread"));
+        assert_eq!(requested.as_deref(), Some("other"));
+        assert!(consume_open_activation(&mut requested, "other"));
+        assert!(requested.is_none());
+        assert!(!consume_open_activation(&mut requested, "other"));
     }
 }
