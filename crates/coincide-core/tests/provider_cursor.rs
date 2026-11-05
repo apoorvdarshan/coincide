@@ -23,13 +23,17 @@ assert os.environ['AGENT_CLI_CREDENTIAL_STORE']=='memory'
 assert os.environ['CURSOR_AUTH_TOKEN']=='synthetic-token-not-a-real-credential'
 assert os.environ['CURSOR_DATA_DIR']==str(profile/'artifacts')
 assert os.environ['DIRENV_DISABLE']=='1'
-assert sys.argv[1:]==['--disable-project-configs','--model','chosen-model','acp']
+target='user-default' if MODE.startswith('inherited-model') else 'chosen-model'
+assert sys.argv[1:]==['--disable-project-configs','--model',target,'acp']
 config=json.loads((profile/'cli-config.json').read_text());assert config['approvalMode']=='allowlist'
 assert config['permissions']['allow']==[]
 config['selectedModel']={'modelId':'CLI changed its model default'}
 (profile/'cli-config.json').write_text(json.dumps(config))
 open('pid','w').write(str(os.getpid()))
-r=read();assert r['method']=='initialize';reply(r,{'protocolVersion':1,'agentCapabilities':{'loadSession':True,'promptCapabilities':{'image':True}}})
+r=read();assert r['method']=='initialize'
+assert r['params']['clientCapabilities']=={'fs':{'readTextFile':False,'writeTextFile':False},'terminal':False,'_meta':{'parameterizedModelPicker':True}}
+parameterized=r['params']['clientCapabilities']['_meta']['parameterizedModelPicker']
+reply(r,{'protocolVersion':1,'agentCapabilities':{'loadSession':True,'promptCapabilities':{'image':True}}})
 r=read();assert r['method']==('session/load' if RESUME else 'session/new')
 if RESUME:
  assert r['params']['sessionId']=='native'
@@ -41,6 +45,19 @@ if RESUME:
  db.close()
  send({'method':'session/update','params':{'sessionId':'native','update':{'sessionUpdate':'agent_message_chunk','content':{'text':'OLD REPLAY'}}}})
  if MODE=='resume-failed':send({'id':r['id'],'error':{'code':-32602,'message':'cannot load'}});sys.stdin.readline();sys.exit(0)
+if MODE.startswith('inherited-model'):
+ # Match installed Cursor: parameterized mode exposes base IDs; its default
+ # variant picker exposes distinct opaque variant IDs instead.
+ advertised='other-base' if MODE=='inherited-model-unavailable' else ('user-default' if parameterized else 'opaque-variant')
+ reply(r,{'sessionId':'native','models':{'currentModelId':advertised,'availableModels':[{'modelId':advertised}]},'configOptions':[{'id':'model','category':'model','currentValue':advertised,'options':[{'value':advertised}]}]})
+ if MODE=='inherited-model-unavailable':
+  if sys.stdin.readline():open('unexpected-after-unavailable','w').write('request')
+  sys.exit(0)
+ r=read();assert r['method']=='session/set_mode' and r['params']['modeId']=='agent';reply(r,{})
+ r=read();assert r['method']=='session/prompt' and r['params']['prompt']==[{'type':'text','text':'fixture prompt'}]
+ open('prompt-ready','w').write('ready')
+ send({'method':'session/update','params':{'sessionId':'native','update':{'sessionUpdate':'agent_message_chunk','content':{'text':'NEW ANSWER'}}}})
+ reply(r,{'stopReason':'end_turn'});sys.stdin.readline();sys.exit(0)
 reply(r,{'sessionId':'native','models':{'currentModelId':'old-model','availableModels':[{'modelId':'chosen-model'}]}})
 r=read();assert r['method']=='session/set_config_option' and r['params']['value']=='chosen-model'
 if MODE=='model-unconfirmed':reply(r,{});sys.stdin.readline();sys.exit(0)
@@ -99,6 +116,8 @@ fn cursor_private_profiles_resume_approve_ask_cancel_without_global_writes() {
         "no-auth",
         "api",
         "model-unconfirmed",
+        "inherited-model-base",
+        "inherited-model-unavailable",
     ] {
         let dir = tempfile::tempdir().unwrap();
         native_database(dir.path());
@@ -187,7 +206,7 @@ fn cursor_fixture_child() {
             executable: directory.join("fixture"),
             cwd: directory.clone(),
             session: mode.starts_with("resume").then(|| "native".into()),
-            model: Some("chosen-model".into()),
+            model: (!mode.starts_with("inherited-model")).then(|| "chosen-model".into()),
             prompt: "fixture prompt".into(),
         },
     );
@@ -228,7 +247,10 @@ fn cursor_fixture_child() {
                 _ => {}
             },
             Event::Finished => {
-                assert!(matches!(mode.as_str(), "new" | "resume" | "stop"));
+                assert!(matches!(
+                    mode.as_str(),
+                    "new" | "resume" | "stop" | "inherited-model-base"
+                ));
                 break;
             }
             Event::Failed(error) => {
@@ -239,6 +261,12 @@ fn cursor_fixture_child() {
                     }
                     "provider-error" => assert!(error.contains("fixture failure")),
                     "no-auth" => assert!(error.contains("CURSOR_AUTH_TOKEN")),
+                    "inherited-model-unavailable" => {
+                        assert!(native);
+                        assert!(error.contains("did not confirm or advertise the requested model"));
+                        assert!(!directory.join("prompt-ready").exists());
+                        assert!(!directory.join("unexpected-after-unavailable").exists());
+                    }
                     "model-unconfirmed" => {
                         assert!(error.contains("did not apply the selected model"))
                     }
@@ -251,6 +279,10 @@ fn cursor_fixture_child() {
     if matches!(mode.as_str(), "new" | "resume") {
         assert_eq!(text, "NEW ANSWER");
         assert!(settled && native);
+    }
+    if mode == "inherited-model-base" {
+        assert!(native && directory.join("prompt-ready").exists());
+        assert_eq!(text, "NEW ANSWER");
     }
     if mode == "no-auth" {
         assert!(!directory.join("pid").exists());
