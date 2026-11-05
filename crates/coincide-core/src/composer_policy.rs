@@ -170,13 +170,17 @@ impl Policy {
         );
         Ok(())
     }
-    pub fn preflight(&self) -> Result<()> {
+    fn validate_effort_proof(&self) -> Result<()> {
         if self.effort.is_some() {
             let proof = self.effort_proof.as_ref().context(
                 "Refresh the exact Codex model catalog before applying reasoning effort",
             )?;
             proof.validate_executable_for_policy()?;
         }
+        Ok(())
+    }
+    pub fn preflight(&self) -> Result<()> {
+        self.validate_effort_proof()?;
         if self.provider == "codex"
             && let Some(model) = &self.model
         {
@@ -195,7 +199,7 @@ impl Policy {
         Ok(())
     }
     /// Exact turn/start policy fields only. Thread creation/resume parameters,
-    /// text/images, effort/speed and account selection are deliberately separate.
+    /// text/images and account selection are separate; speed remains unsupported.
     pub fn codex_turn_fields(
         &self,
         source_thread_id: &str,
@@ -222,7 +226,9 @@ impl Policy {
                 "Codex collaboration mode requires an explicit model or matching provider-resolved model; provider default alone cannot apply or clear Plan mode"
             );
         }
-        self.preflight()?;
+        // The source-bound resolved model above is valid at this wire boundary.
+        // Admission preflight has no such evidence and remains stricter.
+        self.validate_effort_proof()?;
         let mut fields = json!({"approvalPolicy":if self.access==Access::Approval{"untrusted"}else{"never"},"approvalsReviewer":"user","sandboxPolicy":{"type":if self.access==Access::Approval{"readOnly"}else{"dangerFullAccess"}}});
         if let Some(effort) = &self.effort {
             fields["effort"] = json!(effort);

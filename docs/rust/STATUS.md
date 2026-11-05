@@ -56,7 +56,7 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
-- 59abdfc passed all six Rust CI jobs (run 42097308139): macOS GPUI build,
+- cbc7eef passed all six Rust CI jobs (run 42105540376): macOS GPUI build,
   Linux/macOS/Windows core, Windows GPUI check and the new Linux GPUI check.
   Linux checks both desktop configurations and all eight headless release-receipt
   fixtures; this does not establish Linux GUI acceptance. The earlier 6dc104e
@@ -112,14 +112,22 @@ Latest verification and current gates:
   default-login reuse passed 16 profile/auth tests. A follow-up preserves only
   validated active-team routing for the same stored-login identity; 22 focused
   tests and the isolated Cursor provider integration passed. Actual Cursor
-  inference subsequently failed after session creation, with the worker returned
-  and no tool request observed; its cause is under diagnosis. The current-core
-  OpenCode one-turn smoke passed the exact assistant marker in 4.65 seconds,
-  with an empty workspace and actual Rust worker return.
+  inference initially failed after session creation. Boolean-only protocol
+  diagnostics traced the failure to opaque variant IDs versus the inherited
+  base model ID. The client now negotiates the CLI’s parameterized model picker
+  while keeping exact advertised-model checks. The protocol fixture and actual
+  existing-account Cursor turn passed (12.94 seconds, exact assistant marker,
+  no tools, empty workspace, Rust worker returned). OpenCode also passed the
+  current-core one-turn marker check in 4.65 seconds. Antigravity’s existing
+  runtime metadata is present, but a valid Rust-owned acknowledgement/account
+  binding is unconfirmed; no acknowledgement, login or provider run was invented.
 - The combined authentication/provider batch passed 456 core unit tests plus all
   integration targets (three isolated unit entrypoints remain parent-invoked),
   strict core Clippy and 302 desktop unit tests plus five integration targets.
-  Native menu routing is mounted but still needs real interaction acceptance.
+  Native Settings, exactly-one New Conversation, GPUI and WK Select All
+  routing, exact draft preservation and normal app-menu Quit subsequently passed
+  in an isolated full-app fixture. Cut/Copy/Paste were not executed against the
+  user clipboard; Hide/Show and Undo/Redo remain outside this acceptance slice.
   Twenty mechanical desktop lint fixes then passed the full 302-unit desktop
   suite and all five integration targets (19, 10, 14, 11 and 8 tests). A fresh
   strict desktop run still fails remaining diagnostics; no suppression was added.
@@ -192,20 +200,45 @@ Latest verification and current gates:
   have scoped native evidence. Metadata chooser interaction and broader browser,
   transcript and terminal acceptance remain open.
 
+The latest local batch passed 470 parallel core unit tests, all core integration
+targets, strict core Clippy, 319 desktop unit tests and four desktop integration
+targets (19, 10, 14 and 11). The eight unchanged WebView release tests now run in
+the actual vendored package feature context; their locked invocation passed and
+both Mac/Linux CI jobs retain that coverage. No test or lint suppression was added.
+
+Standalone `/plan`, `/build`, `/default` and `/model` are now handled locally
+before normal Send/queue admission. Native `/plan`, `/build` and `/model` passed
+with exact mode/draft ACKs, no history/session/provider runtime attempt and normal
+Quit persistence. Attachments/context keep slash text literal; failures retain the
+draft. The terminal readiness notice is cleared only by successful binding.
+
+Native terminal Edit validation exposed AppKit re-enabling a disabled native Copy
+selector. Restricted contexts now remove native edit selectors and use an
+unregistered disabled action. The actual fake-PTY test passed all four disabled
+Edit actions, restoration of native composer Select All, exact draft preservation
+and normal Quit with actual child exit. Strong native browser release is still
+Unknown and the helper remains unavailable in the ordinary application.
+
+Ordinary default-account Codex effort now requires a private latest-ready catalog
+proof bound to the explicit model, advertised choice and executable metadata.
+Refresh/revocation, invalid selection and failure cases are tested, including the
+actual fake-provider wire boundary. Controls preserve saved effort, offer only
+current scoped choices and require explicit Apply; an explicit effort-only clear
+can repair stale proof without changing other fields. Native effort-control
+acceptance is pending. Speed and Swift’s Astra special default override remain
+unsupported; executable metadata binding is not cryptographic running-code trust.
+
 The parent normal-quit mount freezes new work, retains recovery controls, drains owned workers
 off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last fully green Rust remote checkpoint is 59abdfc (all six jobs). The
-a9a2eaa run passed five jobs but failed Linux core during updater rollback
-recovery: another helper still held the target lock. A deterministic duplicate-FD
-regression covers inherited open-file-description custody; explicit unlock before
-close fixes the source mechanism. All 21 focused installer tests pass locally;
-the corrected exact commit still requires parallel core and Linux CI validation. The
-follow-up WebView payload and Cursor team-routing changes require their own pushed
-CI checkpoint. Native menu acceptance and strong native browser deallocation
-remain open. No real OS GUI parity is inferred from compilation.
+The last fully green Rust remote checkpoint is cbc7eef (all six jobs); f521be7
+also passed all six Rust jobs and all three packaging-validation jobs after the
+explicit transaction-lock fix. Newer local command, effort, picker and menu fixes
+have passed the checks above and require their own pushed CI checkpoint. Native
+menu/terminal fixtures and real provider smoke checks are scoped evidence, not
+full OS GUI parity, installation/rollback or data cutover acceptance.
 
 ## Earlier parallel checkpoint (2026-11-05)
 

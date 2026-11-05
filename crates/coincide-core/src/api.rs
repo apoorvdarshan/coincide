@@ -595,10 +595,9 @@ impl Engine {
                     } else {
                         self.composer_effort_proof(&thread["selection"]).and_then(|proof| crate::composer_selection::validate_thread_with_proof(&thread,proof.as_ref())).err().map(|error|error.to_string())
                     };
-                    if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)? {
-                        if let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
-                            provider["effort"] = self.composer_effort_capability(&thread["selection"]);
-                        }
+                    if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
+                        provider["effort"] = self.composer_effort_capability(&thread["selection"]);
                     }
                     // A repair capability is separate from the locked/proof state.
                     // It permits only removing effort, never sending unproved work.
