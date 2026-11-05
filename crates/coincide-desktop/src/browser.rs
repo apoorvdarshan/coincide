@@ -1,12 +1,14 @@
 //! UI-thread browser owner. The portable engine queues typed requests; native
 //! callbacks return bounded payloads without holding an engine mutex.
+#[path = "browser_cookie_actor.rs"]
+mod cookie_actor;
+#[cfg(any(target_os = "macos", test))]
+#[path = "browser_cookie_import.rs"]
+mod cookie_import;
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
-#[cfg(any(target_os = "macos", test))]
-#[path = "browser_cookie_import.rs"]
-mod cookie_import;
 pub use shutdown::BrowserShutdownStatus;
 use shutdown::TrackedEvaluation;
 
@@ -117,6 +119,8 @@ pub struct BrowserController {
     contexts: HashMap<String, wry::WebContext>,
     profiles: ProfileCatalog,
     #[cfg(target_os = "macos")]
+    cookie_actor: Option<cookie_actor::Actor>,
+    #[cfg(target_os = "macos")]
     private_stores: HashMap<String, Retained<WKWebsiteDataStore>>,
     downloads: Rc<RefCell<DownloadRegistry>>,
     waits: HashMap<String, PendingWait>,
@@ -178,6 +182,8 @@ impl BrowserController {
             contexts: HashMap::new(),
             profiles,
             #[cfg(target_os = "macos")]
+            cookie_actor: None,
+            #[cfg(target_os = "macos")]
             private_stores: HashMap::new(),
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(
                 profile_dir.join("downloads"),
@@ -195,6 +201,10 @@ impl BrowserController {
             return;
         }
         self.shutdown.close();
+        #[cfg(target_os = "macos")]
+        if let Some(actor) = self.cookie_actor.as_mut() {
+            actor.stop();
+        }
         for tabs in self.tabs.values() {
             for tab in tabs {
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
@@ -215,6 +225,7 @@ impl BrowserController {
     /// Native release is deliberately unconfirmed; no file/profile deletion or
     /// semantic cancellation is used as completion evidence.
     pub fn poll_shutdown(&mut self) -> BrowserShutdownStatus {
+        self.poll_cookie_import();
         let downloads_pending = self
             .tabs
             .keys()
@@ -962,6 +973,10 @@ impl BrowserController {
             !self.shutdown.callbacks.closed(),
             "Browser is shutting down"
         );
+        #[cfg(target_os = "macos")]
+        if let Some(actor) = self.cookie_actor.as_mut() {
+            actor.stop();
+        }
         if let crate::browser_settings::ProfileOperation::Select(ProfileChoice::Persistent(id)) =
             &request.operation
         {

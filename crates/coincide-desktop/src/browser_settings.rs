@@ -7,8 +7,8 @@ use coincide_core::{
     browser_bookmarks::{self, Library, Plan},
 };
 use gpui_kit::{
-    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, PathPromptOptions,
-    Render, ScrollHandle, SharedString, Styled, Window,
+    AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
+    PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Window,
     component::{
         Disableable,
         button::Button,
@@ -30,11 +30,41 @@ use std::{
 };
 use uuid::Uuid;
 const MAX_DOCUMENT: u64 = 1_048_576;
+#[path = "cookie_import_flow.rs"]
+pub(crate) mod cookie_flow;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CookieImportMarker {
+    Incomplete,
+    ReadbackVerified,
+}
+impl CookieImportMarker {
+    fn raw(&self) -> &'static str {
+        match self {
+            Self::Incomplete => "incomplete_or_uncertain",
+            Self::ReadbackVerified => "readback_verified",
+        }
+    }
+}
+pub(crate) struct FreshCookieProfile {
+    id: Uuid,
+    name: String,
+    thread: String,
+    revision: u64,
+}
+impl FreshCookieProfile {
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileMetadata {
     pub id: Uuid,
     pub name: String,
     pub is_default: bool,
+    pub cookie_import: Option<CookieImportMarker>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProfileChoice {
@@ -109,6 +139,16 @@ impl ProfileCatalog {
                     id,
                     name: name.into(),
                     is_default: profile["default"].as_bool().unwrap_or(false),
+                    cookie_import: match profile.get("cookieImport") {
+                        None | Some(Value::Null) => None,
+                        Some(value) if value == "incomplete_or_uncertain" => {
+                            Some(CookieImportMarker::Incomplete)
+                        }
+                        Some(value) if value == "readback_verified" => {
+                            Some(CookieImportMarker::ReadbackVerified)
+                        }
+                        _ => anyhow::bail!("Unsupported cookie import marker"),
+                    },
                 });
             }
             ensure!(
@@ -153,6 +193,7 @@ impl ProfileCatalog {
                     id: legacy_rust_default.unwrap_or_else(Uuid::new_v4),
                     name: "Default".into(),
                     is_default: true,
+                    cookie_import: None,
                 }],
                 selections: BTreeMap::new(),
             }
@@ -222,6 +263,7 @@ impl ProfileCatalog {
                     id: Uuid::new_v4(),
                     name,
                     is_default: false,
+                    cookie_import: None,
                 });
             }
         }
@@ -231,6 +273,79 @@ impl ProfileCatalog {
             return Err(error);
         }
         self.revision = self.revision.wrapping_add(1);
+        Ok(())
+    }
+    pub(crate) fn reserve_cookie_profile(
+        &self,
+        thread: &str,
+        revision: u64,
+        name: &str,
+    ) -> Result<FreshCookieProfile> {
+        validate_thread(thread)?;
+        validate_name(name)?;
+        ensure!(
+            revision == self.revision && self.profiles.len() < 32,
+            "Profile metadata changed or profile limit reached"
+        );
+        ensure!(
+            !self
+                .profiles
+                .iter()
+                .any(|profile| profile.name.eq_ignore_ascii_case(name)),
+            "A profile with this name exists"
+        );
+        Ok(FreshCookieProfile {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            thread: thread.into(),
+            revision,
+        })
+    }
+    pub(crate) fn commit_cookie_profile(
+        &mut self,
+        thread: &str,
+        fresh: &FreshCookieProfile,
+    ) -> Result<()> {
+        ensure!(
+            thread == fresh.thread && self.revision == fresh.revision,
+            "Browser profile changed before import"
+        );
+        ensure!(
+            self.profiles.len() < 32
+                && !self.profiles.iter().any(|profile| profile.id == fresh.id
+                    || profile.name.eq_ignore_ascii_case(&fresh.name)),
+            "Cookie destination is no longer fresh"
+        );
+        self.profiles.push(ProfileMetadata {
+            id: fresh.id,
+            name: fresh.name.clone(),
+            is_default: false,
+            cookie_import: Some(CookieImportMarker::Incomplete),
+        });
+        if let Err(error) = self.save() {
+            self.profiles.pop();
+            return Err(error);
+        }
+        self.revision = self.revision.wrapping_add(1);
+        // No native dispatch before the incomplete marker's directory entry sync.
+        fs::File::open(&self.root)?.sync_all()?;
+        Ok(())
+    }
+    pub(crate) fn mark_cookie_readback_verified(&mut self, id: Uuid) -> Result<()> {
+        let index = self
+            .profiles
+            .iter()
+            .position(|profile| {
+                profile.id == id && profile.cookie_import == Some(CookieImportMarker::Incomplete)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Cookie import marker changed"))?;
+        self.profiles[index].cookie_import = Some(CookieImportMarker::ReadbackVerified);
+        if let Err(error) = self.save() {
+            self.profiles[index].cookie_import = Some(CookieImportMarker::Incomplete);
+            return Err(error);
+        }
+        self.revision = self.revision.wrapping_add(1);
+        fs::File::open(&self.root)?.sync_all()?;
         Ok(())
     }
     pub fn storage_directory(&self, choice: &ProfileChoice) -> Result<Option<PathBuf>> {
@@ -267,7 +382,7 @@ impl ProfileCatalog {
                 )
             })
             .collect();
-        let value = json!({"version":1,"profiles":self.profiles.iter().map(|p|json!({"id":p.id,"name":p.name,"default":p.is_default})).collect::<Vec<_>>(),"threads":threads});
+        let value = json!({"version":1,"profiles":self.profiles.iter().map(|p|{let mut value=json!({"id":p.id,"name":p.name,"default":p.is_default});if let Some(marker)=&p.cookie_import {value["cookieImport"]=json!(marker.raw());}value}).collect::<Vec<_>>(),"threads":threads});
         let bytes = serde_json::to_vec_pretty(&value)?;
         ensure!(
             bytes.len() as u64 <= MAX_DOCUMENT,
@@ -507,6 +622,7 @@ fn update_route_epoch(
 }
 pub struct BrowserSettings {
     workers: WorkerOwner,
+    cookie_flow: cookie_flow::Flow,
     form_scroll: ScrollHandle,
     engine: Option<SharedEngine>,
     epoch: Arc<AtomicU64>,
@@ -529,6 +645,7 @@ pub struct BrowserSettings {
 }
 impl BrowserSettings {
     pub fn request_shutdown(&mut self) {
+        self.cookie_flow.close();
         if self.workers.close() {
             self.generation = self.generation.wrapping_add(1);
             self.epoch.store(self.generation, Ordering::Release);
@@ -547,7 +664,18 @@ impl BrowserSettings {
         if self.workers.closed() {
             self.discard_shutdown_results();
         }
-        self.workers.status()
+        let mut status = self.workers.status();
+        let cookie = self.cookie_flow.shutdown_status();
+        status.closed &= cookie.closed;
+        status.unjoined += cookie.unjoined;
+        status.returned += cookie.returned;
+        status.panicked += cookie.panicked;
+        status.unclassified += cookie.unclassified;
+        status.pending_pickers += cookie.pending_pickers;
+        if status.spawn_error.is_none() {
+            status.spawn_error = cookie.spawn_error;
+        }
+        status
     }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("New Rust profile name"));
@@ -556,6 +684,7 @@ impl BrowserSettings {
         (
             Self {
                 workers: WorkerOwner::default(),
+                cookie_flow: cookie_flow::Flow::default(),
                 form_scroll: ScrollHandle::default(),
                 engine: None,
                 epoch: Arc::new(AtomicU64::new(0)),
@@ -707,6 +836,7 @@ impl BrowserSettings {
     }
     pub fn sync_route_context(&mut self, thread: Option<&str>, cx: &mut Context<Self>) {
         if update_route_epoch(&mut self.route, thread, &mut self.generation, &self.epoch) {
+            self.cookie_flow.route_changed();
             self.snapshot = None;
             self.preview = None;
             self.chosen = None;
@@ -717,6 +847,7 @@ impl BrowserSettings {
         }
     }
     pub fn set_snapshot(&mut self, snapshot: Option<ProfileSnapshot>, cx: &mut Context<Self>) {
+        self.cookie_flow.set_snapshot(snapshot.clone());
         if self.workers.closed() {
             return;
         }
@@ -748,6 +879,7 @@ impl BrowserSettings {
         cx.notify();
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        self.cookie_flow.poll();
         self.workers.poll();
         if self.workers.closed() {
             self.discard_shutdown_results();
@@ -1081,7 +1213,7 @@ impl Render for BrowserSettings {
                     ),
             );
         }
-        panel.child(SharedString::from(self.status.clone())).child("Cookie/keychain migration, password CSV import, native passkey enrollment/assertion and Bitwarden passkey ceremonies are not implemented in this Rust settings slice. Only explicit Save imports validated bookmarks. Profile, history, cookie and credential data are not imported; no account or keychain is accessed.")
+        panel.child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.")
     }
 }
 
