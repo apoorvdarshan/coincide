@@ -14,7 +14,8 @@ actions!(
         RequestNewConversation,
         RequestHide,
         RequestHideOthers,
-        RequestShowAll
+        RequestShowAll,
+        UnavailableEdit
     ]
 );
 /// The parent supplies actual focus ownership. This module never guesses from
@@ -71,6 +72,21 @@ struct MenuState {
 }
 impl Global for MenuState {}
 
+// AppKit revalidates native responder selectors when opening a menu and can
+// re-enable a disabled Copy item. An unavailable action has neither an OS
+// selector nor a registered GPUI handler, so validation stays fail-closed.
+fn edit_item(
+    context: EditContext,
+    name: &str,
+    action: impl gpui_kit::Action,
+    os: OsAction,
+) -> MenuItem {
+    if context == EditContext::StandardResponder {
+        MenuItem::os_action(name, action, os)
+    } else {
+        MenuItem::action(name, UnavailableEdit).disabled(true)
+    }
+}
 fn menus(context: EditContext) -> Vec<Menu> {
     let mut app = vec![
         MenuItem::action("Settings…", RequestSettings),
@@ -84,17 +100,15 @@ fn menus(context: EditContext) -> Vec<Menu> {
         MenuItem::separator(),
     ]);
     app.push(MenuItem::action("Quit Coincide Rust", Quit));
-    let disabled = context != EditContext::StandardResponder;
     vec![
         Menu::new("Coincide Rust").items(app),
         Menu::new("File").items([MenuItem::action("New Conversation", RequestNewConversation)]),
         Menu::new("Edit").items([
-            MenuItem::os_action("Cut", input::Cut, OsAction::Cut).disabled(disabled),
-            MenuItem::os_action("Copy", input::Copy, OsAction::Copy).disabled(disabled),
-            MenuItem::os_action("Paste", input::Paste, OsAction::Paste).disabled(disabled),
+            edit_item(context, "Cut", input::Cut, OsAction::Cut),
+            edit_item(context, "Copy", input::Copy, OsAction::Copy),
+            edit_item(context, "Paste", input::Paste, OsAction::Paste),
             MenuItem::separator(),
-            MenuItem::os_action("Select All", input::SelectAll, OsAction::SelectAll)
-                .disabled(disabled),
+            edit_item(context, "Select All", input::SelectAll, OsAction::SelectAll),
         ]),
     ]
 }
@@ -195,8 +209,19 @@ mod tests {
             let menu = menus(context);
             let edit = menu.iter().find(|m| m.name == "Edit").unwrap();
             for item in &edit.items {
-                if let MenuItem::Action { disabled, .. } = item {
+                if let MenuItem::Action {
+                    disabled,
+                    action,
+                    os_action,
+                    ..
+                } = item
+                {
                     assert!(*disabled);
+                    assert!(
+                        os_action.is_none(),
+                        "native validation must not restore a terminal selector"
+                    );
+                    assert!(action.as_any().is::<UnavailableEdit>());
                 }
             }
         }
