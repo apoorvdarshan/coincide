@@ -43,10 +43,12 @@ class ResourceLabels(unittest.TestCase):
                 MODULE.ROOT = Path(directory)
                 app = MODULE.ROOT / 'App'
                 app.mkdir()
-                (app / 'TerminalPanel.h').write_text('make_button(L"Use selection in message", L"TerminalUseSelection", [](auto&){});', encoding='utf-8')
+                (app / 'TerminalPanel.h').write_text('make_button(L"Use selection in message", L"TerminalUseSelection", [](auto&){}); make_command(L"Split", L"TerminalSplit", [](auto&){});', encoding='utf-8')
                 values = MODULE.labels()
                 self.assertEqual(values[MODULE.ui_key('Use selection in message')], 'Use selection in message')
                 self.assertNotIn('TerminalUseSelection', values.values())
+                self.assertEqual(values[MODULE.ui_key('Split')], 'Split')
+                self.assertNotIn('TerminalSplit', values.values())
         finally:
             MODULE.ROOT = original
 

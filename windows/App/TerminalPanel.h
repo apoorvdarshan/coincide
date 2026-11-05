@@ -250,19 +250,23 @@ private:
         value.Click([weak=weak_from_this(),action=std::move(action)](const auto&,const auto&){if(const auto self=weak.lock())try{action(*self);}catch(const std::exception& error){self->show_error(error.what());}catch(const winrt::hresult_error& error){self->show_error(winrt::to_string(error.message()));}});
         return value;
     }
+    terminal_ui::ui::AppBarButton make_command(const wchar_t* text,const wchar_t* id,std::function<void(TerminalPanel&)> action){
+        terminal_ui::ui::AppBarButton value;value.Label(ui_text(text));terminal_ui::identify(value,id);
+        value.Click([weak=weak_from_this(),action=std::move(action)](const auto&,const auto&){if(const auto self=weak.lock())try{action(*self);}catch(const std::exception& error){self->show_error(error.what());}catch(const winrt::hresult_error& error){self->show_error(winrt::to_string(error.message()));}});return value;
+    }
     void build_view(){
         namespace xaml=terminal_ui::xaml;namespace ui=terminal_ui::ui;
         root_=ui::Grid{};root_.RowSpacing(6);root_.Visibility(xaml::Visibility::Collapsed);terminal_ui::identify(root_,L"TerminalPanel");
         for(const auto unit:{xaml::GridUnitType::Auto,xaml::GridUnitType::Star,xaml::GridUnitType::Auto}){ui::RowDefinition row;row.Height({1,unit});root_.RowDefinitions().Append(row);}
-        ui::StackPanel toolbar;toolbar.Orientation(ui::Orientation::Horizontal);toolbar.Spacing(6);
-        tabs_=ui::ComboBox{};tabs_.MinWidth(150);tabs_.MaxWidth(300);terminal_ui::identify(tabs_,L"TerminalTabs");
+        ui::CommandBar toolbar;toolbar.DefaultLabelPosition(ui::CommandBarDefaultLabelPosition::Right);toolbar.IsDynamicOverflowEnabled(true);terminal_ui::identify(toolbar,L"TerminalToolbar");
+        tabs_=ui::ComboBox{};tabs_.MinWidth(150);tabs_.MaxWidth(220);terminal_ui::identify(tabs_,L"TerminalTabs");
         tabs_.SelectionChanged([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->refreshing_){const auto at=self->tabs_.SelectedIndex();if(at>=0&&static_cast<std::size_t>(at)<self->displayed_tabs_.size()){self->threads_.at(self->selected_thread_).selected=self->displayed_tabs_[at];self->show_active();}}});
-        toolbar.Children().Append(tabs_);toolbar.Children().Append(make_button(L"New Tab",L"TerminalNewTab",[](auto& self){self.new_tab();}));
-        toolbar.Children().Append(make_button(L"Split",L"TerminalSplit",[](auto& self){self.split();}));
-        toolbar.Children().Append(make_button(L"Close Tab",L"TerminalCloseTab",[](auto& self){self.close_tab();}));
-        toolbar.Children().Append(make_button(L"Paste",L"TerminalPaste",[](auto& self){if(const auto pane=self.active_pane())self.paste(pane);}));
-        toolbar.Children().Append(make_button(L"Copy",L"TerminalCopy",[](auto& self){if(const auto pane=self.active_pane())self.copy(pane);}));
-        toolbar.Children().Append(make_button(L"Stop",L"TerminalStop",[](auto& self){if(const auto pane=self.active_pane();pane&&pane->session)pane->session->stop();}));
+        toolbar.Content(tabs_);toolbar.PrimaryCommands().Append(make_command(L"New Tab",L"TerminalNewTab",[](auto& self){self.new_tab();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Split",L"TerminalSplit",[](auto& self){self.split();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Close Tab",L"TerminalCloseTab",[](auto& self){self.close_tab();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Paste",L"TerminalPaste",[](auto& self){if(const auto pane=self.active_pane())self.paste(pane);}));
+        toolbar.PrimaryCommands().Append(make_command(L"Copy",L"TerminalCopy",[](auto& self){if(const auto pane=self.active_pane())self.copy(pane);}));
+        toolbar.PrimaryCommands().Append(make_command(L"Stop",L"TerminalStop",[](auto& self){if(const auto pane=self.active_pane();pane&&pane->session)pane->session->stop();}));
         ui::StackPanel toolbar_rows;toolbar_rows.Spacing(6);toolbar_rows.Children().Append(toolbar);
         toolbar_rows.Children().Append(make_button(L"Use selection in message",L"TerminalUseSelection",[](auto& self){self.use_selection();}));
         root_.Children().Append(toolbar_rows);panes_view_=ui::Grid{};panes_view_.ColumnSpacing(4);panes_view_.RowSpacing(4);ui::Grid::SetRow(panes_view_,1);root_.Children().Append(panes_view_);
@@ -351,6 +355,9 @@ private:
         pane->input.GotFocus([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock()){value->selection->clear();if(const auto tab=self->active_tab())tab->active=value->id;}});
         pane->input.Loaded([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock();value&&value->pending_focus&&self->visible_){value->pending_focus=false;value->input.Focus(xaml::FocusState::Programmatic);}});
         pane->output.SizeChanged([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock())self->resize_pane(value);});
+        // SizeChanged may precede Loaded while the tool's parent is collapsed. Fit
+        // the first realized viewport as well, before following the buffer tail.
+        pane->output.Loaded([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock())self->resize_pane(value);});
     }
     bool send(const std::shared_ptr<Pane>& pane,std::string bytes){
         if(closed_||pane->closed||pane->exited)return false;

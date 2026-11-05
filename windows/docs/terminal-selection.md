@@ -10,7 +10,8 @@ queued input, and does not write to or interrupt the terminal process.
 
 Selection text must be valid UTF-8, contain no NUL and fit within 32 KiB. The final draft is bounded to 4 MiB. Quoting
 chooses a fence longer than every backtick run in the selection, so terminal text remains inside its code block.
-The action is placed on its own toolbar row so it remains visible beside the existing terminal controls.
+The action is placed on its own toolbar row. Other terminal commands use native overflow when the pane is narrow.
+The terminal fits its first loaded viewport, so startup output remains visible without manually resizing the window.
 
 Coverage includes portable quoting and size cases, a real native RichTextBlock selection in the owned ConPTY fixture,
 hidden-panel refusal and a full-app selection-to-composer flow. Exact-revision Windows execution is a separate gate;
