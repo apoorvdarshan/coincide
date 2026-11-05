@@ -1,5 +1,6 @@
 //! Native read-only inline review browser. Injected transport executes only on
 //! one background worker; the parent supplies authoritative thread/root context.
+use crate::worker_owner::{Admission, ShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, bail, ensure};
 use coincide_core::github_threads::{InlineComment, Page, ReviewThread, Scope};
 use gpui_kit::{
@@ -143,6 +144,23 @@ fn fetch(transport: &ThreadsTransport, request: &Request, cancel: &AtomicBool) -
         std::thread::sleep(Duration::from_millis(80));
     }
 }
+fn fetch_admitted(
+    transport: &ThreadsTransport,
+    request: &Request,
+    cancel: &AtomicBool,
+    admission: &Admission,
+) -> Result<Page> {
+    let transport = transport.clone();
+    let admission = admission.clone();
+    let fenced: ThreadsTransport = Arc::new(move |method, params| {
+        ensure!(
+            admission.allowed(),
+            "Inline review UI admissions are closed"
+        );
+        transport(method, params)
+    });
+    fetch(&fenced, request, cancel)
+}
 #[derive(Default)]
 struct State {
     scope: Option<Scope>,
@@ -239,6 +257,14 @@ fn short(text: &str, max: usize) -> String {
     }
     s
 }
+fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
+    let mut discarded = false;
+    for result in receiver.try_iter() {
+        drop(result);
+        discarded = true;
+    }
+    discarded
+}
 type Completion = (u64, Request, Result<Page>);
 pub struct GitHubThreadsPanel {
     transport: ThreadsTransport,
@@ -254,9 +280,10 @@ pub struct GitHubThreadsPanel {
     active: Option<(u64, Request)>,
     cancel: Option<Arc<AtomicBool>>,
     busy: bool,
+    workers: WorkerOwner,
     sender: mpsc::SyncSender<Completion>,
     receiver: mpsc::Receiver<Completion>,
-    _poll: Task<()>,
+    _poll: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 impl GitHubThreadsPanel {
@@ -304,13 +331,17 @@ impl GitHubThreadsPanel {
             active: None,
             cancel: None,
             busy: false,
+            workers: WorkerOwner::default(),
             sender,
             receiver,
-            _poll: poll,
+            _poll: Some(poll),
             _subscriptions: subscriptions,
         }
     }
     pub fn set_context(&mut self, context: Option<(String, String)>, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         if self.context != context {
             self.context = context;
             self.invalidate(cx);
@@ -326,6 +357,9 @@ impl GitHubThreadsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workers.closed() {
+            return;
+        }
         if self.repository.read(cx).value().to_string() == repository
             && self.number.read(cx).value().to_string() == number.to_string()
             && self.head.read(cx).value().to_string() == head
@@ -342,6 +376,9 @@ impl GitHubThreadsPanel {
         self.invalidate(cx);
     }
     fn invalidate(&mut self, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         if let Some(cancel) = &self.cancel {
             cancel.store(true, Ordering::Release);
         }
@@ -368,7 +405,7 @@ impl GitHubThreadsPanel {
         Ok(scope)
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         match self.input_scope(cx) {
@@ -390,7 +427,7 @@ impl GitHubThreadsPanel {
         }
     }
     fn start(&mut self, request: Request, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         self.generation = self.generation.wrapping_add(1);
@@ -402,13 +439,49 @@ impl GitHubThreadsPanel {
         self.notice = "Loading inline review page…".into();
         let transport = self.transport.clone();
         let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let result = fetch(&transport, &request, &cancel);
+        if !self.workers.spawn(move |admission| {
+            let result = fetch_admitted(&transport, &request, &cancel, &admission);
             let _ = sender.try_send((generation, request, result));
-        });
+        }) {
+            self.busy = false;
+            self.notice = "Inline review worker could not start.".into();
+        }
         cx.notify();
     }
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            if let Some(cancel) = &self.cancel {
+                cancel.store(true, Ordering::Release);
+            }
+            self.generation = self.generation.wrapping_add(1);
+            self.active = None;
+            self.context = None;
+            self.state.clear();
+            drop(self._poll.take());
+        }
+        self.discard_results();
+    }
+    fn discard_results(&mut self) {
+        if discard_completions(&self.receiver) {
+            self.busy = false;
+        }
+    }
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        let status = self.workers.status();
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        status
+    }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_results();
+            return;
+        }
         let Ok((generation, request, result)) = self.receiver.try_recv() else {
             return;
         };
@@ -444,6 +517,7 @@ impl GitHubThreadsPanel {
 }
 impl Drop for GitHubThreadsPanel {
     fn drop(&mut self) {
+        self.workers.close();
         if let Some(cancel) = &self.cancel {
             cancel.store(true, Ordering::Release);
         }
@@ -475,7 +549,7 @@ impl Render for GitHubThreadsPanel {
    .child(div().flex().gap_2().child(Input::new(&self.repository)).child(Input::new(&self.number)))
    .child(Input::new(&self.head))
    .child(div().flex().gap_2()
-    .child(Button::new("github-threads-load").label("Load / Refresh threads").disabled(self.busy||self.context.is_none()).on_click(cx.listener(|this,_,_,cx|this.refresh(cx))))
+    .child(Button::new("github-threads-load").label("Load / Refresh threads").disabled(self.busy||self.workers.closed()||self.context.is_none()).on_click(cx.listener(|this,_,_,cx|this.refresh(cx))))
     .child(Button::new("github-threads-cancel").label("Cancel read").disabled(!self.busy).on_click(cx.listener(|this,_,_,cx|{if let Some(cancel)=&this.cancel{cancel.store(true,Ordering::Release);}this.notice="Cancellation requested…".into();cx.notify();}))))
    .child(Input::new(&self.mention));
         let mut filters = div().flex().gap_2();
@@ -547,7 +621,10 @@ impl Render for GitHubThreadsPanel {
                 Button::new("github-threads-more")
                     .label("Load more threads")
                     .disabled(
-                        self.busy || self.state.limit_reached || self.state.threads.len() >= 100,
+                        self.busy
+                            || self.workers.closed()
+                            || self.state.limit_reached
+                            || self.state.threads.len() >= 100,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(scope) = this.state.scope.clone() {
@@ -726,7 +803,10 @@ impl Render for GitHubThreadsPanel {
                     Button::new("github-thread-more-comments")
                         .label("Load more comments / replies")
                         .disabled(
-                            self.busy || self.state.limit_reached || thread.comments.len() >= 500,
+                            self.busy
+                                || self.workers.closed()
+                                || self.state.limit_reached
+                                || thread.comments.len() >= 500,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(scope) = this.state.scope.clone() {
@@ -1042,5 +1122,75 @@ mod tests {
                 .database_id,
             Some(101)
         );
+    }
+    struct ShutdownTls {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl Drop for ShutdownTls {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! { static SHUTDOWN_TLS:std::cell::RefCell<Option<ShutdownTls>>=const { std::cell::RefCell::new(None) }; }
+    #[::core::prelude::v1::test]
+    fn closing_ui_stops_poll_and_cancel_transport_but_waits_for_tls_join() {
+        let mut owner = WorkerOwner::default();
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (tls_tx, tls_rx) = mpsc::channel();
+        let (tls_release_tx, tls_release_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let gate = std::sync::Mutex::new(release_rx);
+        let transport: ThreadsTransport = Arc::new(move |method, _| {
+            seen.lock().unwrap().push(method.to_owned());
+            if method == "github.threads.list" {
+                Ok(json!({"operationId":"synthetic"}))
+            } else if method == "github.threads.result" {
+                entered_tx.send(()).unwrap();
+                gate.lock().unwrap().recv().unwrap();
+                Ok(json!({"ready":false}))
+            } else {
+                panic!("shutdown UI must not issue cancel or another transport call")
+            }
+        });
+        let request = Request {
+            scope: scope(),
+            read: Read::Threads { cursor: None },
+        };
+        assert!(owner.spawn(move |admission| {
+            SHUTDOWN_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(ShutdownTls {
+                    entered: tls_tx,
+                    release: tls_release_rx,
+                })
+            });
+            let result = fetch_admitted(&transport, &request, &worker_cancel, &admission);
+            let _ = result_tx.send((1, request, result));
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        owner.close();
+        cancel.store(true, Ordering::Release);
+        release_tx.send(()).unwrap();
+        tls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(discard_completions(&result_rx));
+        assert!(result_rx.try_recv().is_err());
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["github.threads.list", "github.threads.result"]
+        );
+        assert_eq!(owner.status().unjoined, 1);
+        tls_release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owner.status().unjoined != 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 1);
     }
 }

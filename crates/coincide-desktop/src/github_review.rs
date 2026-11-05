@@ -1,6 +1,7 @@
 //! Native GitHub PR metadata panel with a separate explicit action surface. Parent mounts this entity and calls
 //! set_context on every thread/root change. Repository is explicitly entered by
 //! the user. All Engine calls run in one background worker, never GPUI render.
+use crate::worker_owner::{Admission, ShutdownStatus as ReadShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::{
@@ -186,6 +187,19 @@ fn fetch(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) 
         std::thread::sleep(Duration::from_millis(80));
     }
 }
+fn fetch_admitted(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    request: &Request,
+    admission: &Admission,
+) -> Result<Value> {
+    fetch(
+        &mut |method, params| {
+            ensure!(admission.allowed(), "GitHub UI read admissions are closed");
+            api(method, params)
+        },
+        request,
+    )
+}
 fn current(generation: u64, request: &Request, active: Option<&(u64, Request)>) -> bool {
     active.is_some_and(|(g, r)| *g == generation && r == request)
 }
@@ -203,6 +217,19 @@ fn excerpt(value: &str, max: usize) -> String {
     s
 }
 
+fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
+    let mut discarded = false;
+    for result in receiver.try_iter() {
+        drop(result);
+        discarded = true;
+    }
+    discarded
+}
+pub struct ReviewShutdownStatus {
+    pub read: ReadShutdownStatus,
+    pub actions: Option<coincide_core::github_write::WriteShutdownStatus>,
+    pub writes: Option<crate::github_write_transport::NativeWriteShutdownStatus>,
+}
 pub struct GitHubReviewPanel {
     engine: SharedEngine,
     scope: Option<(String, String)>,
@@ -211,6 +238,7 @@ pub struct GitHubReviewPanel {
     generation: u64,
     active: Option<(u64, Request)>,
     busy: bool,
+    workers: WorkerOwner,
     list: Vec<Value>,
     truncated: bool,
     selected: Option<(u64, String)>,
@@ -218,7 +246,7 @@ pub struct GitHubReviewPanel {
     notice: String,
     tx: mpsc::Sender<(u64, Request, Result<Value>)>,
     rx: mpsc::Receiver<(u64, Request, Result<Value>)>,
-    _poll: Task<()>,
+    _poll: Option<Task<()>>,
     _repository_changes: Subscription,
     actions: Option<Entity<crate::github_actions::GitHubActions>>,
     writes: Option<crate::github_write_transport::NativeWrites>,
@@ -244,6 +272,9 @@ impl GitHubReviewPanel {
         });
         let repository_changes = cx.subscribe(&repository, |this, _, event, cx| {
             if matches!(event, InputEvent::Change) {
+                if this.workers.closed() {
+                    return;
+                }
                 this.generation = this.generation.wrapping_add(1);
                 this.active = None;
                 this.detail = None;
@@ -263,6 +294,7 @@ impl GitHubReviewPanel {
             generation: 0,
             active: None,
             busy: false,
+            workers: WorkerOwner::default(),
             list: Vec::new(),
             truncated: false,
             selected: None,
@@ -270,7 +302,7 @@ impl GitHubReviewPanel {
             notice: "Choose a conversation and enter its GitHub repository.".into(),
             tx,
             rx,
-            _poll: poll,
+            _poll: Some(poll),
             _repository_changes: repository_changes,
             actions: None,
             writes: None,
@@ -287,7 +319,11 @@ impl GitHubReviewPanel {
     ) {
         self.actions = Some(actions);
         self.writes = Some(writes);
-        self.sync_action_scope(cx);
+        if self.workers.closed() {
+            self.request_shutdown(cx);
+        } else {
+            self.sync_action_scope(cx);
+        }
     }
     fn invalidate_actions(&mut self, cx: &mut Context<Self>) {
         self.actions_open = false;
@@ -299,6 +335,9 @@ impl GitHubReviewPanel {
         }
     }
     fn validated_loaded_scope(&self, cx: &App) -> Option<crate::github_actions::ActionScope> {
+        if self.workers.closed() {
+            return None;
+        }
         let (_, request) = self.active.as_ref()?;
         let pr = self.detail.as_ref()?;
         let View::Detail { number, head } = &request.view else {
@@ -332,6 +371,9 @@ impl GitHubReviewPanel {
         Some((request.binding.repository.clone(), *number, head.clone()))
     }
     fn sync_action_scope(&mut self, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         let scope = self.validated_loaded_scope(cx);
         if let Some(actions) = &self.actions {
             actions.update(cx, |actions, cx| actions.set_scope(scope, cx));
@@ -340,6 +382,9 @@ impl GitHubReviewPanel {
     /// root must be the canonical stored-thread working directory. No calls or
     /// filesystem I/O run here. Changing scope invalidates every visible PR/head.
     pub fn set_context(&mut self, scope: Option<(String, String)>, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         if self.scope == scope {
             return;
         }
@@ -360,7 +405,7 @@ impl GitHubReviewPanel {
         cx.notify();
     }
     fn load_list(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         let Some((thread, root)) = self.scope.clone() else {
@@ -395,7 +440,7 @@ impl GitHubReviewPanel {
         );
     }
     fn load_detail(&mut self, number: u64, head: String, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         let Some((_, active)) = &self.active else {
@@ -413,7 +458,7 @@ impl GitHubReviewPanel {
         );
     }
     fn start(&mut self, request: Request, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         // Every request invalidates prepared actions, including refreshing
@@ -426,16 +471,67 @@ impl GitHubReviewPanel {
         self.notice = "Loading GitHub metadata…".into();
         let engine = self.engine.clone();
         let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let result = fetch(
+        if !self.workers.spawn(move |admission| {
+            let result = fetch_admitted(
                 &mut |method, params| call(&engine, method, params),
                 &request,
+                &admission,
             );
             let _ = tx.send((generation, request, result));
-        });
+        }) {
+            self.busy = false;
+            self.notice = "GitHub read worker could not start.".into();
+        }
         cx.notify();
     }
+    pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
+        if self.workers.close() {
+            self.generation = self.generation.wrapping_add(1);
+            self.active = None;
+            self.scope = None;
+            self.detail = None;
+            self.selected = None;
+            self.list.clear();
+            self.truncated = false;
+            self.actions_open = false;
+            drop(self._poll.take());
+        }
+        if let Some(actions) = &self.actions {
+            actions.update(cx, |actions, cx| actions.request_shutdown(cx));
+        }
+        if let Some(writes) = &self.writes {
+            writes.request_shutdown();
+        }
+        self.discard_read_results();
+    }
+    fn discard_read_results(&mut self) {
+        if discard_completions(&self.rx) {
+            self.busy = false;
+        }
+    }
+    pub fn shutdown_status(&mut self, cx: &App) -> ReviewShutdownStatus {
+        if self.workers.closed() {
+            self.discard_read_results();
+        }
+        let read = self.workers.status();
+        if self.workers.closed() {
+            self.discard_read_results();
+        }
+        ReviewShutdownStatus {
+            read,
+            actions: self
+                .actions
+                .as_ref()
+                .map(|actions| actions.read(cx).shutdown_status()),
+            writes: self.writes.as_ref().map(|writes| writes.shutdown_status()),
+        }
+    }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_read_results();
+            return;
+        }
         if let Some(status) = self.writes.as_ref().and_then(|writes| writes.status()) {
             if self.write_status.as_ref() != Some(&status) {
                 let ready = status == crate::github_write_transport::Status::Ready;
@@ -483,6 +579,14 @@ impl GitHubReviewPanel {
         }
         self.sync_action_scope(cx);
         cx.notify();
+    }
+}
+impl Drop for GitHubReviewPanel {
+    fn drop(&mut self) {
+        self.workers.close();
+        if let Some(writes) = &self.writes {
+            writes.request_shutdown();
+        }
     }
 }
 impl Render for GitHubReviewPanel {
@@ -547,7 +651,7 @@ impl Render for GitHubReviewPanel {
                             } else {
                                 state.to_owned()
                             })
-                            .disabled(self.busy)
+                            .disabled(self.busy || self.workers.closed())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.state = state.into();
                                 this.load_list(cx);
@@ -557,7 +661,7 @@ impl Render for GitHubReviewPanel {
             .child(
                 Button::new("github-refresh")
                     .label("Load / refresh PR list")
-                    .disabled(self.busy || self.scope.is_none())
+                    .disabled(self.busy || self.workers.closed() || self.scope.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.load_list(cx))),
             )
             .child(div().text_sm().child(self.notice.clone()));
@@ -573,6 +677,7 @@ impl Render for GitHubReviewPanel {
             if status == &crate::github_write_transport::Status::FirstSetup {
                 pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger")
                     .on_click(cx.listener(|this, _, _, cx| {
+                        if this.workers.closed() { return; }
                         if let Some(writes) = &this.writes {
                             if !writes.initialize_from_user_action() { this.notice = "Ledger setup is busy or no longer available. No action was queued.".into(); }
                         }
@@ -598,7 +703,7 @@ impl Render for GitHubReviewPanel {
             toolbar = toolbar.child(
                 Button::new("github-back")
                     .label("Back to PR list")
-                    .disabled(self.busy)
+                    .disabled(self.busy || self.workers.closed())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected = None;
                         this.detail = None;
@@ -624,11 +729,15 @@ impl Render for GitHubReviewPanel {
                         .label("Comment review / merge…")
                         .disabled(
                             self.busy
+                                || self.workers.closed()
                                 || self.actions.is_none()
                                 || self.write_status
                                     != Some(crate::github_write_transport::Status::Ready),
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
+                            if this.workers.closed() {
+                                return;
+                            }
                             this.sync_action_scope(cx);
                             this.actions_open = true;
                             cx.notify();
@@ -637,7 +746,7 @@ impl Render for GitHubReviewPanel {
                 .child(
                     Button::new("github-refresh-detail")
                         .label("Refresh selected PR")
-                        .disabled(self.busy)
+                        .disabled(self.busy || self.workers.closed())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.load_detail(number, refresh_head.clone(), cx);
                         })),
@@ -786,7 +895,7 @@ impl Render for GitHubReviewPanel {
                             text(pr, "headRefName"),
                             text(pr, "baseRefName")
                         ))
-                        .disabled(self.busy)
+                        .disabled(self.busy || self.workers.closed())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.load_detail(number, head.clone(), cx)
                         })),
@@ -1027,5 +1136,96 @@ mod tests {
         ] {
             assert!(!repository(invalid), "{invalid}");
         }
+    }
+    struct ShutdownTls {
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+    impl Drop for ShutdownTls {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! { static SHUTDOWN_TLS:std::cell::RefCell<Option<ShutdownTls>>=const { std::cell::RefCell::new(None) }; }
+    #[::core::prelude::v1::test]
+    fn shutdown_discards_late_private_pr_reply_and_keeps_actual_tls_owner() {
+        let mut owner = crate::worker_owner::WorkerOwner::default();
+        let request = request(View::List("open".into()));
+        let result = payload(&request);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (tls_tx, tls_rx) = std::sync::mpsc::channel();
+        let (tls_release_tx, tls_release_rx) = std::sync::mpsc::channel();
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            SHUTDOWN_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(ShutdownTls {
+                    entered: tls_tx,
+                    release: tls_release_rx,
+                })
+            });
+            let result = super::fetch_admitted(
+                &mut |method, _| {
+                    if method == "github.pr.list" {
+                        Ok(json!({"operationId":"synthetic"}))
+                    } else {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok(json!({"ready":true,"result":result.clone()}))
+                    }
+                },
+                &request,
+                &admission,
+            );
+            let _ = reply_tx.send((1, request, result));
+        }));
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        owner.close();
+        release_tx.send(()).unwrap();
+        tls_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(super::discard_completions(&reply_rx));
+        assert!(reply_rx.try_recv().is_err());
+        assert_eq!(owner.status().unjoined, 1);
+        assert!(!owner.spawn(|_| panic!("closed panel must not spawn")));
+        tls_release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn closed_read_admission_never_enters_engine_transport() {
+        let mut owner = crate::worker_owner::WorkerOwner::default();
+        let request = request(View::List("open".into()));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            let result = super::fetch_admitted(
+                &mut |_, _| panic!("closed UI worker must not touch Engine"),
+                &request,
+                &admission,
+            );
+            done_tx.send(result.is_err()).unwrap();
+        }));
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        owner.close();
+        release_tx.send(()).unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+        );
     }
 }
