@@ -398,6 +398,7 @@ struct ProcessRpc<'a> {
     stdin: std::process::ChildStdin,
     stdout: std::process::ChildStdout,
     buffer: Vec<u8>,
+    scanned: usize,
     total: usize,
     frames: usize,
     started: Instant,
@@ -508,6 +509,7 @@ impl<'a> ProcessRpc<'a> {
             stdin: stdin.expect("piped stdin"),
             stdout: stdout.expect("piped stdout"),
             buffer: Vec::new(),
+            scanned: 0,
             total: 0,
             frames: 0,
             started,
@@ -540,9 +542,10 @@ impl<'a> ProcessRpc<'a> {
         use std::io::Read;
         loop {
             self.check()?;
-            if let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            if let Some(end) = newline(&self.buffer, &mut self.scanned) {
                 ensure!(end < MAX_FRAME, "Model discovery frame exceeds 1 MiB");
                 let line = self.buffer.drain(..=end).collect::<Vec<_>>();
+                self.scanned = 0;
                 self.frames += 1;
                 ensure!(self.frames <= MAX_FRAMES, "Too many model discovery frames");
                 return serde_json::from_slice(&line).context("Invalid model discovery JSON frame");
@@ -571,6 +574,19 @@ impl<'a> ProcessRpc<'a> {
         }
     }
 }
+/// Retain the inspected prefix across fragmented pipe reads. Rescanning a long
+/// unterminated frame per chunk would make the size bound quadratic in CPU work.
+#[cfg(any(unix, test))]
+fn newline(buffer: &[u8], scanned: &mut usize) -> Option<usize> {
+    let start = *scanned;
+    let result = buffer[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| start + offset);
+    *scanned = buffer.len();
+    result
+}
+
 #[cfg(unix)]
 impl Rpc for ProcessRpc<'_> {
     fn write(&mut self, value: &Value) -> Result<()> {
@@ -694,6 +710,27 @@ mod tests {
                 Some("initialize" | "initialized" | "model/list")
             )));
         }
+    }
+    #[test]
+    fn fragmented_unterminated_frame_scans_each_byte_once_until_size_rejection() {
+        let mut bytes = Vec::new();
+        let mut scanned = 0;
+        let mut inspected = 0;
+        while bytes.len() <= MAX_FRAME {
+            bytes.extend_from_slice(&[b'x'; 8192]);
+            inspected += bytes.len() - scanned;
+            assert!(newline(&bytes, &mut scanned).is_none());
+            assert_eq!(scanned, bytes.len());
+        }
+        assert!(bytes.len() > MAX_FRAME);
+        assert_eq!(
+            inspected,
+            bytes.len(),
+            "fragmented input must require linear scan work"
+        );
+        let previous = bytes.len();
+        bytes.extend_from_slice(b"\n");
+        assert_eq!(newline(&bytes, &mut scanned), Some(previous));
     }
     #[test]
     fn strict_refresh_contract_never_accepts_paths_accounts_or_turn_options() {
@@ -861,12 +898,16 @@ sleep 5
             let error = discover(
                 "codex",
                 path,
-                Duration::from_millis(150),
+                if expected == "timed out" {
+                    Duration::from_millis(150)
+                } else {
+                    DEADLINE
+                },
                 &AtomicBool::new(false),
             )
             .unwrap_err()
             .to_string();
-            assert!(error.contains(expected), "unexpected error: {error}");
+            assert!(error.contains(expected), "expected {expected}, got {error}");
             assert!(!error.contains("private-synthetic-diagnostic"));
             assert!(started.elapsed() < Duration::from_secs(2));
         }
