@@ -291,6 +291,8 @@ impl BrowserController {
                 let sender = self.sender.clone();
                 let id = request.id.clone();
                 let probe_ticket = ticket.clone();
+                let protected = tab.credential_console_suppressed.clone();
+                let navigation = tab.navigation.clone();
                 tab.view
                     .read(cx)
                     .raw()
@@ -298,7 +300,12 @@ impl BrowserController {
                         let _ = sender.try_send(NativeEvent::UploadProbe {
                             id: id.clone(),
                             ticket: probe_ticket.clone(),
-                            result: parse_script_result(&payload),
+                            result: public_script_reply(
+                                &payload,
+                                navigation.load(Ordering::Acquire) == epoch,
+                                protected.load(Ordering::Acquire),
+                                false,
+                            ),
                         });
                     })?;
                 self.uploads.insert(
@@ -443,6 +450,9 @@ impl BrowserController {
         let console_handler = console.clone();
         let credential_console_suppressed = Arc::new(AtomicBool::new(false));
         let console_suppressed = credential_console_suppressed.clone();
+        let title_suppressed = credential_console_suppressed.clone();
+        let popup_suppressed = credential_console_suppressed.clone();
+        let download_suppressed = credential_console_suppressed.clone();
         let load_console_suppressed = credential_console_suppressed.clone();
         let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
@@ -495,7 +505,7 @@ impl BrowserController {
             .with_download_started_handler(move |url, destination| {
                 // Wry 0.53 registers GTK callbacks on the shared context without
                 // matching the source webview. Fail closed until that is fixed.
-                if cfg!(target_os = "linux") {
+                if cfg!(target_os = "linux") || download_suppressed.load(Ordering::Acquire) {
                     return false;
                 }
                 let result = start_downloads.borrow_mut().start(
@@ -527,6 +537,9 @@ impl BrowserController {
                 let _ = completed_sender.try_send(NativeEvent::DownloadsChanged);
             })
             .with_document_title_changed_handler(move |title| {
+                if title_suppressed.load(Ordering::Acquire) {
+                    return;
+                }
                 let _ = title_sender.try_send(NativeEvent::Title {
                     thread: title_thread.clone(),
                     tab: title_id.clone(),
@@ -549,7 +562,7 @@ impl BrowserController {
                 });
             })
             .with_new_window_req_handler(move |url, _| {
-                if validate_url(&url).is_ok() {
+                if !popup_suppressed.load(Ordering::Acquire) && validate_url(&url).is_ok() {
                     let _ = popup_sender.try_send(NativeEvent::Popup {
                         thread: popup_thread.clone(),
                         url,
@@ -666,7 +679,9 @@ impl BrowserController {
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
-                        tab.title = title;
+                        if !tab.credential_console_suppressed.load(Ordering::Acquire) {
+                            tab.title = title;
+                        }
                     }
                 }
                 NativeEvent::Load {
@@ -1003,10 +1018,18 @@ impl BrowserController {
         if !native_password_manager {
             unsupported.push("password-manager");
         }
-        json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":tab.title,"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
+        json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":public_tab_title(&tab.title,tab.credential_console_suppressed.load(Ordering::Acquire)),"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
             "nativePasswordManagerAvailable":native_password_manager,
             "passwordManagerRequiresNativeApproval":true})
+    }
+}
+
+fn public_tab_title(title: &str, protected: bool) -> &str {
+    if protected {
+        "Saved-login inspection paused"
+    } else {
+        title
     }
 }
 
@@ -1087,6 +1110,17 @@ mod credential_inspection_tests {
                 true
             ),
             json!({"dispatched":true})
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn protected_tab_metadata_never_exposes_a_page_title_echo() {
+        assert_eq!(
+            public_tab_title("synthetic-password-only", true),
+            "Saved-login inspection paused"
+        );
+        assert_eq!(
+            public_tab_title("Synthetic public title", false),
+            "Synthetic public title"
         );
     }
     #[::core::prelude::v1::test]
