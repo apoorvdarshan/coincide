@@ -34,6 +34,9 @@ mod idle_sleep;
 pub mod notification_events;
 #[path = "organization_api.rs"]
 mod organization_api;
+#[cfg(test)]
+#[path = "provider_worker_tests.rs"]
+mod provider_worker_tests;
 #[path = "session_import_api.rs"]
 mod session_import_api;
 #[path = "thread_resolution.rs"]
@@ -45,6 +48,15 @@ mod workspace_api;
 mod workspace_runtime_tests;
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
+/// Sampled provider Rust-thread ownership, not whole-app quiescence or process
+/// cleanup acceptance. Terminal outcomes remain counted after run retirement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProviderWorkersStatus {
+    pub running: usize,
+    pub returned: u64,
+    pub panicked: u64,
+    pub unclassified: u64,
+}
 struct Running {
     session: Session,
     provider: String,
@@ -65,6 +77,8 @@ pub struct Engine {
     github: github_engine::GithubState,
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
+    provider_workers: Vec<agent::WorkerCompletion>,
+    provider_worker_outcomes: ProviderWorkersStatus,
     pub revision: u64,
     pub requested_open: Option<String>,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
@@ -124,6 +138,8 @@ impl Engine {
                 github_engine::GithubState::unavailable()
             },
             runs: HashMap::new(),
+            provider_workers: Vec::new(),
+            provider_worker_outcomes: ProviderWorkersStatus::default(),
             revision: 0,
             requested_open: None,
             terminals: HashMap::new(),
@@ -808,7 +824,7 @@ impl Engine {
             });
         }
         self.store.save(&v)?;
-        self.runs.insert(
+        self.insert_running(
             id,
             Running {
                 session: Session::start_with_images_and_instructions(
@@ -835,6 +851,29 @@ impl Engine {
         );
         self.revision += 1;
         Ok(json!({"accepted":true}))
+    }
+    fn insert_running(&mut self, id: String, run: Running) {
+        self.provider_workers.push(run.session.worker_completion());
+        self.runs.insert(id, run);
+    }
+    /// Nonblocking observer for trusted native owners. Completed handles are
+    /// dropped without join; their classification remains in sticky counters.
+    pub fn provider_workers_status(&mut self) -> ProviderWorkersStatus {
+        let totals = &mut self.provider_worker_outcomes;
+        self.provider_workers.retain(|worker| {
+            let counter = match worker.status() {
+                agent::WorkerThreadStatus::Running => return true,
+                agent::WorkerThreadStatus::Returned => &mut totals.returned,
+                agent::WorkerThreadStatus::Panicked => &mut totals.panicked,
+                agent::WorkerThreadStatus::Unclassified => &mut totals.unclassified,
+            };
+            *counter = counter.saturating_add(1);
+            false
+        });
+        ProviderWorkersStatus {
+            running: self.provider_workers.len(),
+            ..*totals
+        }
     }
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
         use crate::message_queue::{self as queue, State};
@@ -1132,6 +1171,7 @@ impl Engine {
             .context("Choose a project working directory first")
     }
     pub fn poll(&mut self) {
+        self.provider_workers_status();
         self.computer_use_expire();
         if self.model_catalog.poll() {
             self.revision += 1;
