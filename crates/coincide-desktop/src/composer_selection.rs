@@ -1,5 +1,6 @@
 //! Capability-aware, explicit selection drafts. Reading this view never starts
-//! a provider or discovers/authenticates models. Apply is the only mutation.
+//! a provider or discovers/authenticates models. Explicit Apply and acknowledged
+//! standalone mode commands use the same validated selection endpoint.
 use super::*;
 use std::collections::HashMap;
 
@@ -194,7 +195,10 @@ fn command_transaction(
     );
     // No UI callback/await or other controller can interleave the Engine lock.
     // This clears only text, never consumes images or references.
-    let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))?;
+    let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))
+        .map_err(|error| anyhow::anyhow!("{}: {error}", if command.mode().is_some() {
+            "Mode was saved, but command draft clearing failed; draft retained"
+        } else { "Model controls were validated, but command draft clearing failed; draft retained" }))?;
     anyhow::ensure!(
         cleared["id"] == *id && cleared["draft"] == "",
         "Draft clear was not acknowledged; local draft retained"
