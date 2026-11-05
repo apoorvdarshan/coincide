@@ -142,6 +142,12 @@ fn command_params(
     if let Some(reason) = capability_lock(capabilities, running) {
         anyhow::bail!(reason);
     }
+    // Swift /model opens its picker, rather than applying/validating a mode.
+    // Preserve the authoritative capability/active/origin locks above; merely
+    // showing existing choices must not invent another mode-change gate.
+    if command == crate::composer_commands::Command::Model {
+        return Ok(None);
+    }
     let mut draft = SelectionDraft::from_thread(thread);
     if let Some(mode) = command.mode() {
         draft.proposed_interaction = json!(mode);
@@ -1415,5 +1421,39 @@ mod tests {
                 }
             );
         }
+    }
+    #[test]
+    fn model_opens_picker_without_revalidating_mode_but_keeps_authoritative_locks() {
+        let mut original = command_thread("/model");
+        original["interactionMode"] = json!("unsupported-current-mode");
+        original["accessMode"] = json!("unsupported-current-access");
+        let (result, stored, calls) = fake_command(
+            crate::composer_commands::Command::Model,
+            original.clone(),
+            command_capabilities("codex", false),
+            "",
+        );
+        assert!(result.is_ok());
+        assert_eq!(stored["interactionMode"], original["interactionMode"]);
+        assert_eq!(stored["accessMode"], original["accessMode"]);
+        assert!(!calls.iter().any(|method| method == "agent.select"));
+        let (result, stored, calls) = fake_command(
+            crate::composer_commands::Command::Model,
+            original.clone(),
+            command_capabilities("codex", true),
+            "",
+        );
+        assert!(result.is_err());
+        assert_eq!(stored, original);
+        assert_eq!(calls, vec!["threads.read", "agent.selection.capabilities"]);
+        assert!(
+            command_params(
+                &original,
+                crate::composer_commands::Command::Model,
+                &command_capabilities("codex", false),
+                true
+            )
+            .is_err()
+        );
     }
 }
