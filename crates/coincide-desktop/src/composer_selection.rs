@@ -1321,14 +1321,10 @@ impl Coincide {
             .gap_2()
             .min_w_0()
             .child(header)
-            .child(
-                div()
-                    .id("selection-advanced-scroll")
-                    .max_h(px(120.))
-                    .overflow_y_scroll()
-                    .min_w_0()
-                    .child(pane),
-            )
+            // The outer composer accessory viewport already supplies a bounded,
+            // persistent scrollbar. A second capped viewport hides controls
+            // behind an independent scroll position without an accessible thumb.
+            .child(div().min_w_0().child(pane))
             .into_any_element()
     }
 }
