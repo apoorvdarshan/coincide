@@ -126,34 +126,49 @@ impl Session {
         launch: Launch,
         images: Vec<ImageAttachment>,
     ) -> Self {
+        Self::start_with_images_and_instructions(provider, launch, images, None)
+    }
+    /// Explicit bot-local instruction CONTENT, not a path or an agent-supplied
+    /// global setting. Parent must validate rustBotContext before calling.
+    /// Every turn must supply the same validated snapshot, including resume.
+    pub fn start_with_images_and_instructions(
+        provider: Provider,
+        launch: Launch,
+        images: Vec<ImageAttachment>,
+        instructions: Option<String>,
+    ) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (control, commands) = mpsc::channel();
         thread::spawn(move || {
-            let result = validate_images(&provider, &images).and_then(|()| match provider {
-                Provider::Codex => run(launch, images, commands, &events_tx),
-                Provider::Claude => claude::run(launch, images, commands, &events_tx),
-                Provider::Grok => grok::run(launch, images, commands, &events_tx),
-                Provider::OpenCode => opencode::run(launch, images, commands, &events_tx),
-                Provider::Antigravity {
-                    profile,
-                    source_profile,
-                    risk_acknowledged,
-                } => antigravity::run(
-                    launch,
-                    images,
-                    profile,
-                    source_profile,
-                    risk_acknowledged,
-                    commands,
-                    &events_tx,
-                ),
-                Provider::Cursor { profile } => {
-                    cursor::run(launch, images, profile, commands, &events_tx)
-                }
-                Provider::AcpV1 { arguments } => {
-                    acp::run(launch, arguments, images, commands, &events_tx)
-                }
-            });
+            let result = validate_instructions(&provider, instructions.as_deref())
+                .and_then(|()| validate_images(&provider, &images))
+                .and_then(|()| match provider {
+                    Provider::Codex => run(launch, images, instructions, commands, &events_tx),
+                    Provider::Claude => {
+                        claude::run(launch, images, instructions, commands, &events_tx)
+                    }
+                    Provider::Grok => grok::run(launch, images, commands, &events_tx),
+                    Provider::OpenCode => opencode::run(launch, images, commands, &events_tx),
+                    Provider::Antigravity {
+                        profile,
+                        source_profile,
+                        risk_acknowledged,
+                    } => antigravity::run(
+                        launch,
+                        images,
+                        profile,
+                        source_profile,
+                        risk_acknowledged,
+                        commands,
+                        &events_tx,
+                    ),
+                    Provider::Cursor { profile } => {
+                        cursor::run(launch, images, profile, commands, &events_tx)
+                    }
+                    Provider::AcpV1 { arguments } => {
+                        acp::run(launch, arguments, images, commands, &events_tx)
+                    }
+                });
             if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));
             }
@@ -172,6 +187,30 @@ impl Drop for Session {
         self.stop();
     }
 }
+/// Shared content cap for Claude argv and Codex JSON transport.
+pub const MAX_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+fn validate_instructions(provider: &Provider, instructions: Option<&str>) -> Result<()> {
+    if let Some(instructions) = instructions {
+        ensure!(
+            matches!(provider, Provider::Codex | Provider::Claude),
+            "Bot-local instructions are unsupported for this provider"
+        );
+        ensure!(
+            !instructions.trim().is_empty(),
+            "Bot-local instructions cannot be empty"
+        );
+        ensure!(
+            instructions.len() <= MAX_INSTRUCTIONS_BYTES,
+            "Bot-local instructions exceed 64 KiB"
+        );
+        ensure!(
+            !instructions.contains('\0'),
+            "Bot-local instructions cannot contain NUL"
+        );
+    }
+    Ok(())
+}
+
 struct OwnedChild(Child);
 impl OwnedChild {
     fn spawn(command: &mut Command) -> Result<Self> {
@@ -207,6 +246,7 @@ fn request(id: u64, method: &str, params: Value) -> Value {
 fn run(
     launch: Launch,
     images: Vec<ImageAttachment>,
+    instructions: Option<String>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
@@ -258,6 +298,9 @@ fn run(
                         let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
                         if let Some(model) = &launch.model {
                             params["model"] = json!(model);
+                        }
+                        if let Some(instructions) = &instructions {
+                            params["developerInstructions"] = json!(instructions);
                         }
                         let method = if let Some(session) = &launch.session {
                             params["threadId"] = json!(session);

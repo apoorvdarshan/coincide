@@ -233,6 +233,7 @@ impl Mapper {
 pub(super) fn run(
     launch: Launch,
     images: Vec<ImageAttachment>,
+    instructions: Option<String>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
@@ -253,6 +254,9 @@ pub(super) fn run(
     ]
     .map(str::to_owned)
     .to_vec();
+    if let Some(instructions) = instructions {
+        arguments.extend(["--append-system-prompt".into(), instructions]);
+    }
     if let Some(model) = &launch.model {
         arguments.extend(["--model".into(), model.clone()]);
     }
