@@ -470,3 +470,21 @@ remain open. Current GPUI offers no supported OS/Dock quit veto. In-flight or
 unpersisted media work remains exposed to OS quit/crash; palette/window guards
 and the termination observer do not close that gap. Full replacement acceptance,
 real-account validation, data cutover and Swift removal remain open.
+
+The subsequent parent batch passes 242 desktop tests (217 unit plus the existing
+10/9/6 integrations), including the mounted default-off Computer Use bridge.
+Synchronous selection changes revoke prior grants, including A→B→A between UI
+polls; two focused tests pass. The stopped-handle error-precedence defect found
+by CI at `49dcb71` is corrected with deterministic coverage; eight runtime tests
+pass. The bounded scalar resolver passes four core and seven CLI fixtures plus
+strict Clippy. ASUS Linux tested exact `bd2296c`: 497 outer tests passed, zero
+failed, with nine existing child entry markers ignored; ten visible child
+scenario executions are not additional unique tests. Strict Clippy also passed.
+
+The explicitly opt-in updater helper passes 22 Mac and 24 Linux fixtures,
+feature-on strict Clippy and explicit helper-bin compilation. No native helper
+entry, signing, target replacement or app quit ran. Real launcher/owner wiring
+is still pending. Review identified a remaining running-process identity check
+to add alongside existing static bundle verification before native acceptance.
+All helper checks are now included in core CI without enabling the feature by
+default or adding it to packaging inventories.
