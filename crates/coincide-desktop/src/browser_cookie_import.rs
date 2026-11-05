@@ -104,6 +104,14 @@ mod native {
         input: Cookie,
     }
     impl PreparedCookie {
+        /// Foundation representation only: no native store/profile is created.
+        pub fn prepare(input: Cookie) -> Result<Self, Failure> {
+            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
+            Ok(Self {
+                native: cookie(&input)?,
+                input,
+            })
+        }
         pub fn expired(&self, now: u64) -> bool {
             self.input
                 .expires()
@@ -234,16 +242,6 @@ mod native {
                 binding,
                 callbacks,
                 _lease: lease,
-            })
-        }
-        pub fn prepare(&self, input: Cookie, current: &Binding) -> Result<PreparedCookie, Failure> {
-            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
-            if self.callbacks.closed() || *current != self.binding {
-                return Err(Failure::ClosedOrStale);
-            }
-            Ok(PreparedCookie {
-                native: cookie(&input)?,
-                input,
             })
         }
         /// Dispatch is irreversible; callback silence remains Unknown. No timeout

@@ -218,6 +218,29 @@ impl BrowserController {
                 .context
                 .binding(id)
                 .ok_or_else(|| "Invalid import conversation.".to_owned())?;
+            // Prevalidate every native representation before creating a profile
+            // or data store. This Foundation-only step does not dispatch work.
+            let mut expired = 0;
+            let mut remaining = VecDeque::new();
+            while prepared.cookies.remaining() != 0 {
+                let before = prepared.cookies.remaining();
+                let cookie = prepared
+                    .cookies
+                    .next(&binding, chrono_now())
+                    .map_err(|_| "Cookie context changed during preparation.".to_owned())?;
+                expired += before - prepared.cookies.remaining() - usize::from(cookie.is_some());
+                let Some(cookie) = cookie else { break };
+                match PreparedCookie::prepare(cookie) {
+                    Ok(cookie) => remaining.push_back(cookie),
+                    Err(_)=>return Err("Native cookie representation is unsupported (including SameSite=None). No profile was created and no cookie was dispatched.".into()),
+                }
+            }
+            if remaining.is_empty() {
+                return Err("All reviewed cookies expired; no profile was created.".into());
+            }
+            if self.shutdown.callbacks.closed() || !prepared.reservation.context.valid() {
+                return Err("Cookie context closed before destination creation.".into());
+            }
             self.profiles.commit_cookie_profile(current_thread,&prepared.reservation.fresh).map_err(|_|"New empty profile creation could not be confirmed. No cookies were dispatched; inspect profile metadata before trying again.".to_owned())?;
             let mut status = ImportStatus {
                 profile: Some(id),
@@ -225,6 +248,7 @@ impl BrowserController {
                 revision: self.profiles.revision,
                 thread: current_thread.into(),
                 generation: prepared.reservation.context.generation,
+                expired,
                 ..Default::default()
             };
             // Named native contexts count even when no WKWebView ever exists.
@@ -239,26 +263,6 @@ impl BrowserController {
                     return Ok(status);
                 }
             };
-            let mut remaining = VecDeque::new();
-            while prepared.cookies.remaining() != 0 {
-                let before = prepared.cookies.remaining();
-                let cookie = prepared
-                    .cookies
-                    .next(&binding, chrono_now())
-                    .map_err(|_| "Cookie context changed during preparation.".to_owned())?;
-                status.expired +=
-                    before - prepared.cookies.remaining() - usize::from(cookie.is_some());
-                let Some(cookie) = cookie else { break };
-                match target.prepare(cookie, &binding) {
-                    Ok(cookie) => remaining.push_back(cookie),
-                    Err(_) => {
-                        status.refused += 1;
-                        status.undispatched = remaining.len() + prepared.cookies.remaining();
-                        status.message="Native cookie representation was refused before first dispatch (including unsupported SameSite=None). New empty profile remains unselected.".into();
-                        return Ok(status);
-                    }
-                }
-            }
             status.undispatched = remaining.len();
             status.pending = true;
             status.message =
