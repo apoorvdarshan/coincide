@@ -17,6 +17,8 @@ use uuid::Uuid;
 mod antigravity_api;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
+#[path = "organization_api.rs"]
+mod organization_api;
 #[path = "session_import_api.rs"]
 mod session_import_api;
 #[path = "workspace_api.rs"]
@@ -125,6 +127,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if organization_api::METHODS.contains(&method) {
+            return self.organization_command(method, p);
+        }
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
         }
@@ -340,6 +345,7 @@ impl Engine {
                 ,"agent.pending", "agent.answer", "agent.select"
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(organization_api::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))

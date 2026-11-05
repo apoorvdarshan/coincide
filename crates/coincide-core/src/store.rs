@@ -494,6 +494,48 @@ impl Store {
         self.db.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document",params![name,value.to_string()])?;
         Ok(())
     }
+    /// Compare-and-save only the Rust bot overlay. The original captured file
+    /// remains immutable. An immediate transaction excludes competing writers
+    /// across Store connections, not just callers sharing one Engine mutex.
+    pub fn save_bots_document_if_unchanged(
+        &mut self,
+        expected: Option<&Value>,
+        value: &Value,
+    ) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='bots.json'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current: Option<Value> = if let Some(local) = local {
+            Some(serde_json::from_str(&local)?)
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='bots.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+        };
+        ensure!(
+            current.as_ref() == expected,
+            "Bot document changed; reload before saving"
+        );
+        tx.execute("INSERT INTO documents(name,document) VALUES ('bots.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [value.to_string()])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn patch_document(&mut self, name: &str, patch: &Value) -> Result<Value> {
         let patch = patch
             .as_object()
