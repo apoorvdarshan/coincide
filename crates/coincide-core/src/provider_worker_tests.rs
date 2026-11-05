@@ -180,3 +180,83 @@ fn later_turn_on_same_thread_does_not_replace_retired_worker_tracking() {
         }
     );
 }
+
+struct TlsExitGate {
+    entered: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+impl Drop for TlsExitGate {
+    fn drop(&mut self) {
+        // These cannot panic during a panicking worker's TLS destruction.
+        let _ = self.entered.send(());
+        let _ = self.release.recv();
+    }
+}
+thread_local! {
+    static TLS_EXIT_GATE: std::cell::RefCell<Option<TlsExitGate>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+fn joined_tls_exit(panic_after_finished: bool) {
+    let (_dir, mut engine, id) = fixture();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let session = Session::fixture_worker(move |_, events| {
+        TLS_EXIT_GATE.with(|slot| {
+            *slot.borrow_mut() = Some(TlsExitGate {
+                entered: entered_tx,
+                release: release_rx,
+            });
+        });
+        events.send(Event::Finished).unwrap();
+        assert!(
+            !panic_after_finished,
+            "synthetic worker panic before TLS exit"
+        );
+    });
+    let observer = session.worker_completion();
+    // An explicit destructor-entry acknowledgement proves that the worker body
+    // has returned/unwound. Its actual thread exit is still gated, independent
+    // of scheduling, sleep duration, or JoinHandle::is_finished semantics.
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    retire(&mut engine, &id, session);
+    assert_eq!(observer.status(), agent::WorkerThreadStatus::Running);
+    assert_eq!(
+        engine.provider_workers_status(),
+        ProviderWorkersStatus {
+            running: 1,
+            ..ProviderWorkersStatus::default()
+        }
+    );
+    release_tx.send(()).unwrap();
+    let expected_status = if panic_after_finished {
+        agent::WorkerThreadStatus::Panicked
+    } else {
+        agent::WorkerThreadStatus::Returned
+    };
+    assert_eq!(wait_exit(&observer), expected_status);
+    let expected_counts = if panic_after_finished {
+        ProviderWorkersStatus {
+            panicked: 1,
+            ..ProviderWorkersStatus::default()
+        }
+    } else {
+        ProviderWorkersStatus {
+            returned: 1,
+            ..ProviderWorkersStatus::default()
+        }
+    };
+    engine.poll();
+    assert_eq!(engine.provider_workers_status(), expected_counts);
+    assert_eq!(engine.provider_workers_status(), expected_counts);
+}
+
+#[test]
+fn returned_worker_stays_running_until_tls_destructor_and_join_finish() {
+    joined_tls_exit(false);
+}
+
+#[test]
+fn panicked_worker_stays_running_until_tls_destructor_and_join_finish() {
+    joined_tls_exit(true);
+}
