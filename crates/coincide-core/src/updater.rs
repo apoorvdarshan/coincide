@@ -1647,7 +1647,15 @@ mod tests {
             Self::with_timeout(Duration::from_secs(5))
         }
         fn with_timeout(timeout: Duration) -> Self {
-            let root = tempfile::tempdir().unwrap();
+            // Tempfile directories otherwise inherit the default mkdir mode/umask;
+            // request an owner-only cache at creation, matching the production gate.
+            let mut builder = tempfile::Builder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                builder.permissions(fs::Permissions::from_mode(0o700));
+            }
+            let root = builder.tempdir().unwrap();
             let bytes = archive(None, CompressionMethod::Deflated);
             let http = Arc::new(FakeHttp {
                 feed: Mutex::new(serde_json::to_vec(&feed(&bytes)).unwrap()),
