@@ -16,6 +16,9 @@ use std::{
     sync::mpsc::{self, Receiver, Sender},
     thread,
 };
+#[path = "terminal_shell.rs"]
+pub mod shell;
+
 struct Size {
     rows: u16,
     cols: u16,
@@ -45,6 +48,10 @@ pub struct Terminal {
     events: Receiver<Event>,
     term: Term<Listener>,
     processor: Processor,
+    shell: shell::ShellObserver,
+    shell_anchors: shell::Anchors,
+    history_limit: usize,
+    _shell_launch: shell::ShellLaunch,
     pub revision: u64,
     pub title: String,
 }
@@ -81,6 +88,16 @@ impl Terminal {
             "COINCIDE_CONTROL_SOCKET",
             std::env::temp_dir().join(format!("coincide-unbound-{}.sock", uuid::Uuid::new_v4())),
         );
+        let shell_launch = shell::ShellLaunch::prepare(
+            shell,
+            command
+                .get_env("ZDOTDIR")
+                .map(std::ffi::OsStr::to_os_string),
+        );
+        command.args(&shell_launch.arguments);
+        for (name, value) in &shell_launch.environment {
+            command.env(name, value);
+        }
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         let child = pty.slave.spawn_command(command)?;
@@ -117,14 +134,32 @@ impl Terminal {
             events,
             term: Term::new(Config::default(), &Size { rows, cols }, Listener(sender)),
             processor: Processor::new(),
+            shell: Default::default(),
+            shell_anchors: Default::default(),
+            history_limit: Config::default().scrolling_history,
+            _shell_launch: shell_launch,
             revision: 0,
             title: "Terminal".into(),
         })
     }
     pub fn poll(&mut self) -> Result<bool> {
         let mut changed = false;
-        for bytes in self.output.try_iter().take(64) {
-            self.processor.advance(&mut self.term, &bytes);
+        for _ in 0..64 {
+            let Ok(bytes) = self.output.try_recv() else {
+                break;
+            };
+            let mut offset = 0;
+            for (end, mark) in self.shell.events(&bytes) {
+                self.advance_screen(&bytes[offset..end]);
+                offset = end;
+                if self.term.mode().contains(TermMode::ALT_SCREEN) {
+                    self.shell_anchors.invalidate();
+                } else {
+                    let position = self.shell_position();
+                    self.shell_anchors.observe(mark, position);
+                }
+            }
+            self.advance_screen(&bytes[offset..]);
             changed = true;
         }
         for event in self.events.try_iter() {
@@ -138,6 +173,189 @@ impl Terminal {
             self.revision += 1;
         }
         Ok(changed)
+    }
+    fn shell_position(&self) -> shell::Position {
+        let grid = self.term.grid();
+        shell::Position {
+            row: grid.history_size() + grid.cursor.point.line.0.max(0) as usize,
+            col: grid.cursor.point.column.0 + usize::from(grid.cursor.input_needs_wrap),
+        }
+    }
+    fn advance_screen(&mut self, bytes: &[u8]) {
+        let history = self.term.grid().history_size();
+        self.processor.advance(&mut self.term, bytes);
+        let now = self.term.grid().history_size();
+        // Once history fills, any advance may evict old lines. Conservatively
+        // refuse anchors until a fresh prompt in a non-full, non-alternate grid.
+        if now < history
+            || now >= self.history_limit
+            || self.term.mode().contains(TermMode::ALT_SCREEN)
+        {
+            self.shell_anchors.invalidate();
+        }
+    }
+    /// Exact observed-revision output hook for the API owner. Never executes the
+    /// text. No suffix search through arbitrary output; bash's delayed mark is
+    /// verified against its original prompt-anchored command line only.
+    pub fn last_command_output(&mut self, revision: u64) -> Result<Option<String>> {
+        self.poll()?;
+        ensure!(
+            revision == self.revision,
+            "Terminal revision changed; read a fresh frame"
+        );
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return Ok(None);
+        }
+        let Some(output) = self.shell_anchors.output.clone() else {
+            return Ok(None);
+        };
+        if self.shell.state.command.as_deref() != Some(output.command.as_str()) {
+            return Ok(None);
+        }
+        let history = self.term.grid().history_size();
+        let cols = self.term.columns();
+        let end = output.end.unwrap_or_else(|| self.shell_position());
+        let mut start = if let Some(start) = output.start {
+            start
+        } else {
+            let Some((prompt, lines)) = output.prompt else {
+                return Ok(None);
+            };
+            let mut row = prompt.row + lines.saturating_sub(1);
+            if row >= end.row {
+                return Ok(None);
+            }
+            let mut command_line = String::new();
+            loop {
+                if row >= history + self.term.screen_lines() {
+                    return Ok(None);
+                }
+                command_line.push_str(&self.shell_copy(row, 0, row, cols - 1)?);
+                if command_line.len() > 32 * 1024 {
+                    return Ok(None);
+                }
+                let wrapped = self.term.grid()[Line(row as i32 - history as i32)][Column(cols - 1)]
+                    .flags
+                    .contains(Flags::WRAPLINE);
+                row += 1;
+                if !wrapped {
+                    break;
+                }
+            }
+            if !command_line
+                .trim_end_matches([' ', '\t'])
+                .ends_with(&output.command)
+            {
+                return Ok(None);
+            }
+            shell::Position { row, col: 0 }
+        };
+        if start.col >= cols {
+            start.row += 1;
+            start.col = 0;
+        }
+        if start.row > end.row
+            || (start.row == end.row && start.col > end.col)
+            || end.row >= history + self.term.screen_lines()
+        {
+            return Ok(None);
+        }
+        let mut text = format!("$ {}", output.command);
+        if start != end {
+            let (last_row, last_col) = if end.col == 0 {
+                let Some(row) = end.row.checked_sub(1) else {
+                    return Ok(None);
+                };
+                (row, cols - 1)
+            } else {
+                (end.row, end.col.min(cols) - 1)
+            };
+            if last_row < start.row {
+                return Ok(None);
+            }
+            let body = self.shell_copy(start.row, start.col, last_row, last_col)?;
+            let body = body.trim_end_matches([' ', '\t', '\n']);
+            if !body.is_empty() {
+                text.push('\n');
+                text.push_str(body);
+            }
+        }
+        if text.len() > 1024 * 1024 {
+            return Ok(None);
+        }
+        Ok(Some(text))
+    }
+    fn shell_copy(
+        &self,
+        first: usize,
+        first_col: usize,
+        last: usize,
+        last_col: usize,
+    ) -> Result<String> {
+        let history = self.term.grid().history_size();
+        let cols = self.term.columns();
+        ensure!(
+            first <= last && last < history + self.term.screen_lines(),
+            "Command anchor left the buffer"
+        );
+        let mut result = String::new();
+        let mut offset = first;
+        while offset <= last {
+            let end = (offset + 299).min(last);
+            let part = copy_cells(
+                offset,
+                end - offset + 1,
+                cols,
+                TerminalPoint {
+                    row: offset,
+                    col: if offset == first { first_col } else { 0 },
+                },
+                TerminalPoint {
+                    row: end,
+                    col: if end == last { last_col } else { cols - 1 },
+                },
+                |row, col| {
+                    let cell = &self.term.grid()[Line(row as i32 - history as i32)][Column(col)];
+                    let flags = cell.flags;
+                    let continuation =
+                        flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
+                    let mut text = if continuation {
+                        String::new()
+                    } else {
+                        cell.c.to_string()
+                    };
+                    if !continuation {
+                        if let Some(marks) = cell.zerowidth() {
+                            text.extend(marks.iter().take(MAX_COMBINING_CHARS).copied());
+                        }
+                    }
+                    Ok(CopyCell {
+                        text,
+                        width: if continuation {
+                            0
+                        } else if flags.contains(Flags::WIDE_CHAR) {
+                            2
+                        } else {
+                            1
+                        },
+                        continuation,
+                        hidden: flags.contains(Flags::HIDDEN),
+                        wrapline: flags.contains(Flags::WRAPLINE),
+                    })
+                },
+            )?;
+            result.push_str(&part);
+            if end < last
+                && !self.term.grid()[Line(end as i32 - history as i32)][Column(cols - 1)]
+                    .flags
+                    .contains(Flags::WRAPLINE)
+            {
+                result.push('\n');
+            }
+            ensure!(result.len() <= 1024 * 1024, "Command output exceeds 1 MiB");
+            offset = end + 1;
+        }
+        Ok(result)
     }
     pub fn write(&mut self, text: &str) -> Result<()> {
         ensure!(text.len() <= 32 * 1024, "Terminal input exceeds 32 KiB");
@@ -167,6 +385,7 @@ impl Terminal {
             pixel_width: 0,
             pixel_height: 0,
         })?;
+        self.shell_anchors.invalidate();
         self.term.resize(Size { rows, cols });
         self.revision += 1;
         Ok(())
@@ -238,7 +457,7 @@ impl Terminal {
         }
         let exited = self.child.try_wait()?.map(|s| s.exit_code());
         Ok(
-            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport(),"modes":self.input_modes()}),
+            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport(),"modes":self.input_modes(),"shell":self.shell.state}),
         )
     }
     /// At most ten styled viewport rows per response. Cursor coordinates remain
@@ -328,7 +547,7 @@ impl Terminal {
             "revision": self.revision, "exitCode": exited,
             "grid": grid, "cursor": cursor, "truncated": truncated,
             "rowOffset": row_offset, "rowCount": row_count,
-            "viewport": self.viewport(), "modes": self.input_modes(),
+            "viewport": self.viewport(), "modes": self.input_modes(), "shell":self.shell.state,
             "nextRowOffset": (row_offset + row_count < rows).then_some(row_offset + row_count),
         }))
     }
