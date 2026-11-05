@@ -9,13 +9,16 @@ use coincide_core::{
         ServiceResult, ValidatedRenderEntry,
     },
 };
-use gpui_kit::base::Disableable;
 use gpui_kit::{
+    AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
+    Task, Window,
+    base::Disableable,
     component::{
-        button::*,
+        button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
     },
-    *,
+    div,
 };
 use std::{
     collections::{HashMap, HashSet},
