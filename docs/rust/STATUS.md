@@ -56,6 +56,32 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- The next local feature batch passed 489 core unit tests (five isolated child
+  entrypoints are invoked by parent fixtures), strict feature core Clippy over
+  all targets, 12 bookmark core regressions and 11 desktop browser-settings
+  regressions. The full feature desktop run passed 323 unit tests and all four
+  integration targets (19, 10, 14 and 11 tests). Bookmark opens now prepare an opaque saved-ID proof off UI and
+  enqueue only after synchronous Settings-route and selected-thread checks;
+  close/reopen between polls invalidates old work. Source files are rechecked
+  before explicit Save. Native bookmark acceptance is pending. Codex speed now
+  admits only exact catalog-backed tiers and sends an explicit Standard reset
+  after a resumed nondefault tier; the actual fake-protocol regression passed.
+  Explicit one-field and combined stale-option repair preserve unrelated data.
+  Desktop speed controls and native effort acceptance remain in progress.
+- a296e7c passed all six Rust CI jobs (run 42112221154), plus packaging
+  validation (42112221196). A Windows-only test assumption was corrected to
+  expect the platform's Unsupported catalog state; proof revocation and refusal
+  to reuse an older catalog remain asserted. Local full feature validation passed
+  470 core unit tests and all integration targets, 319 desktop unit tests and
+  four integration targets, and strict core Clippy. Strict desktop Clippy still
+  fails unused/unmounted APIs; no suppression or success claim was added.
+- Native terminal Edit guards passed all four disabled commands with actual PTY
+  focus and restored standard responder routing afterward. Native standalone
+  /plan, /build and /model controls passed without creating messages, sessions
+  or provider attempts, then normal Quit preserved the exact final draft.
+  Codex effort proof, explicit clear and revoked-catalog repair have backend
+  regression coverage; their new native acceptance is still pending. Bookmark
+  import/open is under integration review and is not yet accepted.
 - cbc7eef passed all six Rust CI jobs (run 42105540376): macOS GPUI build,
   Linux/macOS/Windows core, Windows GPUI check and the new Linux GPUI check.
   Linux checks both desktop configurations and all eight headless release-receipt
