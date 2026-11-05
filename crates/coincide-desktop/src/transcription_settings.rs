@@ -273,6 +273,34 @@ impl TranscriptionSettings {
             cx.notify();
         }
     }
+    /// Session-local snapshot for the gated microphone panel. No path access,
+    /// discovery, permission query or inference is performed here. Generation
+    /// changes on configuration edits (also conservatively on binding/jobs).
+    pub fn recording_configuration(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> (
+        u64,
+        Option<crate::microphone_settings::LocalRecordingConfig>,
+    ) {
+        let configuration = if self.picker {
+            None
+        } else {
+            self.executable
+                .clone()
+                .zip(self.model.clone())
+                .map(
+                    |(executable, model)| crate::microphone_settings::LocalRecordingConfig {
+                        executable,
+                        model,
+                        language: self.language.read(cx).value().to_string().trim().into(),
+                        threads: self.threads,
+                        maximum_seconds: 60,
+                    },
+                )
+        };
+        (self.workflow.generation, configuration)
+    }
     pub fn accepts_text(&self, event: &TextReady, current: &ComposerBinding) -> bool {
         self.workflow.accepts(event, current)
     }

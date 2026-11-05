@@ -1,10 +1,14 @@
 use super::*;
 
+use coincide_core::bot_runtime::BOTS_PROJECT_ID;
+
 const NO_PROJECT: &str = "00000000-0000-0000-0000-000000000000";
 
 fn project_key(id: &str) -> &str {
     if id.is_empty() || id == NO_PROJECT {
         NO_PROJECT
+    } else if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) {
+        BOTS_PROJECT_ID
     } else {
         id
     }
@@ -15,6 +19,7 @@ impl Coincide {
         let project_label = match self.selected_project.as_deref() {
             None => "All projects".into(),
             Some(NO_PROJECT) => "No project".into(),
+            Some(BOTS_PROJECT_ID) => "Bots".into(),
             Some(id) => self
                 .projects
                 .iter()
@@ -41,7 +46,11 @@ impl Coincide {
             .iter()
             .map(|p| (text(p, "id"), text(p, "name")))
             .collect::<Vec<_>>();
-        groups.retain(|(id, _)| id != NO_PROJECT && !id.is_empty());
+        groups.retain(|(id, _)| {
+            id != NO_PROJECT && !id.is_empty() && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+        });
+        // Reserved virtual grouping: no fabricated filesystem project or cwd.
+        groups.push((BOTS_PROJECT_ID.into(), "Bots".into()));
         groups.push((NO_PROJECT.into(), "No project".into()));
         for thread in &visible {
             let key = project_key(&thread.project_id);
@@ -155,6 +164,7 @@ impl Coincide {
                     .label("Settings")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings_open = !this.settings_open;
+                        this.sync_transcription_binding(cx);
                         cx.notify();
                     })),
             )
@@ -206,6 +216,18 @@ impl Coincide {
                                 })),
                         )
                         .child(
+                            Button::new("projects-bots")
+                                .label("Bots")
+                                .when(
+                                    self.selected_project.as_deref() == Some(BOTS_PROJECT_ID),
+                                    |b| b.primary(),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.selected_project = Some(BOTS_PROJECT_ID.into());
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
                             div()
                                 .id("project-picker")
                                 .max_h(px(180.))
@@ -214,8 +236,15 @@ impl Coincide {
                                 .flex_col()
                                 .gap_1()
                                 .children(
-                                    self.projects.iter().filter(|p| p["id"] != NO_PROJECT).map(
-                                        |project| {
+                                    self.projects
+                                        .iter()
+                                        .filter(|p| {
+                                            p["id"] != NO_PROJECT
+                                                && !p["id"].as_str().is_some_and(|id| {
+                                                    id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+                                                })
+                                        })
+                                        .map(|project| {
                                             let id = text(project, "id");
                                             Button::new(SharedString::from(format!("project-{id}")))
                                                 .label(text(project, "name"))
@@ -227,8 +256,7 @@ impl Coincide {
                                                     this.selected_project = Some(id.clone());
                                                     cx.notify();
                                                 }))
-                                        },
-                                    ),
+                                        }),
                                 ),
                         )
                         .child(Input::new(&self.project_path))

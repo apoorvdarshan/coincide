@@ -748,7 +748,7 @@ mod tests {
             thread::yield_now();
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn startup_reads_only_and_explicit_click_writes_without_permission_prompt() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         until(&mut pump, &mut engine, |p| !p.status.busy);
@@ -767,7 +767,7 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), vec!["request"]);
         pump.finish(&mut engine);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn uncertain_receipt_is_acked_once_without_delivery_retry() {
         let (mut pump, mut engine, calls) = setup(Delivery::Uncertain, true);
         pump.action(&mut engine, Action::Configure(true));
@@ -792,7 +792,7 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), vec!["status", "post"]);
         pump.finish(&mut engine);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn closed_worker_retains_unsent_claim_for_cancel_ack_on_shutdown() {
         let (mut pump, mut engine, _) = setup(Delivery::Accepted, true);
         until(&mut pump, &mut engine, |p| !p.status.busy);
@@ -815,7 +815,7 @@ mod tests {
             matches!(engine.0.lock().unwrap().acks.as_slice(), [(got, NotificationAck::Cancelled)] if *got == id)
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn real_bridge_constructor_is_read_only_and_activity_slot_is_latest_only() {
         let state = Arc::new(Mutex::new(EngineState::default()));
         let calls = Arc::new(Mutex::new(vec![]));
@@ -859,7 +859,7 @@ mod tests {
             thread::yield_now();
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn inactive_build_never_claims_or_pretends_delivery() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, false);
         engine.0.lock().unwrap().claims.push_back(claim());
@@ -873,7 +873,7 @@ mod tests {
         assert!(calls.lock().unwrap().is_empty());
         pump.finish(&mut engine);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn foreground_default_off_is_inert_until_enabled_and_authorized() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         let mut seen = activity();
@@ -921,7 +921,7 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), vec!["status", "clear"]);
         pump.finish(&mut engine);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn disable_cancels_retained_unsent_claim_and_never_clears_from_activity() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         let event = claim();

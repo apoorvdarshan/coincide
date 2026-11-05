@@ -3,12 +3,154 @@
 //!
 //! TextView::markdown is already selectable in gpui-base 0.9.0; Kit's Root mounts
 //! TextSelectionLayer. Its Copy handlers trim selected_text(), losing whitespace.
-//! Capture Copy inside the body subtree before those handlers. Empty selection
-//! propagates normally; a whitespace-only selection is valid clipboard content.
+//! The selection layer may route Copy outside the message body. Install a Root
+//! presentation plugin so the capture handler surrounds both content and layer.
+//! Editable inputs retain their own Copy handling.
 use gpui_kit::{
-    base::{TextSelection, input::Copy},
+    base::{Root, RootPlugin, TextSelection, input::Copy},
+    component::text::{TextView, TextViewState},
     *,
 };
+use std::collections::HashMap;
+
+#[derive(Default)]
+struct TranscriptViews {
+    views: HashMap<(WindowId, EntityId), WeakEntity<TextViewState>>,
+}
+impl Global for TranscriptViews {}
+
+// The native entity remains keyed by semantic message identity. This holder
+// caches only source text; selection, layout and Markdown stay in TextViewState.
+struct NativeBody {
+    state: Entity<TextViewState>,
+    source: SharedString,
+}
+
+pub fn markdown(
+    thread: &str,
+    item: &str,
+    source: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> TextView {
+    let source = source.into();
+    let key = SharedString::from(format!("native-state/{}", selection_id(thread, item)));
+    let body = window.use_keyed_state(key, cx, |_, cx| NativeBody {
+        state: cx.new(|cx| TextViewState::markdown(source.as_ref(), cx)),
+        source: source.clone(),
+    });
+    let state = body.update(cx, |body, cx| {
+        if body.source != source {
+            let appended = !body.source.is_empty() && source.starts_with(body.source.as_ref());
+            body.state.update(cx, |state, cx| {
+                if !appended {
+                    // A pending large reparse must not copy the previous
+                    // document's multi-click/select-all override.
+                    state.clear_selection(cx);
+                }
+                state.set_text(source.as_ref(), cx);
+            });
+            body.source = source;
+        }
+        body.state.clone()
+    });
+    let registry = cx.default_global::<TranscriptViews>();
+    registry.views.retain(|_, state| state.upgrade().is_some());
+    registry.views.insert(
+        (window.window_handle().window_id(), state.entity_id()),
+        state.downgrade(),
+    );
+    TextView::new(&state)
+}
+
+pub fn init(cx: &mut App) {
+    Root::register_plugin(cx, |_, _| ExactSelectionCopy);
+}
+
+struct ExactSelectionCopy;
+impl Render for ExactSelectionCopy {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+impl RootPlugin for ExactSelectionCopy {
+    fn decorate(
+        &self,
+        surface: AnyElement,
+        _: &Root,
+        _: &mut Window,
+        _: &mut App,
+    ) -> impl IntoElement {
+        div()
+            .size_full()
+            .capture_action(|_: &Copy, window, cx| {
+                // A stale rendered selection must never steal Copy from a
+                // composer, search field, terminal or native web view.
+                if !window
+                    .context_stack()
+                    .iter()
+                    .any(|context| context.contains("TextView"))
+                {
+                    cx.propagate();
+                    return;
+                }
+                let window_id = window.window_handle().window_id();
+                let states = cx
+                    .try_global::<TranscriptViews>()
+                    .map(|registry| {
+                        registry
+                            .views
+                            .iter()
+                            .filter(|((owner, _), _)| *owner == window_id)
+                            .filter_map(|(_, state)| state.upgrade())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let Some(focused) = states
+                    .into_iter()
+                    .find(|state| state.read(cx).focus_handle().is_focused(window))
+                else {
+                    cx.propagate();
+                    return;
+                };
+                // Resolve native geometry projections first. The window-level
+                // collector drops whitespace-only participants; selected_text
+                // also adds a newline after each selected Markdown block, even
+                // when only two spaces inside that block were highlighted.
+                let mut selected = TextSelection::selected_text(window, cx);
+                if TextSelection::has_selection(window, cx) {
+                    let state = focused.read(cx);
+                    let rendered = state.rendered_text();
+                    // Both mappings come from the same committed native parse.
+                    // This is the pinned component's public selection mapping,
+                    // not a search for repeated text or an inferred byte range.
+                    // It preserves real newlines inside the selected span and
+                    // excludes only synthetic block separators at its ends.
+                    if let Some(exact) = state
+                        .selected_source_range()
+                        .and_then(|range| rendered.range_for_source(range))
+                        .and_then(|range| rendered.as_str().get(range))
+                    {
+                        selected = exact.to_owned();
+                    } else if selected.is_empty() {
+                        // Unmapped custom/HTML Markdown nodes still use the
+                        // native projection; never guess their source offsets.
+                        selected = state.selected_text();
+                    }
+                }
+                match copy_payload(selected) {
+                    Some(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        // Capture handlers propagate by default in pinned GPUI.
+                        // Stop the downstream native handler trimming our copy.
+                        cx.stop_propagation();
+                    }
+                    None => cx.propagate(),
+                }
+            })
+            .child(surface)
+    }
+}
 
 fn selection_id(thread: &str, item: &str) -> SharedString {
     // Semantic IDs, never the virtualized row index. Length framing prevents
@@ -31,23 +173,15 @@ fn copy_payload(selected: String) -> Option<String> {
 
 /// Mount around the existing styled TextView::markdown expression. Native drag,
 /// Shift extension and Select All still select/project the rendered Markdown;
-/// clipboard copy preserves exactly that projection (Plain or Source format).
+/// clipboard copy uses its exact rendered range whenever the native parser
+/// supplies a source mapping; unmapped nodes retain the native projection.
 /// This does not implement cross-message/offscreen range selection.
 pub fn preserve_selected_copy(
     thread: &str,
     item: &str,
     body: impl IntoElement,
 ) -> impl IntoElement {
-    div()
-        .id(selection_id(thread, item))
-        .min_w_0()
-        .capture_action(|_: &Copy, window, cx| {
-            match copy_payload(TextSelection::selected_text(window, cx)) {
-                Some(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-                None => cx.propagate(),
-            }
-        })
-        .child(body)
+    div().id(selection_id(thread, item)).min_w_0().child(body)
 }
 
 #[cfg(test)]

@@ -755,7 +755,7 @@ mod tests {
             .is_err()
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn conversation_creation_uses_saved_baseline_only_and_never_sends_or_saves() {
         let bound = Bound::parse(reply()).unwrap();
         let draft = Fields {
@@ -780,7 +780,7 @@ mod tests {
         assert_eq!(draft, before);
         assert_eq!(bound.bot["name"], "Saved");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn unsupported_conversation_creation_errors_without_fallback_or_retry() {
         let bound = Bound::parse(reply()).unwrap();
         let mut calls = 0;
@@ -922,7 +922,7 @@ mod fixture_tests {
         assert_eq!(store.original("bots.json").unwrap().unwrap(), original);
         assert_eq!(fs::read(source.join("bots.json")).unwrap(), original);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn real_api_new_conversation_preserves_drafts_and_does_not_execute() {
         let fixture = Fixture::new();
         let mut store = Store::open(&fixture.0.join("rust/state.sqlite")).unwrap();

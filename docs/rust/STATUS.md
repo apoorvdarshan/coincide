@@ -58,14 +58,25 @@ The broad feature groups above remain open until their complete behavior passes.
 
 | Owner | Verified evidence | Current work / remaining acceptance |
 | --- | --- | --- |
-| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY and control integration each passed 1/1 at f9e0ca0 | Splits/shell parity; Windows GPUI compile passed at 1e5387e; GUI acceptance pending |
-| Browser | Native Mac upload fixture passed seven groups; 77 combined Mac desktop tests pass with native notification feature compiled, including 10 private-channel cases | Private isolated-world WebKit fill passed 11 native fixture groups and is enabled on supported Mac builds; Windows uploads unavailable |
-| Organization | CLI import Store/API tests passed on Mac/Linux; native preview/import panel mounted with five passing tests | Native picker/confirmation acceptance; bot-local persistence and editor mounted/tested; execution and native acceptance pending |
-| Credentials | Six native-workflow fixture tests passed; local Whisper subprocess tests passed 5/5 plus strict clippy on Linux at cf90172 | Local WAV workflow mounted/tested; real model/microphone, visual approval, vault and passkey acceptance remain |
-| Workspace | Async checkpoint/worktree panel mounted; seven worker tests pass; exact-copy helper mounted with five pure tests | Native panel/copy acceptance; bounded GitHub metadata API/panel mounted; 11 Mac/Linux service/Engine tests and seven panel tests pass; live account acceptance pending |
-| Host | Runtime synthetic tests and four Engine idle-sleep tests passed on Linux; explicit Rust-owned opt-in wired | Native idle-sleep lifecycle acceptance; notifications delivery adapter; privileged power/remote/iCloud remain |
-| Packaging | d4a9de5 passed 22 tests per host on Mac/Linux/Windows (DMG explicitly skipped off Mac), plus real store rehearsal; actual Mac ZIP/DMG payload readback verified | Runtime dependencies, signatures, HFS/Finder behavior, launch/install/updater and release readiness remain unverified |
-| Coordinator | Full Mac desktop suite passed 77 tests including bot/transcription mounts and native notification feature compilation; Windows long-destination handling corrected with explicit long-cwd limitation | Integrated Linux checks, native acceptance, CI triage and combined UI/UX parity |
+| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Tabs/splits source delivered; compile, mounted acceptance, shell integration and Windows GUI pending |
+| Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes | Windows uploads, broader browser parity and real-account acceptance remain |
+| Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot conversation creation and trusted every-turn activation integrated; new mounted flow pending |
+| Credentials | Native synthetic WAV insertion preserved Unicode selection and did not send; microphone converter/lifecycle fixtures pass | Gated microphone controls mounted; six fake workflow tests and feature-on converter/lifecycle fixtures pass; real vault/passkey/model/mic acceptance absent |
+| Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | GitHub write confirmation source delivered; durable backend integration and mutation acceptance pending |
+| Host | Serialized notification runtime fake tests pass; native adapters compile | Settings bridge mounted; default-off foreground native-clear issue corrected with regression fixtures; native delivery/remote/iCloud remain |
+| Packaging | 22 archive tests per supported host and real Mac ZIP/DMG payload readback passed | Concrete HTTPS/ZIP updater adapters in progress; signatures, install, rollback and release readiness remain open |
+| Coordinator | Last pushed checkpoint 412b200 passed all five Rust CI jobs; subsequent combined desktop suite passed 125 synthetic tests and Linux core passed 347 tests plus strict clippy | Mounted bot/notification/microphone controls and registered terminal/GitHub action modules pass Mac fixtures; pushed CI checkpoint pending; full UI/UX parity remains open |
+
+The latest five native acceptance groups used isolated fixture data and fake
+provider/gh/Whisper processes. Import sources stayed unchanged, imported execution
+was refused, bot edits survived restart, and WAV insertion left transcript item
+counts unchanged. Copy checks preserved selected spaces and Unicode exactly and
+preserved real source newlines without adding block separators. The evidence is
+in `NATIVE_ACCEPTANCE.md` and `acceptance-report.json` under the retained local
+`coincide-native-ui3-1i2rd94e` fixture directory. The synthetic app was stopped;
+existing Swift and ordinary Rust preview instances were preserved. These results
+do not establish full transcript virtualization, real inference or live GitHub
+write acceptance.
 
 Windows Core CI at f9e0ca0 passed the real ConPTY and private-pipe integration
 targets, then failed a long-path Git worktree test. The fix distinguishes long
@@ -80,8 +91,9 @@ prevents dispatch; already-dispatched renderer work cannot be retracted. Eleven
 native WebKit fixture groups passed; supported Mac builds now advertise the
 native approval workflow. Visual approval and integrated console-suppression
 acceptance remain pending. These tests used no real vault,
-provider account, model inference or microphone. Copy helper pure tests establish
-byte/range handling, not native cross-message or offscreen selection acceptance.
+provider account, model inference or microphone. Native transcript copy acceptance now covers whitespace-only and partial Unicode
+selection plus complete-message copy and focus isolation. Cross-message and
+offscreen selection acceptance remain open.
 
 Checkpoint 1e5387e passed all five Rust CI jobs: core on Mac/Linux/Windows,
 macOS GPUI build and native Windows GPUI check (run 42023874869). Windows
@@ -93,7 +105,9 @@ The next combined Linux source snapshot (base fd65284 plus bot persistence)
 passed 312 reported test successes and strict core clippy. Bot-local name/persona
 edits preserve the imported envelope and unknown fields, use a full-document
 baseline and compare again in one Store transaction. No linked/global instruction
-files are writable through these endpoints. Bot execution remains disconnected.
+files are writable through these endpoints. That earlier snapshot did not activate bots. The later integrated Engine validates
+locally authorized immutable bot snapshots before every fresh/resumed provider turn;
+synthetic process fixtures cover activation, with real-provider acceptance pending.
 
 ## Verified so far
 

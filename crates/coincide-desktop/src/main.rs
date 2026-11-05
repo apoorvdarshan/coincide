@@ -5,8 +5,13 @@ mod browser;
 mod composer_attachments;
 mod credential_settings;
 mod credentials;
+mod github_actions;
 mod github_review;
+mod microphone;
+mod microphone_settings;
 mod navigation;
+mod notification_runtime;
+mod notification_settings;
 mod notifications;
 mod presentation;
 mod provider_settings;
@@ -15,6 +20,7 @@ mod scheduling;
 mod session_import;
 mod settings;
 mod terminal_selection;
+mod terminal_workspace;
 mod transcript;
 mod transcription_composer;
 mod transcription_settings;
@@ -174,10 +180,16 @@ struct Coincide {
     settings_open: bool,
     bots_open: bool,
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
+    notifications_open: bool,
+    notification_panel: Entity<notification_settings::NotificationSettingsPanel>,
+    created_bot_thread_to_focus: Option<String>,
     transcription_open: bool,
     transcription_panel: Entity<transcription_settings::TranscriptionSettings>,
     transcription_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     transcription_target: transcription_composer::ComposerTarget,
+    microphone_panel: Entity<microphone_settings::MicrophoneSettings>,
+    microphone_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
+    microphone_window_active: bool,
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
     credentials_open: bool,
@@ -289,6 +301,7 @@ impl Coincide {
         let thread = if self.settings_open
             && self.transcription_open
             && !self.bots_open
+            && !self.notifications_open
             && !self.session_import_open
             && !self.credentials_open
             && !self.provider_settings.open
@@ -306,28 +319,64 @@ impl Coincide {
         );
         self.transcription_panel
             .update(cx, |panel, cx| panel.set_binding(binding.clone(), cx));
+        let (settings_revision, configuration) = self
+            .transcription_panel
+            .read(cx)
+            .recording_configuration(cx);
+        let microphone_binding = self
+            .microphone_window_active
+            .then(|| binding.clone())
+            .flatten();
+        self.microphone_panel.update(cx, |panel, cx| {
+            // Compilation is not live acceptance. No runtime or persisted
+            // setting can enable native permission/capture through this mount.
+            panel.set_target(
+                microphone_binding,
+                settings_revision,
+                configuration,
+                false,
+                cx,
+            );
+        });
         binding
     }
     fn poll_transcription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.microphone_window_active =
+            window.is_window_active() && window.visibility().is_visible();
         self.sync_transcription_binding(cx);
         self.transcription_panel
             .update(cx, |panel, cx| panel.poll(cx));
+        self.microphone_panel.update(cx, |panel, cx| panel.poll(cx));
         let events = self
             .transcription_events
             .try_iter()
             .take(4)
+            .map(|event| (false, event))
+            .chain(
+                self.microphone_events
+                    .try_iter()
+                    .take(4)
+                    .map(|event| (true, event)),
+            )
             .collect::<Vec<_>>();
-        for event in events {
+        for (from_microphone, event) in events {
             // Re-read text/range and ownership immediately before insertion,
             // independent of whether GPUI has delivered pending observations.
             let Some(binding) = self.sync_transcription_binding(cx) else {
                 continue;
             };
-            if !self
-                .transcription_panel
-                .read(cx)
-                .accepts_text(&event, &binding)
-            {
+            // Each panel owns its generation space. A microphone event must
+            // never be validated against the file-transcription generation.
+            let accepted = if from_microphone {
+                self.microphone_panel
+                    .read(cx)
+                    .accepts_text(&event, &binding)
+            } else {
+                self.transcription_panel
+                    .read(cx)
+                    .accepts_text(&event, &binding)
+            };
+            if !accepted {
                 continue;
             }
             let original = self.composer.read(cx).value().to_string();
@@ -422,8 +471,14 @@ impl Coincide {
         });
         let transcription_events =
             transcription_events.expect("Transcription receiver initialized");
+        let (microphone_settings, microphone_events) =
+            microphone_settings::MicrophoneSettings::new();
+        let microphone_panel = cx.new(|_| microphone_settings);
         let bot_panel =
             cx.new(|cx| bot_settings::BotSettingsPanel::new(engine.clone(), window, cx));
+        let notification_panel = cx.new(|cx| {
+            notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
+        });
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -453,6 +508,21 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.observe_window_activation(window, |this, window, cx| {
+                this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
+                this.sync_transcription_binding(cx);
+                this.sync_notification_activity(window, cx);
+            }),
+            cx.observe_window_visibility(window, |this, visibility, window, cx| {
+                this.microphone_window_active = visibility.is_visible() && window.is_window_active();
+                this.sync_transcription_binding(cx);
+                this.sync_notification_activity(window, cx);
+            }),
+            cx.observe(&transcription_panel, |this, _, cx| {
+                // Revoke stopped audio or queued text on configuration changes,
+                // including an edit away and back before the next UI tick.
+                this.sync_transcription_binding(cx);
+            }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
             cx.observe(&composer, |this, _, cx| {
                 // Selection has no dedicated InputEvent in gpui-base 0.9.0.
@@ -461,9 +531,46 @@ impl Coincide {
                 this.transcription_target.changed();
                 this.sync_transcription_binding(cx);
             }),
-            cx.subscribe(&bot_panel, |this, _, event, cx| {
-                let bot_settings::BotSettingsEvent::Saved { bot_id } = event;
-                this.settings_status = format!("Bot {bot_id} saved locally. Execution is not connected yet.");
+            cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
+                match event {
+                    bot_settings::BotSettingsEvent::Saved { bot_id } => {
+                        this.settings_status = format!("Bot {bot_id} saved. Changes apply to new conversations.");
+                    }
+                    bot_settings::BotSettingsEvent::ConversationCreated { thread_id } => {
+                        let thread_id = thread_id.clone();
+                        let requested = thread_id.clone();
+                        let engine = this.engine.clone();
+                        // The worker already created the empty conversation.
+                        // Only navigation runs here; never send or recreate it.
+                        let open = cx.background_executor().spawn(async move {
+                            coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
+                        });
+                        cx.spawn_in(window, async move |this, cx| {
+                            let result = open.await;
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                this.refresh(cx);
+                                match result {
+                                    Ok(_) => {
+                                        this.session_import_open = false;
+                                        this.workspace_open = false;
+                                        this.schedules_open = false;
+                                        this.selected_project = Some(coincide_core::bot_runtime::BOTS_PROJECT_ID.into());
+                                        this.collapsed_projects.remove(coincide_core::bot_runtime::BOTS_PROJECT_ID);
+                                        this.created_bot_thread_to_focus = Some(thread_id.clone());
+                                        this.select(&thread_id, window, cx);
+                                        this.status = if this.selected.as_ref().is_some_and(|thread| thread["id"] == thread_id) {
+                                            "Opened an empty bot conversation. No message was sent.".into()
+                                        } else {
+                                            "Created an empty bot conversation; waiting to open it. No message was sent.".into()
+                                        };
+                                    }
+                                    Err(error) => this.status = format!("Bot conversation created, but opening it failed: {error}"),
+                                }
+                                cx.notify();
+                            });
+                        }).detach();
+                    }
+                }
                 cx.notify();
             }),
             cx.subscribe_in(
@@ -585,10 +692,16 @@ impl Coincide {
             settings_open: false,
             bots_open: false,
             bot_panel,
+            notifications_open: false,
+            notification_panel,
+            created_bot_thread_to_focus: None,
             transcription_open: false,
             transcription_panel,
             transcription_events,
             transcription_target: Default::default(),
+            microphone_panel,
+            microphone_events,
+            microphone_window_active: window.is_window_active() && window.visibility().is_visible(),
             session_import_open: false,
             session_import_panel,
             credentials_open: false,
@@ -952,6 +1065,13 @@ impl Coincide {
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
                 self.preserve_pending_draft(&mut v);
+                if self
+                    .created_bot_thread_to_focus
+                    .as_deref()
+                    .is_some_and(|pending| pending != id)
+                {
+                    self.created_bot_thread_to_focus = None;
+                }
                 self.transcription_target.changed();
                 let draft = text(&v, "draft");
                 if self
@@ -1012,6 +1132,7 @@ impl Coincide {
             }
             Err(e) => self.status = format!("Unable to open conversation: {e}"),
         }
+        self.sync_transcription_binding(cx);
         self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
@@ -1024,6 +1145,20 @@ impl Coincide {
             .clone()
             .or_else(|| self.selected.as_ref().map(|v| text(v, "projectID")))
             .unwrap_or_else(|| "00000000-0000-0000-0000-000000000000".into());
+        if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
+            // A virtual bot group has no filesystem project or generic default
+            // bot. The user chooses a saved bot in its existing native editor.
+            self.settings_open = true;
+            self.bots_open = true;
+            self.notifications_open = false;
+            self.transcription_open = false;
+            self.credentials_open = false;
+            self.provider_settings.open = false;
+            self.session_import_open = false;
+            self.sync_transcription_binding(cx);
+            cx.notify();
+            return;
+        }
         let cwd = self
             .projects
             .iter()
@@ -1118,7 +1253,47 @@ impl Coincide {
             }
         }
     }
+    fn sync_notification_activity(&self, window: &Window, cx: &App) {
+        let visible_thread = (!self.settings_open
+            && !self.schedules_open
+            && !self.workspace_open
+            && !self.session_import_open)
+            .then(|| {
+                self.selected.as_ref().and_then(|thread| {
+                    thread["id"]
+                        .as_str()
+                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                })
+            })
+            .flatten();
+        // Only foreground window/visible conversation are observed here.
+        // No idle, lock or display-sleep monitors are connected. Do not assert
+        // recent desktop interaction; remote delivery remains disconnected.
+        let _ = self.notification_panel.read(cx).update_activity(
+            coincide_core::platform_host::notifications::DesktopActivity {
+                app_active: window.is_window_active() && window.visibility().is_visible(),
+                visible_thread,
+                idle_seconds: u64::MAX,
+                locked: false,
+                display_asleep: false,
+            },
+        );
+    }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_notification_activity(window, cx);
+        if self
+            .created_bot_thread_to_focus
+            .as_deref()
+            .is_some_and(|id| {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|thread| thread["id"] == id)
+            })
+            && !self.settings_open
+        {
+            self.created_bot_thread_to_focus = None;
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        }
         if let Ok(mut engine) = self.engine.try_lock() {
             if engine.shutdown {
                 cx.quit();
@@ -1986,25 +2161,22 @@ impl Coincide {
                 .child(transcript::preserve_selected_copy(
                     &source_id,
                     &item_id,
-                    TextView::markdown(
-                        SharedString::from(format!("message-body-{source_id}-{item_id}")),
-                        shown,
-                    )
-                    .text_size(px(self.conversation_font_size()
-                        + if kind == "assistant"
-                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                                == "newYork"
-                        {
-                            1.
-                        } else {
-                            0.
-                        }))
-                    .when(
-                        kind == "assistant"
-                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                                == "newYork",
-                        |view| view.font_family(settings::reply_font()),
-                    ),
+                    transcript::markdown(&source_id, &item_id, shown, window, cx)
+                        .text_size(px(self.conversation_font_size()
+                            + if kind == "assistant"
+                                && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                    == "newYork"
+                            {
+                                1.
+                            } else {
+                                0.
+                            }))
+                        .when(
+                            kind == "assistant"
+                                && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                    == "newYork",
+                            |view| view.font_family(settings::reply_font()),
+                        ),
                 ))
                 .when(!previews.is_empty(), |view| {
                     view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
@@ -2948,6 +3120,7 @@ impl Render for Coincide {
             self.select(&id, window, cx);
         }
         self.sync_credentials(cx);
+        self.sync_notification_activity(window, cx);
         let import_project = self.selected_project.clone();
         self.session_import_panel
             .update(cx, |panel, cx| panel.set_project(import_project, cx));
@@ -2993,7 +3166,9 @@ impl Render for Coincide {
                 .child(self.session_import_panel.clone())
                 .into_any_element()
         } else if self.settings_open {
-            if self.bots_open || self.transcription_open {
+            if (self.bots_open || self.transcription_open || self.notifications_open)
+                && !self.provider_settings.open
+            {
                 div()
                     .id("extra-settings-surface")
                     .flex_1()
@@ -3007,6 +3182,7 @@ impl Render for Coincide {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.bots_open = false;
                                 this.transcription_open = false;
+                                this.notifications_open = false;
                                 this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
@@ -3017,6 +3193,15 @@ impl Render for Coincide {
                             .min_h_0()
                             .child(self.bot_panel.clone())
                             .into_any_element()
+                    } else if self.notifications_open {
+                        div()
+                            .id("notification-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(self.notification_panel.clone())
+                            .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
+                            .into_any_element()
                     } else {
                         div()
                             .id("transcription-settings-scroll")
@@ -3024,6 +3209,8 @@ impl Render for Coincide {
                             .min_h_0()
                             .overflow_y_scroll()
                             .child(self.transcription_panel.clone())
+                            .child(self.microphone_panel.clone())
+                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
                             .child(div().p_3().text_sm().child(self.status.clone()))
                             .into_any_element()
                     })
@@ -3186,6 +3373,7 @@ impl Render for Coincide {
                                         this.session_import_open = false;
                                         let open = !(this.settings_open && this.credentials_open);
                                         this.credentials_open = open;
+                                        this.notifications_open = false;
                                         this.bots_open = false;
                                         this.transcription_open = false;
                                         this.settings_open = open;
@@ -3209,6 +3397,7 @@ impl Render for Coincide {
                                         this.workspace_open = !this.workspace_open;
                                         this.settings_open = false;
                                         this.schedules_open = false;
+                                        this.sync_transcription_binding(cx);
                                         cx.notify();
                                     })),
                             )
@@ -3224,6 +3413,7 @@ impl Render for Coincide {
                                         this.workspace_open = false;
                                         this.session_import_open = false;
                                         this.schedules_open = !this.schedules_open;
+                                        this.sync_transcription_binding(cx);
                                         if this.schedules_open {
                                             this.refresh_schedules(cx);
                                         }
@@ -3349,7 +3539,8 @@ impl Render for Coincide {
                                                             |this, _, window, cx| {
                                                                 this.open_antigravity_settings(
                                                                     window, cx,
-                                                                )
+                                                                );
+                                                                this.sync_transcription_binding(cx);
                                                             },
                                                         )),
                                                 )
@@ -3503,6 +3694,7 @@ fn main() -> Result<()> {
         .with_assets(assets::CoincideAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
             let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
             gpui_kit::open_window(

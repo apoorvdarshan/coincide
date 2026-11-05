@@ -535,6 +535,7 @@ impl Coincide {
             .child(div().p_3().flex().gap_2()
                 .child(Button::new("settings-bots").label("Bots and bot instructions")
                     .on_click(cx.listener(|this, _, _, cx| {
+                        this.notifications_open = false;
                         this.bots_open = true;
                         this.transcription_open = false;
                         this.credentials_open = false;
@@ -542,8 +543,9 @@ impl Coincide {
                         this.sync_transcription_binding(cx);
                         cx.notify();
                     })))
-                .child(Button::new("settings-transcription").label("Local WAV transcription")
+                .child(Button::new("settings-transcription").label("Local transcription")
                     .on_click(cx.listener(|this, _, window, cx| {
+                        this.notifications_open = false;
                         this.transcription_open = true;
                         this.bots_open = false;
                         this.credentials_open = false;
@@ -554,6 +556,17 @@ impl Coincide {
                         this.sync_transcription_binding(cx);
                         cx.notify();
                     }))))
+            .child(div().p_3().child(Button::new("settings-notifications").label("Desktop notifications")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.notifications_open = true;
+                    this.bots_open = false;
+                    this.transcription_open = false;
+                    this.credentials_open = false;
+                    this.provider_settings.open = false;
+                    window.blur(cx);
+                    this.sync_transcription_binding(cx);
+                    cx.notify();
+                }))))
             .child(div().p_3().text_sm().child(self.settings_status.clone()));
         pane.into_any_element()
     }
