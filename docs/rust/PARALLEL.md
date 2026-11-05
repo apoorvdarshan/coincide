@@ -37,19 +37,19 @@ pause implementation. All current workers use `gpt-6.1-sol`.
 
 ## Current lane queue
 
-1. Combined desktop source integrated: Find + main mount, browser profile and
-   password settings, catalog UI and inline review reader. Compilation exposed
-   owned source errors; fixes are integrated and the next combined run is active.
-2. Mac core: media service 10/10, shell parser 8/8, terminal rendering 20/20,
-   terminal selection 8/8 and GitHub threads Engine routes 4/4 passed. Bash shim
-   integration has one failing synthetic cwd case; terminal owner is fixing it.
-3. Model catalog 7/8 initially passed. Production incremental frame scan fixes
-   quadratic work; rerun now covers nine tests. Strict Clippy rerun queued.
-4. Linux inline threads: six fake-process groups and strict core Clippy passed
-   on the recorded parent453 snapshot plus feature overlay. Full current parent
-   validation remains separate.
-5. Native candidate10 built; resize acceptance remains unverified because the
-   synthetic window failed to become key. Preserve native guards. Use CLI/API
-   for workflow setup and state checks; reserve brief CUA for physical UI evidence.
-6. Next independent mounts: GitHub threads, media panel with durable ownership,
-   Computer Use and updater lifecycle. Keep owners responsible through acceptance.
+1. All five Rust CI jobs passed at `276ec83`; subsequent CLI and Computer Use
+   mount changes require their own integrated checkpoint. CLI six focused Mac
+   tests and strict core Clippy passed at `9a570dd`.
+2. Desktop suite passed 233 tests. Actual service-to-recovery integration passed
+   four tests; Computer Use shared-authority collection fencing passed nine.
+3. Native candidate13 reveals folded/hidden Find targets correctly but crashes
+   on the far-away target with a duplicate accessibility node ID. Find and main
+   owners diagnose; native owner records evidence and preserves original apps.
+4. Standalone synthetic browser approval harness compiled. Native Allow/Deny,
+   revocation and inspection-shield acceptance uses fake vault data only.
+5. Host mount is frozen; palette owner registers it outside the Engine guard.
+   Models owner implements bounded scalar thread resolution and synchronous
+   selection-change revocation; CLI owner consumes the frozen resolver contract.
+6. Packaging owner implements the default-off signed helper. Actual shutdown
+   hooks and OS/crash custody protection remain open. Linux lane is idle after
+   focused CLI validation; no duplicate full-suite work is allocated.

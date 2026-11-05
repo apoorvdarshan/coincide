@@ -439,3 +439,34 @@ Two additional isolated workers own cross-platform/headless integration and
 durable media recovery. Recovery work must preserve every copied identity and
 uncertain outcome, verify durable ownership before acknowledging receipts, and
 never delete media automatically. Work not yet persisted remains unprotected.
+
+## Follow-through validation update (2026-11-05)
+
+Rust CI run 42045348996 passed all five jobs at exact commit
+`276ec83522a0b47dc2e2270ab52abf23338993b3`: core Mac/Linux/Windows, macOS GPUI
+build with synthetic feature fixtures, and Windows GPUI check. This checkpoint
+precedes the new CLI commits. The subsequent CLI batch passed six focused Mac
+fixtures and strict core Clippy at `9a570dd`; its cross-platform rerun is pending.
+The exact-ID resolver's full-library response dependency is being replaced with
+a bounded scalar lookup; existing green checks do not establish that fix.
+
+Desktop tests at `276ec83` passed 233 tests: 208 unit, 10 private-browser,
+nine credential and six inline-review integration tests. Actual historical-media
+service completions passed four service-to-durable-recovery tests, preserving
+the Store's uppercase thread IDs and requiring exact receipt-token matching.
+Computer Use collection-time authority fencing passed nine core tests. These
+are synthetic checks, with no live provider, vault or permission effects.
+
+Native candidate13 verified folded-tool and hidden-reasoning Find reveal after
+the exact-row anchor fix. Advancing to the far-away match crashed in GPUI with
+a duplicate accessibility node ID; that remains a concrete open defect. Native
+candidate12 verified the compact composer. Remaining Find, terminal resize and
+selection acceptance are not inferred from headless tests. The isolated browser
+approval harness compiled; its native control sequence is pending.
+
+Computer Use's bounded mount is delivered for parent registration and testing.
+The signed updater helper is under implementation; real shutdown-owner hooks
+remain open. Current GPUI offers no supported OS/Dock quit veto. In-flight or
+unpersisted media work remains exposed to OS quit/crash; palette/window guards
+and the termination observer do not close that gap. Full replacement acceptance,
+real-account validation, data cutover and Swift removal remain open.
