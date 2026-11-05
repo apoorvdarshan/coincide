@@ -87,6 +87,30 @@ impl Search {
             .and_then(|old| self.matches.iter().position(|m| m == &old))
             .or_else(|| (!self.matches.is_empty()).then_some(0));
     }
+    /// Do not publish an order-dependent partial document set. Keep the prior
+    /// stable match through an async append; a new query discards prior matches.
+    fn rebuild_ready<'a>(
+        &mut self,
+        items: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+        reset: bool,
+    ) -> bool {
+        let items = items.into_iter().collect::<Vec<_>>();
+        if items.iter().any(|(_, text)| text.is_none()) {
+            if reset {
+                self.matches.clear();
+                self.active = None;
+                self.truncated = false;
+            }
+            return false;
+        }
+        self.rebuild(
+            items
+                .into_iter()
+                .map(|(id, text)| (id, text.unwrap_or_default())),
+            reset,
+        );
+        true
+    }
     fn step(&mut self, next: bool) {
         if self.matches.is_empty() {
             self.active = None;
@@ -357,7 +381,9 @@ impl TranscriptFind {
         self.invalidate();
         let same = self.thread.as_deref() == Some(s.thread_id.as_str());
         if !same {
+            self.search.matches.clear();
             self.search.active = None;
+            self.search.truncated = false;
         }
         let mut old = if same {
             std::mem::take(&mut self.items)
@@ -589,19 +615,37 @@ impl TranscriptFind {
         }
         if force || changed {
             self.error.clear();
-            self.search.rebuild(
-                self.items.iter().filter_map(|item| {
-                    item.rendered
-                        .as_ref()
-                        .map(|r| (item.id.as_str(), r.as_str()))
+            let ready = self.search.rebuild_ready(
+                self.items.iter().map(|item| {
+                    (
+                        item.id.as_str(),
+                        item.rendered.as_ref().map(RenderedText::as_str),
+                    )
                 }),
                 reset,
             );
-            self.publish(cx);
+            if ready {
+                self.publish(cx);
+            } else {
+                self.invalidate();
+                self.per_item.clear();
+                for item in &self.items {
+                    item.state
+                        .update(cx, |state, cx| state.clear_range_highlights(cx));
+                }
+                if let Some(thread) = &self.thread {
+                    cx.emit(FindEvent::Cleared {
+                        thread_id: thread.clone(),
+                        generation: self.generation,
+                        match_serial: self.serial,
+                    });
+                }
+                cx.notify();
+            }
         }
     }
     fn step(&mut self, next: bool, cx: &mut Context<Self>) {
-        if !self.opened {
+        if !self.opened || self.items.iter().any(|item| item.rendered.is_none()) {
             return;
         }
         self.search.step(next);
@@ -659,13 +703,13 @@ impl Render for TranscriptFind {
                     .child(
                         Button::new("find-previous")
                             .label("Previous")
-                            .disabled(self.search.matches.is_empty())
+                            .disabled(self.search.matches.is_empty() || pending > 0)
                             .on_click(cx.listener(|this, _, _, cx| this.step(false, cx))),
                     )
                     .child(
                         Button::new("find-next")
                             .label("Next")
-                            .disabled(self.search.matches.is_empty())
+                            .disabled(self.search.matches.is_empty() || pending > 0)
                             .on_click(cx.listener(|this, _, _, cx| this.step(true, cx))),
                     )
                     .child(
@@ -848,5 +892,28 @@ mod tests {
         search.rebuild([("a", body.as_str()), ("b", "x")], true);
         assert!(search.truncated);
         assert_eq!(search.matches.len(), MAX_MATCHES);
+    }
+    #[::core::prelude::v1::test]
+    fn async_parse_batches_do_not_publish_timing_order_or_lose_streamed_active_match() {
+        let mut search = Search {
+            query: "hit".into(),
+            ..Search::default()
+        };
+        assert!(!search.rebuild_ready([("first", None), ("second", Some("hit"))], true));
+        assert!(search.matches.is_empty());
+        assert!(search.rebuild_ready([("first", Some("hit")), ("second", Some("hit"))], false));
+        assert_eq!(search.selected().unwrap().item, "first");
+        search.step(true);
+        assert!(!search.rebuild_ready([("first", Some("hit")), ("second", None)], false));
+        assert_eq!(search.selected().unwrap().item, "second");
+        assert!(search.rebuild_ready(
+            [("first", Some("hit")), ("second", Some("hit plus append"))],
+            false
+        ));
+        assert_eq!(search.selected().unwrap().item, "second");
+        search.query = "new query".into();
+        assert!(!search.rebuild_ready([("first", None), ("second", Some("hit"))], true));
+        assert!(search.matches.is_empty());
+        assert!(search.selected().is_none());
     }
 }
