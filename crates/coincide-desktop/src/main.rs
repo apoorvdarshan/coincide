@@ -11,6 +11,7 @@ mod computer_use_mount;
 mod computer_use_settings;
 mod credential_settings;
 mod credentials;
+mod draft_close;
 mod github_actions;
 mod github_review;
 mod github_threads;
@@ -40,6 +41,7 @@ mod updater_lifecycle;
 mod updater_settings;
 mod workspace;
 use browser::BrowserController;
+use draft_close::PendingDraft;
 use coincide_core::{
     api::{Engine, SharedEngine},
     attachments::StoredImage,
@@ -86,11 +88,6 @@ fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
         anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
     }
     Ok(response["result"].clone())
-}
-
-struct PendingDraft {
-    text: String,
-    retry: bool,
 }
 
 enum PreviewState {
@@ -562,24 +559,20 @@ impl Coincide {
         }
     }
     fn save_pending_draft(&mut self, id: &str) {
-        let Some(pending) = self.pending_drafts.get(id).filter(|draft| draft.retry) else {
-            return;
-        };
-        match call(
-            &self.engine,
-            "threads.patch",
-            json!({"threadId":id,"patch":{"draft":pending.text}}),
-        ) {
-            Ok(_) => {
-                self.pending_drafts.remove(id);
-            }
-            Err(error) => {
-                // Only a failed try_lock guarantees no mutation happened. Keep
-                // other failures visible without automatically replaying them.
-                self.pending_drafts.get_mut(id).unwrap().retry = engine_busy(&error);
-                self.status = format!("Draft remains in this window; not yet saved: {error}");
-            }
+        let engine = self.engine.clone();
+        if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
+            call(&engine, "threads.patch", json!({"threadId":id,"patch":{"draft":text}}))
+                .map(|_| ())
+                .map_err(|error| (engine_busy(&error), error.to_string()))
+        }) {
+            self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
+    }
+    fn flush_pending_drafts(&mut self) -> bool {
+        for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
+            self.save_pending_draft(&id);
+        }
+        self.pending_drafts.is_empty()
     }
     fn preserve_pending_draft(&self, thread: &mut Value) {
         if let Some(draft) = self.pending_drafts.get(&text(thread, "id")) {
@@ -602,8 +595,11 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                let drafts_saved = this.flush_pending_drafts();
                 this.shutdown_computer_use(cx);
-                this.request_media_close(window, cx) && this.computer_use_shutdown_ready()
+                let media_ready = this.request_media_close(window, cx);
+                cx.notify();
+                drafts_saved && media_ready && this.computer_use_shutdown_ready()
             })
             .unwrap_or(false)
         });
@@ -2088,6 +2084,8 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Persistence must precede either close path, including API app.quit.
+        let drafts_saved = self.flush_pending_drafts();
         self.sync_media_context(cx);
         self.poll_media_parent(cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
@@ -2096,12 +2094,15 @@ impl Coincide {
         if self.media.close_requested || self.media.shutdown_requested {
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
-            if self.media_shutdown_ready(cx) && self.computer_use_shutdown_ready() {
+            if drafts_saved && self.media_shutdown_ready(cx) && self.computer_use_shutdown_ready() {
                 if self.media.shutdown_requested {
                     cx.quit();
                 } else {
                     window.remove_window();
                 }
+            } else if !drafts_saved {
+                self.status = "Closing is waiting for drafts to save. Failed saves require Retry save.".into();
+                cx.notify();
             } else if !self.media_shutdown_ready(cx) {
                 self.computer_use_open = false;
                 self.show_media_shutdown(window, cx);
@@ -2155,9 +2156,6 @@ impl Coincide {
             if self.attachment_root.is_none() {
                 self.attachment_root = engine.store.data_directory().ok();
             }
-        }
-        for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
-            self.save_pending_draft(&id);
         }
         self.refresh_awake_status(cx);
         self.apply_appearance(window, cx);
@@ -3461,6 +3459,18 @@ impl Render for Coincide {
                     .flex_1()
                     .min_w_0()
                     .h_full()
+                    .when(!self.pending_drafts.is_empty(), |view| {
+                        view.child(div().p_2().flex().items_center().gap_2()
+                            .child("Drafts are not saved yet. Keep this window open.")
+                            .when(self.pending_drafts.values().any(|draft| !draft.retry), |view| {
+                                view.child(Button::new("retry-draft-save").label("Retry save")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        draft_close::retry_failed(&mut this.pending_drafts);
+                                        this.flush_pending_drafts();
+                                        cx.notify();
+                                    })))
+                            }))
+                    })
                     .child(
                         div()
                             .flex()
