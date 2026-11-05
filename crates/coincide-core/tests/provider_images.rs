@@ -19,7 +19,7 @@ fn prepared(path: &std::path::Path, bytes: &[u8]) -> ImageAttachment {
 }
 
 const SCRIPT: &str = r#"#!/usr/bin/env python3
-import base64,json,sys,os
+import base64,json,sys,os,pathlib
 def read(): return json.loads(sys.stdin.readline())
 def write(value): print(json.dumps(value),flush=True)
 def complete(value):
@@ -44,7 +44,10 @@ if sys.argv[1:]==['app-server']:
   blocks=blocks[1:]
  assert len(blocks)==2
  for i,block in enumerate(blocks):
-  assert block=={'type':'localImage','path':os.path.join(os.getcwd(),'image '+str(i)+'.png')}
+  assert set(block)=={'type','path'} and block['type']=='localImage'
+  # macOS temporary paths may start with /var while cwd resolves /private/var.
+  # Both must designate exactly this fixture image, not an unrelated path.
+  assert pathlib.Path(block['path']).resolve()==pathlib.Path('image '+str(i)+'.png').resolve()
  write({'id':r['id'],'result':{}})
  complete({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
 elif '--input-format' in sys.argv:
