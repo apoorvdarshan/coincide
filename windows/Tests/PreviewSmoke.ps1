@@ -6,7 +6,7 @@ param(
     [string]$PreparedHostedData,
     [switch]$NativePanelsOnly,
     [switch]$SkipNativePanels,
-    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel')][string]$NativeSuite
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -575,7 +575,7 @@ try {
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel')}
+    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue

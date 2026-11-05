@@ -20,6 +20,7 @@ std::optional<int> run_contract_test(int argc,wchar_t** argv){
     if(!argv||argc<2)return{};for(const auto route:{provider_test_route,data_test_route,platform_test_route,host_test_route,browser_tool_test_route,hosted_facade_test_route,browser_library_test_route,instruction_git_test_route})if(const auto result=route(argc,argv))return result;return{};
 }
 std::optional<std::string> ui_test_suite(std::wstring_view flag){
+    if(flag==L"--thread-find-panel-tests")return "thread-find-panel";
     if(flag==L"--persona-panel-tests")return "persona-panel";
     if(flag==L"--browser-tool-panel-tests")return "browser-tool-panel";
     if(flag==L"--credentials-controller-panel-tests")return "credentials-controller-panel";

@@ -54,6 +54,9 @@
   <data name="EndSession" xml:space="preserve">
     <value>End session</value>
   </data>
+  <data name="FindInThread" xml:space="preserve">
+    <value>Find in conversation</value>
+  </data>
   <data name="Git" xml:space="preserve">
     <value>Git</value>
   </data>
@@ -315,6 +318,9 @@
   <data name="Text_1ee35c64166b9bec" xml:space="preserve">
     <value>Choose a profile, then check its status. Existing CLI logins are preserved.</value>
   </data>
+  <data name="Text_1f23a6f1d2e255fd" xml:space="preserve">
+    <value>Find in message text</value>
+  </data>
   <data name="Text_1f7698c061c208c9" xml:space="preserve">
     <value>开放</value>
   </data>
@@ -350,6 +356,9 @@
   </data>
   <data name="Text_2998563d980cf5b2" xml:space="preserve">
     <value>等待批准</value>
+  </data>
+  <data name="Text_2c15ce0df25b5485" xml:space="preserve">
+    <value>Searching message text…</value>
   </data>
   <data name="Text_2ccedee13720d916" xml:space="preserve">
     <value>MIT License · Copyright 2026 Apoorv Darshan. Native Windows development builds are not signed public releases.</value>
@@ -419,6 +428,9 @@
   </data>
   <data name="Text_359b8da94e7c2bf7" xml:space="preserve">
     <value>This conversation has no Computer Use access.</value>
+  </data>
+  <data name="Text_35ff0dcc73e8e41a" xml:space="preserve">
+    <value>Showing first 10,000 matches</value>
   </data>
   <data name="Text_365e0ea3db8f9c26" xml:space="preserve">
     <value>This conversation can inspect native windows.</value>
@@ -898,6 +910,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_8537fcae4b754448" xml:space="preserve">
     <value>Worktree branch</value>
   </data>
+  <data name="Text_853b2b66af857bfb" xml:space="preserve">
+    <value>No matching messages</value>
+  </data>
   <data name="Text_85994a70cd39166c" xml:space="preserve">
     <value>正在运行</value>
   </data>
@@ -939,6 +954,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_8c7fc9051c0d8003" xml:space="preserve">
     <value>Terminal input limit reached or session closed.</value>
+  </data>
+  <data name="Text_8e6c4d342f580bc5" xml:space="preserve">
+    <value>Message text could not be searched.</value>
   </data>
   <data name="Text_8e6e61bcc3d05c09" xml:space="preserve">
     <value>Native executable path</value>
@@ -1023,6 +1041,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_9899f07ee811b5ca" xml:space="preserve">
     <value>1 hour</value>
+  </data>
+  <data name="Text_992eff3017ea9c13" xml:space="preserve">
+    <value>Search text is too long or unavailable.</value>
   </data>
   <data name="Text_99e360f40b25f306" xml:space="preserve">
     <value>Saved logins are available. Each fill still needs Allow once.</value>
@@ -1113,6 +1134,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_abd480ab5c691fa7" xml:space="preserve">
     <value>推理</value>
+  </data>
+  <data name="Text_ac1dc7fac3bccfe2" xml:space="preserve">
+    <value>Enter text to search this conversation.</value>
   </data>
   <data name="Text_ac9d80c3d9c0aade" xml:space="preserve">
     <value>Keep active work running when the window closes</value>
@@ -1261,6 +1285,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_c9b9e80e4a82d845" xml:space="preserve">
     <value>Grant access</value>
   </data>
+  <data name="Text_ca7bf081fffde7fa" xml:space="preserve">
+    <value>matching messages</value>
+  </data>
   <data name="Text_cac4c9636dbe7d3d" xml:space="preserve">
     <value>新建聊天</value>
   </data>
@@ -1329,6 +1356,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_d70e957037f58cd3" xml:space="preserve">
     <value>Allow terminal status, output and interrupt</value>
+  </data>
+  <data name="Text_d71de823d3bf0ed6" xml:space="preserve">
+    <value>Matches message text literally, including code and markup. One result per message.</value>
   </data>
   <data name="Text_d77161a4e928fdfd" xml:space="preserve">
     <value>Retain input and resolve</value>
@@ -1533,6 +1563,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_f6e1665c7022a1f8" xml:space="preserve">
     <value>Password</value>
+  </data>
+  <data name="Text_f739c7a36d16183c" xml:space="preserve">
+    <value>Find in conversation</value>
   </data>
   <data name="Text_f79e097f95e39761" xml:space="preserve">
     <value>Local history retains the most recent 10,000 recorded turns. All-time totals cover retained history.</value>

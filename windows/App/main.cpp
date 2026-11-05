@@ -57,6 +57,7 @@
 #include "../Runtime/HostToolContextStore.h"
 #include "../Runtime/HostedAgentSession.h"
 #include "HostedInputRecovery.h"
+#include "ThreadFindBar.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -174,6 +175,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::ListView transcript{nullptr};
     controls::TextBox composer{nullptr};
     controls::TextBox search{nullptr};
+    std::shared_ptr<coincide::ThreadFindBar> thread_find;
     controls::TextBlock title{nullptr};
     controls::TextBlock state{nullptr};
     controls::ComboBox providers{nullptr};
@@ -345,6 +347,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         content.Padding({16, 12, 16, 12});
         auto header = controls::RowDefinition{}; header.Height({1, xaml::GridUnitType::Auto});
         content.RowDefinitions().Append(header);
+        auto find_row=controls::RowDefinition{};find_row.Height({1,xaml::GridUnitType::Auto});content.RowDefinitions().Append(find_row);
         content.RowDefinitions().Append(controls::RowDefinition{});
         auto prompts_row=controls::RowDefinition{};prompts_row.Height({1,xaml::GridUnitType::Auto});content.RowDefinitions().Append(prompts_row);
         auto composer_row = controls::RowDefinition{}; composer_row.Height({1, xaml::GridUnitType::Auto});
@@ -397,10 +400,18 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto tools=toolbar_button(L"AgentTools",L"Agent tools",L"AgentToolAccess");tools.Click([this](const auto&,const auto&){show_tool_access();});toolbar.PrimaryCommands().Append(tools);
         auto usage=toolbar_button(L"Usage",L"Usage",L"OpenUsage");usage.Click([this](const auto&,const auto&){show_usage();});toolbar.PrimaryCommands().Append(usage);
         auto end_session=toolbar_button(L"EndSession",L"End session",L"EndSession");end_session.Click([this](const auto&,const auto&){end_selected_session();});toolbar.SecondaryCommands().Append(end_session);
+        auto find=toolbar_button(L"FindInThread",L"Find in conversation",L"FindInThread");find.Click([this](const auto&,const auto&){open_thread_find();});toolbar.SecondaryCommands().Append(find);
         content.Children().Append(toolbar);
+
+        const auto find_owner=get_weak();
+        thread_find=coincide::ThreadFindBar::create([find_owner]()->const coincide::Thread*{const auto self=find_owner.get();return self&&!self->closing&&!self->selected.empty()?&self->workspace.thread(self->selected):nullptr;},
+            [find_owner](const auto& match){if(const auto self=find_owner.get())self->navigate_thread_find(match);},
+            [find_owner]{if(const auto self=find_owner.get();self&&!self->closing&&self->composer&&self->composer.IsEnabled())self->composer.Focus(xaml::FocusState::Keyboard);});
+        controls::Grid::SetRow(thread_find->view(),1);content.Children().Append(thread_find->view());
 
         transcript = controls::ListView{};
         identify(transcript, L"Transcript");
+        transcript.Items().VectorChanged([find_owner](const auto&,const auto&){if(const auto self=find_owner.get();self&&self->thread_find&&!self->closing)self->thread_find->source_changed();});
         transcript.Loaded([this](const auto&, const auto&) { show_latest(true); });
         transcript.LayoutUpdated([weak=get_weak()](const auto&,const auto&){if(const auto self=weak.get();self&&!self->closing)self->follow_latest_layout();});
         const auto stop_follow=xaml::Input::PointerEventHandler([weak=get_weak()](const auto&,const auto&){if(const auto self=weak.get())self->latest_scroll_pending=false;});
@@ -411,7 +422,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         transcript.ItemTemplate(xaml::Markup::XamlReader::Load(
             LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ContentPresenter Content="{Binding Content}" HorizontalContentAlignment="Stretch"/></DataTemplate>)"
         ).as<xaml::DataTemplate>());
-        controls::Grid::SetRow(transcript, 1);
+        controls::Grid::SetRow(transcript, 2);
         content.Children().Append(transcript);
 
         controls::StackPanel compose;
@@ -464,7 +475,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         prompts_scroll.MaxHeight(220);
         prompts_scroll.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);
         prompts_view = controls::StackPanel{}; prompts_view.Spacing(12); identify(prompts_view, L"AgentPrompts");
-        prompts_scroll.Content(prompts_view);controls::Grid::SetRow(prompts_scroll,2);content.Children().Append(prompts_scroll);
+        prompts_scroll.Content(prompts_view);controls::Grid::SetRow(prompts_scroll,3);content.Children().Append(prompts_scroll);
         state = controls::TextBlock{};
         identify(state, L"AgentStatus");
         state.TextWrapping(xaml::TextWrapping::Wrap);
@@ -472,7 +483,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         compose.Children().Append(state);
         controls::ScrollViewer compose_scroll; compose_scroll.MaxHeight(420);
         compose_scroll.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);compose_scroll.Content(compose);
-        controls::Grid::SetRow(compose_scroll, 3);
+        controls::Grid::SetRow(compose_scroll, 4);
         content.Children().Append(compose_scroll);
         root.SizeChanged([compose_scroll,prompts_scroll](const auto&,const xaml::SizeChangedEventArgs& args){const auto height=static_cast<double>(args.NewSize().Height);compose_scroll.MaxHeight(std::max(160.0,std::min(400.0,height*0.50)));prompts_scroll.MaxHeight(std::max(90.0,std::min(240.0,height*0.28)));});
 
@@ -501,6 +512,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         window.Closed([this](const auto&, const auto&) {
             if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
             closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
+            if(thread_find)thread_find->close(false);
             if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
             drain_sessions(); flush_dirty(); save_current();
@@ -556,6 +568,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     void open_thread(const std::string& id) {
         if (!writable) return;
+        if(id!=selected&&thread_find)thread_find->close(false);
         save_current();
         try {
             auto& t = workspace.thread(id);
@@ -604,8 +617,20 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         return nullptr;
     }
 
+    void open_thread_find(){
+        if(closing||quitting||dialog_open||selected.empty()||!thread_find)return;
+        latest_scroll_pending=false;++latest_scroll_generation;thread_find->open();
+    }
+    void navigate_thread_find(const coincide::TranscriptFindMatch& match){
+        if(closing||selected.empty()||!thread_find||!thread_find->visible())return;
+        const auto& messages=workspace.thread(selected).messages;
+        if(match.row>=messages.size()||messages[match.row].id!=match.message_id||match.row>=transcript.Items().Size())return;
+        latest_scroll_pending=false;++latest_scroll_generation;
+        transcript.ScrollIntoView(transcript.Items().GetAt(static_cast<std::uint32_t>(match.row)),controls::ScrollIntoViewAlignment::Leading);
+    }
+
     void follow_latest_layout(){
-        if(!latest_scroll_pending||latest_layout_active||closing||!transcript||!transcript.IsLoaded()||!transcript.Items().Size()||transcript.ActualHeight()<=0)return;
+        if((thread_find&&thread_find->visible())||!latest_scroll_pending||latest_layout_active||closing||!transcript||!transcript.IsLoaded()||!transcript.Items().Size()||transcript.ActualHeight()<=0)return;
         latest_layout_active=true;struct Reset{bool& value;~Reset(){value=false;}} reset{latest_layout_active};
         const auto item=transcript.Items().GetAt(transcript.Items().Size()-1);
         const auto container=transcript.ContainerFromItem(item).try_as<xaml::FrameworkElement>();
@@ -621,6 +646,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(scroll)scroll.ChangeView(nullptr,winrt::box_value(scroll.ScrollableHeight()).as<foundation::IReference<double>>(),nullptr,true);
     }
     void show_latest(bool force=false) {
+        if(thread_find&&thread_find->visible())return;
         if(force)latest_scroll_pending=true;
         if(!latest_scroll_pending||closing||!transcript||!transcript.IsLoaded()||!transcript.Items().Size())return;
         // Track actual realization/layout completion: collapsed approval cards can resize the
@@ -723,6 +749,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }
         if (!visible.empty()) {open_thread(visible.front()); return;}
         selected.clear(); selecting = true; composer.Text(L""); composer.IsEnabled(false); selecting = false;
+        if(thread_find)thread_find->close(false);
         transcript.Items().Clear(); prompts_view.Children().Clear(); attachments_view.Children().Clear();queued_view.Children().Clear();title.Text(L"Coincide");
         send_button.IsEnabled(false); stop_button.IsEnabled(false); providers.IsEnabled(false);
         queue_button.IsEnabled(false);steer_button.IsEnabled(false);models_button.IsEnabled(false);
@@ -1126,6 +1153,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 xaml::Input::KeyboardAccelerator editor;editor.Key(shortcut.Key());editor.Modifiers(modifiers);editor.Invoked(invoke);composer.KeyboardAccelerators().Append(editor);
             }
         }
+        // Preserve configured shortcuts and native editor operations. Find is available in
+        // the conversation menu even if its usual keys have an explicit app assignment.
+        const auto reserved=[&](unsigned key,bool control,bool shift){for(const auto& entry:preferences.shortcuts){const auto value=coincide::parse_shortcut(entry.second);if(value.key==key&&value.control==control&&value.shift==shift&&!value.alt)return true;}return false;};
+        const auto add_find=[&](unsigned key,bool control,bool shift,bool backwards){if(reserved(key,control,shift))return;auto mods=winrt::Windows::System::VirtualKeyModifiers::None;if(control)mods|=winrt::Windows::System::VirtualKeyModifiers::Control;if(shift)mods|=winrt::Windows::System::VirtualKeyModifiers::Shift;
+            const auto invoke=[weak,key,backwards](const auto&,const xaml::Input::KeyboardAcceleratorInvokedEventArgs& args){if(const auto self=weak.get();self&&!self->closing&&!self->dialog_open){if(key=='F'){if(self->selected.empty())return;args.Handled(true);self->open_thread_find();}else if(self->thread_find&&self->thread_find->visible()){args.Handled(true);self->thread_find->next(backwards);}}};
+            xaml::Input::KeyboardAccelerator shortcut;shortcut.Key(static_cast<winrt::Windows::System::VirtualKey>(key));shortcut.Modifiers(mods);shortcut.Invoked(invoke);root.KeyboardAccelerators().Append(shortcut);
+            if(key=='F'){xaml::Input::KeyboardAccelerator editor;editor.Key(shortcut.Key());editor.Modifiers(mods);editor.Invoked(invoke);composer.KeyboardAccelerators().Append(editor);}};
+        add_find('F',true,false,false);add_find(static_cast<unsigned>(winrt::Windows::System::VirtualKey::F3),false,false,false);add_find(static_cast<unsigned>(winrt::Windows::System::VirtualKey::F3),false,true,true);
     }
     void show_window(){if(!closing){window.AppWindow().Show();window.Activate();if(composer&&composer.IsEnabled())composer.Focus(xaml::FocusState::Programmatic);}}
     void quit_app(){
