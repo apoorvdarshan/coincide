@@ -6,17 +6,20 @@
 //! Uses the parent's coherent styled-frame reader and cell renderer conventions,
 //! and the existing TerminalSelection/Alacritty projection (never ANSI stripping).
 //! All engine calls run on one serialized worker. No shell commands are generated.
+//! Mode-sensitive input is encoded by terminal.input in core; native IME preedit
+//! is local to a revocable per-pane focus session and never edits shell output.
 use crate::terminal_selection::TerminalSelection;
 use anyhow::{Result, ensure};
 use coincide_core::{
     api::SharedEngine,
     store::text,
-    terminal::{TerminalPoint, TerminalScroll},
+    terminal::{KeyModifiers, TerminalInput, TerminalPoint, TerminalScroll},
 };
 use gpui_kit::{base::Disableable, component::button::*, prelude::FluentBuilder, *};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
+    ops::Range,
     sync::mpsc::{self, Receiver, SyncSender},
     time::{Duration, Instant},
 };
@@ -76,6 +79,329 @@ struct Tab {
     layout: Layout,
     focus: PaneId,
 }
+
+// Native text services can only edit this local, uncommitted composition buffer.
+// Every range uses UTF-16; no callback is allowed to edit echoed shell output.
+#[derive(Default, Clone, Debug)]
+struct Composition {
+    text: String,
+    selected: Range<usize>,
+    marked: bool,
+}
+fn utf16_byte(text: &str, offset: usize) -> Option<usize> {
+    let mut units = 0;
+    for (byte, ch) in text.char_indices() {
+        if units == offset {
+            return Some(byte);
+        }
+        units += ch.len_utf16();
+    }
+    (units == offset).then_some(text.len())
+}
+fn byte_range(text: &str, range: Range<usize>) -> Option<Range<usize>> {
+    if range.start > range.end {
+        return None;
+    }
+    Some(utf16_byte(text, range.start)?..utf16_byte(text, range.end)?)
+}
+fn valid_payload(text: &str, _paste: bool) -> Result<()> {
+    // Core chooses the current mode and enforces the whole encoded-frame bound,
+    // including paste delimiters. UI never frames or retries input itself.
+    ensure!(text.len() <= 32768, "Encoded terminal input exceeds 32 KiB");
+    ensure!(
+        !text
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\r' | '\n')),
+        "Terminal text contains control framing"
+    );
+    Ok(())
+}
+impl Composition {
+    fn replacement(&self, range: Option<Range<usize>>, text: &str) -> Result<(String, usize)> {
+        valid_payload(text, false)?;
+        let range = range.unwrap_or_else(|| {
+            if self.marked {
+                0..self.text.encode_utf16().count()
+            } else {
+                self.selected.clone()
+            }
+        });
+        let bytes = byte_range(&self.text, range.clone())
+            .ok_or_else(|| anyhow::anyhow!("IME range is outside uncommitted text"))?;
+        let mut next = self.text.clone();
+        next.replace_range(bytes, text);
+        valid_payload(&next, false)?;
+        Ok((next, range.start))
+    }
+    fn stage(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        selected: Option<Range<usize>>,
+    ) -> Result<()> {
+        let (next, start) = self.replacement(range, text)?;
+        let relative = selected.unwrap_or_else(|| {
+            let end = text.encode_utf16().count();
+            end..end
+        });
+        ensure!(
+            byte_range(text, relative.clone()).is_some(),
+            "IME selection splits a UTF-16 character"
+        );
+        self.text = next;
+        self.selected = start + relative.start..start + relative.end;
+        self.marked = true;
+        Ok(())
+    }
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+    fn display(&self) -> String {
+        self.text.replace(['\t', '\r', '\n'], " ")
+    }
+}
+fn native_scope(
+    key: PaneId,
+    epoch: u64,
+    visible: bool,
+    panes: &[PaneId],
+    binding: Option<(u64, bool)>,
+) -> bool {
+    visible
+        && panes.contains(&key)
+        && binding.is_some_and(|(current, enabled)| current == epoch && enabled)
+}
+struct PaneInput {
+    owner: WeakEntity<TerminalWorkspace>,
+    key: PaneId,
+    epoch: u64,
+    focus: FocusHandle,
+    active: bool,
+    composition: Composition,
+    notice: String,
+    anchor: Point<Pixels>,
+    bounds: Option<Bounds<Pixels>>,
+    _blur: Subscription,
+    _activation: Subscription,
+}
+impl PaneInput {
+    fn current(&self, window: &Window, cx: &App) -> bool {
+        if !self.active || !window.is_window_active() || !self.focus.is_focused(window) {
+            return false;
+        }
+        self.owner.upgrade().is_some_and(|owner| {
+            let workspace = owner.read(cx);
+            native_scope(
+                self.key,
+                self.epoch,
+                workspace.visible,
+                &workspace.ids(),
+                workspace
+                    .panes
+                    .get(&self.key)
+                    .map(|p| (p.ime_epoch, !p.closing && p.terminal.is_some())),
+            )
+        })
+    }
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.composition.clear();
+        window.notify_text_input_changed(&self.focus);
+        cx.notify();
+    }
+    fn submit(
+        &mut self,
+        input: TerminalInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.current(window, cx) {
+            self.composition.clear();
+            return false;
+        }
+        self.owner
+            .update(cx, |workspace, cx| {
+                workspace.submit_native(self.key, self.epoch, input, window, cx)
+            })
+            .unwrap_or(false)
+    }
+    fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.notify_text_input_changed(&self.focus);
+        window.notify_text_selection_changed(&self.focus);
+        cx.notify();
+    }
+    fn line(&self, window: &Window) -> ShapedLine {
+        let text: SharedString = self.composition.display().into();
+        let run = TextRun {
+            len: text.len(),
+            font: font(if cfg!(target_os = "macos") {
+                "Menlo"
+            } else {
+                "monospace"
+            }),
+            color: rgb(0xd4d4d4).into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window.text_system().shape_line(text, px(12.), &[run], None)
+    }
+}
+impl EntityInputHandler for PaneInput {
+    fn accepts_text_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.current(window, cx)
+    }
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        if !self.current(window, cx) {
+            return None;
+        }
+        let bytes = byte_range(&self.composition.text, range.clone())?;
+        *adjusted = Some(range);
+        Some(self.composition.text[bytes].into())
+    }
+    fn selected_text_range(
+        &mut self,
+        _ignore: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        self.current(window, cx).then(|| UTF16Selection {
+            range: self.composition.selected.clone(),
+            reversed: false,
+        })
+    }
+    fn marked_text_range(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        (self.current(window, cx) && self.composition.marked)
+            .then(|| 0..self.composition.text.encode_utf16().count())
+    }
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel(window, cx);
+    }
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        selected: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current(window, cx) {
+            self.composition.clear();
+            return;
+        }
+        match self.composition.stage(range, text, selected) {
+            Ok(()) => self.notice.clear(),
+            Err(error) => self.notice = error.to_string(),
+        }
+        self.changed(window, cx);
+    }
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current(window, cx) {
+            self.composition.clear();
+            return;
+        }
+        match self.composition.replacement(range, text) {
+            Ok((text, _)) => {
+                if self.submit(TerminalInput::Text { text }, window, cx) {
+                    self.composition.clear();
+                    self.notice.clear();
+                }
+            }
+            Err(error) => self.notice = error.to_string(),
+        }
+        self.changed(window, cx);
+    }
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = item.text() {
+            match valid_payload(&text, true) {
+                Ok(()) => {
+                    if self.submit(TerminalInput::Paste { text }, window, cx) {
+                        self.composition.clear();
+                        self.notice.clear();
+                    }
+                }
+                Err(error) => self.notice = error.to_string(),
+            }
+            self.changed(window, cx);
+        }
+    }
+    fn bounds_for_range(
+        &mut self,
+        range: Range<usize>,
+        element: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        if !self.current(window, cx) {
+            return None;
+        }
+        let bytes = byte_range(&self.composition.text, range)?;
+        let line = self.line(window);
+        let x = (self.anchor.x + line.x_for_index(bytes.start))
+            .max(element.left())
+            .min(element.right());
+        let right = (self.anchor.x + line.x_for_index(bytes.end))
+            .max(x)
+            .min(element.right());
+        let y = self
+            .anchor
+            .y
+            .max(element.top())
+            .min((element.bottom() - px(CELL_H)).max(element.top()));
+        Some(Bounds::from_corners(
+            point(x, y),
+            point(right, y + px(CELL_H)),
+        ))
+    }
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        if !self.current(window, cx) || !self.bounds?.contains(&point) {
+            return None;
+        }
+        let byte = self
+            .line(window)
+            .closest_index_for_x(point.x - self.anchor.x);
+        self.composition
+            .text
+            .get(..byte)
+            .map(|text| text.encode_utf16().count())
+    }
+    fn set_selected_text_range(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current(window, cx) && byte_range(&self.composition.text, range.clone()).is_some() {
+            self.composition.selected = range;
+            self.changed(window, cx);
+        }
+    }
+    fn text_length_utf16(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
+        self.current(window, cx)
+            .then(|| self.composition.text.encode_utf16().count())
+    }
+}
+
 struct Pane {
     terminal: Option<String>,
     frame: Option<Value>,
@@ -88,6 +414,9 @@ struct Pane {
     notice: String,
     wheel: f32,
     blink: Instant,
+    ime: Option<Entity<PaneInput>>,
+    ime_epoch: u64,
+    ime_observer: Option<Subscription>,
 }
 impl Pane {
     fn new(cx: &mut Context<TerminalWorkspace>) -> Self {
@@ -103,6 +432,9 @@ impl Pane {
             notice: String::new(),
             wheel: 0.,
             blink: Instant::now(),
+            ime: None,
+            ime_epoch: 0,
+            ime_observer: None,
         }
     }
     fn matches(&self, terminal: &str, expected: Option<Stamp>) -> bool {
@@ -114,7 +446,7 @@ impl Pane {
 }
 #[derive(Clone)]
 enum Action {
-    Write(String),
+    Input(TerminalInput),
     Resize(u16, u16),
     Scroll(u64, TerminalScroll),
     Close,
@@ -235,7 +567,7 @@ fn run_worker(
             Ok(Command::Act(key, ticket, action)) => {
                 let closing = matches!(action, Action::Close);
                 let failure = match &action {
-                    Action::Write(_) => "Terminal input was not sent",
+                    Action::Input(_) => "Terminal input was not sent",
                     Action::Resize(_, _) => "Terminal resize failed",
                     Action::Scroll(_, _) => "Terminal scroll failed",
                     Action::Close => "Terminal close failed",
@@ -247,8 +579,8 @@ fn run_worker(
                     binding.ticket = ticket;
                     let id = &binding.terminal;
                     match action {
-                        Action::Write(input) => {
-                            call("terminal.write", json!({"terminalId":id,"text":input}))?;
+                        Action::Input(input) => {
+                            call("terminal.input", json!({"terminalId":id,"input":input}))?;
                         }
                         Action::Resize(rows, cols) => {
                             call(
@@ -368,6 +700,9 @@ impl TerminalWorkspace {
     }
     /// Parent calls false when hiding a cached entity, true when mounting it.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if !visible {
+            self.revoke_inputs();
+        }
         self.visible = visible;
         self.watch();
         cx.notify();
@@ -421,18 +756,26 @@ impl TerminalWorkspace {
         } else {
             self.tab_for(key);
         }
-        window.focus(&self.panes[&key].focus, cx);
+        self.focus(key, window, cx);
         self.watch();
         cx.notify();
     }
-    fn act(&mut self, key: PaneId, action: Action, cx: &mut Context<Self>) {
+    fn act(&mut self, key: PaneId, action: Action, cx: &mut Context<Self>) -> bool {
         let Some(pane) = self.panes.get_mut(&key) else {
-            return;
+            return false;
         };
         if pane.closing || pane.terminal.is_none() {
             pane.notice = "Wait for terminal creation".into();
             cx.notify();
-            return;
+            return false;
+        }
+        if let Action::Input(TerminalInput::Text { text } | TerminalInput::Paste { text }) = &action
+        {
+            if let Err(error) = valid_payload(text, false) {
+                pane.notice = error.to_string();
+                cx.notify();
+                return false;
+            }
         }
         let ticket = pane.ticket + 1;
         if self
@@ -442,19 +785,23 @@ impl TerminalWorkspace {
         {
             pane.notice = "Input not sent: terminal worker queue full".into();
             cx.notify();
-            return;
+            return false;
         }
         pane.ticket = ticket;
         pane.selection.clear();
         pane.blink = Instant::now();
         if matches!(action, Action::Close) {
             pane.closing = true;
+            pane.ime_epoch += 1;
+            pane.ime = None;
+            pane.ime_observer = None;
         }
         if let Action::Resize(rows, cols) = action {
             pane.size = (rows, cols);
             pane.frame = None;
         }
         cx.notify();
+        true
     }
     fn remove(&mut self, key: PaneId) {
         self.panes.remove(&key);
@@ -617,6 +964,37 @@ impl TerminalWorkspace {
             cx.notify();
         }
     }
+    fn revoke_inputs(&mut self) {
+        for pane in self.panes.values_mut() {
+            pane.ime_epoch += 1;
+            pane.ime = None;
+            pane.ime_observer = None;
+        }
+    }
+    fn submit_native(
+        &mut self,
+        key: PaneId,
+        epoch: u64,
+        input: TerminalInput,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !native_scope(
+            key,
+            epoch,
+            self.visible,
+            &self.ids(),
+            self.panes.get(&key).map(|p| {
+                (
+                    p.ime_epoch,
+                    p.focus.is_focused(window) && !p.closing && p.terminal.is_some(),
+                )
+            }),
+        ) {
+            return false;
+        }
+        self.act(key, Action::Input(input), cx)
+    }
     fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.iter().find(|t| Some(t.key) == self.active) {
             let key = tab.focus;
@@ -626,6 +1004,44 @@ impl TerminalWorkspace {
     fn focus(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         if !self.visible || !self.ids().contains(&key) {
             return;
+        }
+        let same = self.panes.get(&key).is_some_and(|p| {
+            p.focus.is_focused(window) && p.ime.as_ref().is_some_and(|ime| ime.read(cx).active)
+        });
+        if !same {
+            self.revoke_inputs();
+            let owner = cx.entity().downgrade();
+            let pane = self.panes.get_mut(&key).unwrap();
+            let epoch = pane.ime_epoch;
+            let focus = pane.focus.clone();
+            let input = cx.new(|cx| {
+                let blur = cx.on_blur(&focus, window, |this: &mut PaneInput, window, cx| {
+                    this.active = false;
+                    this.cancel(window, cx);
+                });
+                let activation =
+                    cx.observe_window_activation(window, |this: &mut PaneInput, window, cx| {
+                        if !window.is_window_active() {
+                            this.active = false;
+                            this.cancel(window, cx);
+                        }
+                    });
+                PaneInput {
+                    owner,
+                    key,
+                    epoch,
+                    focus: focus.clone(),
+                    active: true,
+                    composition: Default::default(),
+                    notice: String::new(),
+                    anchor: point(px(0.), px(0.)),
+                    bounds: None,
+                    _blur: blur,
+                    _activation: activation,
+                }
+            });
+            pane.ime_observer = Some(cx.observe(&input, |_, _, cx| cx.notify()));
+            pane.ime = Some(input);
         }
         if let Some(pane) = self.panes.get(&key) {
             window.focus(&pane.focus, cx);
@@ -688,20 +1104,30 @@ impl TerminalWorkspace {
             self.scroll(key, TerminalScroll::Lines(lines), cx);
         }
     }
-    fn key(&mut self, key: PaneId, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn key(
+        &mut self,
+        key: PaneId,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.visible || !self.ids().contains(&key) {
             return;
         }
         let k = &event.keystroke;
         let command = k.modifiers.platform || (k.modifiers.control && k.modifiers.shift);
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("v") {
-            // Clipboard contents are sent literally; no command/newline is added.
-            // API does not expose bracketed-paste mode; no speculative VT framing.
             if let Some(input) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                if input.len() <= 32 * 1024 {
-                    self.act(key, Action::Write(input), cx);
+                if valid_payload(&input, true).is_ok() {
+                    if self.act(key, Action::Input(TerminalInput::Paste { text: input }), cx) {
+                        if let Some(p) = self.panes.get_mut(&key) {
+                            if let Some(ime) = &p.ime {
+                                ime.update(cx, |i, cx| i.cancel(window, cx));
+                            }
+                        }
+                    }
                 } else if let Some(p) = self.panes.get_mut(&key) {
-                    p.notice = "Paste exceeds 32 KiB; nothing sent".into();
+                    p.notice="Paste contains control framing or exceeds encoded 32 KiB limit; nothing sent".into();
                 }
             }
             cx.stop_propagation();
@@ -716,6 +1142,16 @@ impl TerminalWorkspace {
         let Some(pane) = self.panes.get_mut(&key) else {
             return;
         };
+        if pane
+            .ime
+            .as_ref()
+            .is_some_and(|ime| ime.read(cx).composition.marked)
+            && !command
+            && !k.modifiers.control
+        {
+            // Candidate navigation/commit/cancel belongs to native text services.
+            return;
+        }
         let alternate = pane
             .frame
             .as_ref()
@@ -767,7 +1203,7 @@ impl TerminalWorkspace {
             }
         }
         if let Some(input) = key_input(event) {
-            self.act(key, Action::Write(input), cx);
+            self.act(key, Action::Input(input), cx);
             cx.stop_propagation();
         }
     }
@@ -845,7 +1281,9 @@ impl TerminalWorkspace {
                 Button::new(SharedString::from(format!("close-{key}")))
                     .label("Close")
                     .disabled(pane.closing || pane.terminal.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| this.act(key, Action::Close, cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.act(key, Action::Close, cx);
+                    })),
             );
         let mut body = div()
             .id(SharedString::from(format!("terminal-body-{key}")))
@@ -868,7 +1306,9 @@ impl TerminalWorkspace {
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| this.focus(key, window, cx)),
             )
-            .on_key_down(cx.listener(move |this, event, _, cx| this.key(key, event, cx)))
+            .on_key_down(
+                cx.listener(move |this, event, window, cx| this.key(key, event, window, cx)),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, _| {
@@ -1076,6 +1516,46 @@ impl TerminalWorkspace {
                 )));
         }
         let weak = cx.entity().downgrade();
+        let ime = pane.ime.clone();
+        let native_focus = pane.focus.clone();
+        let local_scroll = pane.scroll.clone();
+        let caret = pane
+            .frame
+            .as_ref()
+            .map(|frame| {
+                let row = frame["cursor"]["row"]
+                    .as_i64()
+                    .unwrap_or(0)
+                    .clamp(0, i64::from(pane.size.0.saturating_sub(1)));
+                let col = frame["cursor"]["insertionCol"]
+                    .as_u64()
+                    .or_else(|| frame["cursor"]["col"].as_u64())
+                    .unwrap_or(0)
+                    .min(u64::from(pane.size.1.saturating_sub(1)));
+                point(px(col as f32 * CELL_W), px(row as f32 * CELL_H))
+            })
+            .unwrap_or_else(|| point(px(0.), px(0.)));
+        let mut composition_notice = String::new();
+        if let Some(input) = &ime {
+            let input = input.read(cx);
+            composition_notice = input.notice.clone();
+            if input.active
+                && input.epoch == pane.ime_epoch
+                && input.composition.marked
+                && pane.focus.is_focused(window)
+            {
+                body = body.child(
+                    div()
+                        .absolute()
+                        .left(caret.x)
+                        .top(caret.y)
+                        .bg(rgb(0x0c0c0c))
+                        .text_color(rgb(0xd4d4d4))
+                        .underline()
+                        .child(input.composition.display()),
+                );
+            }
+        }
         div()
             .relative()
             .flex()
@@ -1112,7 +1592,32 @@ impl TerminalWorkspace {
                                     });
                                 });
                             },
-                            |_, _, _, _| {},
+                            move |bounds, _, window, cx| {
+                                if native_focus.is_focused(window) {
+                                    if let Some(input) = ime {
+                                        let offset = local_scroll.offset();
+                                        input.update(cx, |input, _| {
+                                            input.bounds = Some(bounds);
+                                            input.anchor = point(
+                                                (bounds.left() + caret.x + offset.x)
+                                                    .max(bounds.left())
+                                                    .min(bounds.right()),
+                                                (bounds.top() + caret.y + offset.y)
+                                                    .max(bounds.top())
+                                                    .min(
+                                                        (bounds.bottom() - px(CELL_H))
+                                                            .max(bounds.top()),
+                                                    ),
+                                            );
+                                        });
+                                        window.handle_input(
+                                            &native_focus,
+                                            ElementInputHandler::new(bounds, input),
+                                            cx,
+                                        );
+                                    }
+                                }
+                            },
                         )
                         .absolute()
                         .size_full(),
@@ -1121,6 +1626,7 @@ impl TerminalWorkspace {
             )
             .child(footer)
             .child(div().text_sm().child(pane.notice.clone()))
+            .child(div().text_sm().child(composition_notice))
             .into_any_element()
     }
     fn layout_view(&self, layout: &Layout, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1141,6 +1647,16 @@ impl TerminalWorkspace {
 }
 impl Render for TerminalWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.visible && window.is_window_active() {
+            if let Some(key) = self.ids().into_iter().find(|key| {
+                self.panes.get(key).is_some_and(|p| {
+                    p.focus.is_focused(window)
+                        && p.ime.as_ref().is_none_or(|ime| !ime.read(cx).active)
+                })
+            }) {
+                self.focus(key, window, cx);
+            }
+        }
         let mut tabs = div().flex().gap_1().items_center().flex_wrap();
         for tab in &self.tabs {
             let key = tab.key;
@@ -1212,69 +1728,49 @@ fn stamp(frame: &Value) -> Option<Stamp> {
     ))
 }
 
-fn key_input(event: &KeyDownEvent) -> Option<String> {
-    let key = &event.keystroke;
-    if event.prefer_character_input {
-        return key.key_char.clone();
-    }
-    if key.modifiers.platform {
+fn key_input(event: &KeyDownEvent) -> Option<TerminalInput> {
+    let k = &event.keystroke;
+    // Printable characters (including AltGr) are committed by native text input.
+    // Sending key_char here as well would duplicate insertText/IME commits.
+    if event.prefer_character_input || k.modifiers.platform {
         return None;
     }
-    if key.modifiers.control && key.key.len() == 1 {
-        let byte = key.key.as_bytes()[0].to_ascii_uppercase();
-        if (b'@'..=b'_').contains(&byte) {
-            return Some(String::from((byte - 64) as char));
-        }
-        return None;
-    }
-    let modifier = 1
-        + u8::from(key.modifiers.shift)
-        + 2 * u8::from(key.modifiers.alt)
-        + 4 * u8::from(key.modifiers.control);
-    let input = match key.key.as_str() {
-        "enter" => "\r".into(),
-        "backspace" => "\x7f".into(),
-        "tab" if key.modifiers.shift => "\x1b[Z".into(),
-        "tab" => "\t".into(),
-        "escape" => "\x1b".into(),
-        "up" | "down" | "right" | "left" | "home" | "end" => {
-            let suffix = match key.key.as_str() {
-                "up" => 'A',
-                "down" => 'B',
-                "right" => 'C',
-                "left" => 'D',
-                "home" => 'H',
-                _ => 'F',
-            };
-            if modifier == 1 {
-                format!("\x1b[{suffix}")
-            } else {
-                format!("\x1b[1;{modifier}{suffix}")
-            }
-        }
-        "pageup" | "pagedown" | "delete" | "insert" => {
-            let code = match key.key.as_str() {
-                "pageup" => 5,
-                "pagedown" => 6,
-                "delete" => 3,
-                _ => 2,
-            };
-            if modifier == 1 {
-                format!("\x1b[{code}~")
-            } else {
-                format!("\x1b[{code};{modifier}~")
-            }
-        }
-        _ => {
-            let value = key.key_char.clone()?;
-            if key.modifiers.alt {
-                format!("\x1b{value}")
-            } else {
-                value
-            }
-        }
+    let name = match k.key.as_str() {
+        "pageup" => "pageUp",
+        "pagedown" => "pageDown",
+        other => other,
     };
-    Some(input)
+    let special = matches!(
+        name,
+        "up" | "down"
+            | "left"
+            | "right"
+            | "home"
+            | "end"
+            | "pageUp"
+            | "pageDown"
+            | "insert"
+            | "delete"
+            | "enter"
+            | "backspace"
+            | "tab"
+            | "escape"
+    );
+    if !special
+        && !(k.modifiers.control
+            && name.len() == 1
+            && (b'@'..=b'_').contains(&name.as_bytes()[0].to_ascii_uppercase()))
+    {
+        return None;
+    }
+    Some(TerminalInput::Key {
+        key: name.into(),
+        modifiers: KeyModifiers {
+            shift: k.modifiers.shift,
+            alt: k.modifiers.alt,
+            control: k.modifiers.control,
+        },
+    })
 }
 
 // Recover inclusive coordinates through the actual selection helper rather than
@@ -1376,41 +1872,33 @@ mod tests {
         }
     }
     #[::core::prelude::v1::test]
-    fn navigation_keeps_alternate_screen_modifiers_and_ctrl_c_interrupt() {
-        let control_shift = Modifiers {
-            control: true,
-            shift: true,
-            ..Default::default()
-        };
+    fn navigation_keeps_modifiers_and_defers_mode_encoding_to_core() {
+        let input = key_input(&event(
+            "pageup",
+            Modifiers {
+                control: true,
+                shift: true,
+                ..Default::default()
+            },
+            None,
+        ))
+        .unwrap();
         assert_eq!(
-            key_input(&event("pageup", control_shift, None)),
-            Some("\x1b[5;6~".into())
+            serde_json::to_value(input).unwrap(),
+            json!({"kind":"key","key":"pageUp","modifiers":{"shift":true,"control":true,"alt":false}})
         );
-        assert_eq!(
-            key_input(&event(
-                "left",
-                Modifiers {
-                    shift: true,
-                    ..Default::default()
-                },
-                None
-            )),
-            Some("\x1b[1;2D".into())
-        );
-        assert_eq!(
-            key_input(&event(
-                "c",
-                Modifiers {
-                    control: true,
-                    ..Default::default()
-                },
-                None
-            )),
-            Some("\x03".into())
-        );
-        assert_eq!(
-            key_input(&event("enter", Default::default(), None)),
-            Some("\r".into())
+        let input = key_input(&event(
+            "c",
+            Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            None,
+        ))
+        .unwrap();
+        assert!(matches!(input,TerminalInput::Key{key,..} if key=="c"));
+        assert!(
+            matches!(key_input(&event("enter",Default::default(),None)),Some(TerminalInput::Key{key,..}) if key=="enter")
         );
         assert!(
             key_input(&event(
@@ -1425,7 +1913,7 @@ mod tests {
         );
     }
     #[::core::prelude::v1::test]
-    fn unicode_and_altgr_characters_are_not_reinterpreted_as_commands() {
+    fn unicode_and_altgr_characters_have_only_native_commit_path() {
         let mut altgr = event(
             "q",
             Modifiers {
@@ -1436,12 +1924,9 @@ mod tests {
             Some("@"),
         );
         altgr.prefer_character_input = true;
-        assert_eq!(key_input(&altgr), Some("@".into()));
-        assert_eq!(
-            key_input(&event("e", Default::default(), Some("e\u{301}"))),
-            Some("e\u{301}".into())
-        );
-        assert_eq!(
+        assert!(key_input(&altgr).is_none());
+        assert!(key_input(&event("e", Default::default(), Some("e\u{301}"))).is_none());
+        assert!(
             key_input(&event(
                 "x",
                 Modifiers {
@@ -1449,8 +1934,8 @@ mod tests {
                     ..Default::default()
                 },
                 Some("x")
-            )),
-            Some("\x1bx".into())
+            ))
+            .is_none()
         );
     }
     fn frame() -> Value {
@@ -1501,7 +1986,8 @@ mod tests {
                             .lock()
                             .unwrap()
                             .push((method.to_owned(), params.clone()));
-                        if method == "terminal.write" && params["text"] == "fixture-rejected-input"
+                        if method == "terminal.input"
+                            && params["input"]["text"] == "fixture-rejected-input"
                         {
                             anyhow::bail!("fixture PTY queue full");
                         }
@@ -1549,8 +2035,14 @@ mod tests {
         w.tx.send(Command::Create(20)).unwrap();
         assert!(matches!(w.next(),Update::Bound(10,Ok(id)) if id=="created-1"));
         assert!(matches!(w.next(),Update::Bound(20,Ok(id)) if id=="created-2"));
-        w.tx.send(Command::Act(10, 1, Action::Write("literal\n".into())))
-            .unwrap();
+        w.tx.send(Command::Act(
+            10,
+            1,
+            Action::Input(TerminalInput::Text {
+                text: "literal\n".into(),
+            }),
+        ))
+        .unwrap();
         w.tx.send(Command::Act(20, 1, Action::Resize(12, 50)))
             .unwrap();
         w.tx.send(Command::Act(10, 2, Action::Close)).unwrap();
@@ -1563,8 +2055,8 @@ mod tests {
         assert_eq!(
             log[3],
             (
-                "terminal.write".into(),
-                json!({"terminalId":"created-1","text":"literal\n"})
+                "terminal.input".into(),
+                json!({"terminalId":"created-1","input":{"kind":"text","text":"literal\n"}})
             )
         );
         assert_eq!(
@@ -1587,11 +2079,19 @@ mod tests {
         w.tx.send(Command::Act(
             1,
             1,
-            Action::Write("fixture-rejected-input".into()),
+            Action::Input(TerminalInput::Text {
+                text: "fixture-rejected-input".into(),
+            }),
         ))
         .unwrap();
-        w.tx.send(Command::Act(1, 2, Action::Write("next input".into())))
-            .unwrap();
+        w.tx.send(Command::Act(
+            1,
+            2,
+            Action::Input(TerminalInput::Text {
+                text: "next input".into(),
+            }),
+        ))
+        .unwrap();
         w.tx.send(Command::Watch(vec![1])).unwrap();
         // Even after UI advances to ticket2, the rejected write travels as an
         // independent error, not an obsolete ticket1 frame that UI discards.
@@ -1604,8 +2104,8 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .filter(|(method, _)| method == "terminal.write")
-            .map(|(_, params)| params["text"].clone())
+            .filter(|(method, _)| method == "terminal.input")
+            .map(|(_, params)| params["input"]["text"].clone())
             .collect::<Vec<_>>();
         assert_eq!(
             writes,
@@ -1657,8 +2157,12 @@ mod tests {
         let a = TerminalPoint { row: 0, col: 1 };
         let b = TerminalPoint { row: 0, col: 3 };
         w.tx.send(Command::Adopt(1, "one".into())).unwrap();
-        w.tx.send(Command::Act(1, 1, Action::Write("x".into())))
-            .unwrap();
+        w.tx.send(Command::Act(
+            1,
+            1,
+            Action::Input(TerminalInput::Text { text: "x".into() }),
+        ))
+        .unwrap();
         w.tx.send(Command::Copy(1, 0, 7, a, b)).unwrap();
         assert!(matches!(w.next(), Update::Copied(1, 0, 7, Err(_))));
         w.tx.send(Command::Copy(1, 1, 6, a, b)).unwrap();
@@ -1701,5 +2205,139 @@ mod tests {
             json!({"terminalId":"two","revision":7,"scroll":{"kind":"lines","lines":3}})
         );
         w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn composition_ranges_are_utf16_and_cannot_edit_terminal_output() {
+        let mut state = Composition::default();
+        state.stage(None, "A😀e\u{301}", Some(3..5)).unwrap();
+        assert_eq!(state.selected, 3..5);
+        assert_eq!(byte_range(&state.text, 1..3), Some(1..5));
+        assert!(byte_range(&state.text, 2..3).is_none());
+        let before = state.text.clone();
+        assert!(state.stage(Some(2..3), "x", None).is_err());
+        assert_eq!(state.text, before);
+        state.stage(Some(1..3), "界", Some(0..1)).unwrap();
+        assert_eq!(state.text, "A界e\u{301}");
+        assert_eq!(state.selected, 1..2);
+        state.clear();
+        assert!(state.replacement(Some(0..1), "x").is_err());
+        assert!(state.text.is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn invalid_composition_selection_is_atomic_and_never_splits_surrogate() {
+        let mut state = Composition::default();
+        state.stage(None, "old", None).unwrap();
+        assert!(state.stage(None, "😀", Some(1..1)).is_err());
+        assert_eq!(state.text, "old");
+        assert_eq!(state.selected, 3..3);
+        assert!(state.stage(None, "\x1b[201~", None).is_err());
+        assert_eq!(state.text, "old");
+    }
+    #[::core::prelude::v1::test]
+    fn composition_preedit_changes_never_queue_until_one_commit() {
+        let w = FakeWorker::new();
+        w.tx.send(Command::Adopt(1, "one".into())).unwrap();
+        let mut state = Composition::default();
+        for preedit in ["n", "ni", "に", "日本"] {
+            state.stage(None, preedit, None).unwrap();
+        }
+        assert_eq!(
+            w.log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, _)| method == "terminal.input")
+                .count(),
+            0
+        );
+        let (text, _) = state.replacement(None, "日本語").unwrap();
+        w.tx.send(Command::Act(
+            1,
+            1,
+            Action::Input(TerminalInput::Text { text }),
+        ))
+        .unwrap();
+        state.clear(); // Successful native commit clears staging; unmark sends no input.
+        state.clear();
+        w.tx.send(Command::Act(1, 2, Action::Close)).unwrap();
+        assert!(matches!(w.next(), Update::Closed(1, 2, Ok(()))));
+        let inputs = w
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "terminal.input")
+            .map(|(_, params)| params.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            inputs,
+            vec![json!({"terminalId":"one","input":{"kind":"text","text":"日本語"}})]
+        );
+        w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn composition_cancel_clears_marking_selection_and_editable_text() {
+        let mut state = Composition::default();
+        state.stage(None, "私の文", Some(1..2)).unwrap();
+        state.clear();
+        assert!(!state.marked);
+        assert!(state.text.is_empty());
+        assert_eq!(state.selected, 0..0);
+        assert_eq!(state.replacement(None, "次").unwrap().0, "次");
+    }
+    #[::core::prelude::v1::test]
+    fn payload_limits_are_utf8_and_never_permit_embedded_framing() {
+        assert!(valid_payload(&"💡".repeat(8192), false).is_ok());
+        assert!(valid_payload(&"💡".repeat(8193), false).is_err());
+        for text in ["\x1b[201~", "\x03", "\u{9b}", "\0", "\x7f"] {
+            assert!(valid_payload(text, true).is_err());
+        }
+        assert!(valid_payload("界e\u{301}\r\n\t", true).is_ok());
+        let mut state = Composition::default();
+        state.stage(None, "a\nb\tc", None).unwrap();
+        assert_eq!(state.display(), "a b c");
+        assert_eq!(state.text, "a\nb\tc");
+    }
+    #[::core::prelude::v1::test]
+    fn worker_preserves_text_paste_key_variants_without_ui_mode_encoding() {
+        let w = FakeWorker::new();
+        w.tx.send(Command::Adopt(1, "one".into())).unwrap();
+        w.tx.send(Command::Act(
+            1,
+            1,
+            Action::Input(TerminalInput::Paste {
+                text: "literal\n".into(),
+            }),
+        ))
+        .unwrap();
+        let key = key_input(&event("up", Default::default(), None)).unwrap();
+        w.tx.send(Command::Act(1, 2, Action::Input(key))).unwrap();
+        w.tx.send(Command::Act(1, 3, Action::Close)).unwrap();
+        assert!(matches!(w.next(), Update::Closed(1, 3, Ok(()))));
+        let inputs = w
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "terminal.input")
+            .map(|(_, params)| params["input"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            inputs,
+            vec![
+                json!({"kind":"paste","text":"literal\n"}),
+                json!({"kind":"key","key":"up","modifiers":{"shift":false,"alt":false,"control":false}})
+            ]
+        );
+        w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn revoked_or_hidden_native_sessions_cannot_route_into_another_pane() {
+        assert!(native_scope(1, 4, true, &[1, 2], Some((4, true))));
+        assert!(!native_scope(1, 4, true, &[1, 2], Some((5, true)))); // old focus generation
+        assert!(!native_scope(1, 4, false, &[1, 2], Some((4, true)))); // hidden thread
+        assert!(!native_scope(1, 4, true, &[2, 3], Some((4, true)))); // another tab
+        assert!(!native_scope(1, 4, true, &[1, 2], Some((4, false)))); // closed/unfocused/unbound
+        assert!(!native_scope(1, 4, true, &[1, 2], None)); // removed pane
     }
 }
