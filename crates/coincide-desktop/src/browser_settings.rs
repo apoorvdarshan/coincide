@@ -489,11 +489,28 @@ fn library_context_allowed(
     );
     Ok(())
 }
+// Route transitions are recorded synchronously by the parent, not inferred from
+// the next profile poll. Closing and reopening the same thread is a new route.
+fn update_route_epoch(
+    route: &mut Option<String>,
+    next: Option<&str>,
+    generation: &mut u64,
+    epoch: &AtomicU64,
+) -> bool {
+    if route.as_deref() == next {
+        return false;
+    }
+    *route = next.map(str::to_owned);
+    *generation = generation.wrapping_add(1);
+    epoch.store(*generation, Ordering::Release);
+    true
+}
 pub struct BrowserSettings {
     workers: WorkerOwner,
     form_scroll: ScrollHandle,
     engine: Option<SharedEngine>,
     epoch: Arc<AtomicU64>,
+    route: Option<String>,
     chosen: Option<ChosenBookmarks>,
     library: Option<Library>,
     library_page: usize,
@@ -542,6 +559,7 @@ impl BrowserSettings {
                 form_scroll: ScrollHandle::default(),
                 engine: None,
                 epoch: Arc::new(AtomicU64::new(0)),
+                route: None,
                 chosen: None,
                 library: None,
                 library_page: 0,
@@ -686,6 +704,17 @@ impl BrowserSettings {
                 }))
             },
         );
+    }
+    pub fn sync_route_context(&mut self, thread: Option<&str>, cx: &mut Context<Self>) {
+        if update_route_epoch(&mut self.route, thread, &mut self.generation, &self.epoch) {
+            self.snapshot = None;
+            self.preview = None;
+            self.chosen = None;
+            self.bookmark_open = None;
+            self.status =
+                "Browser Settings changed. Previous import previews were discarded.".into();
+            cx.notify();
+        }
     }
     pub fn set_snapshot(&mut self, snapshot: Option<ProfileSnapshot>, cx: &mut Context<Self>) {
         if self.workers.closed() {
@@ -1260,11 +1289,6 @@ mod tests {
         assert!(ProfileCatalog::open(scratch.0.clone(), None).is_err());
         assert!(read_document(&scratch.0.join("profiles.json")).is_err());
     }
-}
-
-#[cfg(test)]
-mod shutdown_tests {
-    use super::*;
     #[::core::prelude::v1::test]
     fn late_or_stale_picker_finishes_custody_without_starting_parser() {
         let mut workers = WorkerOwner::default();
@@ -1355,5 +1379,52 @@ mod shutdown_tests {
             assert_eq!(owner.status().panicked, 0);
             assert_eq!(owner.status().returned, 1);
         }
+    }
+    #[::core::prelude::v1::test]
+    fn close_reopen_before_poll_invalidates_old_route_without_repeated_epoch_changes() {
+        let epoch = AtomicU64::new(0);
+        let mut generation = 0;
+        let mut route = None;
+        assert!(update_route_epoch(
+            &mut route,
+            Some("thread"),
+            &mut generation,
+            &epoch
+        ));
+        let previous = generation;
+        assert!(update_route_epoch(
+            &mut route,
+            None,
+            &mut generation,
+            &epoch
+        ));
+        assert!(update_route_epoch(
+            &mut route,
+            Some("thread"),
+            &mut generation,
+            &epoch
+        ));
+        let mut owner = WorkerOwner::default();
+        let (send, receive) = mpsc::sync_channel(1);
+        assert!(owner.spawn(move |admission| {
+            send.send(library_context_allowed(&admission, &epoch, previous).is_ok())
+                .unwrap();
+        }));
+        assert!(!receive.recv().unwrap());
+        let current = generation;
+        let epoch = AtomicU64::new(current);
+        assert!(!update_route_epoch(
+            &mut route,
+            Some("thread"),
+            &mut generation,
+            &epoch
+        ));
+        assert_eq!(generation, current);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 1);
     }
 }

@@ -468,10 +468,19 @@ impl Coincide {
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
     }
+    fn sync_browser_settings_route(&mut self, cx: &mut Context<Self>) {
+        let thread = (self.browser_settings_visible() && !self.command_palette.read(cx).is_open())
+            .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
+            .flatten();
+        self.browser_settings_panel.update(cx, |panel, cx| {
+            panel.sync_route_context(thread.as_deref(), cx);
+        });
+    }
     fn sync_transcription_binding(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<transcription_settings::ComposerBinding> {
+        self.sync_browser_settings_route(cx);
         let thread = if self.settings_open
             && self.transcription_open
             && !self.bots_open
@@ -2025,6 +2034,8 @@ impl Coincide {
     fn browser_settings_visible(&self) -> bool {
         self.settings_open
             && self.browser_settings_open
+            && !self.computer_use_settings_visible()
+            && !self.media_settings_visible()
             && !self.credentials_open
             && !self.bots_open
             && !self.transcription_open
@@ -2033,6 +2044,7 @@ impl Coincide {
             && !self.session_import_open
     }
     fn sync_browser_settings(&mut self, cx: &mut Context<Self>) {
+        self.sync_browser_settings_route(cx);
         let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         for request in self.browser_profile_requests.try_iter().take(8) {
@@ -2098,6 +2110,7 @@ impl Coincide {
                         .insert(queued.show_operation, queued.thread);
                     self.browser_settings_open = false;
                     self.settings_open = false;
+                    self.sync_browser_settings_route(cx);
                     cx.notify();
                 }
                 Err(error) => self
@@ -2242,6 +2255,7 @@ impl Coincide {
                 self.transcription_open = false;
                 self.provider_settings.open = false;
                 self.session_import_open = false;
+                self.sync_browser_settings_route(cx);
                 self.computer_use_status="Closing is waiting for Computer Use shutdown accounting. No native actions are retried.".into();
                 cx.notify();
             }
