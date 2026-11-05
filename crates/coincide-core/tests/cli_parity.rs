@@ -349,7 +349,19 @@ mod scripted {
                             let method = request["method"].as_str().unwrap();
                             recorded.lock().unwrap().push(method.to_owned());
                             let result = match method {
-                                "threads.list" => json!([{"id":FIRST,"title":"Fake"}]),
+                                "threads.resolve_id" => {
+                                    assert_eq!(
+                                        uuid::Uuid::parse_str(
+                                            request["params"]["threadId"].as_str().unwrap()
+                                        )
+                                        .unwrap(),
+                                        uuid::Uuid::parse_str(FIRST).unwrap()
+                                    );
+                                    json!({"threadId":FIRST})
+                                }
+                                "threads.list" => {
+                                    panic!("Exact-ID wait must never list the library")
+                                }
                                 "threads.read" => {
                                     let settled = if state == "done" {
                                         polls >= 2
@@ -400,6 +412,133 @@ mod scripted {
         let calls = methods.lock().unwrap().clone();
         (code, reply, calls)
     }
+    fn scalar_scenario(
+        args: &[&str],
+        current: Option<&str>,
+        resolved: Value,
+    ) -> (i32, Value, Vec<String>) {
+        const STORED: &str = "aAaA0000-0000-4000-8000-000000000001";
+        let directory = tempfile::Builder::new()
+            .prefix("ci-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let data = directory.path().join("data");
+        fs::create_dir(&data).unwrap();
+        let listener = UnixListener::bind(data.join("control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let methods = Arc::new(Mutex::new(Vec::new()));
+        let recorded = methods.clone();
+        let peer = Peer {
+            stop,
+            worker: Some(thread::spawn(move || {
+                while !stopping.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            stream.set_nonblocking(false).unwrap();
+                            stream
+                                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                                .unwrap();
+                            stream
+                                .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+                                .unwrap();
+                            let mut line = String::new();
+                            BufReader::new(&stream).read_line(&mut line).unwrap();
+                            let request: Value = serde_json::from_str(&line).unwrap();
+                            let method = request["method"].as_str().unwrap();
+                            recorded.lock().unwrap().push(method.to_owned());
+                            let response = match method {
+                                "threads.resolve_id" => {
+                                    assert_eq!(
+                                        uuid::Uuid::parse_str(
+                                            request["params"]["threadId"].as_str().unwrap()
+                                        )
+                                        .unwrap(),
+                                        uuid::Uuid::parse_str(FIRST).unwrap()
+                                    );
+                                    if resolved.get("error").is_some() {
+                                        json!({"id":request["id"],"error":resolved["error"]})
+                                    } else {
+                                        json!({"id":request["id"],"result":resolved})
+                                    }
+                                }
+                                // This represents a library that exceeds the control frame
+                                // cap. Exact-ID and this paths must never request it.
+                                "threads.list" => {
+                                    json!({"id":request["id"],"result":[{"id":FIRST,"title":"x".repeat(4*1024*1024+1)}]})
+                                }
+                                "threads.read" | "agent.stop" | "agent.send" => {
+                                    assert_eq!(request["params"]["threadId"], STORED);
+                                    if method == "agent.send" {
+                                        assert_eq!(request["params"]["text"], "synthetic only");
+                                    }
+                                    json!({"id":request["id"],"result":{"id":STORED,"items":[],"accepted":true}})
+                                }
+                                _ => panic!("Unexpected scalar resolver request {method}"),
+                            };
+                            // A broken client attempting the oversized list can close
+                            // before this trap reply finishes. Still record the attempt.
+                            let _ = writeln!(stream, "{response}");
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(std::time::Duration::from_millis(1))
+                        }
+                        Err(e) => panic!("Scalar fake peer accept: {e}"),
+                    }
+                }
+            })),
+        };
+        let mut command = Command::new(BINARY);
+        command
+            .args(args)
+            .env("COINCIDE_RUST_DATA_DIR", &data)
+            .env_remove("COINCIDE_THREAD_ID");
+        if let Some(current) = current {
+            command.env("COINCIDE_THREAD_ID", current);
+        }
+        let (code, reply) = run(command, None);
+        drop(peer);
+        let calls = methods.lock().unwrap().clone();
+        (code, reply, calls)
+    }
+
+    #[test]
+    fn scalar_exact_and_current_resolution_avoids_large_library_and_validates_identity() {
+        const STORED: &str = "aAaA0000-0000-4000-8000-000000000001";
+        for args in [
+            vec!["read", FIRST],
+            vec!["read", "this"],
+            vec!["stop", FIRST],
+            vec!["send", FIRST, "synthetic only"],
+        ] {
+            let (code, reply, calls) =
+                scalar_scenario(&args, Some(FIRST), json!({"threadId":STORED}));
+            assert_eq!(code, 0, "{reply}");
+            assert_eq!(calls[0], "threads.resolve_id");
+            assert!(!calls.iter().any(|m| m == "threads.list"));
+            assert_eq!(reply["result"]["id"], STORED);
+        }
+        for response in [
+            json!({"threadId":SECOND}),
+            json!({"id":FIRST}),
+            json!(FIRST),
+            json!({"threadId":1}),
+            json!({"threadId":FIRST,"extra":true}),
+            json!({"error":{"message":"missing or ambiguous"}}),
+        ] {
+            let (code, _, calls) = scalar_scenario(&["read", FIRST], None, response);
+            assert_eq!(code, 1);
+            assert_eq!(calls, vec!["threads.resolve_id"]);
+        }
+        for current in [None, Some("AAAA"), Some("malformed")] {
+            let (code, _, calls) =
+                scalar_scenario(&["read", "this"], current, json!({"threadId":STORED}));
+            assert_eq!(code, 1);
+            assert!(calls.is_empty());
+        }
+    }
+
     #[test]
     fn fake_control_polling_distinguishes_done_input_timeout_and_submits_once() {
         for (state, code) in [("done", 0), ("needsInput", 3), ("timedOut", 4)] {
