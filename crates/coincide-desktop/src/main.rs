@@ -14,6 +14,7 @@ mod github_actions;
 mod github_review;
 mod github_threads;
 mod github_write_transport;
+mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
@@ -294,6 +295,7 @@ struct Coincide {
     settings_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
+    media: legacy_media_mount::ParentMedia,
     bots_open: bool,
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
     notifications_open: bool,
@@ -583,9 +585,16 @@ impl Coincide {
     fn new(
         engine: SharedEngine,
         profile_dir: std::path::PathBuf,
+        media_config: coincide_core::legacy_media_service::ServiceConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let media = legacy_media_mount::ParentMedia::new(media_config, window, cx);
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            weak.update(cx, |this, cx| this.request_media_close(window, cx))
+                .unwrap_or(false)
+        });
         let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -885,6 +894,7 @@ impl Coincide {
             settings_open: false,
             settings_search,
             settings_section: Default::default(),
+            media,
             bots_open: false,
             bot_panel,
             notifications_open: false,
@@ -1723,6 +1733,8 @@ impl Coincide {
                 cx,
             ),
             C::OpenSettings => {
+                self.media.opened = false;
+                self.browser_settings_open = false;
                 self.bots_open = false;
                 self.notifications_open = false;
                 self.transcription_open = false;
@@ -1954,6 +1966,24 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_media_context(cx);
+        self.poll_media_parent(cx);
+        if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
+            self.media.shutdown_requested = true;
+        }
+        if self.media.close_requested || self.media.shutdown_requested {
+            self.sync_media_context(cx);
+            if self.media_shutdown_ready(cx) {
+                if self.media.shutdown_requested {
+                    cx.quit();
+                } else {
+                    window.remove_window();
+                }
+            } else {
+                self.show_media_shutdown(window, cx);
+            }
+            return;
+        }
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
@@ -1973,7 +2003,7 @@ impl Coincide {
         }
         if let Ok(mut engine) = self.engine.try_lock() {
             if engine.shutdown {
-                cx.quit();
+                self.media.shutdown_requested = true;
                 return;
             }
             engine.ui_available = self.browser.is_some();
@@ -2049,6 +2079,7 @@ impl Coincide {
         }
         self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
+        self.sync_media_context(cx);
         self.sync_find(window, cx);
     }
     fn refresh_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2823,6 +2854,7 @@ impl Coincide {
                 .when(!previews.is_empty(), |view| {
                     view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
                 })
+                .children(self.historical_images(&item_id))
                 .when(kind == "user", |view| {
                     let source = source_id.clone();
                     let item = item_id.clone();
@@ -3002,6 +3034,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_media_context(cx);
         self.sync_terminal_workspace(window, cx);
         let open = self
             .engine
@@ -3107,6 +3140,8 @@ impl Render for Coincide {
                             .into_any_element()
                     })
                     .into_any_element()
+            } else if self.media_settings_visible() {
+                self.media_settings_pane(cx)
             } else if self.browser_settings_visible() {
                 div()
                     .id("browser-settings-surface")
@@ -3335,6 +3370,7 @@ impl Render for Coincide {
                                         let open = !(this.settings_open && this.credentials_open);
                                         this.credentials_open = open;
                                         this.browser_settings_open = false;
+                                        this.media.opened = false;
                                         this.credential_panel
                                             .update(cx, |panel, cx| panel.cancel(cx));
                                         this.notifications_open = false;
@@ -3610,9 +3646,13 @@ fn schedule_date(value: &Value) -> String {
 }
 fn main() -> Result<()> {
     let data = control::data_directory()?;
-    let engine = Arc::new(Mutex::new(Engine::new(Store::open(
-        &data.join("coincide.sqlite"),
-    )?)));
+    let store = Store::open(&data.join("coincide.sqlite"))?;
+    let media_data = store.data_directory()?;
+    let media_config = coincide_core::legacy_media_service::ServiceConfig {
+        database_path: media_data.join("coincide.sqlite"),
+        expected_data_directory: media_data,
+    };
+    let engine = Arc::new(Mutex::new(Engine::new(store)));
     let _server = control::serve(data.join("control.sock"), engine.clone())?;
     #[cfg(target_os = "linux")]
     let application = gpui_kit::platform::linux(WindowingModes::X11);
@@ -3633,7 +3673,15 @@ fn main() -> Result<()> {
                 cx,
                 |window, cx| {
                     window.set_window_title("Coincide Rust Preview");
-                    cx.new(|cx| Coincide::new(engine, data.join("browser-profile"), window, cx))
+                    cx.new(|cx| {
+                        Coincide::new(
+                            engine,
+                            data.join("browser-profile"),
+                            media_config,
+                            window,
+                            cx,
+                        )
+                    })
                 },
             )
             .expect("Unable to open Coincide window");
