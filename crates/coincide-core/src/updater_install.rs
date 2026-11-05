@@ -248,16 +248,49 @@ pub enum InstallOutcome {
         reason: String,
     },
 }
+// Fixed operation categories, never populated from native errors or paths.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum DiagnosticStage {
+    ParentExitProof,
+    ConsentBinding,
+    StoppedTargetProof,
+    InstalledIdentity,
+    CandidateIdentity,
+    DestinationPreparation,
+    DestinationDisk,
+    CandidateCopy,
+    CopiedIdentity,
+    CopyJournal,
+    StoppedTargetRecheck,
+    InstalledIdentityRecheck,
+    CopiedIdentityRecheck,
+    ExchangeJournal,
+    Exchange,
+    ExchangeDurability,
+    ExchangedJournal,
+    PostExchangeIdentity,
+    RollbackStoppedTargetProof,
+    RollbackBackupIdentity,
+    RollbackJournal,
+    RollbackExchange,
+    RollbackDurability,
+    RollbackIdentity,
+    RollbackReceipt,
+    FinalVerification,
+    FinalReceipt,
+}
 // Diagnostic only: never deserialized or consulted by install/recovery paths.
 #[derive(Serialize)]
 struct OutcomeDiagnostic {
     format: u8,
     transaction: Uuid,
     outcome: &'static str,
+    stage: DiagnosticStage,
     reason: &'static str,
 }
 impl InstallOutcome {
-    fn diagnostic(&self) -> OutcomeDiagnostic {
+    fn diagnostic(&self, stage: DiagnosticStage) -> OutcomeDiagnostic {
         let (transaction, outcome, reason) = match self {
             Self::Installed { transaction, .. } => (
                 *transaction,
@@ -284,6 +317,7 @@ impl InstallOutcome {
             format: 1,
             transaction,
             outcome,
+            stage,
             reason,
         }
     }
@@ -606,8 +640,10 @@ impl Installer {
     pub fn run_helper(&self, mut armed: ArmedInstall) -> Result<InstallOutcome> {
         self.check_armed(&armed)?;
         let id = armed.transaction();
+        let mut diagnostic_stage = DiagnosticStage::ParentExitProof;
         let result = (|| -> Result<InstallOutcome> {
             armed.watch.wait_clean_exit(self.config.exit_timeout)?;
+            diagnostic_stage = DiagnosticStage::ConsentBinding;
             let consent: Consent = read_json(&armed.directory.join("clean-quit.json"))?;
             ensure!(
                 consent.transaction == id
@@ -615,15 +651,20 @@ impl Installer {
                     && consent.nonce == armed.journal.nonce,
                 "Clean quit consent does not bind this native authorization"
             );
+            diagnostic_stage = DiagnosticStage::StoppedTargetProof;
             self.dependencies.processes.ensure_stopped(&self.target())?;
+            diagnostic_stage = DiagnosticStage::InstalledIdentity;
             self.verify_tree(&self.target(), &armed.journal.proposal, false)?;
+            diagnostic_stage = DiagnosticStage::CandidateIdentity;
             self.verify_tree(&armed.candidate.bundle, &armed.journal.proposal, true)?;
+            diagnostic_stage = DiagnosticStage::DestinationPreparation;
             let backup = self.backup(id);
             ensure!(
                 fs::symlink_metadata(&backup)
                     .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound),
                 "Replacement/backup path already exists"
             );
+            diagnostic_stage = DiagnosticStage::DestinationDisk;
             let required = files(&armed.candidate.bundle)?.values().try_fold(
                 self.config.reserve_disk_bytes,
                 |total, path| -> Result<u64> {
@@ -639,17 +680,25 @@ impl Installer {
                     >= required,
                 "Insufficient destination-volume disk space"
             );
+            diagnostic_stage = DiagnosticStage::CandidateCopy;
             copy_bundle(&armed.candidate.bundle, &backup)?;
+            diagnostic_stage = DiagnosticStage::CopiedIdentity;
             self.verify_tree(&backup, &armed.journal.proposal, true)?;
+            diagnostic_stage = DiagnosticStage::CopyJournal;
             armed.journal.phase = Phase::CandidateCopied;
             persist(&armed.directory, &armed.journal)?;
             self.checkpoint(Checkpoint::AfterCopy)?;
+            diagnostic_stage = DiagnosticStage::StoppedTargetRecheck;
             self.dependencies.processes.ensure_stopped(&self.target())?;
+            diagnostic_stage = DiagnosticStage::InstalledIdentityRecheck;
             self.verify_tree(&self.target(), &armed.journal.proposal, false)?;
+            diagnostic_stage = DiagnosticStage::CopiedIdentityRecheck;
             self.verify_tree(&backup, &armed.journal.proposal, true)?;
+            diagnostic_stage = DiagnosticStage::ExchangeJournal;
             armed.journal.phase = Phase::Exchanging;
             persist(&armed.directory, &armed.journal)?;
             self.checkpoint(Checkpoint::BeforeSwap)?;
+            diagnostic_stage = DiagnosticStage::Exchange;
             if self
                 .dependencies
                 .exchange
@@ -664,20 +713,27 @@ impl Installer {
                     reason: "Atomic exchange failed; inspect both retained bundles".into(),
                 });
             }
+            diagnostic_stage = DiagnosticStage::ExchangeDurability;
             sync_directory(&self.config.target_parent)?;
             self.checkpoint(Checkpoint::AfterSwap)?;
+            diagnostic_stage = DiagnosticStage::ExchangedJournal;
             armed.journal.phase = Phase::Exchanged;
             persist(&armed.directory, &armed.journal)?;
+            diagnostic_stage = DiagnosticStage::PostExchangeIdentity;
             if self
                 .verify_tree(&self.target(), &armed.journal.proposal, true)
                 .is_err()
             {
                 // Do not exchange a changed/unknown backup back into the install.
+                diagnostic_stage = DiagnosticStage::RollbackStoppedTargetProof;
                 self.dependencies.processes.ensure_stopped(&self.target())?;
+                diagnostic_stage = DiagnosticStage::RollbackBackupIdentity;
                 self.verify_tree(&backup, &armed.journal.proposal, false)?;
+                diagnostic_stage = DiagnosticStage::RollbackJournal;
                 armed.journal.phase = Phase::RollbackPending;
                 persist(&armed.directory, &armed.journal)?;
                 self.checkpoint(Checkpoint::BeforeRollback)?;
+                diagnostic_stage = DiagnosticStage::RollbackExchange;
                 if self
                     .dependencies
                     .exchange
@@ -694,9 +750,12 @@ impl Installer {
                                 .into(),
                     });
                 }
+                diagnostic_stage = DiagnosticStage::RollbackDurability;
                 sync_directory(&self.config.target_parent)?;
                 self.checkpoint(Checkpoint::AfterRollback)?;
+                diagnostic_stage = DiagnosticStage::RollbackIdentity;
                 self.verify_tree(&self.target(), &armed.journal.proposal, false)?;
+                diagnostic_stage = DiagnosticStage::RollbackReceipt;
                 armed.journal.phase = Phase::RolledBack;
                 persist(&armed.directory, &armed.journal)?;
                 return Ok(InstallOutcome::RolledBack {
@@ -705,9 +764,11 @@ impl Installer {
                     reason: "New target verification failed; previous target restored".into(),
                 });
             }
+            diagnostic_stage = DiagnosticStage::FinalVerification;
             self.checkpoint(Checkpoint::AfterVerify)?;
             // A receipt is diagnostic: never misreport a completed verified exchange
             // as a failed installation solely because this write failed.
+            diagnostic_stage = DiagnosticStage::FinalReceipt;
             armed.journal.phase = Phase::Committed;
             let receipt = self
                 .checkpoint(Checkpoint::BeforeCommit)
@@ -753,7 +814,7 @@ impl Installer {
         // This record cannot authorize exchange, rollback, consent or recovery.
         // A write failure must preserve the actual filesystem outcome and never
         // cause callers to retry a completed exchange as an installation failure.
-        if persist_outcome(&armed.directory, &outcome.diagnostic()).is_err() {
+        if persist_outcome(&armed.directory, &outcome.diagnostic(diagnostic_stage)).is_err() {
             outcome.warn_diagnostic_unavailable();
         }
         Ok(outcome)
@@ -2362,7 +2423,7 @@ mod tests {
         let record: Value = read_json(&path).unwrap();
         assert_eq!(
             record,
-            serde_json::json!({"format":1,"transaction":id,"outcome":"NotInstalled","reason":"Replacement was not installed; inspect retained transaction state"})
+            serde_json::json!({"format":1,"transaction":id,"outcome":"NotInstalled","stage":"stopped-target-proof","reason":"Replacement was not installed; inspect retained transaction state"})
         );
         let metadata = fs::symlink_metadata(path).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
@@ -2453,7 +2514,7 @@ mod tests {
             backup: f.installer.backup(id),
             receipt_warning: None,
         }
-        .diagnostic();
+        .diagnostic(DiagnosticStage::FinalReceipt);
         persist_outcome(&directory, &false_record).unwrap();
         let bytes = fs::read(directory.join("outcome.json")).unwrap();
         assert!(
@@ -2463,11 +2524,14 @@ mod tests {
                     transaction: id,
                     reason: "synthetic".into()
                 }
-                .diagnostic()
+                .diagnostic(DiagnosticStage::StoppedTargetProof)
             )
             .is_err()
         );
         assert_eq!(fs::read(directory.join("outcome.json")).unwrap(), bytes);
+        // Release only the consumed capability's target lock; leave the actual
+        // Armed journal intact, as a process interruption would.
+        drop(armed);
         // Even a syntactically valid diagnostic claiming Installed cannot
         // authorize exchange or change read-only recovery's actual Armed phase.
         assert!(matches!(
@@ -2478,7 +2542,6 @@ mod tests {
             }
         ));
         assert_eq!(f.version(), "0.1.0");
-        f.installer.cancel(armed).unwrap();
     }
     #[test]
     fn low_destination_disk_and_cancel_preserve_original_target() {
