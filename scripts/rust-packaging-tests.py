@@ -111,5 +111,15 @@ class ArtifactTests(unittest.TestCase):
             packaging.validate(self.root, manifest)
 
 
+def load_tests(loader, tests, pattern):
+    # Keep dedicated packaging CI's existing test entry point covering staging.
+    staging_spec = importlib.util.spec_from_file_location(
+        'staging_tests', Path(__file__).with_name('rust-stage-desktop-tests.py'))
+    staging_tests = importlib.util.module_from_spec(staging_spec)
+    staging_spec.loader.exec_module(staging_tests)
+    tests.addTests(loader.loadTestsFromModule(staging_tests))
+    return tests
+
+
 if __name__ == '__main__':
     unittest.main()

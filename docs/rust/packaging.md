@@ -124,3 +124,79 @@ prove its build origin. The hash identifies the tested bytes. Local equivalent:
 ```sh
 python3 -B scripts/rust-packaging-ci.py --store-bin /absolute/path/coincide-store --commit FULL_40_CHARACTER_COMMIT
 ```
+
+## Stage an actual unsigned desktop artifact
+
+`scripts/rust-stage-desktop.py` accepts explicit **already built** desktop/CLI/store
+binaries. It never invokes Cargo. It creates a unique `coincide-desktop-stage-*`
+directory under the supplied existing scratch root (which must resolve inside the
+system temporary directory, or `/tmp` on Unix). It has no overwrite/output-path mode.
+Inputs must be quiescent regular files; asset trees must contain only directories
+and regular files. It copies assets under `Resources/assets` on Mac or
+`resources/assets` elsewhere. macOS requires an explicit ICNS icon and deployment
+floor; Windows/Linux may receive an optional icon copied as `resources/AppIcon.*`.
+This does not embed a Windows executable icon or install Linux desktop integration.
+
+The output directory contains `artifact/`, `manifest.json`, and `validation.json`.
+The Mac artifact has the separate preview identifier/name/executable, APPL type,
+version/build number, icon reference, high-resolution flag and supplied deployment
+floor. No production entitlements or privacy permission claims are invented.
+The three target binaries are copied into the platform layout above, permissions
+normalized to executable, and the existing desktop validator runs before success.
+Failure removes only the unique output directory created by that invocation.
+Resources cannot replace generated files; scratch roots inside the resource input
+are refused. Nothing executes a staged binary. Source files remain untouched.
+
+Coordinator-only build allocation, from the exact checkout to stage:
+
+```sh
+# Mac build: allocate the existing shared target cache exclusively first.
+CARGO_TARGET_DIR=/tmp/coincide-rust-rewrite-target cargo build --locked -p coincide-desktop -p coincide-core --bins
+# Linux/Windows CI or allocated native host: keep a separate target directory.
+# Requires each host's GPUI/GTK/WebKit/WebView build prerequisites.
+cargo build --locked -p coincide-desktop -p coincide-core --bins
+```
+
+Mac staging after the allocated build, from this checkout (no build or launch occurs
+in the staging command). `13.0` below is an example **only**: replace it with the
+verified deployment floor of the supplied build/dependencies. The coordinator must
+verify that floor before treating the artifact as launchable.
+
+```sh
+stage_inputs=$(mktemp -d /tmp/coincide-rust-stage-inputs.XXXXXX)
+mkdir "$stage_inputs/CoincideRust.iconset"
+cp Coincide/Resources/Assets.xcassets/AppIcon.appiconset/*.png "$stage_inputs/CoincideRust.iconset/"
+iconutil -c icns -o "$stage_inputs/CoincideRust.icns" "$stage_inputs/CoincideRust.iconset"
+python3 -B scripts/rust-stage-desktop.py --scratch-root /tmp \
+  --platform macos --version 0.1.0 --build-number 1 --commit "$(git rev-parse HEAD)" \
+  --desktop-bin /tmp/coincide-rust-rewrite-target/debug/coincide-rust \
+  --cli-bin /tmp/coincide-rust-rewrite-target/debug/coincide-rs \
+  --store-bin /tmp/coincide-rust-rewrite-target/debug/coincide-store \
+  --minimum-macos-version 13.0 --icon "$stage_inputs/CoincideRust.icns"
+```
+
+Linux native/CI equivalent, after its allocated build:
+
+```sh
+python3 -B scripts/rust-stage-desktop.py --scratch-root /tmp \
+  --platform linux --version 0.1.0 --commit "$(git rev-parse HEAD)" \
+  --desktop-bin target/debug/coincide-rust --cli-bin target/debug/coincide-rs \
+  --store-bin target/debug/coincide-store
+```
+
+Windows native/CI equivalent in PowerShell, after its allocated build:
+
+```powershell
+python -B scripts/rust-stage-desktop.py --scratch-root $env:TEMP `
+  --platform windows --version 0.1.0 --commit (git rev-parse HEAD) `
+  --desktop-bin target/debug/coincide-rust.exe --cli-bin target/debug/coincide-rs.exe `
+  --store-bin target/debug/coincide-store.exe
+```
+
+For explicitly selected additional assets, append `--assets-dir PATH_TO_SELECTED_ASSETS`.
+The current Rust source does not declare a complete runtime resource packaging contract;
+copying assets is not proof the UI loads them. Do not copy the entire Swift resources
+or an active app bundle as a substitute. Full desktop build/staging/launch acceptance
+on each host still needs coordinator allocation. Dedicated CI automatically runs the
+synthetic staging suite through `rust-packaging-tests.py`; its real-binary lane remains
+scoped to `store-tool`. No additional desktop CI builds are introduced here.
