@@ -6,7 +6,7 @@ use serde_json::Value;
 use url::Url;
 
 #[path = "browser_upload.rs"]
-mod upload;
+pub mod upload;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -613,6 +613,46 @@ pub fn script_for_request(request: &BrowserRequest) -> Result<Option<String>> {
     script_in_frame(&request.action, request.frame.as_deref())
 }
 
+/// Establish a document/input identity before any background file reads.
+pub fn upload_probe_script(request: &BrowserRequest, ticket: &str) -> Result<String> {
+    request.validate()?;
+    let BrowserAction::Upload { selector, .. } = &request.action else {
+        anyhow::bail!("Expected upload");
+    };
+    fixed_script(
+        serde_json::json!({"kind":"upload-probe","selector":selector,"ticket":ticket}),
+        request.frame.as_deref(),
+    )
+}
+
+/// Run only on a background worker. Rechecks the original document and input
+/// identity in JavaScript before delivering bytes or dispatching page events.
+pub fn prepare_upload_script(
+    request: &BrowserRequest,
+    ticket: &str,
+    work: &upload::UploadWork,
+) -> Result<String> {
+    request.validate()?;
+    let BrowserAction::Upload { selector, files } = &request.action else {
+        anyhow::bail!("Expected upload");
+    };
+    let files = upload::prepare_controlled(files, work)?;
+    work.check()?;
+    fixed_script(
+        serde_json::json!({"kind":"upload","selector":selector,"files":files,"ticket":ticket}),
+        request.frame.as_deref(),
+    )
+}
+
+fn fixed_script(payload: Value, frame: Option<&str>) -> Result<String> {
+    Ok(format!(
+        "(() => {{ const request = {}; const frameId = {}; {} }})()",
+        serde_json::to_string(&payload)?,
+        serde_json::to_string(&frame)?,
+        SCRIPT
+    ))
+}
+
 fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option<String>> {
     let payload = match action {
         BrowserAction::Read { selector, page } => {
@@ -647,12 +687,7 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
         BrowserAction::Reload => return Ok(Some("location.reload(); ({dispatched:true})".into())),
         _ => return Ok(None),
     };
-    Ok(Some(format!(
-        "(() => {{ const request = {}; const frameId = {}; {} }})()",
-        serde_json::to_string(&payload)?,
-        serde_json::to_string(&frame)?,
-        SCRIPT
-    )))
+    Ok(Some(fixed_script(payload, frame)?))
 }
 
 const SCRIPT: &str = r#"
@@ -758,13 +793,23 @@ try {
       atBottom:win.scrollY+win.innerHeight>=root.scrollHeight-2,frame:frameId};
   }
   const target=choose(request.selector);
-  if (request.kind==='upload') {
+  if (request.kind==='upload' || request.kind==='upload-probe') {
     // Hidden file inputs are intentional. Never click a button or open a native
     // picker as a fallback: that could attach files to an unrelated input.
     if (!(target instanceof win.HTMLInputElement) || target.type!=='file')
       throw new Error('Upload selector must name a file input directly; button-triggered pickers are not supported');
     if (target.disabled || target.getAttribute('aria-disabled')==='true') throw new Error('File input is disabled');
     if (target.hasAttribute('webkitdirectory') || target.hasAttribute('directory')) throw new Error('Directory uploads are not supported');
+    if (request.kind==='upload-probe') {
+      window.__coincideUploadTicketV1={ticket:request.ticket,doc,target,deadline:performance.now()+10000};
+      return {ready:true};
+    }
+    if (request.ticket) {
+      const binding=window.__coincideUploadTicketV1;
+      if (!binding || binding.ticket!==request.ticket || binding.doc!==doc || binding.target!==target || performance.now()>=binding.deadline)
+        throw new Error('Upload document or input changed; retry upload');
+      delete window.__coincideUploadTicketV1;
+    }
     if (!target.multiple && request.files.length!==1) throw new Error('File input does not allow multiple files');
     const transfer=new win.DataTransfer();
     for (const file of request.files) {

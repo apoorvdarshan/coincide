@@ -3,7 +3,9 @@
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
     BrowserAction, BrowserConsole, BrowserReply, BrowserRequest, CONSOLE_SCRIPT, DownloadRegistry,
-    allow_native_navigation, script_for_request, validate_url,
+    allow_native_navigation, prepare_upload_script, script_for_request,
+    upload::{UploadPermit, UploadSlots, UploadWork},
+    upload_probe_script, validate_url,
 };
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
@@ -14,7 +16,11 @@ use std::{
     fs,
     path::PathBuf,
     rc::Rc,
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, SyncSender},
+    },
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -28,6 +34,7 @@ struct Tab {
     url: String,
     loading: bool,
     console: Rc<RefCell<BrowserConsole>>,
+    navigation: Arc<AtomicU64>,
 }
 struct PendingWait {
     request: BrowserRequest,
@@ -37,8 +44,27 @@ struct PendingWait {
     next_probe: Instant,
     in_flight: bool,
 }
+struct PendingUpload {
+    request: BrowserRequest,
+    tab: String,
+    ticket: String,
+    epoch: u64,
+    work: UploadWork,
+    permit: Option<UploadPermit>,
+    prepared: Option<Receiver<std::result::Result<String, String>>>,
+}
+impl Drop for PendingUpload {
+    fn drop(&mut self) {
+        self.work.cancel();
+    }
+}
 enum NativeEvent {
     DownloadsChanged,
+    UploadProbe {
+        id: String,
+        ticket: String,
+        result: Value,
+    },
     Reply(BrowserReply),
     WaitReply {
         id: String,
@@ -73,6 +99,8 @@ pub struct BrowserController {
     context: wry::WebContext,
     downloads: Rc<RefCell<DownloadRegistry>>,
     waits: HashMap<String, PendingWait>,
+    uploads: HashMap<String, PendingUpload>,
+    upload_slots: UploadSlots,
     #[cfg(target_os = "macos")]
     profile_id: [u8; 16],
 }
@@ -127,6 +155,8 @@ impl BrowserController {
                 profile_dir.join("downloads"),
             )?)),
             waits: HashMap::new(),
+            uploads: HashMap::new(),
+            upload_slots: UploadSlots::default(),
             #[cfg(target_os = "macos")]
             profile_id,
         })
@@ -207,6 +237,55 @@ impl BrowserController {
             .and_then(|tabs| tabs.iter().position(|tab| tab.id == target))
             .context("No such tab in this thread")?;
         match &request.action {
+            BrowserAction::Upload { .. } => {
+                ensure!(
+                    !cfg!(windows),
+                    "Browser uploads are disabled on Windows until safe reparse-point handling is implemented"
+                );
+                ensure!(
+                    !self.uploads.contains_key(&request.id),
+                    "Upload operation already active"
+                );
+                ensure!(
+                    !self.uploads.values().any(|upload| upload.tab == target),
+                    "An upload is already active in this tab"
+                );
+                let permit = self.upload_slots.reserve()?;
+                let ticket = Uuid::new_v4().to_string();
+                let source = upload_probe_script(&request, &ticket)?;
+                let tab = &self.tabs[thread][index];
+                ensure!(
+                    !tab.loading,
+                    "Wait for navigation to finish before uploading"
+                );
+                let epoch = tab.navigation.load(Ordering::Acquire);
+                let sender = self.sender.clone();
+                let id = request.id.clone();
+                let probe_ticket = ticket.clone();
+                tab.view
+                    .read(cx)
+                    .raw()
+                    .evaluate_script_with_callback(&source, move |payload| {
+                        let _ = sender.try_send(NativeEvent::UploadProbe {
+                            id: id.clone(),
+                            ticket: probe_ticket.clone(),
+                            result: parse_script_result(&payload),
+                        });
+                    })?;
+                self.uploads.insert(
+                    request.id.clone(),
+                    PendingUpload {
+                        request,
+                        tab: target,
+                        ticket,
+                        epoch,
+                        work: UploadWork::new(Duration::from_secs(10)),
+                        permit: Some(permit),
+                        prepared: None,
+                    },
+                );
+                Ok(None)
+            }
             BrowserAction::Console { clear } => Ok(Some(
                 self.tabs[thread][index].console.borrow_mut().read(*clear),
             )),
@@ -240,6 +319,7 @@ impl BrowserController {
                 self.downloads.borrow_mut().tab_closed(thread, &target);
                 let tabs = self.tabs.get_mut(thread).context("No such thread")?;
                 let removed = tabs.remove(index);
+                removed.navigation.fetch_add(1, Ordering::AcqRel);
                 removed.view.update(cx, |view, _| view.hide());
                 if self.active.get(thread) == Some(&target) {
                     if let Some(tab) = tabs.last() {
@@ -316,6 +396,8 @@ impl BrowserController {
         let completed_sender = self.sender.clone();
         let console = Rc::new(RefCell::new(BrowserConsole::default()));
         let console_handler = console.clone();
+        let navigation = Arc::new(AtomicU64::new(0));
+        let navigation_handler = navigation.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
             .with_devtools(false)
@@ -327,7 +409,13 @@ impl BrowserController {
                     .borrow_mut()
                     .receive(message.body(), &message.uri().to_string());
             })
-            .with_navigation_handler(|url| allow_native_navigation(&url))
+            .with_navigation_handler(move |url| {
+                let allowed = allow_native_navigation(&url);
+                if allowed {
+                    navigation_handler.fetch_add(1, Ordering::AcqRel);
+                }
+                allowed
+            })
             .with_download_started_handler(move |url, destination| {
                 // Wry 0.53 registers GTK callbacks on the shared context without
                 // matching the source webview. Fail closed until that is fixed.
@@ -397,6 +485,7 @@ impl BrowserController {
             url: url.into(),
             loading: url != "about:blank",
             console,
+            navigation,
         });
         self.active.insert(thread.into(), id.clone());
         // New background tabs must not steal another thread's browser pane.
@@ -411,6 +500,42 @@ impl BrowserController {
         for event in events {
             match event {
                 NativeEvent::DownloadsChanged => {}
+                NativeEvent::UploadProbe { id, ticket, result } => {
+                    if let Some(upload) = self.uploads.get_mut(&id) {
+                        if upload.ticket != ticket {
+                            continue;
+                        }
+                        let current = self
+                            .tabs
+                            .get(&upload.request.thread_id)
+                            .and_then(|tabs| tabs.iter().find(|tab| tab.id == upload.tab))
+                            .is_some_and(|tab| {
+                                tab.navigation.load(Ordering::Acquire) == upload.epoch
+                            });
+                        if !current {
+                            upload.work.cancel();
+                        }
+                        if result["ready"] == true && upload.work.check().is_ok() {
+                            if let Some(permit) = upload.permit.take() {
+                                let (sender, receiver) = mpsc::sync_channel(1);
+                                upload.prepared = Some(receiver);
+                                let request = upload.request.clone();
+                                let ticket = upload.ticket.clone();
+                                let work = upload.work.clone();
+                                std::thread::spawn(move || {
+                                    let _permit = permit;
+                                    let result = prepare_upload_script(&request, &ticket, &work)
+                                        .map_err(|e| e.to_string());
+                                    let _ = sender.try_send(result);
+                                });
+                            }
+                        } else {
+                            let upload = self.uploads.remove(&id).expect("existing upload");
+                            self.replies.push_back(BrowserReply { id: upload.request.id.clone(), thread_id: upload.request.thread_id.clone(),
+                                result: json!({"error":result["error"].as_str().unwrap_or("Upload document probe failed")}) });
+                        }
+                    }
+                }
                 NativeEvent::Reply(reply) => self.replies.push_back(reply),
                 NativeEvent::WaitReply {
                     id,
@@ -463,7 +588,65 @@ impl BrowserController {
                 }
             }
         }
+        changed |= self.poll_uploads(cx);
         changed |= self.poll_waits(cx);
+        changed
+    }
+
+    fn poll_uploads(&mut self, cx: &App) -> bool {
+        let mut changed = false;
+        for (id, upload) in std::mem::take(&mut self.uploads) {
+            let tab = self
+                .tabs
+                .get(&upload.request.thread_id)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == upload.tab));
+            let status = upload.work.check().and_then(|_| {
+                let tab = tab.context("Upload tab closed")?;
+                ensure!(
+                    tab.navigation.load(Ordering::Acquire) == upload.epoch,
+                    "Upload cancelled because the document navigated"
+                );
+                Ok(())
+            });
+            let prepared = upload.prepared.as_ref().map(|receiver| receiver.try_recv());
+            let outcome = match (status, prepared) {
+                (Err(error), _) => Some(Err(error.to_string())),
+                (Ok(()), Some(Ok(result))) => Some(result),
+                (Ok(()), Some(Err(mpsc::TryRecvError::Disconnected))) => {
+                    Some(Err("Upload worker stopped".into()))
+                }
+                _ => None,
+            };
+            if let Some(outcome) = outcome {
+                changed = true;
+                let result = outcome.and_then(|source| {
+                    let sender = self.sender.clone();
+                    let id = id.clone();
+                    let thread_id = upload.request.thread_id.clone();
+                    tab.expect("checked tab")
+                        .view
+                        .read(cx)
+                        .raw()
+                        .evaluate_script_with_callback(&source, move |payload| {
+                            let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
+                                id: id.clone(),
+                                thread_id: thread_id.clone(),
+                                result: parse_script_result(&payload),
+                            }));
+                        })
+                        .map_err(|e| e.to_string())
+                });
+                if let Err(error) = result {
+                    self.replies.push_back(BrowserReply {
+                        id,
+                        thread_id: upload.request.thread_id.clone(),
+                        result: json!({"error":error}),
+                    });
+                }
+            } else {
+                self.uploads.insert(id, upload);
+            }
+        }
         changed
     }
 
