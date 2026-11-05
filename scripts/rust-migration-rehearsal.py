@@ -36,6 +36,7 @@ def inspect(db):
 def rehearse(binary):
     binary = binary.resolve(strict=True)
     require(binary.is_file(), 'store binary required')
+    initial_hash = hashlib.sha256(binary.read_bytes()).hexdigest()
     checks = []
     with tempfile.TemporaryDirectory(prefix='coincide-synthetic-rehearsal-') as temporary:
         root = Path(temporary).resolve()
@@ -85,7 +86,8 @@ def rehearse(binary):
                 not rejected['imported_threads'] and
                 'legacy_source' not in dict(rejected['metadata']), 'failed import committed data')
         checks.append('invalid input transaction rollback')
-    return {'checks': checks, 'store_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+    require(hashlib.sha256(binary.read_bytes()).hexdigest() == initial_hash, 'store binary changed during rehearsal')
+    return {'checks': checks, 'store_sha256': initial_hash,
             'scope': 'synthetic only', 'cutover_ready': False}
 
 

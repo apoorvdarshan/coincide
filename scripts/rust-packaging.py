@@ -11,6 +11,7 @@ import sys
 
 PLATFORMS = ('macos', 'windows', 'linux')
 BINARIES = ('coincide-rust', 'coincide-rs', 'coincide-store')
+KINDS = ('desktop-preview', 'store-tool')
 
 
 def require(ok, message):
@@ -43,16 +44,17 @@ def inventory(root):
     return files
 
 
-def layout(root, platform):
-    base = root / 'Coincide Rust.app/Contents' if platform == 'macos' else root
-    bindir = base / 'MacOS' if platform == 'macos' else base / 'bin'
-    if platform == 'macos':
+def layout(root, platform, kind='desktop-preview'):
+    bundle = platform == 'macos' and kind == 'desktop-preview'
+    base = root / 'Coincide Rust.app/Contents' if bundle else root
+    bindir = base / 'MacOS' if bundle else base / 'bin'
+    if bundle:
         with (base / 'Info.plist').open('rb') as stream:
             info = plistlib.load(stream)
         require(info.get('CFBundleExecutable') == 'coincide-rust', 'wrong bundle executable')
         require(info.get('CFBundleIdentifier') == 'com.apoorvdarshan.coincide.rust', 'preview bundle identity required')
         require(info.get('CFBundleName') == 'Coincide Rust', 'preview bundle name required')
-    for name in BINARIES:
+    for name in (BINARIES if kind == 'desktop-preview' else ('coincide-store',)):
         path = bindir / (name + ('.exe' if platform == 'windows' else ''))
         with path.open('rb') as stream:
             magic = stream.read(4)
@@ -65,21 +67,22 @@ def layout(root, platform):
             require(path.stat().st_mode & 0o111, 'missing executable permission: ' + name)
 
 
-def manifest(root, platform, version, commit):
+def manifest(root, platform, version, commit, kind='desktop-preview'):
+    require(kind in KINDS, 'unsupported artifact kind')
     require(len(commit) == 40 and all(c in '0123456789abcdef' for c in commit), 'full lowercase commit SHA required')
     require(version and len(version) < 128 and all(c.isalnum() or c in '.-+' for c in version), 'invalid version label')
     files = inventory(root)
-    layout(Path(root), platform)
-    return {'format': 1, 'channel': 'unsigned-preview', 'platform': platform,
+    layout(Path(root), platform, kind)
+    return {'format': 2, 'kind': kind, 'channel': 'unsigned-preview', 'platform': platform,
             'version': version, 'commit': commit, 'files': files}
 
 
 def validate(root, document):
-    require(document.get('format') == 1 and document.get('channel') == 'unsigned-preview', 'unsupported manifest')
+    require(document.get('format') == 2 and document.get('channel') == 'unsigned-preview', 'unsupported manifest')
     require(document.get('platform') in PLATFORMS, 'unsupported platform')
-    actual = manifest(root, document['platform'], document['version'], document['commit'])
+    actual = manifest(root, document['platform'], document['version'], document['commit'], document['kind'])
     require(actual == document, 'artifact inventory or metadata mismatch')
-    return {'integrity': 'passed', 'release_ready': False,
+    return {'integrity': 'passed', 'kind': document['kind'], 'release_ready': False,
             'unverified': ['architecture', 'dynamic dependencies', 'OS signature/notarization',
                            'manifest authenticity', 'launch', 'updater', 'rollback compatibility']}
 
@@ -90,6 +93,7 @@ def main():
     create = commands.add_parser('manifest', help='print inventory; redirect OUTSIDE artifact root')
     create.add_argument('root', type=Path)
     create.add_argument('--platform', choices=PLATFORMS, required=True)
+    create.add_argument('--kind', choices=KINDS, default='desktop-preview')
     create.add_argument('--version', required=True)
     create.add_argument('--commit', required=True)
     check = commands.add_parser('validate', help='read files only; never execute candidate')
@@ -98,7 +102,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'manifest':
-            result = manifest(args.root, args.platform, args.version, args.commit)
+            result = manifest(args.root, args.platform, args.version, args.commit, args.kind)
         else:
             result = validate(args.root, json.loads(args.manifest.read_text()))
         print(json.dumps(result, indent=2, sort_keys=True))
