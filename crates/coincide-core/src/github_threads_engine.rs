@@ -12,9 +12,31 @@ pub(super) const METHODS: &[&str] = &[
 #[derive(Default)]
 pub(super) struct State {
     service: Option<GithubThreadsService>,
+    closed: bool,
+}
+impl State {
+    pub(super) fn request_shutdown(&mut self) {
+        self.closed = true;
+        if let Some(service) = &mut self.service {
+            service.request_shutdown();
+        }
+    }
+    pub(super) fn shutdown_status(&mut self) -> crate::github_api::ReadShutdownStatus {
+        self.service.as_mut().map_or(
+            crate::github_api::ReadShutdownStatus {
+                closed: self.closed,
+                ..Default::default()
+            },
+            GithubThreadsService::shutdown_status,
+        )
+    }
 }
 impl Engine {
     pub(super) fn github_threads_command(&mut self, method: &str, params: &Value) -> Result<Value> {
+        ensure!(
+            !self.github_threads.closed,
+            "GitHub reads are shutting down"
+        );
         ensure!(
             cfg!(unix),
             "Inline GitHub review reads are not supported on this platform yet"

@@ -11,12 +11,14 @@ pub(super) const METHODS: &[&str] = &["github.pr.list", "github.pr.read", "githu
 pub(super) struct GithubState {
     service: Option<GithubService>,
     error: String,
+    shutdown_requested: bool,
 }
 impl GithubState {
     pub(super) fn unavailable() -> Self {
         Self {
             service: None,
             error: "GitHub is unavailable in this isolated engine".into(),
+            shutdown_requested: false,
         }
     }
 
@@ -31,10 +33,12 @@ impl GithubState {
             Ok(runner) => Self {
                 service: Some(GithubService::new(runner)),
                 error: String::new(),
+                shutdown_requested: false,
             },
             Err(error) => Self {
                 service: None,
                 error: error.to_string(),
+                shutdown_requested: false,
             },
         }
     }
@@ -91,9 +95,40 @@ fn resolve(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Result<PathBuf> 
 }
 
 impl Engine {
+    /// Stop read admissions and request cancellation; never waits for gh or joins.
+    pub fn request_github_reads_shutdown(&mut self) -> Result<()> {
+        ensure!(
+            self.admissions_frozen(),
+            "GitHub shutdown requires frozen admissions"
+        );
+        self.github.shutdown_requested = true;
+        if let Some(service) = &mut self.github.service {
+            service.request_shutdown();
+        }
+        self.github_threads.request_shutdown();
+        Ok(())
+    }
+    /// Separate PR/inline read-worker ownership; excludes desktop write workers.
+    pub fn github_reads_shutdown_status(
+        &mut self,
+    ) -> Result<[crate::github_api::ReadShutdownStatus; 2]> {
+        ensure!(
+            self.admissions_frozen(),
+            "GitHub shutdown status requires frozen admissions"
+        );
+        let reads = self.github.service.as_mut().map_or(
+            crate::github_api::ReadShutdownStatus {
+                closed: self.github.shutdown_requested,
+                ..Default::default()
+            },
+            GithubService::shutdown_status,
+        );
+        Ok([reads, self.github_threads.shutdown_status()])
+    }
     /// Native transport preparation: derive the root from stored thread/project
     /// state while briefly locked, then perform GitHub work outside that lock.
     pub fn github_write_root(&self, thread_id: &str) -> Result<PathBuf> {
+        self.require_admissions()?;
         ensure!(!self.shutdown, "Application is shutting down");
         Uuid::parse_str(thread_id).context("Invalid thread ID")?;
         self.working_directory(&self.store.thread(thread_id)?)
@@ -167,3 +202,30 @@ impl Engine {
 #[cfg(test)]
 #[path = "github_engine_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod shutdown_tests {
+    use crate::github_api::ReadShutdownStatus;
+
+    #[test]
+    fn frozen_engine_closes_both_read_services_without_lazy_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&dir.path().join("state.sqlite")).unwrap(),
+        );
+        assert!(engine.request_github_reads_shutdown().is_err());
+        assert!(engine.github_reads_shutdown_status().is_err());
+        engine.freeze_admissions();
+        engine.request_github_reads_shutdown().unwrap();
+        engine.request_github_reads_shutdown().unwrap();
+        for status in engine.github_reads_shutdown_status().unwrap() {
+            assert_eq!(
+                status,
+                ReadShutdownStatus {
+                    closed: true,
+                    ..Default::default()
+                }
+            );
+        }
+    }
+}

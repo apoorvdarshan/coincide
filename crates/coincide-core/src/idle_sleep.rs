@@ -30,7 +30,8 @@ pub(super) struct IdleSleep {
     factory: Box<dyn Fn() -> Result<HostRuntime> + Send>,
 }
 /// Trusted Engine-owner observation; this is not a JSON shutdown authority.
-pub(super) struct IdleShutdownStatus {
+#[derive(Debug, Clone)]
+pub struct IdleShutdownStatus {
     pub requested: bool,
     pub worker_started: bool,
     pub joined: bool,

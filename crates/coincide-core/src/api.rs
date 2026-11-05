@@ -53,6 +53,7 @@ mod workspace_api;
 mod workspace_runtime_tests;
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
+pub use idle_sleep::IdleShutdownStatus;
 /// Sampled provider Rust-thread ownership, not whole-app quiescence or process
 /// cleanup acceptance. Terminal outcomes remain counted after run retirement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -883,6 +884,23 @@ impl Engine {
             running: self.provider_workers.len(),
             ..*totals
         }
+    }
+    /// Request idle-host release and off-thread join after admission freeze.
+    pub fn request_idle_host_shutdown(&mut self) -> Result<()> {
+        ensure!(
+            self.admissions_frozen(),
+            "Idle host shutdown requires frozen admissions"
+        );
+        self.idle_sleep.request_shutdown();
+        Ok(())
+    }
+    /// Native host ownership only; does not certify other Engine work is drained.
+    pub fn idle_host_shutdown_status(&mut self) -> Result<IdleShutdownStatus> {
+        ensure!(
+            self.admissions_frozen(),
+            "Idle host shutdown status requires frozen admissions"
+        );
+        Ok(self.idle_sleep.poll_shutdown())
     }
     /// Trusted owner-only catalog cancellation after Engine admission freeze.
     /// This requests cancellation and never waits for a worker or process.

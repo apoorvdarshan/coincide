@@ -17,6 +17,10 @@ const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 const SUMMARY: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName";
 const DETAIL: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,body,author,updatedAt,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup";
 
+#[cfg(test)]
+#[path = "github_shutdown_tests.rs"]
+mod shutdown_tests;
+
 #[derive(Clone)]
 pub struct GhRunner {
     executable: PathBuf,
@@ -259,11 +263,60 @@ struct Operation {
     receiver: mpsc::Receiver<Value>,
     result: Option<Value>,
 }
+/// Joined Rust read-worker ownership, independent of retained UI results.
+/// Process cleanup errors and the desktop write service are separate owners.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadShutdownStatus {
+    pub closed: bool,
+    pub running: usize,
+    pub returned: u64,
+    pub panicked: u64,
+    pub unclassified: u64,
+}
+#[derive(Default)]
+pub(crate) struct ReadWorkers {
+    workers: Vec<(Arc<AtomicBool>, crate::agent::WorkerCompletion)>,
+    totals: ReadShutdownStatus,
+}
+impl ReadWorkers {
+    pub(crate) fn require_open(&self) -> Result<()> {
+        ensure!(!self.totals.closed, "GitHub reads are shutting down");
+        Ok(())
+    }
+    pub(crate) fn track(&mut self, cancel: Arc<AtomicBool>, worker: std::thread::JoinHandle<()>) {
+        self.workers
+            .push((cancel, crate::agent::WorkerCompletion::observe(worker)));
+    }
+    pub(crate) fn request_shutdown(&mut self) {
+        self.totals.closed = true;
+        for (cancel, _) in &self.workers {
+            cancel.store(true, Ordering::Release);
+        }
+    }
+    pub(crate) fn status(&mut self) -> ReadShutdownStatus {
+        self.workers.retain(|(_, completion)| {
+            use crate::agent::WorkerThreadStatus;
+            let counter = match completion.status() {
+                WorkerThreadStatus::Running => return true,
+                WorkerThreadStatus::Returned => &mut self.totals.returned,
+                WorkerThreadStatus::Panicked => &mut self.totals.panicked,
+                WorkerThreadStatus::Unclassified => &mut self.totals.unclassified,
+            };
+            *counter = counter.saturating_add(1);
+            false
+        });
+        ReadShutdownStatus {
+            running: self.workers.len(),
+            ..self.totals
+        }
+    }
+}
 /// At most two executing workers, 32 retained operations, 120-second retention.
 /// Completion is collected only by the owning thread with the same stored root.
 pub struct GithubService {
     runner: GhRunner,
     operations: HashMap<String, Operation>,
+    workers: ReadWorkers,
 }
 impl GithubService {
     pub(crate) fn executable(&self) -> &Path {
@@ -273,9 +326,11 @@ impl GithubService {
         Self {
             runner,
             operations: HashMap::new(),
+            workers: ReadWorkers::default(),
         }
     }
     fn collect(&mut self) {
+        self.workers.status();
         self.operations.retain(|_, op| {
             if op.started.elapsed() >= Duration::from_secs(120) {
                 op.cancel.store(true, Ordering::Release);
@@ -314,6 +369,7 @@ impl GithubService {
         params: &Value,
         activity: G,
     ) -> Result<Value> {
+        self.workers.require_open()?;
         uuid::Uuid::parse_str(thread_id)?;
         ensure!(
             params["threadId"].as_str() == Some(thread_id),
@@ -374,11 +430,7 @@ impl GithubService {
             "Collect GitHub results before starting more operations"
         );
         ensure!(
-            self.operations
-                .values()
-                .filter(|op| op.result.is_none())
-                .count()
-                < 2,
+            self.workers.status().running < 2,
             "At most two GitHub reads may execute"
         );
         let id = uuid::Uuid::new_v4().to_string();
@@ -388,7 +440,7 @@ impl GithubService {
         let runner = self.runner.clone();
         let worker_root = root.clone();
         let owner = thread_id.to_owned();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("github-read".into())
             .spawn(move || {
                 let _activity = activity;
@@ -411,6 +463,7 @@ impl GithubService {
                 };
                 let _ = sender.try_send(value);
             })?;
+        self.workers.track(cancel.clone(), worker);
         self.operations.insert(
             id.clone(),
             Operation {
@@ -423,6 +476,13 @@ impl GithubService {
             },
         );
         Ok(json!({"operationId":id}))
+    }
+    pub fn request_shutdown(&mut self) {
+        self.workers.request_shutdown();
+    }
+    pub fn shutdown_status(&mut self) -> ReadShutdownStatus {
+        self.collect();
+        self.workers.status()
     }
     pub fn result(
         &mut self,
@@ -454,6 +514,7 @@ impl GithubService {
 }
 impl Drop for GithubService {
     fn drop(&mut self) {
+        self.workers.request_shutdown();
         for op in self.operations.values() {
             op.cancel.store(true, Ordering::Release);
         }

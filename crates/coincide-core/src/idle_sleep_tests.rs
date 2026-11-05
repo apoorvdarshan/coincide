@@ -189,8 +189,11 @@ fn shutdown_without_runtime_is_inert_and_update_cannot_restart() {
     let fixture = tempfile::tempdir().unwrap();
     let mut engine = Engine::new(Store::open(&fixture.path().join("state.sqlite")).unwrap());
     let probe = injected(&mut engine);
-    engine.idle_sleep.request_shutdown();
-    assert!(engine.idle_sleep.poll_shutdown().ready());
+    assert!(engine.request_idle_host_shutdown().is_err());
+    assert!(engine.idle_host_shutdown_status().is_err());
+    engine.freeze_admissions();
+    engine.request_idle_host_shutdown().unwrap();
+    assert!(engine.idle_host_shutdown_status().unwrap().ready());
     engine.idle_sleep.enabled = true;
     engine.idle_sleep.update(1, false);
     engine.idle_sleep.request_shutdown();

@@ -627,6 +627,7 @@ pub struct GithubThreadsService {
     slots: Arc<AtomicUsize>,
     payload_bytes: Arc<AtomicUsize>,
     known_threads: HashMap<(String, String), (Bound, Instant)>,
+    workers: crate::github_api::ReadWorkers,
 }
 impl GithubThreadsService {
     pub fn new(runner: GhRunner) -> Self {
@@ -636,6 +637,7 @@ impl GithubThreadsService {
             slots: Arc::new(AtomicUsize::new(0)),
             payload_bytes: Arc::new(AtomicUsize::new(0)),
             known_threads: HashMap::new(),
+            workers: crate::github_api::ReadWorkers::default(),
         }
     }
     fn reserve(&self) -> Result<Slot> {
@@ -652,6 +654,7 @@ impl GithubThreadsService {
         }
     }
     fn collect(&mut self) {
+        self.workers.status();
         self.known_threads
             .retain(|_, (_, issued)| issued.elapsed() < Duration::from_secs(120));
         self.operations.retain(|_, op| {
@@ -692,6 +695,7 @@ impl GithubThreadsService {
         method: &str,
         params: &Value,
     ) -> Result<Value> {
+        self.workers.require_open()?;
         let binding = Bound::new(thread, stored_root, params)?;
         let cursor = optional_cursor(params.get("cursor"))?;
         self.collect();
@@ -736,6 +740,10 @@ impl GithubThreadsService {
             "Too many active inline review operations"
         );
         let slot = self.reserve()?;
+        ensure!(
+            self.workers.status().running < 2,
+            "Two thread reads already active"
+        );
         let id = uuid::Uuid::new_v4().to_string();
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
@@ -743,7 +751,8 @@ impl GithubThreadsService {
         let runner = self.runner.clone();
         let payload_quota = self.payload_bytes.clone();
         let worker_binding = binding.clone();
-        std::thread::Builder::new().name("github-threads".into()).spawn(move||{let _slot=slot;let result=(||{worker_binding.recheck()?;let bytes=runner.capture(&worker_binding.root,&request.argv(&worker_binding.scope),&worker_cancel)?;ensure!(!worker_cancel.load(Ordering::Acquire),"Read cancelled");worker_binding.recheck()?;serde_json::to_value(decode(&bytes,&worker_binding.scope,&request)?).map_err(Into::into)})();let result=match result{Ok(value)=>value,Err(error)=>{let changed=error.to_string()=="PR head changed";json!({"code":if changed{"head_changed"}else{"read_failed"},"error":if changed{"PR head changed; refresh the selected PR"}else{"Unable to read validated inline review data"}})}};let _=sender.try_send(Payload::new(result,payload_quota));})?;
+        let worker = std::thread::Builder::new().name("github-threads".into()).spawn(move||{let _slot=slot;let result=(||{worker_binding.recheck()?;let bytes=runner.capture(&worker_binding.root,&request.argv(&worker_binding.scope),&worker_cancel)?;ensure!(!worker_cancel.load(Ordering::Acquire),"Read cancelled");worker_binding.recheck()?;serde_json::to_value(decode(&bytes,&worker_binding.scope,&request)?).map_err(Into::into)})();let result=match result{Ok(value)=>value,Err(error)=>{let changed=error.to_string()=="PR head changed";json!({"code":if changed{"head_changed"}else{"read_failed"},"error":if changed{"PR head changed; refresh the selected PR"}else{"Unable to read validated inline review data"}})}};let _=sender.try_send(Payload::new(result,payload_quota));})?;
+        self.workers.track(cancel.clone(), worker);
         self.operations.insert(
             id.clone(),
             Pending {
@@ -755,6 +764,13 @@ impl GithubThreadsService {
             },
         );
         Ok(json!({"operationId":id}))
+    }
+    pub fn request_shutdown(&mut self) {
+        self.workers.request_shutdown();
+    }
+    pub fn shutdown_status(&mut self) -> crate::github_api::ReadShutdownStatus {
+        self.collect();
+        self.workers.status()
     }
     fn checked(&mut self, thread: &str, stored_root: &Path, params: &Value) -> Result<String> {
         self.collect();
@@ -818,6 +834,7 @@ impl GithubThreadsService {
 }
 impl Drop for GithubThreadsService {
     fn drop(&mut self) {
+        self.workers.request_shutdown();
         for op in self.operations.values() {
             op.cancel.store(true, Ordering::Release);
         }
