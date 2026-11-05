@@ -29,6 +29,11 @@ mod attachment_completion_tests;
 mod background_workers;
 #[path = "bot_engine.rs"]
 mod bot_engine;
+#[path = "browser_bookmarks_api.rs"]
+mod browser_bookmarks_api;
+#[cfg(test)]
+#[path = "browser_bookmarks_api_tests.rs"]
+mod browser_bookmarks_api_tests;
 pub use background_workers::BackgroundShutdownStatus;
 #[path = "composer_context_api.rs"]
 mod composer_context_api;
@@ -371,6 +376,7 @@ impl Engine {
                 }
                 Ok(json!({"ready":false}))
             }
+            "browser.bookmarks.list" | "browser.bookmarks.import" | "browser.bookmarks.open" => self.browser_bookmarks_command(method,p),
             "browser.request"=>{
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
@@ -472,7 +478,7 @@ impl Engine {
             "app.capabilities" => {
                 let mut methods = vec![
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list", "threads.resolve_id",
