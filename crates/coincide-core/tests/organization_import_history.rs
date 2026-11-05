@@ -242,3 +242,51 @@ fn claude_last_revision_wins_and_unicode_is_bounded() {
     assert_eq!(preview.messages[0].text.chars().count(), MAX_TEXT + 2);
     assert!(preview_claude(&vec![b'a'; MAX_RECORD_BYTES + 1]).is_err());
 }
+
+#[test]
+fn codex_unknown_blocks_with_text_are_omitted_not_rendered() {
+    let mut record = msg("user", "visible");
+    record["payload"]["content"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"future_tool","text":"unsupported"}));
+    let preview = preview_codex(&rollout(vec![meta(), record])).unwrap();
+    assert_eq!(preview.messages[0].text, "visible");
+    assert_eq!(preview.omitted_records, 1);
+}
+#[test]
+fn codex_response_identity_can_reappear_after_rollback() {
+    let mut record = msg("user", "replayed");
+    record["payload"]["id"] = json!("message-one");
+    let bytes = rollout(vec![
+        meta(),
+        msg("user", "kept"),
+        record.clone(),
+        json!({"type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}),
+        record,
+    ]);
+    let preview = preview_codex(&bytes).unwrap();
+    assert_eq!(
+        preview
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>(),
+        ["kept", "replayed"]
+    );
+}
+#[test]
+fn previews_bound_record_count_and_preserve_malformed_original_bytes() {
+    assert!(preview_codex(&vec![b'\n'; MAX_RECORDS + 1]).is_err());
+    assert!(preview_claude(&vec![b'\n'; MAX_RECORDS + 1]).is_err());
+    let mut bytes = rollout(vec![meta(), msg("user", "supported")]);
+    bytes.extend_from_slice(b"\n{broken}\n[]\n");
+    let preview = preview_codex(&bytes).unwrap();
+    assert_eq!(preview.omitted_records, 2);
+    assert_eq!(preview.original(), bytes);
+    let mut bytes = rollout(vec![claude("root", None, "user", json!("supported"))]);
+    bytes.extend_from_slice(b"\n{broken}\n[]\n");
+    let preview = preview_claude(&bytes).unwrap();
+    assert_eq!(preview.omitted_records, 2);
+    assert_eq!(preview.original(), bytes);
+}
