@@ -292,7 +292,7 @@ impl Pump {
                         NotificationAck::Cancelled
                     },
                 ),
-                Command::RequestPermission if thread.is_none() => {}
+                Command::RequestPermission | Command::ClearThread(_) if thread.is_none() => {}
                 command => keep.push_back(command),
             }
         }
@@ -314,6 +314,7 @@ impl Pump {
                         self.desired = Some(enabled);
                         if !enabled {
                             self.cancel_pending(engine, None);
+                            self.last_seen = None;
                         }
                     }
                     Err(e) => self.status.error = Some(short(e)),
@@ -405,7 +406,17 @@ impl Pump {
                     && status.enabled == self.status.enabled;
             }
         }
-        if let Some(activity) = activity {
+        // Activity is passive: it must never cause native calls while off or
+        // before authorization has been explicitly observed by a native operation.
+        let may_clear = self.status.enabled
+            && self.status.native_compiled
+            && self.status.bridge_ready
+            && self.status.permission == Permission::Authorized;
+        if !may_clear {
+            self.pending
+                .retain(|c| !matches!(c, Command::ClearThread(_)));
+            self.last_seen = None;
+        } else if let Some(activity) = activity {
             let seen = if activity.app_active && !activity.locked && !activity.display_asleep {
                 activity.visible_thread
             } else {
@@ -826,6 +837,8 @@ mod tests {
         let h = bridge.handle();
         let mut latest = activity();
         latest.idle_seconds = 999;
+        latest.app_active = true;
+        latest.visible_thread = Some(Uuid::new_v4());
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         for snapshot in [activity(), latest] {
             while !h.update_activity(snapshot) {
@@ -861,7 +874,55 @@ mod tests {
         pump.finish(&mut engine);
     }
     #[test]
-    fn disable_cancels_retained_unsent_claim_and_clear_runs_off_bridge() {
+    fn foreground_default_off_is_inert_until_enabled_and_authorized() {
+        let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
+        let mut seen = activity();
+        seen.app_active = true;
+        seen.visible_thread = Some(Uuid::new_v4());
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while pump.status.busy {
+            pump.tick(&mut engine, Some(seen));
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        for _ in 0..100 {
+            pump.tick(&mut engine, Some(seen));
+        }
+        assert!(calls.lock().unwrap().is_empty());
+        pump.action(&mut engine, Action::Configure(true));
+        until(&mut pump, &mut engine, |p| !p.status.busy);
+        for _ in 0..100 {
+            pump.tick(&mut engine, Some(seen));
+        }
+        assert!(calls.lock().unwrap().is_empty()); // enabled alone isn't authorization
+        pump.action(&mut engine, Action::RefreshStatus);
+        while !calls.lock().unwrap().contains(&"clear") {
+            pump.tick(&mut engine, Some(seen));
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        until(&mut pump, &mut engine, |p| {
+            p.pending.is_empty() && p.flights.is_empty()
+        });
+        assert_eq!(*calls.lock().unwrap(), vec!["status", "clear"]);
+        pump.pending
+            .push_back(Command::ClearThread(seen.visible_thread.unwrap()));
+        pump.action(&mut engine, Action::Configure(false));
+        assert!(
+            !pump
+                .pending
+                .iter()
+                .any(|c| matches!(c, Command::ClearThread(_)))
+        );
+        until(&mut pump, &mut engine, |p| !p.status.busy);
+        for _ in 0..100 {
+            pump.tick(&mut engine, Some(seen));
+        }
+        assert_eq!(*calls.lock().unwrap(), vec!["status", "clear"]);
+        pump.finish(&mut engine);
+    }
+    #[test]
+    fn disable_cancels_retained_unsent_claim_and_never_clears_from_activity() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         let event = claim();
         let thread = event.alert.key.thread;
@@ -880,13 +941,10 @@ mod tests {
         let mut seen = activity();
         seen.app_active = true;
         seen.visible_thread = Some(thread);
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while !calls.lock().unwrap().contains(&"clear") {
+        for _ in 0..100 {
             pump.tick(&mut engine, Some(seen));
-            assert!(std::time::Instant::now() < deadline);
-            thread::yield_now();
         }
-        assert!(!calls.lock().unwrap().contains(&"post"));
+        assert!(calls.lock().unwrap().is_empty());
         pump.finish(&mut engine);
     }
 }
