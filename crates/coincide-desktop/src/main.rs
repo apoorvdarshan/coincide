@@ -10,6 +10,7 @@ mod browser;
 mod browser_settings;
 mod command_palette;
 mod composer_attachments;
+mod composer_commands;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_selection;
@@ -2830,6 +2831,12 @@ impl Coincide {
             return;
         }
         if let Some(thread) = &self.selected {
+            let draft = self.composer.read(cx).value().to_string();
+            if let Some(command) = composer_commands::intercept(thread, &draft, |command| command) {
+                let submission = composer_commands::Submission::new(thread, &draft);
+                self.perform_composer_command(command, submission, window, cx);
+                return;
+            }
             let context = thread.get("draftContext").unwrap_or(&Value::Null);
             if let Err(error) = coincide_core::composer_context::validate(context) {
                 self.status = format!("Attached references were retained: {error}");
