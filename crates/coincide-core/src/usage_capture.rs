@@ -19,6 +19,7 @@ pub(crate) struct Capture {
     turn: Option<SourceId>,
     raw: Option<Value>,
     finished: bool,
+    early_usage: Vec<(SourceId, Value)>,
 }
 #[derive(Debug)]
 pub(crate) struct Snapshot {
@@ -36,11 +37,27 @@ impl Capture {
         self.thread.is_some()
     }
     pub(crate) fn bind_turn(&mut self, id: &Value) -> bool {
-        if self.thread.is_none() || self.turn.is_some() || self.finished {
+        let Some(id) = SourceId::parse(id) else {
+            return false;
+        };
+        if self.thread.is_none() || self.finished {
             return false;
         }
-        self.turn = SourceId::parse(id);
-        self.turn.is_some()
+        if let Some(existing) = &self.turn {
+            return existing == &id;
+        }
+        self.turn = Some(id.clone());
+        self.raw = self
+            .early_usage
+            .iter()
+            .rev()
+            .find(|(turn, _)| turn == &id)
+            .map(|(_, raw)| raw.clone());
+        self.early_usage.clear();
+        true
+    }
+    pub(crate) fn owns_thread(&self, params: &Value) -> bool {
+        self.thread.is_some() && SourceId::parse(&params["threadId"]) == self.thread
     }
     pub(crate) fn matches_completion(&self, params: &Value) -> bool {
         !self.finished
@@ -49,19 +66,32 @@ impl Capture {
             && SourceId::parse(&params["threadId"]) == self.thread
             && SourceId::parse(&params["turn"]["id"]) == self.turn
     }
-    pub(crate) fn update(&mut self, params: &Value) {
-        if self.finished
-            || self.thread.is_none()
-            || self.turn.is_none()
-            || SourceId::parse(&params["threadId"]) != self.thread
-            || SourceId::parse(&params["turnId"]) != self.turn
-        {
-            return;
+    /// False means bounded early-usage storage overflow; callers fail closed.
+    pub(crate) fn update(&mut self, params: &Value) -> bool {
+        if self.finished || !self.owns_thread(params) {
+            return true;
         }
+        let Some(turn) = SourceId::parse(&params["turnId"]) else {
+            return true;
+        };
         let raw = &params["tokenUsage"];
-        if raw.is_object() && raw["last"].is_object() && raw.to_string().len() <= 16_384 {
-            self.raw = Some(raw.clone());
+        if !raw.is_object() || !raw["last"].is_object() || raw.to_string().len() > 16_384 {
+            return true;
         }
+        if let Some(current) = &self.turn {
+            if current == &turn {
+                self.raw = Some(raw.clone());
+            }
+        } else if let Some((_, existing)) = self.early_usage.iter_mut().find(|(id, _)| id == &turn)
+        {
+            *existing = raw.clone();
+        } else {
+            if self.early_usage.len() >= 8 {
+                return false;
+            }
+            self.early_usage.push((turn, raw.clone()));
+        }
+        true
     }
     pub(crate) fn complete(&mut self, params: &Value) -> Option<Snapshot> {
         if !self.matches_completion(params) {

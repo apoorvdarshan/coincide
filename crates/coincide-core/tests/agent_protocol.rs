@@ -152,3 +152,43 @@ fn missing_or_duplicate_turn_start_identity_fails_closed() {
         }
     }
 }
+
+#[test]
+fn owned_notifications_before_start_ack_are_replayed_after_matching_identity_validation() {
+    for started in [
+        "",
+        "write({'method':'turn/started','params':{'threadId':'native-thread','turn':{'id':'active-turn'}}})",
+    ] {
+        let body = format!(
+            "{started}\nwrite({{'method':'thread/tokenUsage/updated','params':{{'threadId':'native-thread','turnId':'active-turn','tokenUsage':{{'last':{{'totalTokens':15}}}}}}}})\nwrite({{'method':'turn/completed','params':{{'threadId':'native-thread','turn':{{'id':'active-turn','status':'completed'}}}}}})\nwrite({{'id':r['id'],'result':{{'turn':{{'id':'active-turn'}}}}}})\nsys.stdin.readline()"
+        );
+        let (_dir, session) = active_turn_fixture(&body);
+        loop {
+            match session.events.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Event::Finished => break,
+                Event::Failed(error) => panic!("valid early notification ordering failed: {error}"),
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn mismatching_provisional_identity_or_early_completion_overflow_fails_closed() {
+    for body in [
+        "write({'method':'turn/started','params':{'threadId':'native-thread','turn':{'id':'provisional'}}})\nwrite({'id':r['id'],'result':{'turn':{'id':'different'}}})\nsys.stdin.readline()",
+        "for i in range(9):\n write({'method':'turn/completed','params':{'threadId':'native-thread','turn':{'id':'early','status':'completed'}}})\nsys.stdin.readline()",
+    ] {
+        let (_dir, session) = active_turn_fixture(body);
+        loop {
+            match session.events.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Event::Failed(error) => {
+                    assert!(error.contains("identity") || error.contains("limit"));
+                    break;
+                }
+                Event::Finished => panic!("unvalidated completion cannot finish successfully"),
+                _ => {}
+            }
+        }
+    }
+}
