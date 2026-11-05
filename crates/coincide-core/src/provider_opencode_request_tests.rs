@@ -79,6 +79,7 @@ fn aborted_case(stop: bool, startup: bool, panic_worker: bool) {
             queued: VecDeque::new(),
             events,
             aborted_requests: Vec::new(),
+            owned_workers: Vec::new(),
             request_join_entered: Some(join_entered),
         };
         let child = FakeChild {
@@ -209,6 +210,7 @@ fn successful_response_delivery_does_not_finish_provider_before_request_tls_dest
             queued: VecDeque::new(),
             events,
             aborted_requests: Vec::new(),
+            owned_workers: Vec::new(),
             request_join_entered: Some(join_entered),
         };
         let result = runtime
@@ -253,6 +255,7 @@ fn ordinary_request_panic_waits_for_tls_join_and_returns_explicit_failure() {
             queued: VecDeque::new(),
             events,
             aborted_requests: Vec::new(),
+            owned_workers: Vec::new(),
             request_join_entered: Some(join_entered),
         };
         let result: Result<Value> =
@@ -280,4 +283,207 @@ fn ordinary_request_panic_waits_for_tls_join_and_returns_explicit_failure() {
     assert!(
         matches!(session.events.try_recv().unwrap(),Event::Failed(error) if error=="OpenCode HTTP request worker panicked")
     );
+}
+
+#[test]
+fn saturated_sse_disconnects_before_server_teardown_and_owned_tls_join() {
+    let (close, closing) = mpsc::channel();
+    let (filled, full_seen) = mpsc::channel();
+    let (body_release, body_gate) = mpsc::channel();
+    let (tls_entered, tls_seen) = mpsc::channel();
+    let (tls_release, tls_gate) = mpsc::channel();
+    let (join_entered, join_seen) = mpsc::channel();
+    let (server_torn, server_seen) = mpsc::channel();
+    let torn = Arc::new(AtomicBool::new(false));
+    let flag = torn.clone();
+    let _rescue = Rescue {
+        body: body_release.clone(),
+        tls: tls_release.clone(),
+    };
+    let session = Session::fixture_worker(move |commands, events| {
+        let mut runtime = Runtime {
+            commands,
+            queued: VecDeque::new(),
+            events,
+            aborted_requests: Vec::new(),
+            owned_workers: Vec::new(),
+            request_join_entered: Some(join_entered),
+        };
+        {
+            let _server = FakeServer {
+                _child: FakeChild {
+                    torn: flag,
+                    observed: server_torn,
+                    release_body: body_release,
+                },
+            };
+            // Exactly the production declaration order; the full receiver is
+            // dropped before Server, not retained inside the worker registry.
+            let (sender, _receiver) = mpsc::sync_channel(1);
+            runtime
+                .spawn_owned("fake-sse", move || {
+                    TLS_GATE.with(|slot| {
+                        *slot.borrow_mut() = Some(TlsGate {
+                            entered: tls_entered,
+                            release: tls_gate,
+                        })
+                    });
+                    sender.send(1).unwrap();
+                    filled.send(()).unwrap();
+                    // No receiver ever consumes the first frame, so the second
+                    // send cannot succeed. Receiver destruction must release it.
+                    assert!(sender.send(2).is_err());
+                    body_gate.recv().unwrap();
+                })
+                .unwrap();
+            closing.recv().unwrap();
+        }
+        drop(runtime);
+        events.send(Event::Finished).unwrap();
+    });
+    full_seen.recv().unwrap();
+    close.send(()).unwrap();
+    join_seen.recv().unwrap();
+    assert!(torn.load(Ordering::Acquire));
+    server_seen.try_recv().unwrap();
+    tls_seen.recv().unwrap();
+    assert_eq!(
+        session.worker_completion().status(),
+        WorkerThreadStatus::Running
+    );
+    assert!(matches!(
+        session.events.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    tls_release.send(()).unwrap();
+    joined(&session, WorkerThreadStatus::Returned);
+    assert!(matches!(
+        session.events.try_recv().unwrap(),
+        Event::Finished
+    ));
+}
+
+struct FakeStartupChild {
+    release: Vec<Sender<()>>,
+    torn: Arc<AtomicBool>,
+}
+impl Drop for FakeStartupChild {
+    fn drop(&mut self) {
+        self.torn.store(true, Ordering::Release);
+        for release in &self.release {
+            let _ = release.send(());
+        }
+    }
+}
+fn startup_io_failure(_runtime: &mut Runtime<'_>, _child: FakeStartupChild) -> Result<()> {
+    // Models local OwnedChild on Server::start error; caller retains the
+    // already-started stdout/stderr workers even though no Server is returned.
+    bail!("synthetic startup failure")
+}
+fn startup_io_case(panic_first: bool) {
+    let (close, closing) = mpsc::channel();
+    let (started, starts) = mpsc::channel();
+    let (tls_entered, tls_seen) = mpsc::channel();
+    let (join_entered, join_seen) = mpsc::channel();
+    let torn = Arc::new(AtomicBool::new(false));
+    let flag = torn.clone();
+    let mut specs = Vec::new();
+    let mut body_releases = Vec::new();
+    let mut tls_releases = Vec::new();
+    let mut rescues = Vec::new();
+    for _ in 0..2 {
+        let (body_release, body) = mpsc::channel();
+        let (tls_release, tls) = mpsc::channel();
+        rescues.push(Rescue {
+            body: body_release.clone(),
+            tls: tls_release.clone(),
+        });
+        body_releases.push(body_release);
+        tls_releases.push(tls_release);
+        specs.push((body, tls));
+    }
+    let session = Session::fixture_worker(move |commands, events| {
+        let mut runtime = Runtime {
+            commands,
+            queued: VecDeque::new(),
+            events,
+            aborted_requests: Vec::new(),
+            owned_workers: Vec::new(),
+            request_join_entered: Some(join_entered),
+        };
+        for (index, (body, tls)) in specs.into_iter().enumerate() {
+            let entered = tls_entered.clone();
+            let started = started.clone();
+            runtime
+                .spawn_owned("fake-startup-io", move || {
+                    TLS_GATE.with(|slot| {
+                        *slot.borrow_mut() = Some(TlsGate {
+                            entered,
+                            release: tls,
+                        })
+                    });
+                    started.send(()).unwrap();
+                    body.recv().unwrap();
+                    assert!(!(panic_first && index == 0), "synthetic startup I/O panic");
+                })
+                .unwrap();
+        }
+        closing.recv().unwrap();
+        let error = startup_io_failure(
+            &mut runtime,
+            FakeStartupChild {
+                release: body_releases,
+                torn: flag,
+            },
+        )
+        .unwrap_err();
+        drop(runtime);
+        events.send(Event::Failed(error.to_string())).unwrap();
+    });
+    starts.recv().unwrap();
+    starts.recv().unwrap();
+    close.send(()).unwrap();
+    join_seen.recv().unwrap();
+    assert!(torn.load(Ordering::Acquire));
+    tls_seen.recv().unwrap();
+    tls_seen.recv().unwrap();
+    assert_eq!(
+        session.worker_completion().status(),
+        WorkerThreadStatus::Running
+    );
+    tls_releases[0].send(()).unwrap();
+    // The first join has actually returned (including its panic classification)
+    // before entering the sibling join. A panic must not detach that sibling.
+    join_seen.recv().unwrap();
+    assert_eq!(
+        session.worker_completion().status(),
+        WorkerThreadStatus::Running
+    );
+    assert!(matches!(
+        session.events.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    tls_releases[1].send(()).unwrap();
+    joined(
+        &session,
+        if panic_first {
+            WorkerThreadStatus::Panicked
+        } else {
+            WorkerThreadStatus::Returned
+        },
+    );
+    if !panic_first {
+        assert!(
+            matches!(session.events.try_recv().unwrap(), Event::Failed(error) if error=="synthetic startup failure")
+        );
+    }
+    drop(rescues);
+}
+#[test]
+fn startup_error_retains_both_stdio_workers_through_actual_tls_exit() {
+    startup_io_case(false);
+}
+#[test]
+fn startup_io_panic_still_joins_sibling_before_provider_panicked() {
+    startup_io_case(true);
 }
