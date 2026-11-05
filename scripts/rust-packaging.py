@@ -68,9 +68,10 @@ def layout(root, platform, kind='desktop-preview'):
 
 
 def manifest(root, platform, version, commit, kind='desktop-preview'):
+    require(platform in PLATFORMS, 'unsupported platform')
     require(kind in KINDS, 'unsupported artifact kind')
-    require(len(commit) == 40 and all(c in '0123456789abcdef' for c in commit), 'full lowercase commit SHA required')
-    require(version and len(version) < 128 and all(c.isalnum() or c in '.-+' for c in version), 'invalid version label')
+    require(isinstance(commit, str) and len(commit) == 40 and all(c in '0123456789abcdef' for c in commit), 'full lowercase commit SHA required')
+    require(isinstance(version, str) and version and len(version) < 128 and all(c.isalnum() or c in '.-+' for c in version), 'invalid version label')
     files = inventory(root)
     layout(Path(root), platform, kind)
     return {'format': 2, 'kind': kind, 'channel': 'unsigned-preview', 'platform': platform,
@@ -78,6 +79,7 @@ def manifest(root, platform, version, commit, kind='desktop-preview'):
 
 
 def validate(root, document):
+    require(isinstance(document, dict), 'manifest must be an object')
     require(document.get('format') == 2 and document.get('channel') == 'unsigned-preview', 'unsupported manifest')
     require(document.get('platform') in PLATFORMS, 'unsupported platform')
     actual = manifest(root, document['platform'], document['version'], document['commit'], document['kind'])

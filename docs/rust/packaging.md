@@ -61,7 +61,9 @@ isolated home/data/temp directories, and no inherited provider credentials or Co
 control variables. It imports Unicode text, unknown fields, a draft, fake session
 references and binary attachment bytes. It checks exact captured bytes, thread JSON,
 imported identity, source immutability, repeat-import refusal, failed-import atomicity,
-and closed synthetic database backup/restore equivalence. Child commands have a
+closed synthetic database backup/restore equivalence, duplicate-ID rollback, and
+symlink refusal with source/target preservation. Windows without symlink privilege
+reports that case as skipped in evidence; it never counts a skipped case as passed. Child commands have a
 60-second timeout. SQLite inspection is read-only and refuses leftover WAL files.
 Temporary fixtures are removed on normal completion or error; only JSON evidence is
 printed. The store executable hash ties evidence to an artifact; record source SHA too.
