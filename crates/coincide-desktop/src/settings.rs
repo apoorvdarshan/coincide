@@ -8,6 +8,7 @@ pub(super) enum SettingsSection {
     Conversation,
     Automation,
     Accounts,
+    Browser,
 }
 impl SettingsSection {
     fn id(self) -> &'static str {
@@ -17,6 +18,7 @@ impl SettingsSection {
             Self::Conversation => "conversation",
             Self::Automation => "automation",
             Self::Accounts => "accounts",
+            Self::Browser => "browser",
         }
     }
     fn label(self) -> &'static str {
@@ -26,6 +28,7 @@ impl SettingsSection {
             Self::Conversation => "Conversation",
             Self::Automation => "Automation and alerts",
             Self::Accounts => "Providers and passwords",
+            Self::Browser => "Browser",
         }
     }
 }
@@ -525,6 +528,7 @@ impl Coincide {
             S::Conversation,
             S::Automation,
             S::Accounts,
+            S::Browser,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -703,6 +707,12 @@ impl Coincide {
                 "antigravity provider configured account models",
             ),
             (
+                S::Browser,
+                "browser",
+                "Browser profiles and imports",
+                "browser profiles imports cookies privacy passwords passkeys",
+            ),
+            (
                 S::Accounts,
                 "passwords",
                 "Password managers",
@@ -716,10 +726,13 @@ impl Coincide {
                         Button::new(SharedString::from(format!("settings-{id}")))
                             .label(label)
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                this.credential_panel
+                                    .update(cx, |panel, cx| panel.cancel(cx));
                                 this.bots_open = id == "bots";
                                 this.notifications_open = id == "notifications";
                                 this.transcription_open = id == "transcription";
                                 this.credentials_open = id == "passwords";
+                                this.browser_settings_open = id == "browser";
                                 this.provider_settings.open = false;
                                 if id == "antigravity" {
                                     this.open_antigravity_settings(window, cx);
@@ -756,6 +769,8 @@ impl Coincide {
                             .label("Done")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.settings_open = false;
+                                this.credential_panel
+                                    .update(cx, |panel, cx| panel.cancel(cx));
                                 this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
@@ -814,7 +829,14 @@ impl Coincide {
                 cx.notify();
             }
             "n" => self.new_thread(window, cx),
-            "f" => self.open_find(window, cx),
+            "f" => {
+                // Native WebKit first-responder ownership is not represented by
+                // a GPUI focus handle. Leave browser-visible Cmd/Ctrl-F native.
+                if !transcript_find_shortcut_routes(self.selected.as_ref(), &self.browser_panels) {
+                    return;
+                }
+                self.open_find(window, cx);
+            }
             "enter"
                 if !self.settings_open
                     && !self.schedules_open
@@ -859,5 +881,18 @@ mod navigation_tests {
             "notifications"
         ));
         assert_eq!(S::Accounts.id(), "accounts");
+        assert_eq!(S::Browser.id(), "browser");
+        assert!(settings_match(
+            S::Browser,
+            S::Browser,
+            "cookies privacy",
+            "profiles imports cookies privacy"
+        ));
+        assert!(!settings_match(
+            S::Browser,
+            S::Accounts,
+            "password",
+            "password managers"
+        ));
     }
 }

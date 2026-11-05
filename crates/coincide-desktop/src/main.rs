@@ -2,6 +2,7 @@ use anyhow::Result;
 mod assets;
 mod bot_settings;
 mod browser;
+mod browser_settings;
 mod command_palette;
 mod composer_attachments;
 mod composer_selection;
@@ -229,6 +230,14 @@ fn find_snapshot_current(
         && generation == current_generation
         && find_source_matches(thread, sources)
 }
+fn transcript_find_shortcut_routes(
+    thread: Option<&Value>,
+    browser_panels: &std::collections::HashSet<String>,
+) -> bool {
+    thread
+        .and_then(|thread| thread["id"].as_str())
+        .is_some_and(|id| !browser_panels.contains(id))
+}
 fn find_row(thread: &Value, thread_id: &str, item_id: &str) -> Option<usize> {
     if thread["id"] != thread_id {
         return None;
@@ -276,6 +285,9 @@ struct Coincide {
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
     credentials_open: bool,
+    browser_settings_open: bool,
+    browser_settings_panel: Entity<browser_settings::BrowserSettings>,
+    browser_profile_requests: std::sync::mpsc::Receiver<browser_settings::ProfileRequest>,
     credential_panel: Entity<credential_settings::CredentialSettings>,
     credential_jobs: std::sync::mpsc::Receiver<credentials::FillJob>,
     workspace_open: bool,
@@ -566,6 +578,14 @@ impl Coincide {
         let (credential_settings, credential_jobs) =
             credential_settings::CredentialSettings::new(credential_settings::installed_sources());
         let credential_panel = cx.new(|_| credential_settings);
+        let mut browser_profile_requests = None;
+        let browser_settings_panel = cx.new(|cx| {
+            let (panel, requests) = browser_settings::BrowserSettings::new(window, cx);
+            browser_profile_requests = Some(requests);
+            panel
+        });
+        let browser_profile_requests =
+            browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
@@ -818,6 +838,9 @@ impl Coincide {
             session_import_open: false,
             session_import_panel,
             credentials_open: false,
+            browser_settings_open: false,
+            browser_settings_panel,
+            browser_profile_requests,
             credential_panel,
             credential_jobs,
             workspace_open: false,
@@ -1553,6 +1576,8 @@ impl Coincide {
             self.dismiss_palette(window, cx);
         } else {
             self.dismiss_find(window, cx);
+            self.credential_panel
+                .update(cx, |panel, cx| panel.cancel(cx));
             self.palette_revision = self.palette_revision.saturating_add(1);
             self.palette_entries = self.palette_catalog();
             let snapshot = command_palette::PaletteSnapshot {
@@ -1725,13 +1750,68 @@ impl Coincide {
             self.refresh(cx);
         }
     }
+    fn browser_settings_visible(&self) -> bool {
+        self.settings_open
+            && self.browser_settings_open
+            && !self.credentials_open
+            && !self.bots_open
+            && !self.transcription_open
+            && !self.notifications_open
+            && !self.provider_settings.open
+            && !self.session_import_open
+    }
+    fn sync_browser_settings(&mut self, cx: &mut Context<Self>) {
+        let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
+        let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        for request in self.browser_profile_requests.try_iter().take(8) {
+            let result = if visible {
+                selected_thread
+                    .as_deref()
+                    .ok_or_else(|| "No selected thread".to_owned())
+                    .and_then(|thread| {
+                        self.browser
+                            .as_mut()
+                            .ok_or_else(|| "Browser unavailable".to_owned())
+                            .and_then(|browser| {
+                                browser
+                                    .apply_profile_request(thread, request)
+                                    .map_err(|error| error.to_string())
+                            })
+                    })
+            } else {
+                Err("Browser settings closed; profile request cancelled".into())
+            };
+            self.browser_settings_panel
+                .update(cx, |panel, cx| panel.set_result(result, cx));
+        }
+        let snapshot = if visible {
+            selected_thread.as_deref().and_then(|thread| {
+                self.browser
+                    .as_ref()
+                    .map(|browser| browser.profile_snapshot(thread))
+            })
+        } else {
+            None
+        };
+        self.browser_settings_panel.update(cx, |panel, cx| {
+            panel.set_snapshot(snapshot, cx);
+            panel.poll(cx);
+        });
+    }
     fn sync_credentials(&mut self, cx: &mut Context<Self>) {
         // Provider setup is another native settings workflow, never a reason
         // to keep password approval active behind that panel.
         if self.provider_settings.open {
             self.credentials_open = false;
         }
-        let visible = self.settings_open && self.credentials_open && !self.session_import_open;
+        let visible = self.settings_open
+            && (self.credentials_open || self.browser_settings_visible())
+            && !self.session_import_open
+            && !self.bots_open
+            && !self.notifications_open
+            && !self.transcription_open
+            && !self.provider_settings.open
+            && !self.command_palette.read(cx).is_open();
         let thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         let (page, available) = if visible {
             self.browser
@@ -1751,7 +1831,12 @@ impl Coincide {
         // Revocation precedes polling or delivery: closing the panel, changing
         // documents, or losing the selection cannot retain a prior approval.
         self.credential_panel.update(cx, |panel, cx| {
-            panel.set_page(page, available, cx);
+            panel.set_context(
+                visible.then(|| thread.clone()).flatten(),
+                page,
+                available,
+                cx,
+            );
             panel.poll(cx);
         });
         if let Some(browser) = &mut self.browser {
@@ -1833,6 +1918,7 @@ impl Coincide {
             cx.notify();
         }
         self.poll_browser(window, cx);
+        self.sync_browser_settings(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
@@ -2946,6 +3032,37 @@ impl Render for Coincide {
                             .into_any_element()
                     })
                     .into_any_element()
+            } else if self.browser_settings_visible() {
+                div()
+                    .id("browser-settings-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Button::new("browser-settings-back")
+                            .label("Back to Settings")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_settings_open = false;
+                                this.credential_panel
+                                    .update(cx, |panel, cx| panel.cancel(cx));
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("browser-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
+                            .child(self.browser_settings_panel.clone())
+                            .child(div().p_3().text_lg().child("Passwords"))
+                            .child(self.credential_panel.clone()),
+                    )
+                    .into_any_element()
             } else if self.credentials_open {
                 div()
                     .id("password-settings-surface")
@@ -2954,6 +3071,17 @@ impl Render for Coincide {
                     .min_h_0()
                     .min_w_0()
                     .overflow_y_scroll()
+                    .child(
+                        Button::new("password-settings-back")
+                            .label("Back to Settings")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.credentials_open = false;
+                                this.credential_panel
+                                    .update(cx, |panel, cx| panel.cancel(cx));
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    )
                     .child(self.credential_panel.clone())
                     .into_any_element()
             } else if self.provider_settings.open {
@@ -3113,6 +3241,9 @@ impl Render for Coincide {
                                         this.session_import_open = false;
                                         let open = !(this.settings_open && this.credentials_open);
                                         this.credentials_open = open;
+                                        this.browser_settings_open = false;
+                                        this.credential_panel
+                                            .update(cx, |panel, cx| panel.cancel(cx));
                                         this.notifications_open = false;
                                         this.bots_open = false;
                                         this.transcription_open = false;
@@ -3501,5 +3632,16 @@ mod find_mount_tests {
         assert!(find_sources(&thread).is_err());
         thread["items"][1]["id"] = Value::Null;
         assert!(find_sources(&thread).is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn browser_visible_find_shortcut_passthrough_is_selected_thread_scoped() {
+        let thread = json!({"id":"selected"});
+        let mut panels = std::collections::HashSet::new();
+        assert!(transcript_find_shortcut_routes(Some(&thread), &panels));
+        panels.insert("other".into());
+        assert!(transcript_find_shortcut_routes(Some(&thread), &panels));
+        panels.insert("selected".into());
+        assert!(!transcript_find_shortcut_routes(Some(&thread), &panels));
+        assert!(!transcript_find_shortcut_routes(None, &panels));
     }
 }
