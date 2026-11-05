@@ -1,16 +1,20 @@
-//! Native browser profile metadata and read-only import preview. No cookies,
+//! Native profiles, metadata preview and explicit saved bookmark import. No cookies,
 //! passwords, keys, login grants or original Swift website stores are imported.
 use crate::worker_owner::{ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Result, ensure};
+use coincide_core::{
+    api::SharedEngine,
+    browser_bookmarks::{self, Library, Plan},
+};
 use gpui_kit::{
-    AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render,
-    SharedString, Styled, Window,
+    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, PathPromptOptions,
+    Render, SharedString, Styled, Window,
     component::{
         Disableable,
         button::Button,
         input::{Input, InputState},
     },
-    div,
+    div, px,
 };
 use serde_json::{Value, json};
 use std::{
@@ -18,7 +22,11 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, SyncSender},
+    },
 };
 use uuid::Uuid;
 const MAX_DOCUMENT: u64 = 1_048_576;
@@ -333,6 +341,10 @@ fn validate_thread(thread: &str) -> Result<()> {
     Ok(())
 }
 fn read_document(path: &Path) -> Result<Vec<u8>> {
+    ensure!(
+        !fs::symlink_metadata(path)?.file_type().is_symlink(),
+        "Choose a regular JSON file, not a symbolic link"
+    );
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "macos")]
@@ -344,6 +356,11 @@ fn read_document(path: &Path) -> Result<Vec<u8>> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(0x20000 | 0x800);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000);
     }
     let file = options.open(path)?;
     ensure!(
@@ -365,6 +382,8 @@ pub struct ImportPreview {
     pub history: usize,
     pub cookies_not_imported: usize,
     pub legacy_profile: bool,
+    pub bookmark_plan: Option<Plan>,
+    pub bookmark_problem: Option<String>,
 }
 pub fn preview_import(bytes: &[u8]) -> Result<ImportPreview> {
     ensure!(
@@ -407,36 +426,99 @@ pub fn preview_import(bytes: &[u8]) -> Result<ImportPreview> {
         legacy || profiles > 0 || value["bookmarks"].is_array() || value["history"].is_array(),
         "Unsupported browser metadata export"
     );
+    let bookmark_result = browser_bookmarks::preview(bytes);
+    let bookmark_plan = bookmark_result.as_ref().ok().cloned();
     Ok(ImportPreview {
         profiles: if legacy { 1 } else { profiles },
         bookmarks: value["bookmarks"].as_array().map_or(0, Vec::len),
         history: value["history"].as_array().map_or(0, Vec::len),
         cookies_not_imported: value["cookies"].as_array().map_or(0, Vec::len),
         legacy_profile: legacy,
+        bookmark_plan,
+        bookmark_problem: if value["bookmarks"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        {
+            bookmark_result.err().map(|error| error.to_string())
+        } else {
+            None
+        },
     })
 }
 
 fn finish_import_choice(workers: &mut WorkerOwner, expected: u64, current: u64) -> bool {
     workers.finish_picker() && expected == current
 }
+#[derive(Clone)]
+struct ChosenBookmarks {
+    path: PathBuf,
+    fingerprint: String,
+    plan: Plan,
+    expected_revision: Option<u64>,
+}
+fn verify_chosen_bookmarks(chosen: &ChosenBookmarks) -> Result<()> {
+    let bytes = read_document(&chosen.path).map_err(|_| {
+        anyhow::anyhow!("The chosen export is unavailable; choose and review it again")
+    })?;
+    ensure!(
+        browser_bookmarks::fingerprint(&bytes) == chosen.fingerprint,
+        "The export changed after preview; choose and review it again. Nothing imported"
+    );
+    chosen.plan.validate()?;
+    Ok(())
+}
+pub struct BookmarkOpen {
+    pub thread: String,
+    pub navigate_operation: String,
+    pub show_operation: String,
+}
+enum LibraryReply {
+    Preview(ImportPreview, Option<ChosenBookmarks>, Option<Library>),
+    Reloaded(Library),
+    Saved(browser_bookmarks::ImportResult),
+    OpenAccepted(BookmarkOpen),
+}
+type LibraryCompletion = (u64, Result<LibraryReply, String>);
+fn library_context_allowed(
+    admission: &crate::worker_owner::Admission,
+    epoch: &AtomicU64,
+    generation: u64,
+) -> Result<()> {
+    ensure!(
+        admission.allowed() && epoch.load(Ordering::Acquire) == generation,
+        "Browser settings changed; action was not admitted"
+    );
+    Ok(())
+}
 pub struct BrowserSettings {
     workers: WorkerOwner,
+    engine: Option<SharedEngine>,
+    epoch: Arc<AtomicU64>,
+    chosen: Option<ChosenBookmarks>,
+    library: Option<Library>,
+    library_page: usize,
+    preview_page: usize,
+    bookmark_open: Option<BookmarkOpen>,
     snapshot: Option<ProfileSnapshot>,
     name: Entity<InputState>,
     sender: SyncSender<ProfileRequest>,
     preview: Option<ImportPreview>,
     import_busy: bool,
+    profile_pending: bool,
     generation: u64,
-    imports: Receiver<(u64, Result<ImportPreview, ()>)>,
-    import_sender: std::sync::mpsc::Sender<(u64, Result<ImportPreview, ()>)>,
+    imports: Receiver<LibraryCompletion>,
+    import_sender: SyncSender<LibraryCompletion>,
     status: String,
 }
 impl BrowserSettings {
     pub fn request_shutdown(&mut self) {
         if self.workers.close() {
             self.generation = self.generation.wrapping_add(1);
+            self.epoch.store(self.generation, Ordering::Release);
         }
         self.preview = None;
+        self.chosen = None;
+        self.bookmark_open = None;
         self.discard_shutdown_results();
     }
     fn discard_shutdown_results(&mut self) {
@@ -453,15 +535,23 @@ impl BrowserSettings {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("New Rust profile name"));
         let (sender, requests) = mpsc::sync_channel(8);
-        let (import_sender, imports) = mpsc::channel();
+        let (import_sender, imports) = mpsc::sync_channel(1);
         (
             Self {
                 workers: WorkerOwner::default(),
+                engine: None,
+                epoch: Arc::new(AtomicU64::new(0)),
+                chosen: None,
+                library: None,
+                library_page: 0,
+                preview_page: 0,
+                bookmark_open: None,
                 snapshot: None,
                 name,
                 sender,
                 preview: None,
                 import_busy: false,
+                profile_pending: false,
                 generation: 0,
                 imports,
                 import_sender,
@@ -469,6 +559,129 @@ impl BrowserSettings {
             },
             requests,
         )
+    }
+    /// Parent injects only its existing trusted Engine; no path or global lookup.
+    pub fn set_library_engine(&mut self, engine: SharedEngine) {
+        if self.workers.closed()
+            || self
+                .engine
+                .as_ref()
+                .is_some_and(|old| Arc::ptr_eq(old, &engine))
+        {
+            return;
+        }
+        self.engine = Some(engine);
+        self.generation = self.generation.wrapping_add(1);
+        self.epoch.store(self.generation, Ordering::Release);
+        self.chosen = None;
+        self.preview = None;
+        self.library = None;
+        self.bookmark_open = None;
+    }
+    /// Parent registers these existing bridge operation IDs, then closes Settings
+    /// only if the same selected thread still owns this explicit click.
+    pub fn take_bookmark_open(&mut self) -> Option<BookmarkOpen> {
+        self.bookmark_open.take()
+    }
+    fn library_work(
+        &mut self,
+        status: &str,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(
+            SharedEngine,
+            crate::worker_owner::Admission,
+            Arc<AtomicU64>,
+            u64,
+            ProfileSnapshot,
+        ) -> Result<LibraryReply>
+        + Send
+        + 'static,
+    ) {
+        if self.import_busy || self.profile_pending || !self.workers.can_start() {
+            self.status = "A browser settings action is still finishing.".into();
+            cx.notify();
+            return;
+        }
+        let (Some(engine), Some(snapshot)) = (self.engine.clone(), self.snapshot.clone()) else {
+            self.status = "Select a thread in the desktop browser first.".into();
+            cx.notify();
+            return;
+        };
+        self.import_busy = true;
+        self.status = status.into();
+        let generation = self.generation;
+        let epoch = self.epoch.clone();
+        let sender = self.import_sender.clone();
+        if !self.workers.spawn(move |admission| {
+            let result = work(engine, admission, epoch, generation, snapshot)
+                .map_err(|error| error.to_string());
+            let _ = sender.send((generation, result));
+        }) {
+            self.import_busy = false;
+            self.status = "Browser settings worker could not start.".into();
+        }
+        cx.notify();
+    }
+    fn reload_bookmarks(&mut self, cx: &mut Context<Self>) {
+        self.library_work(
+            "Loading saved Rust bookmarks…",
+            cx,
+            |engine, admission, epoch, generation, snapshot| {
+                library_context_allowed(&admission, &epoch, generation)?;
+                let engine = engine.try_lock().map_err(|_| {
+                    anyhow::anyhow!("The app is busy; reload saved bookmarks to try again")
+                })?;
+                library_context_allowed(&admission, &epoch, generation)?;
+                ensure!(
+                    engine.active_thread() == Some(snapshot.thread.as_str()),
+                    "Selected conversation changed; reload bookmarks"
+                );
+                Ok(LibraryReply::Reloaded(engine.saved_browser_bookmarks()?))
+            },
+        );
+    }
+    fn save_bookmarks(&mut self, cx: &mut Context<Self>) {
+        let Some(chosen) = self.chosen.clone() else {
+            return;
+        };
+        let Some(expected) = chosen.expected_revision else {
+            self.status = "Reload saved bookmarks before saving this preview.".into();
+            cx.notify();
+            return;
+        };
+        self.library_work("Saving only the reviewed bookmarks…",cx,move|engine,admission,epoch,generation,snapshot|{
+            library_context_allowed(&admission,&epoch,generation)?;
+            verify_chosen_bookmarks(&chosen)?;
+            let mut engine=engine.try_lock().map_err(|_|anyhow::anyhow!("The app is busy; saved bookmarks were not changed"))?;
+            library_context_allowed(&admission,&epoch,generation)?;
+            ensure!(engine.active_thread()==Some(snapshot.thread.as_str()),"Selected conversation changed; import was not admitted");
+            engine.import_browser_bookmarks(expected,&chosen.plan).map(LibraryReply::Saved).map_err(|_|anyhow::anyhow!("Save could not be confirmed. Reload saved bookmarks before trying again; the existing library is retained"))
+        });
+    }
+    fn open_bookmark(&mut self, id: Uuid, revision: u64, cx: &mut Context<Self>) {
+        self.library_work(
+            "Sending this bookmark to the thread browser…",
+            cx,
+            move |engine, admission, epoch, generation, snapshot| {
+                library_context_allowed(&admission, &epoch, generation)?;
+                let mut engine = engine
+                    .try_lock()
+                    .map_err(|_| anyhow::anyhow!("The app is busy; bookmark was not opened"))?;
+                library_context_allowed(&admission, &epoch, generation)?;
+                let result = engine.open_browser_bookmark(&snapshot.thread, id, revision)?;
+                Ok(LibraryReply::OpenAccepted(BookmarkOpen {
+                    thread: snapshot.thread,
+                    navigate_operation: result["navigateOperationId"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("Missing browser operation"))?
+                        .into(),
+                    show_operation: result["showOperationId"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("Missing browser operation"))?
+                        .into(),
+                }))
+            },
+        );
     }
     pub fn set_snapshot(&mut self, snapshot: Option<ProfileSnapshot>, cx: &mut Context<Self>) {
         if self.workers.closed() {
@@ -479,7 +692,10 @@ impl BrowserSettings {
                 != snapshot.as_ref().map(|s| (&s.thread, s.revision))
             {
                 self.generation = self.generation.wrapping_add(1);
+                self.epoch.store(self.generation, Ordering::Release);
                 self.preview = None;
+                self.chosen = None;
+                self.bookmark_open = None;
                 self.status =
                     "Thread/profile metadata changed. Previous import previews were discarded."
                         .into();
@@ -492,6 +708,7 @@ impl BrowserSettings {
         if self.workers.closed() {
             return;
         }
+        self.profile_pending = false;
         self.status = result.err().unwrap_or_else(|| {
             "Browser profile metadata updated. Existing tabs were preserved.".into()
         });
@@ -506,13 +723,59 @@ impl BrowserSettings {
         while let Ok((generation, result)) = self.imports.try_recv() {
             self.import_busy = false;
             if generation == self.generation {
-                match result { Ok(preview)=>{self.preview=Some(preview);self.status="Preview only. No cookies, bookmarks, history, credentials or original website stores were imported.".into();},Err(())=>self.status="Could not preview this export. Choose supported metadata JSON under 1 MB; credential exports are refused.".into() }
+                match result {
+                    Ok(LibraryReply::Preview(preview, chosen, library)) => {
+                        self.preview = Some(preview);
+                        self.chosen = chosen;
+                        self.preview_page = 0;
+                        if let Some(library) = library {
+                            self.library = Some(library);
+                            self.library_page = 0;
+                        }
+                        self.status="Preview ready. Only the reviewed HTTP(S) bookmarks can be saved; other metadata stays untouched.".into();
+                    }
+                    Ok(LibraryReply::Reloaded(library)) => {
+                        if let Some(chosen) = &mut self.chosen {
+                            chosen.expected_revision = Some(library.revision);
+                        }
+                        self.library = Some(library);
+                        self.library_page = 0;
+                        self.status =
+                            "Saved Rust bookmarks reloaded. Source files were not changed.".into();
+                    }
+                    Ok(LibraryReply::Saved(result)) => {
+                        self.status = format!(
+                            "Saved {} bookmark(s); {} duplicate URL(s) skipped. No page was opened.",
+                            result.added, result.duplicates
+                        );
+                        self.library = Some(result.library);
+                        self.library_page = 0;
+                        self.chosen = None;
+                        self.preview = None;
+                    }
+                    Ok(LibraryReply::OpenAccepted(open)) => {
+                        self.status="Bookmark queued for this thread's browser. Native navigation is still pending.".into();
+                        self.bookmark_open = Some(open);
+                    }
+                    Err(error) => {
+                        // No replay after an uncertain save or stale read.
+                        // A separate explicit reload restores the CAS baseline.
+                        if let Some(chosen) = &mut self.chosen {
+                            chosen.expected_revision = None;
+                        }
+                        self.status = error;
+                    }
+                }
             }
             cx.notify();
         }
     }
     fn request(&mut self, operation: ProfileOperation, cx: &mut Context<Self>) {
-        if self.workers.closed() {
+        if self.workers.closed()
+            || self.import_busy
+            || self.profile_pending
+            || !self.workers.can_start()
+        {
             return;
         }
         let Some(snapshot) = &self.snapshot else {
@@ -524,6 +787,7 @@ impl BrowserSettings {
             operation,
         };
         self.status = if self.sender.try_send(request).is_ok() {
+            self.profile_pending = true;
             "Native profile action requested…"
         } else {
             "Browser settings request queue is busy. Try again."
@@ -532,11 +796,15 @@ impl BrowserSettings {
         cx.notify();
     }
     fn choose_import(&mut self, cx: &mut Context<Self>) {
-        if self.import_busy || !self.workers.begin_picker() {
+        if self.import_busy || self.profile_pending || !self.workers.begin_picker() {
             return;
         }
         self.import_busy = true;
+        self.generation = self.generation.wrapping_add(1);
+        self.epoch.store(self.generation, Ordering::Release);
         self.preview = None;
+        self.chosen = None;
+        self.bookmark_open = None;
         let generation = self.generation;
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -558,13 +826,34 @@ impl BrowserSettings {
                     Ok(Some(paths)) if paths.len() == 1 => {
                         let path = paths[0].clone();
                         let sender = this.import_sender.clone();
+                        let epoch = this.epoch.clone();
+                        let engine = this.engine.clone();
                         if !this.workers.spawn(move |admission| {
-                            let result = (|| {
-                                ensure!(admission.allowed(), "Browser settings are shutting down");
-                                read_document(&path)
+                            let result = (|| -> Result<LibraryReply> {
+                                library_context_allowed(&admission, &epoch, generation)?;
+                                let bytes = read_document(&path).map_err(|_| {
+                                    anyhow::anyhow!(
+                                        "Could not read the chosen regular JSON export under 1 MiB"
+                                    )
+                                })?;
+                                let preview = preview_import(&bytes)?;
+                                let library = engine.and_then(|engine| {
+                                    let guard = engine.try_lock().ok()?;
+                                    guard.saved_browser_bookmarks().ok()
+                                });
+                                let chosen =
+                                    preview.bookmark_plan.clone().map(|plan| ChosenBookmarks {
+                                        path,
+                                        fingerprint: browser_bookmarks::fingerprint(&bytes),
+                                        plan,
+                                        expected_revision: library
+                                            .as_ref()
+                                            .map(|library| library.revision),
+                                    });
+                                library_context_allowed(&admission, &epoch, generation)?;
+                                Ok(LibraryReply::Preview(preview, chosen, library))
                             })()
-                            .and_then(|bytes| preview_import(&bytes))
-                            .map_err(|_| ());
+                            .map_err(|error| error.to_string());
                             let _ = sender.send((generation, result));
                         }) {
                             this.import_busy = false;
@@ -594,6 +883,7 @@ impl Drop for BrowserSettings {
 }
 impl Render for BrowserSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let busy = self.import_busy || self.profile_pending || self.workers.closed();
         let mut panel = div()
             .flex()
             .flex_col()
@@ -616,7 +906,7 @@ impl Render for BrowserSettings {
                             }
                         ))
                         .disabled(
-                            snapshot.open_tabs > 0
+                            busy || snapshot.open_tabs > 0
                                 || (!profile.is_default && !snapshot.persistent_profiles_available),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -634,7 +924,7 @@ impl Render for BrowserSettings {
                     } else {
                         "Use temporary profile for this thread"
                     })
-                    .disabled(snapshot.open_tabs > 0)
+                    .disabled(busy || snapshot.open_tabs > 0)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.request(ProfileOperation::Select(ProfileChoice::Private), cx)
                     })),
@@ -646,7 +936,8 @@ impl Render for BrowserSettings {
                 Button::new("browser-profile-create")
                     .label("Create fresh Rust profile")
                     .disabled(
-                        self.snapshot
+                        busy || self
+                            .snapshot
                             .as_ref()
                             .is_none_or(|snapshot| !snapshot.persistent_profiles_available),
                     )
@@ -658,14 +949,110 @@ impl Render for BrowserSettings {
             .child(
                 Button::new("browser-import-preview")
                     .label("Choose metadata export to preview")
-                    .disabled(self.import_busy || self.snapshot.is_none())
+                    .disabled(busy || self.snapshot.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.choose_import(cx))),
             );
-        panel = panel.child(Button::new("browser-import-discard").label("Discard import preview").disabled(!self.import_busy && self.preview.is_none()).on_click(cx.listener(|this,_,_,cx| {this.generation=this.generation.wrapping_add(1);this.preview=None;this.status="Preview discarded. An existing file dialog may still need to be cancelled.".into();cx.notify();})));
+        panel = panel.child(Button::new("browser-import-discard").label("Discard import preview").disabled(!self.import_busy && self.preview.is_none()).on_click(cx.listener(|this,_,_,cx| {this.generation=this.generation.wrapping_add(1);this.epoch.store(this.generation,Ordering::Release);this.preview=None;this.chosen=None;this.status="Preview discarded. An existing file dialog may still need to be cancelled.".into();cx.notify();})));
         if let Some(preview) = &self.preview {
             panel=panel.child(SharedString::from(format!("Preview: {} profile reference(s), {} bookmarks, {} history entries; {} cookies will not be imported. {}",preview.profiles,preview.bookmarks,preview.history,preview.cookies_not_imported,if preview.legacy_profile{"Legacy Swift store remains untouched. Create a fresh Rust profile above to start separately."}else{"Source IDs are never reused for a new profile."})));
         }
-        panel.child(SharedString::from(self.status.clone())).child("Cookie/keychain migration, password CSV import, native passkey enrollment/assertion and Bitwarden passkey ceremonies are not implemented in this Rust settings slice. No account or keychain is accessed by profile preview.")
+
+        if let Some(preview) = &self.preview {
+            if let Some(problem) = &preview.bookmark_problem {
+                panel = panel.child(SharedString::from(format!(
+                    "Bookmarks cannot be saved: {problem}"
+                )));
+            }
+        }
+        if let Some(chosen) = &self.chosen {
+            let count = chosen.plan.bookmarks.len();
+            let page = self.preview_page;
+            let pages = count.div_ceil(10);
+            let mut review = div()
+                .id("browser-bookmark-review")
+                .max_h(px(220.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_1();
+            for bookmark in chosen.plan.bookmarks.iter().skip(page * 10).take(10) {
+                review = review.child(SharedString::from(format!(
+                    "{} · {}",
+                    bookmark.title, bookmark.url
+                )));
+            }
+            panel=panel.child(SharedString::from(format!("Review all {count} bookmarks — page {} of {pages}. Save imports every reviewed export row; duplicate URLs keep the saved bookmark.",page+1))).child(review)
+                .child(div().flex().gap_2()
+                    .child(Button::new("bookmark-preview-prev").label("Previous preview page").disabled(busy||page==0).on_click(cx.listener(|this,_,_,cx|{this.preview_page=this.preview_page.saturating_sub(1);cx.notify();})))
+                    .child(Button::new("bookmark-preview-next").label("Next preview page").disabled(busy||page+1>=pages).on_click(cx.listener(|this,_,_,cx|{this.preview_page+=1;cx.notify();}))))
+                .child(Button::new("bookmark-import-save").label(format!("Save {count} bookmarks to Rust library")).disabled(busy||self.engine.is_none()||chosen.expected_revision.is_none()).on_click(cx.listener(|this,_,_,cx|this.save_bookmarks(cx))));
+        }
+        panel = panel.child(
+            Button::new("bookmark-library-reload")
+                .label("Reload saved Rust bookmarks")
+                .disabled(busy || self.engine.is_none() || self.snapshot.is_none())
+                .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
+        );
+        if let Some(library) = &self.library {
+            let count = library.bookmarks.len();
+            let page = self.library_page;
+            let pages = count.div_ceil(10).max(1);
+            panel = panel.child(SharedString::from(format!(
+                "Saved Rust bookmarks: {count} · page {} of {pages}",
+                page + 1
+            )));
+            let mut rows = div()
+                .id("browser-bookmark-library")
+                .max_h(px(260.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_2();
+            for bookmark in library.bookmarks.iter().skip(page * 10).take(10) {
+                let id = bookmark.id;
+                let revision = library.revision;
+                rows = rows.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(SharedString::from(bookmark.title.clone()))
+                        .child(SharedString::from(bookmark.url.clone()))
+                        .child(
+                            Button::new(SharedString::from(format!("bookmark-open-{id}")))
+                                .label("Open in this thread's browser")
+                                .disabled(busy || self.snapshot.is_none())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.open_bookmark(id, revision, cx)
+                                })),
+                        ),
+                );
+            }
+            panel = panel.child(rows).child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("bookmark-library-prev")
+                            .label("Previous saved page")
+                            .disabled(busy || page == 0)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.library_page = this.library_page.saturating_sub(1);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("bookmark-library-next")
+                            .label("Next saved page")
+                            .disabled(busy || page + 1 >= pages)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.library_page += 1;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
+        panel.child(SharedString::from(self.status.clone())).child("Cookie/keychain migration, password CSV import, native passkey enrollment/assertion and Bitwarden passkey ceremonies are not implemented in this Rust settings slice. Only explicit Save imports validated bookmarks. Profile, history, cookie and credential data are not imported; no account or keychain is accessed.")
     }
 }
 
@@ -893,5 +1280,80 @@ mod shutdown_tests {
         assert_eq!(workers.status().pending_pickers, 0);
         assert!(workers.begin_picker());
         assert!(finish_import_choice(&mut workers, 3, 3));
+    }
+    #[::core::prelude::v1::test]
+    fn bookmark_save_rechecks_exact_chosen_bytes_and_never_writes_source() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("bookmarks.json");
+        let source=r#"{"bookmarks":[{"url":"https://example.com/?q=rust#installation","title":"Saved café"}]}"#.as_bytes();
+        fs::write(&path, source).unwrap();
+        let chosen = ChosenBookmarks {
+            path: path.clone(),
+            fingerprint: browser_bookmarks::fingerprint(source),
+            plan: browser_bookmarks::preview(source).unwrap(),
+            expected_revision: Some(0),
+        };
+        verify_chosen_bookmarks(&chosen).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), source);
+        fs::write(
+            &path,
+            br#"{"bookmarks":[{"url":"https://changed.example/","title":"Changed"}]}"#,
+        )
+        .unwrap();
+        let changed = fs::read(&path).unwrap();
+        assert!(verify_chosen_bookmarks(&chosen).is_err());
+        assert_eq!(fs::read(&path).unwrap(), changed);
+        fs::write(&path, vec![b' '; MAX_DOCUMENT as usize + 1]).unwrap();
+        assert!(verify_chosen_bookmarks(&chosen).is_err());
+    }
+    #[cfg(unix)]
+    #[::core::prelude::v1::test]
+    fn bookmark_save_refuses_a_replaced_symlink_and_keeps_target_untouched() {
+        use std::os::unix::fs::symlink;
+        let scratch = Scratch::new();
+        let path = scratch.0.join("chosen.json");
+        let target = scratch.0.join("other.json");
+        let bytes = br#"{"bookmarks":[{"url":"https://example.com/","title":"Saved"}]}"#;
+        fs::write(&path, bytes).unwrap();
+        fs::write(&target, bytes).unwrap();
+        let chosen = ChosenBookmarks {
+            path: path.clone(),
+            fingerprint: browser_bookmarks::fingerprint(bytes),
+            plan: browser_bookmarks::preview(bytes).unwrap(),
+            expected_revision: Some(0),
+        };
+        fs::remove_file(&path).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(verify_chosen_bookmarks(&chosen).is_err());
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+    }
+    #[::core::prelude::v1::test]
+    fn changed_context_or_shutdown_blocks_late_bookmark_worker_admission() {
+        for close in [false, true] {
+            let mut owner = WorkerOwner::default();
+            let epoch = Arc::new(AtomicU64::new(7));
+            let (release, gate) = mpsc::sync_channel(0);
+            let (send, result) = mpsc::sync_channel(1);
+            let checked = epoch.clone();
+            assert!(owner.spawn(move |admission| {
+                gate.recv().unwrap();
+                let allowed = library_context_allowed(&admission, &checked, 7).is_ok();
+                send.send(allowed).unwrap();
+            }));
+            if close {
+                owner.close();
+            } else {
+                epoch.store(8, Ordering::Release);
+            }
+            release.send(()).unwrap();
+            assert!(!result.recv().unwrap());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while owner.status().unjoined != 0 {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert_eq!(owner.status().panicked, 0);
+            assert_eq!(owner.status().returned, 1);
+        }
     }
 }
