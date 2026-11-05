@@ -35,6 +35,8 @@ mod github_engine;
 mod github_threads_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
+#[path = "terminal_shutdown.rs"]
+pub mod terminal_shutdown;
 #[path = "notification_events.rs"]
 pub mod notification_events;
 #[path = "organization_api.rs"]
@@ -87,6 +89,7 @@ pub struct Engine {
     pub revision: u64,
     pub requested_open: Option<String>,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
+    terminal_shutdown: terminal_shutdown::State,
     pub shutdown: bool,
     admissions_frozen: bool,
     active_thread: Option<String>,
@@ -149,6 +152,7 @@ impl Engine {
             revision: 0,
             requested_open: None,
             terminals: HashMap::new(),
+            terminal_shutdown: terminal_shutdown::State::default(),
             shutdown: false,
             admissions_frozen: false,
             active_thread: None,
