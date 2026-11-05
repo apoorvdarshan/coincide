@@ -34,6 +34,10 @@ python3 scripts/rust-packaging.py validate /absolute/physical/stage /outside/sta
 python3 -B scripts/rust-packaging-tests.py
 ```
 
+Manifest format 2 requires an explicit artifact kind. `desktop-preview` is the default;
+`--kind store-tool` validates only `bin/coincide-store[.exe]` on every OS and needs
+no app plist. It does not validate a desktop bundle. Format 1 manifests must be regenerated.
+
 The manifest records version, source commit label, byte counts and SHA-256 for every
 file. The commit/version are caller assertions, not build provenance. Keep the manifest
 outside the artifact. Validation reads only and executes no artifacts. Manifest creation
@@ -99,3 +103,22 @@ separate migration paths. Rehearse recovery against copies with the exact previo
 candidate binaries. Record any edits made after cutover and how they are retained if
 rolling back. Keep the original application/data intact until acceptance and retention
 requirements are met. These synthetic checks alone cannot satisfy this gate.
+
+## Dedicated validation CI
+
+`.github/workflows/rust-packaging.yml` adds Mac/Linux/Windows jobs without changing
+existing workflows. It runs Python regressions, builds only `coincide-store --locked`,
+and uses `scripts/rust-packaging-ci.py` to copy that executable into disposable staging,
+inventory and validate it as `store-tool`, then rehearse against that exact staged file.
+The JSON evidence records its SHA-256, byte count, OS, architecture and CI source commit.
+Only evidence JSON is retained for seven days; no executable or user data is uploaded.
+Caches never replace executing the validations. PR supersession cancels only PR runs.
+The temporary worker branch push trigger allows validation before integration; the
+coordinator may remove that trigger after integration. macOS jobs are path-filtered.
+
+For a coordinator-provided local binary, the commit argument is a label only and cannot
+prove its build origin. The hash identifies the tested bytes. Local equivalent:
+
+```sh
+python3 -B scripts/rust-packaging-ci.py --store-bin /absolute/path/coincide-store --commit FULL_40_CHARACTER_COMMIT
+```
