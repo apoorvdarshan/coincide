@@ -118,6 +118,22 @@ impl Handle {
     /// Agent endpoint: authenticated parent supplies thread UUID, never from JSON.
     /// One bounded request; errors are returned without changing native authority.
     pub fn try_request(&self, thread: Uuid, request: Request) -> Result<Uuid, Failure> {
+        self.try_request_until(thread, request, Instant::now() + Duration::from_secs(10))
+    }
+    /// Trusted gateway hook: preserve the original API deadline across Engine
+    /// queueing. The caller cannot extend the runtime's ten-second ceiling.
+    /// Deadline/grant are transport context, never accepted from agent JSON.
+    pub fn try_request_until(
+        &self,
+        thread: Uuid,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<Uuid, Failure> {
+        let now = Instant::now();
+        if deadline <= now {
+            return Err(Failure::TimedOut);
+        }
+        let deadline = deadline.min(now + Duration::from_secs(10));
         if self.stop.load(Ordering::Acquire) {
             return Err(Failure::Revoked);
         }
@@ -128,9 +144,12 @@ impl Handle {
             thread,
             grant,
             request,
-            deadline: Instant::now() + Duration::from_secs(10),
+            deadline,
         };
         let mut in_flight = self.in_flight.try_lock().map_err(|_| Failure::Busy)?;
+        if Instant::now() >= deadline {
+            return Err(Failure::TimedOut);
+        }
         if !in_flight.insert(thread) {
             return Err(Failure::Busy);
         }
@@ -646,6 +665,114 @@ mod tests {
         assert_eq!(h.native_grant(t), Err(Failure::Revoked));
         assert!(!h.thread_enabled(t));
         assert_eq!(h.try_request(t, Request::Status), Err(Failure::Revoked));
+    }
+    #[test]
+    fn gateway_deadline_is_preserved_clamped_and_rejected_before_admission() {
+        let (runtime, calls, permissions) = fake();
+        let h = runtime.handle();
+        let t = Uuid::new_v4();
+        h.native_enable(true).unwrap();
+        h.native_grant(t).unwrap();
+        assert_eq!(
+            h.try_request_until(
+                t,
+                Request::Status,
+                Instant::now() - Duration::from_millis(1)
+            ),
+            Err(Failure::TimedOut)
+        );
+        assert!(h.in_flight.lock().unwrap().is_empty());
+        let original = Instant::now() + Duration::from_secs(1);
+        h.try_request_until(t, Request::Status, original).unwrap();
+        assert_eq!(reply(&runtime).deadline, original);
+        let earliest_ceiling = Instant::now() + Duration::from_secs(10);
+        h.try_request_until(t, Request::Status, Instant::now() + Duration::from_secs(60))
+            .unwrap();
+        let latest_ceiling = Instant::now() + Duration::from_secs(10);
+        let result = reply(&runtime);
+        assert!(result.deadline >= earliest_ceiling && result.deadline <= latest_ceiling);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(permissions.load(Ordering::SeqCst), 0);
+        h.shutdown();
+    }
+    #[test]
+    fn expired_gateway_request_waiting_behind_fake_work_never_calls_backend() {
+        struct Blocked {
+            calls: Arc<AtomicUsize>,
+            permissions: Arc<AtomicUsize>,
+            entered: SyncSender<()>,
+            release: Receiver<()>,
+        }
+        impl Backend for Blocked {
+            fn permissions(&mut self) -> Result<Permissions, Failure> {
+                self.permissions.fetch_add(1, Ordering::SeqCst);
+                Ok(Permissions {
+                    accessibility: Permission::Granted,
+                    screen_capture: Permission::Granted,
+                })
+            }
+            fn request_permission(&mut self, _: PermissionKind) -> Result<Permissions, Failure> {
+                unreachable!()
+            }
+            fn invalidate(&mut self) {}
+            fn call(&mut self, _: NativeCall, _: &Permit) -> Result<NativeResult, Failure> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.entered.try_send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(NativeResult::Done)
+            }
+        }
+        struct ReleaseOnDrop(Option<SyncSender<()>>);
+        impl Drop for ReleaseOnDrop {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.take() {
+                    let _ = tx.try_send(());
+                }
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let permissions = Arc::new(AtomicUsize::new(0));
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let runtime = Runtime::spawn(
+            Blocked {
+                calls: calls.clone(),
+                permissions: permissions.clone(),
+                entered: entered_tx,
+                release: release_rx,
+            },
+            true,
+        )
+        .unwrap();
+        let mut release = ReleaseOnDrop(Some(release_tx));
+        let h = runtime.handle();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        h.native_enable(true).unwrap();
+        h.native_grant(first).unwrap();
+        h.native_grant(second).unwrap();
+        h.try_request(first, Request::Call(Tool::ListApps(Empty {})))
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let id = h
+            .try_request_until(second, Request::Call(Tool::ListApps(Empty {})), deadline)
+            .unwrap();
+        while Instant::now() < deadline {
+            thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        }
+        release.0.take().unwrap().try_send(()).unwrap();
+        assert!(reply(&runtime).result.is_ok());
+        let result = reply(&runtime);
+        assert_eq!(result.id, id);
+        assert_eq!(result.thread, second);
+        assert_eq!(result.result, Err(Failure::TimedOut));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(permissions.load(Ordering::SeqCst), 1);
+        // Expiry was a terminal failure, not a delivery retry or a leaked Busy slot.
+        h.try_request(second, Request::Status).unwrap();
+        assert!(reply(&runtime).result.is_ok());
+        h.shutdown();
     }
     #[test]
     fn inactive_build_refuses_authority_without_any_backend_query() {
