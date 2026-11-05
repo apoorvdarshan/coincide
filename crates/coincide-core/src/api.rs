@@ -46,6 +46,9 @@ mod composer_effort_api;
 #[cfg(test)]
 #[path = "composer_effort_api_tests.rs"]
 mod composer_effort_api_tests;
+#[cfg(test)]
+#[path = "composer_speed_api_tests.rs"]
+mod composer_speed_api_tests;
 #[path = "computer_use_engine.rs"]
 pub mod computer_use_engine;
 #[path = "github_engine.rs"]
@@ -607,6 +610,7 @@ impl Engine {
                     if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
                         provider["effort"] = self.composer_effort_capability(&thread["selection"]);
+                        provider["speed"] = self.composer_speed_capability(&thread["selection"]);
                     }
                     // A repair capability is separate from the locked/proof state.
                     // It permits only removing effort, never sending unproved work.
@@ -614,6 +618,10 @@ impl Engine {
                         && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
                         && crate::composer_selection::repair_clear_effort(&json!({"threadId":id,"effort":null}),&thread).is_ok());
+                    result["repairSpeedClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
+                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
+                        && crate::composer_selection::repair_clear_speed(&json!({"threadId":id,"speed":null}),&thread).is_ok());
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -629,6 +637,13 @@ impl Engine {
                     && let Ok(selection) = crate::composer_selection::repair_clear_effort(p,&v)
                 {
                     // This exact one-field repair needs no provider/catalog IO.
+                    v["selection"] = selection;
+                    self.store.save(&v)?; self.revision += 1;
+                    return Ok(v);
+                }
+                if p.get("speed").is_some_and(Value::is_null) && !v["selection"]["speed"].is_null()
+                    && let Ok(selection) = crate::composer_selection::repair_clear_speed(p,&v)
+                {
                     v["selection"] = selection;
                     self.store.save(&v)?; self.revision += 1;
                     return Ok(v);

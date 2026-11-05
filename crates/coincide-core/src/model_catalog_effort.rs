@@ -33,10 +33,13 @@ impl EffortExecutable {
         })
     }
 }
+/// Private admitted model options. The historical name is retained internally;
+/// both effort and speed are bound, never caller-supplied proof metadata.
 #[derive(Clone, Debug)]
 pub(crate) struct CodexEffortProof {
     model: String,
-    effort: String,
+    effort: Option<String>,
+    speed: Option<String>,
     executable: EffortExecutable,
     revoked: Arc<AtomicBool>,
 }
@@ -44,6 +47,7 @@ impl PartialEq for CodexEffortProof {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
             && self.effort == other.effort
+            && self.speed == other.speed
             && self.executable == other.executable
             && Arc::ptr_eq(&self.revoked, &other.revoked)
     }
@@ -55,8 +59,9 @@ impl CodexEffortProof {
             selection["provider"] == "codex"
                 && crate::composer_selection::default_account(&selection["accountID"])
                 && selection["modelID"] == self.model
-                && selection["effort"] == self.effort,
-            "Effort proof does not match provider, account, model and effort"
+                && selection["effort"] == json!(self.effort)
+                && selection["speed"] == json!(self.speed),
+            "Catalog proof does not match provider, account, model, effort and speed"
         );
         self.validate_executable(&self.executable.requested)
     }
@@ -81,14 +86,14 @@ impl ModelCatalog {
         ensure!(
             selection["provider"] == "codex"
                 && crate::composer_selection::default_account(&selection["accountID"]),
-            "Effort is supported only for ordinary Codex default-account selections"
+            "Effort/speed is supported only for ordinary Codex default-account selections"
         );
         let model = selection["modelID"]
             .as_str()
-            .context("An explicit model is required for effort")?;
+            .context("An explicit model is required for effort/speed")?;
         ensure!(
             model != "default",
-            "Effort requires an explicit provider-reported model"
+            "Effort/speed requires an explicit provider-reported model"
         );
         let job = self
             .order
@@ -96,7 +101,7 @@ impl ModelCatalog {
             .rev()
             .filter_map(|id| self.jobs.get(id))
             .find(|job| job.response["provider"] == "codex")
-            .context("Refresh the Codex model catalog before choosing effort")?;
+            .context("Refresh the Codex model catalog before choosing effort/speed")?;
         ensure!(
             job.response["state"] == "ready" && !job.cancelled.load(Ordering::Acquire),
             "Latest Codex catalog is not ready; previous choices are not authoritative"
@@ -116,27 +121,57 @@ impl ModelCatalog {
         selection: &Value,
         executable: &Path,
     ) -> Result<Option<CodexEffortProof>> {
-        if selection["effort"].is_null() {
+        if selection["effort"].is_null() && selection["speed"].is_null() {
             return Ok(None);
         }
-        let effort = selection["effort"]
-            .as_str()
-            .context("Effort must be text or null")?;
-        let (job, model) = self.effort_model(selection, executable)?;
+        let effort = selection["effort"].as_str();
+        let speed = selection["speed"].as_str();
         ensure!(
-            model["reportedEfforts"]
-                .as_array()
-                .is_some_and(|choices| choices
-                    .iter()
-                    .any(|choice| choice.as_str() == Some(effort))),
-            "Effort was not advertised for this exact model"
+            selection["effort"].is_null() || effort.is_some(),
+            "Effort must be text or null"
         );
+        ensure!(
+            selection["speed"].is_null() || speed.is_some(),
+            "Speed must be text or null"
+        );
+        let (job, model) = self.effort_model(selection, executable)?;
+        if let Some(effort) = effort {
+            ensure!(
+                model["reportedEfforts"]
+                    .as_array()
+                    .is_some_and(|choices| choices
+                        .iter()
+                        .any(|choice| choice.as_str() == Some(effort))),
+                "Effort was not advertised for this exact model"
+            );
+        }
+        if let Some(speed) = speed {
+            ensure!(
+                speed != "default"
+                    && model["reportedSpeeds"]
+                        .as_array()
+                        .is_some_and(|choices| choices
+                            .iter()
+                            .any(|choice| choice["id"].as_str() == Some(speed))),
+                "Speed was not advertised for this exact model; choose null for Standard"
+            );
+        }
         Ok(Some(CodexEffortProof {
             model: selection["modelID"].as_str().unwrap().into(),
-            effort: effort.into(),
+            effort: effort.map(str::to_owned),
+            speed: speed.map(str::to_owned),
             executable: job.binding.clone().unwrap(),
             revoked: job.cancelled.clone(),
         }))
+    }
+    pub(crate) fn speed_capability(&self, selection: &Value, executable: &Path) -> Value {
+        match self.effort_model(selection, executable) {
+            Ok((_, model)) => {
+                json!({"supported":true,"ordinaryThreadsOnly":true,"requiresExplicitModel":true,
+                "provenance":"provider_model_list","standard":null,"choices":model["reportedSpeeds"],"reason":null})
+            }
+            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+        }
     }
     pub(crate) fn effort_capability(&self, selection: &Value, executable: &Path) -> Value {
         match self.effort_model(selection, executable) {
@@ -312,5 +347,61 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
+    }
+    #[test]
+    fn speed_proof_is_exact_combined_revocable_and_policy_gated() {
+        let (_dir, mut catalog, path, mut selection) = fixture();
+        catalog
+            .jobs
+            .get_mut("trusted-private-job")
+            .unwrap()
+            .response["models"][0]["reportedSpeeds"] = json!([{"id":"priority","name":"Fast"}]);
+        selection["speed"] = json!("priority");
+        let proof = catalog
+            .codex_effort_proof(&selection, &path)
+            .unwrap()
+            .unwrap();
+        proof.validate(&selection).unwrap();
+        let thread =
+            json!({"selection":selection,"accessMode":"approval","interactionMode":"build"});
+        let policy = crate::composer_policy::Policy::parse_with_effort_proof(
+            &thread,
+            crate::composer_policy::Origin::Ordinary,
+            Some(&proof),
+        )
+        .unwrap();
+        policy.preflight().unwrap();
+        assert_eq!(policy.codex_speed(), Some("priority"));
+        for speed in [
+            json!("default"),
+            json!("fast"),
+            json!(" priority "),
+            json!(false),
+            Value::Null,
+        ] {
+            let mut changed = selection.clone();
+            changed["speed"] = speed;
+            assert!(proof.validate(&changed).is_err());
+            if !changed["speed"].is_null() {
+                assert!(catalog.codex_effort_proof(&changed, &path).is_err());
+            }
+        }
+        let mut speed_only = selection.clone();
+        speed_only.as_object_mut().unwrap().remove("effort");
+        assert!(proof.validate(&speed_only).is_err());
+        let speed_proof = catalog
+            .codex_effort_proof(&speed_only, &path)
+            .unwrap()
+            .unwrap();
+        speed_proof.validate(&speed_only).unwrap();
+        catalog
+            .jobs
+            .get_mut("trusted-private-job")
+            .unwrap()
+            .cancelled
+            .store(true, Ordering::Release);
+        assert!(proof.validate(&selection).is_err());
+        assert!(speed_proof.validate(&speed_only).is_err());
+        assert!(policy.preflight().is_err());
     }
 }

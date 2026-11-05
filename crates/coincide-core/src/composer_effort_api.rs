@@ -1,4 +1,4 @@
-//! Trusted Engine-owned effort proof lookup. No client-supplied proof or refresh.
+//! Trusted Engine-owned effort/speed proof lookup. No client-supplied proof or refresh.
 use super::*;
 impl Engine {
     pub(super) fn composer_codex_executable(&self) -> Result<PathBuf> {
@@ -13,14 +13,14 @@ impl Engine {
                     .map(PathBuf::from)
             })
             .context(
-                "Configure and explicitly refresh the Codex model catalog before choosing effort",
+                "Configure and explicitly refresh the Codex model catalog before choosing effort/speed",
             )
     }
     pub(super) fn composer_effort_proof(
         &self,
         selection: &Value,
     ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
-        if selection["effort"].is_null() {
+        if selection["effort"].is_null() && selection["speed"].is_null() {
             return Ok(None);
         }
         self.model_catalog
@@ -30,11 +30,17 @@ impl Engine {
         &self,
         params: &Value,
     ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
-        self.composer_effort_proof(&json!({"provider":params["provider"],"modelID":params.get("model").unwrap_or(&json!("default")),"accountID":params["accountId"],"effort":params["effort"]}))
+        self.composer_effort_proof(&json!({"provider":params["provider"],"modelID":params.get("model").unwrap_or(&json!("default")),"accountID":params["accountId"],"effort":params["effort"],"speed":params["speed"]}))
     }
     pub(super) fn composer_effort_capability(&self, selection: &Value) -> Value {
         match self.composer_codex_executable() {
             Ok(executable) => self.model_catalog.effort_capability(selection, &executable),
+            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+        }
+    }
+    pub(super) fn composer_speed_capability(&self, selection: &Value) -> Value {
+        match self.composer_codex_executable() {
+            Ok(executable) => self.model_catalog.speed_capability(selection, &executable),
             Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
         }
     }

@@ -20,6 +20,8 @@ mod acp;
 mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "codex_speed.rs"]
+mod codex_speed;
 #[path = "codex_steering.rs"]
 pub(crate) mod codex_steering;
 #[path = "provider_cursor.rs"]
@@ -439,6 +441,7 @@ fn run(
         policy.validate_launch_executable(&launch.executable)?;
     }
     let mut capture = usage_capture::Capture::default();
+    let mut service_tier = codex_speed::History::default();
     let image_paths = images
         .iter()
         .map(|image| image.path().to_path_buf())
@@ -567,6 +570,12 @@ fn run(
                                 .as_object_mut()
                                 .unwrap()
                                 .extend(fields.as_object().unwrap().clone());
+                        }
+                        if let Some(policy) = &policy {
+                            service_tier.adopt(id, &frame["result"])?;
+                            if let Some(tier) = service_tier.request(policy.codex_speed()) {
+                                params["serviceTier"] = json!(tier);
+                            }
                         }
                         transport.write(&request(3, "turn/start", params))?;
                     }

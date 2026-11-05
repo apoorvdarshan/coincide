@@ -1,5 +1,5 @@
 //! Explicit, read-only model discovery. Static runtime support remains separate:
-//! Reported speeds stay informational; private Codex effort proofs are bound to
+//! Private Codex effort/speed proofs are bound to
 //! the exact latest model-list job and configured executable metadata.
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -345,9 +345,17 @@ fn parse_model(entry: &Value) -> Result<Option<Value>> {
         ensure!(values.len() <= 32, "Too many model service tiers");
         for value in values {
             let id = text_field(value, "id", 128)?.context("Invalid model service tier")?;
-            speeds.push(json!({"id":id,"name":text_field(value,"name",256)?.unwrap_or(id),"detail":text_field(value,"description",2048)?}));
+            if id != "default" && !speeds.iter().any(|row: &Value| row["id"] == id) {
+                speeds.push(json!({"id":id,"name":text_field(value,"name",256)?.unwrap_or(id),"detail":text_field(value,"description",2048)?}));
+            }
         }
-    } else if let Some(values) = entry.get("additionalSpeedTiers") {
+    }
+    if speeds.is_empty()
+        && entry
+            .get("serviceTiers")
+            .is_none_or(|values| values.as_array().is_some_and(Vec::is_empty))
+        && let Some(values) = entry.get("additionalSpeedTiers")
+    {
         let values = values.as_array().context("Invalid model speed tiers")?;
         ensure!(values.len() <= 32, "Too many model speed tiers");
         for id in values {
@@ -356,7 +364,9 @@ fn parse_model(entry: &Value) -> Result<Option<Value>> {
                 !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control),
                 "Invalid model speed tier"
             );
-            speeds.push(json!({"id":id,"name":id,"detail":null}));
+            if id != "default" && !speeds.iter().any(|row: &Value| row["id"] == id) {
+                speeds.push(json!({"id":id,"name":id,"detail":null}));
+            }
         }
     }
     let supports_images = if let Some(values) = entry.get("inputModalities") {
@@ -1048,5 +1058,37 @@ sleep 5
         assert_eq!(first["accountID"], "default");
         assert_eq!(first["state"], "loading");
         // Drop cancels the fixture job. No user/provider process is involved.
+    }
+}
+
+#[cfg(test)]
+mod speed_metadata_tests {
+    use super::*;
+    #[test]
+    fn speed_choices_filter_standard_deduplicate_and_preserve_modern_precedence() {
+        let parse = |extra: Value| {
+            let mut row = json!({"model":"reported"});
+            row.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            parse_model(&row).unwrap().unwrap()["reportedSpeeds"].clone()
+        };
+        assert_eq!(
+            parse(
+                json!({"serviceTiers":[{"id":"default"},{"id":"priority","name":"Fast"},{"id":"priority","name":"duplicate"}],"additionalSpeedTiers":["ultrafast"]})
+            ),
+            json!([{"id":"priority","name":"Fast","detail":null}])
+        );
+        assert_eq!(
+            parse(
+                json!({"serviceTiers":[],"additionalSpeedTiers":["default","priority","priority"]})
+            ),
+            json!([{"id":"priority","name":"priority","detail":null}])
+        );
+        assert_eq!(
+            parse(json!({"serviceTiers":[{"id":"default"}],"additionalSpeedTiers":["priority"]})),
+            json!([])
+        );
+        assert!(parse_model(&json!({"model":"reported","serviceTiers":false,"additionalSpeedTiers":["priority"]})).is_err());
     }
 }

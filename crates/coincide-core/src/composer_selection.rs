@@ -14,13 +14,13 @@ pub fn capabilities() -> Value {
                 "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
             "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"requiresBuildMode":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
             "effort":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported effort choices."}else{"Reasoning effort is not connected for this provider."}},
-            "speed":{"supported":false,"reason":"This runtime does not apply speed selections."},
+            "speed":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported speed choices."}else{"Speed is not connected for this provider."}},
             "accessModes":if id=="codex"{json!(["approval","fullAccess"])}else{json!(["approval"])},"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
             "modesOrdinaryThreadsOnly":id=="codex",
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();
     json!({"provenance":"static_runtime_contract","authenticationChecked":false,"modelsDiscovered":false,
-        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false})
+        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false,"repairSpeedClearAvailable":false})
 }
 
 pub fn default_account(value: &Value) -> bool {
@@ -61,9 +61,15 @@ pub fn validate_selection(value: &Value) -> Result<()> {
             .as_str()
             .context("Model ID must be text")?,
     )?;
+    let speed = &thread["selection"]["speed"];
     ensure!(
-        thread["selection"]["speed"].is_null(),
-        "Speed is unsupported; selection was not changed"
+        speed.is_null()
+            || (provider == "codex"
+                && speed.as_str().is_some_and(|value| !value.is_empty()
+                    && value.len() <= 128
+                    && value.trim() == value
+                    && !value.chars().any(char::is_control))),
+        "Speed is supported only for an explicit Codex model with advertised choices"
     );
     let effort = &thread["selection"]["effort"];
     ensure!(
@@ -175,7 +181,6 @@ pub(crate) fn select_with_proofs(
         )),
         "Selection request contains unsupported options"
     );
-    ensure!(params["speed"].is_null(), "Speed is unsupported");
     let provider = params["provider"]
         .as_str()
         .context("Provider must be text")?;
@@ -198,6 +203,10 @@ pub(crate) fn select_with_proofs(
         current["selection"]["effort"].is_null() || fields.contains_key("effort"),
         "Choose effort explicitly; an existing effort cannot be silently cleared"
     );
+    ensure!(
+        current["selection"]["speed"].is_null() || fields.contains_key("speed"),
+        "Choose speed explicitly; an existing speed cannot be silently cleared"
+    );
     let mut selection = current["selection"].clone();
     if params["effort"].is_null() {
         if !current["selection"]["effort"].is_null() {
@@ -205,6 +214,14 @@ pub(crate) fn select_with_proofs(
         }
     } else {
         selection["effort"] = params["effort"].clone();
+    }
+
+    if params["speed"].is_null() {
+        if !current["selection"]["speed"].is_null() {
+            selection.as_object_mut().unwrap().remove("speed");
+        }
+    } else {
+        selection["speed"] = params["speed"].clone();
     }
 
     selection["provider"] = json!(provider);
@@ -247,14 +264,19 @@ pub fn launch_selection(selection: &Value) -> Result<Value> {
 /// Explicit ordinary-thread repair: remove only saved effort, preserving every
 /// other field and mode. This never authorizes a new effort or provider change.
 pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Value> {
+    repair_clear_option(params, current, "effort")
+}
+pub(crate) fn repair_clear_speed(params: &Value, current: &Value) -> Result<Value> {
+    repair_clear_option(params, current, "speed")
+}
+fn repair_clear_option(params: &Value, current: &Value, option: &str) -> Result<Value> {
     ensure!(
         current["rustBotContext"].is_null() && current["botID"].is_null(),
-        "Bot selection is fixed; effort cannot be repaired"
+        "Bot selection is fixed; options cannot be repaired"
     );
     ensure!(
-        !current["selection"]["effort"].is_null()
-            && params.get("effort").is_some_and(Value::is_null),
-        "Explicit effort: null is required to clear saved effort"
+        !current["selection"][option].is_null() && params.get(option).is_some_and(Value::is_null),
+        "Explicit null is required to clear the saved option"
     );
     let fields = params
         .as_object()
@@ -277,12 +299,23 @@ pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Val
         ("provider", "provider"),
         ("model", "modelID"),
         ("accountId", "accountID"),
-        ("speed", "speed"),
+        (
+            if option == "effort" {
+                "speed"
+            } else {
+                "effort"
+            },
+            if option == "effort" {
+                "speed"
+            } else {
+                "effort"
+            },
+        ),
     ] {
         if let Some(value) = fields.get(parameter) {
             ensure!(
                 value == &current["selection"][field],
-                "Effort repair cannot change other selection fields"
+                "Option repair cannot change other selection fields"
             );
         }
     }
@@ -290,7 +323,7 @@ pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Val
         if let Some(value) = fields.get(mode) {
             ensure!(
                 value == &current[mode],
-                "Effort repair cannot change access or interaction mode"
+                "Option repair cannot change access or interaction mode"
             );
         }
     }
@@ -298,7 +331,7 @@ pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Val
     repaired["selection"]
         .as_object_mut()
         .context("Invalid saved selection")?
-        .remove("effort");
+        .remove(option);
     validate_thread(&repaired)?;
     Ok(repaired["selection"].clone())
 }

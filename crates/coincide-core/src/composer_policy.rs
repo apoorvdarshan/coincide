@@ -74,6 +74,7 @@ pub struct Policy {
     model: Option<String>,
     bot: bool,
     effort: Option<String>,
+    speed: Option<String>,
     effort_proof: Option<crate::model_catalog::CodexEffortProof>,
 }
 impl Policy {
@@ -82,8 +83,8 @@ impl Policy {
     /// at their existing trusted Engine boundaries before launch.
     pub fn parse(thread: &Value, origin: Origin) -> Result<Self> {
         ensure!(
-            thread["selection"]["effort"].is_null(),
-            "Reasoning effort requires a trusted private model catalog proof"
+            thread["selection"]["effort"].is_null() && thread["selection"]["speed"].is_null(),
+            "Effort/speed requires a trusted private model catalog proof"
         );
         Self::parse_with_effort_proof(thread, origin, None)
     }
@@ -121,8 +122,8 @@ impl Policy {
             || !thread["botID"].is_null();
         if bot {
             ensure!(
-                thread["selection"]["effort"].is_null(),
-                "Frozen bot effort is fixed and unsupported"
+                thread["selection"]["effort"].is_null() && thread["selection"]["speed"].is_null(),
+                "Frozen bot effort/speed is fixed and unsupported"
             );
             ensure!(
                 access == Access::Approval && interaction == Interaction::Build,
@@ -155,6 +156,7 @@ impl Policy {
         }
         Ok(Self {
             effort: thread["selection"]["effort"].as_str().map(str::to_owned),
+            speed: thread["selection"]["speed"].as_str().map(str::to_owned),
             effort_proof: proof.cloned(),
             access,
             interaction,
@@ -162,6 +164,9 @@ impl Policy {
             model,
             bot,
         })
+    }
+    pub(crate) fn codex_speed(&self) -> Option<&str> {
+        self.speed.as_deref()
     }
     pub fn require_codex(&self) -> Result<()> {
         ensure!(
@@ -171,9 +176,9 @@ impl Policy {
         Ok(())
     }
     fn validate_effort_proof(&self) -> Result<()> {
-        if self.effort.is_some() {
+        if self.effort.is_some() || self.speed.is_some() {
             let proof = self.effort_proof.as_ref().context(
-                "Refresh the exact Codex model catalog before applying reasoning effort",
+                "Refresh the exact Codex model catalog before applying reasoning effort or speed",
             )?;
             proof.validate_executable_for_policy()?;
         }
@@ -199,7 +204,7 @@ impl Policy {
         Ok(())
     }
     /// Exact turn/start policy fields only. Thread creation/resume parameters,
-    /// text/images and account selection are separate; speed remains unsupported.
+    /// text/images and account selection are separate.
     pub fn codex_turn_fields(
         &self,
         source_thread_id: &str,
