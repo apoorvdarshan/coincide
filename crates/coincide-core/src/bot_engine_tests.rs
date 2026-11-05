@@ -230,7 +230,7 @@ write({'id':r['id'],'result':{'thread':{'id':'fixture-bot-session'}}})
 r=read();assert r['method']=='turn/start';assert 'Current user request' not in r['params']['input'][0]['text'] or 'fork turn' in r['params']['input'][0]['text']
 write({'id':r['id'],'result':{'turn':{'id':'turn'}}})
 write({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':'Fixture answer'}})
-write({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
+write({'method':'turn/completed','params':{'threadId':'fixture-bot-session','turn':{'id':'turn','status':'completed'}}})
 sys.stdin.readline()
 "#;
 #[cfg(unix)]

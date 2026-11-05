@@ -66,7 +66,7 @@ r=read();assert r['method']=='turn/start';p=r['params']
 assert p['model']=='fixture-model' and p['approvalPolicy']=='untrusted' and p['sandboxPolicy']=={'type':'readOnly'}
 assert p['input'][0]['text']=='fixture user prompt'
 write({'id':r['id'],'result':{'turn':{'id':'turn'}}})
-write({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
+write({'method':'turn/completed','params':{'threadId':'fixture-session','turn':{'id':'turn','status':'completed'}}})
 sys.stdin.readline()
 "#;
 #[test]

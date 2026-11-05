@@ -28,12 +28,26 @@ pub(crate) struct Snapshot {
     outcome: String,
 }
 impl Capture {
-    pub(crate) fn bind_thread(&mut self, id: &str) {
+    pub(crate) fn bind_thread(&mut self, id: &str) -> bool {
+        if self.thread.is_some() {
+            return false;
+        }
         self.thread = SourceId::parse(&json!(id));
+        self.thread.is_some()
     }
-    pub(crate) fn bind_turn(&mut self, id: &Value) {
+    pub(crate) fn bind_turn(&mut self, id: &Value) -> bool {
+        if self.thread.is_none() || self.turn.is_some() || self.finished {
+            return false;
+        }
         self.turn = SourceId::parse(id);
-        self.raw = None;
+        self.turn.is_some()
+    }
+    pub(crate) fn matches_completion(&self, params: &Value) -> bool {
+        !self.finished
+            && self.thread.is_some()
+            && self.turn.is_some()
+            && SourceId::parse(&params["threadId"]) == self.thread
+            && SourceId::parse(&params["turn"]["id"]) == self.turn
     }
     pub(crate) fn update(&mut self, params: &Value) {
         if self.finished
@@ -50,12 +64,7 @@ impl Capture {
         }
     }
     pub(crate) fn complete(&mut self, params: &Value) -> Option<Snapshot> {
-        if self.finished
-            || self.thread.is_none()
-            || self.turn.is_none()
-            || SourceId::parse(&params["threadId"]) != self.thread
-            || SourceId::parse(&params["turn"]["id"]) != self.turn
-        {
+        if !self.matches_completion(params) {
             return None;
         }
         let outcome = match params["turn"]["status"].as_str()? {

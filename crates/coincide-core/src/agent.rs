@@ -437,7 +437,10 @@ fn run(
                         let id = frame["result"]["thread"]["id"]
                             .as_str()
                             .context("Codex returned no thread ID")?;
-                        capture.bind_thread(id);
+                        ensure!(
+                            capture.bind_thread(id),
+                            "Codex returned an invalid or duplicate thread identity"
+                        );
                         events.send(Event::Session(id.into()))?;
                         transport.write(&request(
                             3,
@@ -445,12 +448,21 @@ fn run(
                             turn_params(id, &launch, &image_paths),
                         ))?;
                     }
-                    3 => capture.bind_turn(&frame["result"]["turn"]["id"]),
+                    3 => ensure!(
+                        capture.bind_turn(&frame["result"]["turn"]["id"]),
+                        "Codex returned a missing, invalid or duplicate turn identity"
+                    ),
                     _ => {}
                 }
                 stage += 1;
+            } else if frame["id"].as_u64().is_some_and(|id| (1..=3).contains(&id))
+                && frame.get("result").is_some()
+            {
+                bail!("Codex returned a duplicate or out-of-order startup response");
             } else if frame["method"] == "turn/completed" {
-                ensure!(stage >= 3, "Codex completed a turn before it was started");
+                if !capture.matches_completion(&frame["params"]) {
+                    continue;
+                }
                 if let Some(snapshot) = capture.complete(&frame["params"])
                     && let Ok(mut output) = usage.lock()
                 {
