@@ -6,8 +6,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 fn main() -> Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let cmd = args.first().map(String::as_str).unwrap_or("help");
+    let invocation =
+        Invocation::parse(std::env::args().skip(1).collect()).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(2);
+        });
+    let mut args = invocation.args.clone();
+    let cmd = args[0].clone();
+    let cmd = cmd.as_str();
     let data = control::data_directory()?;
     if cmd == "serve" {
         let engine = Arc::new(Mutex::new(Engine::new(Store::open(
@@ -25,6 +31,118 @@ fn main() -> Result<()> {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
         return Ok(());
+    }
+    let socket = data.join("control.sock");
+    if matches!(
+        cmd,
+        "open"
+            | "read"
+            | "fork"
+            | "send"
+            | "stop"
+            | "provider"
+            | "pending"
+            | "answer"
+            | "browser"
+            | "draft"
+            | "archive"
+            | "restore"
+            | "approve"
+            | "decline"
+            | "attach"
+            | "detach"
+            | "git-status"
+            | "git-diff"
+            | "files"
+            | "file"
+            | "wait"
+    ) || (cmd == "status" && args.len() > 1)
+    {
+        let threads = request_result(&socket, "threads.list", json!({"includeArchived":true}))?;
+        args[1] = resolve_thread(
+            &args[1],
+            &threads,
+            std::env::var("COINCIDE_THREAD_ID").ok().as_deref(),
+        )?;
+    }
+    if cmd == "threads" {
+        let mut threads = request_result(
+            &socket,
+            "threads.list",
+            json!({"query":args.get(1).map(String::as_str).unwrap_or(""),"includeArchived":!invocation.active}),
+        )?;
+        let project = if invocation.chats {
+            Some("00000000-0000-0000-0000-000000000000".to_owned())
+        } else if let Some(name) = &invocation.project {
+            Some(project_id(
+                name,
+                &request_result(&socket, "projects.list", json!({}))?,
+            )?)
+        } else {
+            None
+        };
+        let status = if invocation.running {
+            request_result(&socket, "app.status", json!({}))?
+        } else {
+            json!({})
+        };
+        let running = if invocation.running {
+            Some(
+                status["running"]
+                    .as_array()
+                    .context("Invalid running thread list")?,
+            )
+        } else {
+            None
+        };
+        threads
+            .as_array_mut()
+            .context("Invalid thread list")?
+            .retain(|thread| {
+                project
+                    .as_ref()
+                    .is_none_or(|id| thread["project_id"].as_str() == Some(id.as_str()))
+                    && running.is_none_or(|ids| ids.iter().any(|id| id == &thread["id"]))
+            });
+        return emit_result(threads);
+    }
+    if cmd == "read" {
+        let mut params = json!({"threadId":args[1],"itemLimit":invocation.count});
+        if let Some(offset) = invocation.offset {
+            params["itemOffset"] = json!(offset);
+        }
+        return output(control::request(
+            &socket,
+            &json!({"id":1,"method":"threads.read","params":params}),
+        )?);
+    }
+    if cmd == "wait" {
+        return wait_for_thread(&socket, &args[1], invocation.timeout);
+    }
+    if cmd == "send" && invocation.wait {
+        request_result(
+            &socket,
+            "agent.send",
+            json!({"threadId":args[1],"text":args[2]}),
+        )?;
+        return wait_for_thread(&socket, &args[1], invocation.timeout);
+    }
+    if cmd == "status" && args.len() > 1 {
+        let transcript = request_result(
+            &socket,
+            "threads.read",
+            json!({"threadId":args[1],"itemLimit":100}),
+        )?;
+        let pending = request_result(&socket, "agent.pending", json!({"threadId":args[1]}))?;
+        let status = request_result(&socket, "app.status", json!({}))?;
+        let running = status["running"]
+            .as_array()
+            .context("Invalid running thread list")?
+            .iter()
+            .any(|id| id == &args[1]);
+        return emit_result(
+            json!({"threadID":args[1],"running":running,"pending":pending,"transcript":transcript}),
+        );
     }
     let argument = |n: usize| {
         args.get(n)
@@ -169,7 +287,7 @@ fn main() -> Result<()> {
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/done, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }
@@ -229,4 +347,241 @@ fn output(response: Value) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct Invocation {
+    args: Vec<String>,
+    project: Option<String>,
+    chats: bool,
+    running: bool,
+    active: bool,
+    count: u64,
+    offset: Option<u64>,
+    wait: bool,
+    timeout: std::time::Duration,
+}
+impl Invocation {
+    fn parse(raw: Vec<String>) -> Result<Self> {
+        let command = raw.first().map(String::as_str).unwrap_or("help");
+        let (minimum, maximum) = match command {
+            "help" | "serve" | "quit" | "capabilities" | "projects" | "providers" | "api" => (0, 0),
+            "status" | "threads" => (0, 1),
+            "read" | "open" | "new" | "fork" | "stop" | "pending" | "archive" | "restore"
+            | "wait" | "git-status" => (1, 1),
+            "git-diff" | "files" => (1, 2),
+            "attach" | "detach" | "send" | "draft" | "approve" | "decline" | "browser" => (2, 2),
+            "provider" => (2, 3),
+            "answer" => (3, 3),
+            "file" => (2, 3),
+            _ => bail!("Unknown command; use coincide-rs help"),
+        };
+        let mut parsed = Self {
+            args: vec![command.to_owned()],
+            project: None,
+            chats: false,
+            running: false,
+            active: false,
+            count: 100,
+            offset: None,
+            wait: false,
+            timeout: std::time::Duration::from_secs(1800),
+        };
+        let mut args = raw.iter().skip(1);
+        let mut literal = false;
+        let mut seen = std::collections::HashSet::new();
+        while let Some(arg) = args.next() {
+            if !literal && arg == "--" {
+                literal = true;
+                continue;
+            }
+            if !literal && arg.starts_with('-') {
+                anyhow::ensure!(seen.insert(arg.clone()), "Duplicate option {arg}");
+                let value =
+                    |args: &mut std::iter::Skip<std::slice::Iter<'_, String>>| -> Result<String> {
+                        args.next()
+                            .filter(|v| !v.starts_with("--"))
+                            .cloned()
+                            .with_context(|| format!("Missing value for {arg}"))
+                    };
+                match (command, arg.as_str()) {
+                    ("threads", "--project") => parsed.project = Some(value(&mut args)?),
+                    ("threads", "--chats") => parsed.chats = true,
+                    ("threads", "--running") => parsed.running = true,
+                    ("threads", "--active") => parsed.active = true,
+                    ("threads", "--archived") => {}
+                    ("read", "--count") => {
+                        parsed.count = value(&mut args)?
+                            .parse()
+                            .context("Count must be an integer")?;
+                        anyhow::ensure!(parsed.count <= 1000, "Count must be at most 1000");
+                    }
+                    ("read", "--offset") => {
+                        parsed.offset = Some(
+                            value(&mut args)?
+                                .parse()
+                                .context("Offset must be an integer")?,
+                        )
+                    }
+                    ("send", "--wait") => parsed.wait = true,
+                    ("send" | "wait", "--timeout") => {
+                        let seconds: f64 = value(&mut args)?
+                            .parse()
+                            .context("Timeout must be seconds")?;
+                        anyhow::ensure!(
+                            seconds.is_finite() && seconds > 0.0 && seconds <= 86400.0,
+                            "Timeout must be greater than zero and at most 86400 seconds"
+                        );
+                        parsed.timeout = std::time::Duration::from_secs_f64(seconds.max(0.001));
+                    }
+                    _ => bail!("Unknown option {arg} for {command}"),
+                }
+            } else {
+                parsed.args.push(arg.clone());
+            }
+        }
+        let count = parsed.args.len() - 1;
+        anyhow::ensure!(
+            (minimum..=maximum).contains(&count),
+            "Wrong argument count for {command}"
+        );
+        anyhow::ensure!(
+            !(parsed.chats && parsed.project.is_some()),
+            "Use --chats or --project, not both"
+        );
+        anyhow::ensure!(
+            !(parsed.active && seen.contains("--archived")),
+            "Use --active or --archived, not both"
+        );
+        anyhow::ensure!(
+            !(command == "send" && seen.contains("--timeout") && !parsed.wait),
+            "--timeout needs --wait on send"
+        );
+        Ok(parsed)
+    }
+}
+
+fn request_result(socket: &std::path::Path, method: &str, params: Value) -> Result<Value> {
+    let response = control::request(socket, &json!({"id":1,"method":method,"params":params}))?;
+    if let Some(error) = response.get("error") {
+        bail!("{method}: {}", error["message"]);
+    }
+    response
+        .get("result")
+        .cloned()
+        .context("Control response has no result")
+}
+fn resolve_thread(name: &str, threads: &Value, current: Option<&str>) -> Result<String> {
+    let entries = threads.as_array().context("Invalid thread list")?;
+    let target = if name == "this" {
+        let current =
+            current.context("this requires COINCIDE_THREAD_ID from the launching thread")?;
+        uuid::Uuid::parse_str(current).context("COINCIDE_THREAD_ID must be a UUID")?;
+        current
+    } else {
+        name
+    };
+    if let Ok(id) = uuid::Uuid::parse_str(target) {
+        return entries
+            .iter()
+            .find_map(|thread| {
+                let text = thread["id"].as_str()?;
+                (uuid::Uuid::parse_str(text).ok() == Some(id)).then(|| text.to_owned())
+            })
+            .context("Thread ID not found");
+    }
+    let prefix = target.len() >= 4 && target.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
+    let by_id: Vec<_> = entries
+        .iter()
+        .filter(|thread| {
+            prefix
+                && thread["id"].as_str().is_some_and(|id| {
+                    id.to_ascii_lowercase()
+                        .starts_with(&target.to_ascii_lowercase())
+                })
+        })
+        .collect();
+    let matches: Vec<_> = if by_id.is_empty() {
+        entries
+            .iter()
+            .filter(|thread| thread["title"].as_str() == Some(target))
+            .collect()
+    } else {
+        by_id
+    };
+    anyhow::ensure!(
+        matches.len() == 1,
+        "Thread reference is missing or ambiguous; use its exact ID"
+    );
+    Ok(matches[0]["id"]
+        .as_str()
+        .context("Thread has no ID")?
+        .to_owned())
+}
+fn project_id(name: &str, projects: &Value) -> Result<String> {
+    let matches: Vec<_> = projects
+        .as_array()
+        .context("Invalid project list")?
+        .iter()
+        .filter(|project| {
+            project["id"]
+                .as_str()
+                .is_some_and(|id| id.eq_ignore_ascii_case(name))
+                || project["name"].as_str() == Some(name)
+                || project["path"].as_str() == Some(name)
+        })
+        .collect();
+    anyhow::ensure!(
+        matches.len() == 1,
+        "Project reference is missing or ambiguous; use its exact ID"
+    );
+    Ok(matches[0]["id"]
+        .as_str()
+        .context("Project has no ID")?
+        .to_owned())
+}
+fn emit_result(value: Value) -> Result<()> {
+    output(json!({"id":1,"result":value}))
+}
+fn wait_for_thread(
+    socket: &std::path::Path,
+    thread: &str,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        let transcript = request_result(
+            socket,
+            "threads.read",
+            json!({"threadId":thread,"itemLimit":100}),
+        )?;
+        let pending = request_result(socket, "agent.pending", json!({"threadId":thread}))?;
+        let status = request_result(socket, "app.status", json!({}))?;
+        let pending = pending.as_array().context("Invalid pending request list")?;
+        let running = status["running"]
+            .as_array()
+            .context("Invalid running thread list")?
+            .iter()
+            .any(|id| id.as_str() == Some(thread));
+        let (state, code) = if !pending.is_empty() {
+            ("needsInput", 3)
+        } else if !running {
+            ("done", 0)
+        } else if started.elapsed() >= timeout {
+            ("timedOut", 4)
+        } else {
+            std::thread::sleep(
+                std::time::Duration::from_millis(100)
+                    .min(timeout.saturating_sub(started.elapsed())),
+            );
+            continue;
+        };
+        emit_result(
+            json!({"threadID":thread,"state":state,"transcript":transcript,"pending":pending,"running":running}),
+        )?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
 }
