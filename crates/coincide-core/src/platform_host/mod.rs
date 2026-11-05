@@ -1,5 +1,6 @@
-//! Portable host policy. No registration, process launch, power mutation or data writes.
+//! Portable host policy and explicit opt-in scoped idle sleep backends.
 //! Native adapters must report verified capabilities; a plan is not a running host.
+pub mod inhibitor;
 pub mod notifications;
 pub mod power;
 
