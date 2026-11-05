@@ -595,7 +595,12 @@ impl Coincide {
             return;
         }
         // Keep terminal control sequences (Ctrl+N/F etc.) in the PTY.
-        if self.terminal_focus.is_focused(window) {
+        if self
+            .terminal_visible_thread
+            .as_ref()
+            .and_then(|id| self.terminal_workspaces.get(id))
+            .is_some_and(|workspace| workspace.read(cx).is_focused(window))
+        {
             return;
         }
         match key.key.as_str() {
