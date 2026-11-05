@@ -141,7 +141,9 @@ private:
         } catch (...) {writer_failed_ = true; cv_.notify_one();}
     }
     void stop_process() noexcept {
-        stop_writer_ = true; write_cv_.notify_one();
+        // The writer's unbounded wait checks this predicate under write_mutex_. Updating it
+        // under the same mutex prevents a notification between that check and wait registration.
+        {std::lock_guard lock(write_mutex_); stop_writer_ = true;} write_cv_.notify_one();
         if (process_) process_->stop();
         if (writer_.joinable()) writer_.join(); process_.reset(); live_.reset();
         {std::lock_guard lock(write_mutex_); writes_.clear(); write_bytes_ = 0;}
@@ -209,7 +211,7 @@ private:
         }
     }
     Object launch(const CodexTurn& turn, bool probe) {
-        stop_process(); stop_writer_ = false; session_reported_ = false;
+        stop_process(); {std::lock_guard lock(write_mutex_); stop_writer_ = false;} session_reported_ = false;
         if (!probe && launch_.session_id.empty()) launch_.session_id = uuid();
         const auto custom = !launch_.arguments.empty() && launch_.arguments != std::vector<std::wstring>{L"app-server"};
         auto args = custom ? launch_.arguments : ClaudeProtocol::arguments(turn, launch_.session_id, conversation_exists_, probe);

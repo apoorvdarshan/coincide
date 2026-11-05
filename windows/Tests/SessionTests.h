@@ -201,6 +201,8 @@ inline int session_tests(const std::filesystem::path& report) {
     int checks{};
     const auto check = [&](bool condition, const char* message) {++checks; if (!condition) throw std::runtime_error(message);};
     try {
+        // No success report may escape while a session still owns a worker/child.
+        {
         wchar_t module[32768]{};
         if (!GetModuleFileNameW(nullptr, module, 32768)) throw std::runtime_error("Cannot locate the session fixture");
         const auto launch = [&](const wchar_t* mode = L"normal", const std::string& resume = "") {
@@ -465,6 +467,15 @@ inline int session_tests(const std::filesystem::path& report) {
             check(combined(finished(wrapped),Kind::completed)=="interrupted"&&reads==4,"Wrapped wait/Stop and queued delivery must fetch current context once per actual input");
         }
 
+        bool idle_closed = true;
+        for (unsigned attempt = 0; attempt < 24; ++attempt) {
+            CodexSession idle(launch());
+            std::this_thread::yield();
+            idle.close(); idle.shutdown();
+            idle_closed = idle_closed && !idle.busy() && !idle.send(input("must not restart"));
+        }
+        check(idle_closed, "Closing an unused session must join its idle worker and reject later input without starting a provider");
+        }
         std::ofstream output(report); output << "PASS: " << checks << " Codex session lifecycle checks\n"; return output ? 0 : 2;
     } catch (const winrt::hresult_error& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << winrt::to_string(e.message()) << '\n';}
       catch (const std::exception& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << e.what() << '\n';}

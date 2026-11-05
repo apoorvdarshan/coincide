@@ -65,7 +65,9 @@ public:
 
     // Nonblocking cancellation request. Destruction joins the owned workers after cancelling the child job.
     void close() noexcept {
-        stopping_ = true;
+        // Synchronize the predicate with the writer's unbounded wait. The mutex is
+        // released before notifications, child termination or any worker join.
+        {std::lock_guard lock(outgoing_mutex_); stopping_ = true;}
         incoming_cv_.notify_all(); outgoing_cv_.notify_all();
     }
     void shutdown() noexcept {
@@ -203,7 +205,7 @@ private:
             }
             peer.close(); collect(pending);
         } catch (...) {failure = std::current_exception();}
-        stopping_ = true; outgoing_cv_.notify_all();
+        close();
         if (process) process->stop(); // Unblocks an outstanding WriteFile before joining its worker.
         if (writer.joinable()) writer.join();
         if (!failure) failure = std::make_exception_ptr(RpcError("The agent connection closed"));

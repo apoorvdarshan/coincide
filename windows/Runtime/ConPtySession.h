@@ -60,7 +60,10 @@ public:
     bool running() const noexcept { return running_; }
     DWORD process_id() const noexcept { return process_id_; }
     void stop() noexcept {
-        stopping_ = true;
+        // Pair the predicate transition with write_input's condition-variable mutex.
+        // An atomic alone permits notify to occur between its predicate check and wait.
+        { std::lock_guard lock(input_mutex_); stopping_ = true; }
+        // Never retain input_mutex_ across OS calls or the finish()/shutdown() joins.
         if (stop_event_.get()) SetEvent(stop_event_.get());
         input_cv_.notify_all();
     }

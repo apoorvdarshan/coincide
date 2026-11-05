@@ -73,6 +73,8 @@ inline int connection_tests(const std::filesystem::path& report) {
         bool failed{}; try {(void)future.get();} catch (...) {failed = true;} check(failed, message);
     };
     try {
+        // Every connection, child and worker must finish teardown before PASS is published.
+        {
         wchar_t module[32768]{};
         const auto count = GetModuleFileNameW(nullptr, module, 32768);
         if (!count || count >= 32768) throw std::runtime_error("Cannot locate the RPC fixture");
@@ -122,9 +124,12 @@ inline int connection_tests(const std::filesystem::path& report) {
         connection.shutdown();
         rejects(abandoned, "closing must resolve requests waiting on the host");
 
-        RpcConnection exiting(executable, {L"--rpc-fixture", L"normal"}, cwd);
+        std::atomic<bool> exit_closed{};
+        RpcConnection exiting(executable, {L"--rpc-fixture", L"normal"}, cwd, {}, {}, [&](auto) {exit_closed = true;});
         auto exited = exiting.call("fixture/exit", "{}");
         rejects(exited, "a child exit must fail outstanding requests rather than hang");
+        exiting.shutdown();
+        check(exit_closed, "a natural child exit must join its idle RPC writer and complete host cleanup");
 
         RpcConnection missing(cwd / L"missing-agent.exe", {}, cwd);
         auto missing_call = missing.call("initialize", "{}");
@@ -137,6 +142,14 @@ inline int connection_tests(const std::filesystem::path& report) {
         blocked.shutdown();
         check(std::chrono::steady_clock::now() - stop_start < 5s, "closing must release a blocked writer and terminate its owned job");
 
+        std::atomic<bool> idle_closed{};
+        RpcConnection idle(executable, {L"--rpc-fixture", L"normal"}, cwd, {}, {}, [&](auto) {idle_closed = true;});
+        auto idle_ready = idle.call("fixture/ready", "{}");
+        (void)get(idle_ready);
+        idle.shutdown();
+        check(idle_closed, "explicit idle RPC shutdown must join the writer and finish host cleanup before success");
+        for (auto* value : {&connection, &exiting, &missing, &blocked, &idle}) value->shutdown();
+        }
         std::ofstream output(report);
         output << "PASS: " << checks << " Windows RPC connection checks\n";
         return output ? 0 : 2;

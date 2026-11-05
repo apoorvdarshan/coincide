@@ -102,6 +102,8 @@ inline int claude_tests(const std::filesystem::path& report) {
     using namespace std::chrono_literals; using Kind = SessionEvent::Kind; int checks{};
     const auto check = [&](bool value, const char* message) {++checks; if (!value) throw std::runtime_error(message);};
     try {
+        // Publish PASS only after every session, owned child and worker has been torn down.
+        {
         wchar_t executable[32768]{}; if (!GetModuleFileNameW(nullptr, executable, 32768)) throw std::runtime_error("Cannot locate the Claude fixture");
         const auto launch = [&](const wchar_t* mode = L"normal") {CodexLaunch value; value.executable = executable; value.cwd = value.executable.parent_path(); value.arguments = {L"--claude-session-fixture", mode}; value.interrupt_grace = 100ms;value.fixture_account_reviewed=true; return value;};
         const auto input = [](const char* body = "hello") {CodexTurn value; value.text = body; return value;};
@@ -186,6 +188,10 @@ inline int claude_tests(const std::filesystem::path& report) {
             check(wrapped.queue(input("wrapped original queued draft"),"wrapped-claude-queue")&&wrapped.queued().front().turn.text=="wrapped original queued draft","Claude queued records must retain only the user's original text");wrapped.interrupt();
             check(combined(finished(wrapped),Kind::completed)=="interrupted"&&wrapped.queue_paused(),"Wrapped Claude Stop must retain and pause the original queued draft");check(wrapped.resume_queue(),"The wrapped Claude retained queue still requires explicit resume");const auto wrapped_resumed=finished(wrapped);
             check(!has(wrapped_resumed,Kind::error)&&reads==3&&std::any_of(wrapped_resumed.begin(),wrapped_resumed.end(),[](const auto& event){return event.kind==Kind::input&&event.id=="wrapped-claude-queue"&&event.text=="wrapped original queued draft";}),"Wrapped Claude resume must evaluate current context at delivery while preserving original input identity");
+        }
+        const std::array<ClaudeSession*,5> remaining{&normal,&metadata,&signed_out,&queue,&exiting};
+        for(auto* session:remaining)session->shutdown();
+        check(std::all_of(remaining.begin(),remaining.end(),[](const auto* session){return !session->busy();}),"Claude shutdown must join every remaining worker and stop its owned child before success is reported");
         }
         std::ofstream output(report); output << "PASS: " << checks << " Claude stream-json checks\n"; return output ? 0 : 2;
     } catch (const winrt::hresult_error& error) {std::ofstream(report) << "FAIL: " << winrt::to_string(error.message()) << '\n';}

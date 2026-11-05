@@ -155,6 +155,9 @@ inline int terminal_tests(const std::filesystem::path& report,const std::filesys
             TerminalLaunch value; value.executable = fixture; value.arguments = {L"--terminal-fixture", std::move(mode)};
             value.cwd = directory; value.columns = 500; value.rows = 30; return value;
         };
+        {
+        // Destroy every owned ConPTY/process/thread handle before publishing success.
+        // wait_for_exit alone does not join the monitor thread; teardown is acceptance.
         auto options = launch(L"echo"); options.arguments.push_back(L"literal & | > $(text) 你好");
         auto session = ConPtySession::start(options);
         Result echo;
@@ -219,6 +222,7 @@ inline int terminal_tests(const std::filesystem::path& report,const std::filesys
         rejects([&] {auto rejected = ConPtySession::start(invalid);}, "A terminal cannot disable its output bound");
         invalid = launch(L"wait"); invalid.cwd = directory / "missing-folder";
         rejects([&] {auto rejected = ConPtySession::start(invalid);}, "Invalid terminal folders must fail without a shell or visible fallback");
+        }
         std::ofstream output(report); output << "PASS: " << checks << " native ConPTY terminal checks\n";
         return output ? 0 : 2;
     } catch (const std::exception& error) {

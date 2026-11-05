@@ -85,7 +85,12 @@ public:
         std::lock_guard lock(mutex_);
         auto result = std::move(events_); events_.clear(); event_bytes_ = 0; return result;
     }
-    void close() noexcept { stopping_ = true; cv_.notify_one(); }
+    void close() noexcept {
+        // The idle worker checks this predicate while holding mutex_. Pair the
+        // transition with that same mutex so notification cannot precede its wait.
+        {std::lock_guard lock(mutex_); stopping_ = true;}
+        cv_.notify_one();
+    }
     void shutdown() noexcept { close(); if (worker_.joinable()) worker_.join(); }
 
 private:
