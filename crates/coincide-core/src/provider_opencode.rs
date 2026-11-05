@@ -23,10 +23,20 @@ impl fmt::Display for Stopped {
     }
 }
 impl std::error::Error for Stopped {}
+#[derive(Debug)]
+struct OperationTimedOut;
+impl fmt::Display for OperationTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OpenCode operation timed out")
+    }
+}
+impl std::error::Error for OperationTimedOut {}
+
 struct Runtime<'a> {
     commands: Receiver<Control>,
     queued: VecDeque<Control>,
     events: &'a Sender<Event>,
+    aborted_requests: Vec<thread::JoinHandle<()>>,
     #[cfg(test)]
     request_join_entered: Option<Sender<()>>,
 }
@@ -40,7 +50,9 @@ impl Runtime<'_> {
                     other => self.queued.push_back(other),
                 }
             }
-            ensure!(Instant::now() < deadline, "OpenCode operation timed out");
+            if Instant::now() >= deadline {
+                return Err(OperationTimedOut.into());
+            }
             match receiver.recv_timeout(Duration::from_millis(10)) {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -62,14 +74,19 @@ impl Runtime<'_> {
         })
     }
     /// Request result/Stop is semantic completion, not actual worker exit.
-    /// Join only on the already-background provider thread, including TLS;
-    /// Session::stop and Engine/UI observers remain nonblocking. This does not
-    /// account for the separately owned SSE/stdout/stderr workers below.
+    /// Success joins here; aborted requests remain owned until Runtime Drop,
+    /// after Server/OwnedChild has promptly terminated its process. All joins
+    /// are on the background provider thread; UI/Engine remain nonblocking.
+    /// This does not account for the separately owned SSE/stdout/stderr workers below.
     fn request_with_worker<T: Send + 'static>(
         &mut self,
         limit: Duration,
         work: impl FnOnce() -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        ensure!(
+            self.aborted_requests.is_empty(),
+            "OpenCode aborted HTTP request remains owned; stop this turn before further requests"
+        );
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("coincide-opencode-request".into())
@@ -78,6 +95,15 @@ impl Runtime<'_> {
             })
             .context("OpenCode HTTP request worker could not start")?;
         let result = self.wait(receiver, limit);
+        if result
+            .as_ref()
+            .is_err_and(|error| error.is::<Stopped>() || error.is::<OperationTimedOut>())
+        {
+            // At most one aborted handle: no additional HTTP work is admitted
+            // while ownership is retained. Let Server teardown run FIRST.
+            self.aborted_requests.push(worker);
+            return result;
+        }
         // HTTP's deadline/result delivery does not prove thread/TLS exit.
         // Joined Returned is thread ownership, not a successful request.
         ensure!(
@@ -99,6 +125,22 @@ impl Runtime<'_> {
         self.queued
             .pop_front()
             .or_else(|| self.commands.try_recv().ok())
+    }
+}
+
+impl Drop for Runtime<'_> {
+    fn drop(&mut self) {
+        let mut panicked = false;
+        for worker in std::mem::take(&mut self.aborted_requests) {
+            panicked |= self.join_request_worker(worker).is_err();
+        }
+        // Aborted child panic cannot be silently converted into successful
+        // provider teardown. During an existing unwind the parent is already
+        // Panicked; avoid a double-panic process abort after all joins finish.
+        assert!(
+            !panicked || thread::panicking(),
+            "OpenCode aborted HTTP request worker panicked"
+        );
     }
 }
 
@@ -452,10 +494,13 @@ fn run_inner(
     events: &Sender<Event>,
 ) -> Result<()> {
     let model = model(launch.model.as_deref())?;
+    // Declaration order is ownership-critical: Server (or its local child on
+    // startup error) is destroyed BEFORE Runtime joins aborted HTTP workers.
     let mut runtime = Runtime {
         commands,
         queued: VecDeque::new(),
         events,
+        aborted_requests: Vec::new(),
         #[cfg(test)]
         request_join_entered: None,
     };
