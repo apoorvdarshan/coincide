@@ -886,6 +886,7 @@ mod tests {
         WrongSequence,
         WrongParent,
         WrongDisarm,
+        NoDisarm,
         WrongConsent,
         LostConsent,
         Exited,
@@ -955,13 +956,19 @@ mod tests {
                 ParentMessage::Decline { binding } => Some(HelperMessage::Disarmed {
                     transaction: Some(binding.transaction),
                 }),
-                ParentMessage::Cancel { transaction } => Some(HelperMessage::Disarmed {
-                    transaction: if script.mode == Mode::WrongDisarm {
-                        Some(Uuid::new_v4())
+                ParentMessage::Cancel { transaction } => {
+                    if script.mode == Mode::NoDisarm {
+                        None
                     } else {
-                        transaction
-                    },
-                }),
+                        Some(HelperMessage::Disarmed {
+                            transaction: if script.mode == Mode::WrongDisarm {
+                                Some(Uuid::new_v4())
+                            } else {
+                                transaction
+                            },
+                        })
+                    }
+                }
                 ParentMessage::CleanQuit { mut binding } => {
                     if script.mode == Mode::LostConsent {
                         script.fail_read = true;
@@ -1435,6 +1442,65 @@ mod tests {
                     .script
                     .lock()
                     .unwrap()
+                    .sent
+                    .iter()
+                    .any(|f| matches!(f.body, ParentMessage::CleanQuit { .. }))
+            );
+        }
+    }
+    #[test]
+    fn after_select_or_approval_missing_wire_ack_never_becomes_local_disarm() {
+        for approved in [false, true] {
+            let mut h = Harness::new(Mode::NoDisarm);
+            h.config.timeouts.cancel = Duration::from_millis(25);
+            {
+                let mut script = h.factory.script.lock().unwrap();
+                if approved {
+                    script.allow_ready = false;
+                } else {
+                    script.allow_proposal = false;
+                }
+            }
+            let mut launcher = h.launcher();
+            let mut session = h.start(&mut launcher);
+            let transaction = if approved {
+                let p = proposal(session.as_mut());
+                session.send(ToHelper::Approve(p.clone())).unwrap();
+                until(|| {
+                    h.factory
+                        .script
+                        .lock()
+                        .unwrap()
+                        .sent
+                        .iter()
+                        .any(|f| matches!(f.body, ParentMessage::Approve { .. }))
+                });
+                Some(p.transaction)
+            } else {
+                until(|| !h.factory.script.lock().unwrap().sent.is_empty());
+                None
+            };
+            session.send(ToHelper::Cancel { transaction }).unwrap();
+            {
+                let mut script = h.factory.script.lock().unwrap();
+                script.allow_proposal = true;
+                script.allow_ready = true;
+            }
+            let FromHelper::Failed(reason) = event(session.as_mut()) else {
+                panic!("Missing wire ACK cannot prove Disarmed");
+            };
+            assert!(reason.contains("deadline"));
+            assert!(session.poll().unwrap().is_none());
+            let script = h.factory.script.lock().unwrap();
+            assert!(
+                script
+                    .sent
+                    .iter()
+                    .any(|f| matches!(f.body, ParentMessage::Select { .. }))
+            );
+            assert!(script.sent.iter().any(|f| matches!(f.body, ParentMessage::Cancel { transaction: sent } if sent == transaction)));
+            assert!(
+                !script
                     .sent
                     .iter()
                     .any(|f| matches!(f.body, ParentMessage::CleanQuit { .. }))
