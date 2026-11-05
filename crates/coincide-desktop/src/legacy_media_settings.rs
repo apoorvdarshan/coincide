@@ -267,6 +267,7 @@ pub struct LegacyMediaSettingsPanel {
     render_dirty: bool,
     _subscription: Subscription,
     _poll: Task<()>,
+    closing: bool,
 }
 impl EventEmitter<LegacyMediaSettingsEvent> for LegacyMediaSettingsPanel {}
 impl LegacyMediaSettingsPanel {
@@ -314,6 +315,7 @@ impl LegacyMediaSettingsPanel {
             render_dirty: false,
             _subscription: subscription,
             _poll: poll,
+            closing: false,
         }
     }
     /// Call on actual selection changes, not render frames or panel hide.
@@ -413,6 +415,7 @@ impl LegacyMediaSettingsPanel {
             || !self.awaiting_receipts.is_empty()
     }
     pub fn request_service_shutdown(&mut self) {
+        self.closing = true;
         self.service.request_shutdown();
     }
     pub fn service_shutdown_status(
@@ -436,7 +439,7 @@ impl LegacyMediaSettingsPanel {
         cx.notify();
     }
     fn busy(&self) -> bool {
-        self.pending.is_some() || self.choosing
+        self.closing || self.pending.is_some() || self.choosing
     }
     fn choose(&mut self, cx: &mut Context<Self>) {
         if self.busy() || self.thread_id.is_none() {
@@ -455,7 +458,7 @@ impl LegacyMediaSettingsPanel {
             let result: anyhow::Result<_> = async { Ok(picker.await??) }.await;
             let _=this.update(cx,|this,cx| {
                 this.choosing=false;
-                if revision!=this.revision { cx.notify(); return; }
+                if this.closing || revision!=this.revision { cx.notify(); return; }
                 match result {
                     Ok(Some(paths)) if paths.len()==1=> { this.folder=Some(paths[0].clone()); this.mapping_changed(cx); this.flow.notice="Folder selected. Enter its exact original prefix, then approve mapping and inspect.".into(); },
                     Ok(_)=>this.flow.notice="Folder selection cancelled; nothing was approved.".into(),

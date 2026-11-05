@@ -42,6 +42,11 @@ pub(super) struct ParentMedia {
     epoch: u64,
     pending_render: Option<RenderRequest>,
     freshness: Option<FreshnessCheck>,
+    freshness_task: Option<Task<()>>,
+    freshness_error: Option<String>,
+    recovery_stop_requested: bool,
+    owner_shutdown_requested: bool,
+    shutdown_handoffs: HashSet<ReceiptId>,
     sender: std::sync::mpsc::SyncSender<FreshnessResult>,
     receiver: std::sync::mpsc::Receiver<FreshnessResult>,
     service_acknowledged: HashSet<ReceiptId>,
@@ -70,6 +75,11 @@ impl ParentMedia {
             epoch: 0,
             pending_render: None,
             freshness: None,
+            freshness_task: None,
+            freshness_error: None,
+            recovery_stop_requested: false,
+            owner_shutdown_requested: false,
+            shutdown_handoffs: HashSet::new(),
             sender,
             receiver,
             service_acknowledged: HashSet::new(),
@@ -95,7 +105,99 @@ fn row_intersects(row: Bounds<Pixels>, viewport: Bounds<Pixels>) -> bool {
         && row.right() > viewport.left()
         && row.left() < viewport.right()
 }
+pub(super) struct MediaOwnerShutdownStatus {
+    pub requested: bool,
+    pub service: coincide_core::legacy_media_service::ServiceShutdownStatus,
+    pub panel_inflight: bool,
+    pub panel_retained: usize,
+    pub recovery_pending: usize,
+    pub recovery_worker: coincide_core::agent::WorkerThreadStatus,
+    pub freshness_pending: bool,
+    pub error: Option<String>,
+}
+impl MediaOwnerShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.requested
+            && self.service.ready()
+            && !self.panel_inflight
+            && self.panel_retained == 0
+            && self.recovery_pending == 0
+            && self.recovery_worker == coincide_core::agent::WorkerThreadStatus::Returned
+            && !self.freshness_pending
+            && self.error.is_none()
+    }
+}
 impl Coincide {
+    pub(super) fn request_media_owner_shutdown(&mut self, cx: &mut Context<Self>) {
+        self.media.shutdown_requested = true;
+        if !self.media.owner_shutdown_requested {
+            self.media.owner_shutdown_requested = true;
+            self.invalidate_media_images(cx);
+        }
+        self.media.pending_render = None;
+        self.sync_media_context(cx);
+        self.media
+            .panel
+            .update(cx, |panel, _| panel.request_service_shutdown());
+        self.poll_media_parent(cx);
+    }
+    pub(super) fn poll_media_owner_shutdown(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> MediaOwnerShutdownStatus {
+        self.poll_media_parent(cx);
+        if self.media.shutdown_requested && !self.media.recovery_stop_requested {
+            // Start each retained receipt handoff only once. Existing failed/unknown
+            // writes remain pending; shutdown never automatically replays them.
+            let receipts = self.media.panel.read(cx).retained_receipts();
+            let pending = self
+                .media
+                .owner
+                .pending_receipts()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<HashSet<_>>();
+            for (id, receipt) in receipts {
+                if self.media.owner.durable_ownership(id).is_some() {
+                    self.acknowledge_media_ownership(id, cx);
+                } else if !pending.contains(&id) && self.media.shutdown_handoffs.insert(id) {
+                    if let Err(error) = self.media.owner.take_ownership(id, receipt) {
+                        self.media.status =
+                            format!("Media recovery handoff remains pending: {error:?}");
+                    }
+                }
+            }
+            let panel = self.media.panel.read(cx);
+            if panel.service_shutdown_status().ready()
+                && self
+                    .media
+                    .owner
+                    .shutdown_ready(panel.has_in_flight_work(), panel.retained_receipts().len())
+            {
+                match self.media.owner.request_worker_shutdown() {
+                    Ok(()) => self.media.recovery_stop_requested = true,
+                    Err(error) => {
+                        self.media.freshness_error = Some(format!(
+                            "Media recovery worker shutdown is unconfirmed: {error:?}"
+                        ))
+                    }
+                }
+            }
+        }
+        let panel = self.media.panel.read(cx);
+        MediaOwnerShutdownStatus {
+            requested: self.media.owner_shutdown_requested,
+            service: panel.service_shutdown_status(),
+            panel_inflight: panel.has_in_flight_work(),
+            panel_retained: panel.retained_receipts().len(),
+            recovery_pending: self.media.owner.pending_receipts().len(),
+            recovery_worker: self.media.owner.worker_shutdown_status(),
+            freshness_pending: self.media.freshness_task.is_some()
+                || self.media.freshness.is_some()
+                || self.media.pending_render.is_some(),
+            error: self.media.freshness_error.clone(),
+        }
+    }
     pub(super) fn media_settings_visible(&self) -> bool {
         self.settings_open
             && self.media.opened
@@ -192,7 +294,11 @@ impl Coincide {
         }
     }
     fn start_media_freshness_check(&mut self, cx: &mut Context<Self>) {
-        if self.media.freshness.is_some() {
+        if self.media.close_requested
+            || self.media.shutdown_requested
+            || self.media.freshness.is_some()
+            || self.media.freshness_task.is_some()
+        {
             return;
         }
         let Some(request) = self.media.pending_render.take() else {
@@ -221,44 +327,39 @@ impl Coincide {
         let sender = self.media.sender.clone();
         let thread = request.thread.clone();
         let entries = request.entries.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let result = (|| -> Result<(Value, Vec<DisplayImage>)> {
-                    // Existing loaded-thread metadata only. No media/legacy path IO
-                    // and no Engine lock while decoding or hashing image data.
-                    let current = coincide_core::api::call(
-                        &engine,
-                        "threads.read",
-                        json!({"threadId":thread}),
-                    )?;
-                    let mut images = Vec::new();
-                    let mut seen = HashSet::new();
-                    for entry in entries.iter().take(8) {
-                        if !seen.insert((entry.item_id.clone(), entry.candidate_id.clone())) {
-                            continue;
-                        }
-                        let format = match entry.image.mime_type.as_str() {
-                            "image/png" => ImageFormat::Png,
-                            "image/jpeg" => ImageFormat::Jpeg,
-                            _ => anyhow::bail!(
-                                "Verified historical image has an unsupported normalized format"
-                            ),
-                        };
-                        images.push(DisplayImage {
-                            item: entry.item_id.clone(),
-                            candidate: entry.candidate_id.clone(),
-                            name: entry.image.original_name.clone(),
-                            image: Arc::new(Image::from_bytes(
-                                format,
-                                entry.normalized_bytes.as_ref().clone(),
-                            )),
-                        });
+        self.media.freshness_task = Some(cx.background_executor().spawn(async move {
+            let result = (|| -> Result<(Value, Vec<DisplayImage>)> {
+                // Existing loaded-thread metadata only. No media/legacy path IO
+                // and no Engine lock while decoding or hashing image data.
+                let current =
+                    coincide_core::api::call(&engine, "threads.read", json!({"threadId":thread}))?;
+                let mut images = Vec::new();
+                let mut seen = HashSet::new();
+                for entry in entries.iter().take(8) {
+                    if !seen.insert((entry.item_id.clone(), entry.candidate_id.clone())) {
+                        continue;
                     }
-                    Ok((current, images))
-                })();
-                let _ = sender.send((epoch, result));
-            })
-            .detach();
+                    let format = match entry.image.mime_type.as_str() {
+                        "image/png" => ImageFormat::Png,
+                        "image/jpeg" => ImageFormat::Jpeg,
+                        _ => anyhow::bail!(
+                            "Verified historical image has an unsupported normalized format"
+                        ),
+                    };
+                    images.push(DisplayImage {
+                        item: entry.item_id.clone(),
+                        candidate: entry.candidate_id.clone(),
+                        name: entry.image.original_name.clone(),
+                        image: Arc::new(Image::from_bytes(
+                            format,
+                            entry.normalized_bytes.as_ref().clone(),
+                        )),
+                    });
+                }
+                Ok((current, images))
+            })();
+            let _ = sender.send((epoch, result));
+        }));
         self.media.freshness = Some(FreshnessCheck {
             epoch,
             request,
@@ -346,6 +447,9 @@ impl Coincide {
                 entries,
                 failures,
             } => {
+                if self.media.close_requested || self.media.shutdown_requested {
+                    return;
+                }
                 if self
                     .selected
                     .as_ref()
@@ -417,16 +521,19 @@ impl Coincide {
             if epoch == check.epoch && epoch == self.media.epoch {
                 match result {
                     Ok((stored, images)) => {
-                        let valid = self.selected.as_ref().is_some_and(|thread| {
-                            snapshot_current(
-                                thread,
-                                &check.snapshot,
-                                &check.request.thread,
-                                check.request.revision,
-                                self.media.revision,
-                                self.pending_drafts.contains_key(&check.request.thread),
-                            )
-                        }) && stored == check.snapshot
+                        let valid = !self.media.close_requested
+                            && !self.media.shutdown_requested
+                            && self.selected.as_ref().is_some_and(|thread| {
+                                snapshot_current(
+                                    thread,
+                                    &check.snapshot,
+                                    &check.request.thread,
+                                    check.request.revision,
+                                    self.media.revision,
+                                    self.pending_drafts.contains_key(&check.request.thread),
+                                )
+                            })
+                            && stored == check.snapshot
                             && check
                                 .request
                                 .selection
@@ -485,6 +592,17 @@ impl Coincide {
                         cx.notify();
                     }
                 }
+            }
+        }
+        if self
+            .media
+            .freshness_task
+            .as_ref()
+            .is_some_and(Task::is_ready)
+        {
+            self.media.freshness_task.take();
+            if self.media.freshness.is_some() {
+                self.media.freshness_error = Some("Historical image freshness task finished without its result; ownership is unconfirmed".into());
             }
         }
         self.start_media_freshness_check(cx);
@@ -583,7 +701,7 @@ impl Coincide {
             .child(Button::new("historical-media-back").label("Back to Settings")
                 .disabled(self.media.close_requested||self.media.shutdown_requested)
                 .on_click(cx.listener(|this,_,_,cx|{this.media.opened=false;cx.notify();})))
-            .child(div().p_2().text_sm().child("Keep this app open until image work finishes and receipts are saved to recovery. System/Dock Quit can currently interrupt that protection."))
+            .child(div().p_2().text_sm().child("Keep this app open until image recovery finishes."))
             .when(self.media.close_requested||self.media.shutdown_requested,|view|view.child(div().p_2().child("Closing is paused until image work finishes and every receipt is saved and acknowledged.")))
             .child(div().p_2().text_sm().child(format!("Retained service receipts: {retained} · parent handoffs: {}. {}",pending.len(),self.media.status)))
             .child(Button::new("historical-media-retry-saved").label("Retry saved receipt acknowledgments").disabled(!saved)
