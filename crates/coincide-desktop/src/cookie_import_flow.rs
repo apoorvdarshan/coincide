@@ -91,6 +91,17 @@ fn keep_failure(error: core_cookie::Failure, cleanup: &Mutex<Vec<Box<CleanupCust
         error => error.to_string(),
     }
 }
+trait CleanupWork {
+    fn retry_owned(&mut self) -> bool;
+}
+impl CleanupWork for Box<CleanupCustody> {
+    fn retry_owned(&mut self) -> bool {
+        self.retry()
+    }
+}
+fn retry_owned<T: CleanupWork>(owners: &mut Vec<T>) {
+    owners.retain_mut(|owner| !owner.retry_owned());
+}
 impl Flow {
     pub(crate) fn route_changed(&mut self) {
         self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -191,10 +202,11 @@ impl Flow {
         // Capture only shared custody; failed thread creation cannot drop owners.
         let cleanup = self.cleanup.clone();
         self.cleanup_workers.spawn(move |_| {
-            cleanup
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .retain_mut(|owner| !owner.retry());
+            retry_owned(
+                &mut cleanup
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
         });
     }
     pub(crate) fn close(&mut self) {
@@ -479,5 +491,149 @@ impl BrowserSettings {
             view=view.child(format!("New unselected profile: {} · callback-stored {} · readback-matched {} · expired {} · refused {} · undispatched {}",flow.status.name,flow.status.applied,flow.status.verified,flow.status.expired,flow.status.refused,flow.status.undispatched));
         }
         view.child(flow.status.message.clone()).child("Per-cookie operations are not atomic. Callback completion and readback do not prove disk persistence; interrupted profiles remain marked incomplete/uncertain and never resume automatically.").into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn snapshot() -> ProfileSnapshot {
+        ProfileSnapshot {
+            thread: Uuid::new_v4().to_string(),
+            revision: 0,
+            profiles: Vec::new(),
+            selected: ProfileChoice::Private,
+            open_tabs: 0,
+            persistent_profiles_available: true,
+        }
+    }
+    fn synthetic_plan() -> Plan {
+        let path = std::env::temp_dir().join(format!(
+            "coincide-cookie-flow-test-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        // Build only fixed SQLite bytes via the already-tested core fixture
+        // format; no real browser profiles or credentials are accessed.
+        let seed = include_bytes!("../tests/fixtures/firefox-cookie-flow.sqlite");
+        fs::write(&path, seed).unwrap();
+        let plan = Plan::read(NativeSource::from_native_choice(path.clone()), 1).unwrap();
+        fs::remove_file(path).unwrap();
+        plan
+    }
+    #[::core::prelude::v1::test]
+    fn close_reopen_before_poll_discards_typed_late_preview_and_reservation() {
+        let mut flow = Flow::default();
+        let snap = snapshot();
+        flow.set_snapshot(Some(snap.clone()));
+        let old = flow.context.as_ref().unwrap().clone();
+        flow.route_changed();
+        flow.set_snapshot(Some(snap));
+        assert!(!old.valid());
+        assert!(flow.context.as_ref().unwrap().valid());
+        *flow.mailbox.lock().unwrap() =
+            Some(Completion::Parsed(old.generation, Ok(synthetic_plan())));
+        flow.poll();
+        assert!(flow.plan.is_none());
+        assert!(flow.reserve.is_none());
+        assert!(flow.prepared.is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn explicit_import_captures_reviewed_hosts_and_stale_status_cannot_ack_revision() {
+        let mut flow = Flow::default();
+        flow.set_snapshot(Some(snapshot()));
+        flow.plan = Some(synthetic_plan());
+        flow.selected.insert("example.test".into());
+        flow.request_import("New synthetic profile".into());
+        let request = flow.reserve.take().unwrap();
+        flow.selected.clear();
+        assert_eq!(request.hosts, vec!["example.test"]);
+        let original = flow.context.as_ref().unwrap().clone();
+        let destination = Uuid::new_v4();
+        flow.destination = Some(destination);
+        flow.accept_status(ImportStatus {
+            profile: Some(destination),
+            thread: Uuid::new_v4().to_string(),
+            generation: original.generation,
+            revision: 99,
+            ..Default::default()
+        });
+        assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 0);
+        flow.accept_status(ImportStatus {
+            profile: Some(destination),
+            thread: original.snapshot.thread.clone(),
+            generation: original.generation,
+            revision: 1,
+            ..Default::default()
+        });
+        assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 1);
+        let mut own_snapshot = original.snapshot;
+        own_snapshot.revision = 1;
+        flow.set_snapshot(Some(own_snapshot));
+        assert!(original.valid());
+        flow.route_changed();
+        flow.set_snapshot(Some(snapshot()));
+        let current = flow.context.as_ref().unwrap().generation;
+        flow.accept_status(ImportStatus {
+            profile: Some(destination),
+            thread: request.context.snapshot.thread,
+            generation: request.context.generation,
+            revision: 100,
+            ..Default::default()
+        });
+        assert_eq!(flow.context.as_ref().unwrap().generation, current);
+        assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 0);
+    }
+    #[::core::prelude::v1::test]
+    fn cleanup_only_worker_retains_failed_identity_after_general_close_and_waits_actual_join() {
+        struct FakeOwned {
+            id: u64,
+            allow: Arc<std::sync::atomic::AtomicBool>,
+        }
+        impl CleanupWork for FakeOwned {
+            fn retry_owned(&mut self) -> bool {
+                self.allow.load(Ordering::Acquire)
+            }
+        }
+        struct ExitGate(std::sync::mpsc::Receiver<()>);
+        impl Drop for ExitGate {
+            fn drop(&mut self) {
+                self.0.recv().unwrap();
+            }
+        }
+        let allow = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let owners = Arc::new(Mutex::new(vec![FakeOwned {
+            id: 17,
+            allow: allow.clone(),
+        }]));
+        let mut general = WorkerOwner::default();
+        general.close();
+        let mut cleanup = WorkerOwner::default();
+        let (release, gate) = mpsc::sync_channel(0);
+        let (sent, done) = mpsc::sync_channel(0);
+        let held = owners.clone();
+        assert!(cleanup.spawn(move |_| {
+            let _exit = ExitGate(gate);
+            retry_owned(&mut held.lock().unwrap());
+            sent.send(()).unwrap();
+        }));
+        done.recv().unwrap();
+        assert_eq!(owners.lock().unwrap()[0].id, 17);
+        assert_eq!(cleanup.status().unjoined, 1);
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cleanup.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        allow.store(true, Ordering::Release);
+        let held = owners.clone();
+        assert!(cleanup.spawn(move |_| retry_owned(&mut held.lock().unwrap())));
+        while cleanup.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(owners.lock().unwrap().is_empty());
+        assert!(general.status().closed);
+        assert_eq!(cleanup.status().returned, 2);
     }
 }

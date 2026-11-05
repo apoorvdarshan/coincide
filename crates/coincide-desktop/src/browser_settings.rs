@@ -1559,4 +1559,80 @@ mod tests {
         }
         assert_eq!(owner.status().returned, 1);
     }
+    #[::core::prelude::v1::test]
+    fn fresh_cookie_profile_marker_survives_partial_restart_without_selection_or_other_changes() {
+        let scratch = Scratch::new();
+        let thread = Uuid::new_v4().to_string();
+        let mut catalog = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        let selected = catalog.snapshot(&thread, 0).selected;
+        let before: Value =
+            serde_json::from_slice(&fs::read(scratch.0.join("profiles.json")).unwrap()).unwrap();
+        let fresh = catalog
+            .reserve_cookie_profile(&thread, catalog.revision, "Synthetic cookie destination")
+            .unwrap();
+        assert_eq!(
+            catalog.profiles.len(),
+            1,
+            "reservation cannot persist a profile"
+        );
+        catalog.commit_cookie_profile(&thread, &fresh).unwrap();
+        assert_eq!(catalog.snapshot(&thread, 0).selected, selected);
+        let after: Value =
+            serde_json::from_slice(&fs::read(scratch.0.join("profiles.json")).unwrap()).unwrap();
+        assert_eq!(after["profiles"][0], before["profiles"][0]);
+        assert_eq!(after["threads"], before["threads"]);
+        assert_eq!(
+            after["profiles"][1]["cookieImport"],
+            "incomplete_or_uncertain"
+        );
+        drop(catalog);
+        let mut reopened = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        assert_eq!(reopened.snapshot(&thread, 0).selected, selected);
+        assert_eq!(
+            reopened.profiles[1].cookie_import,
+            Some(CookieImportMarker::Incomplete)
+        );
+        reopened.mark_cookie_readback_verified(fresh.id()).unwrap();
+        drop(reopened);
+        let reopened = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        assert_eq!(
+            reopened.profiles[1].cookie_import,
+            Some(CookieImportMarker::ReadbackVerified)
+        );
+        assert_eq!(reopened.snapshot(&thread, 0).selected, selected);
+    }
+    #[::core::prelude::v1::test]
+    fn stale_cookie_reservation_cannot_append_or_reuse_an_existing_profile() {
+        let scratch = Scratch::new();
+        let thread = Uuid::new_v4().to_string();
+        let mut catalog = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        let fresh = catalog
+            .reserve_cookie_profile(&thread, catalog.revision, "Cookie new")
+            .unwrap();
+        catalog
+            .apply(
+                &thread,
+                request(
+                    &catalog,
+                    &thread,
+                    ProfileOperation::CreateFresh("Other new".into()),
+                ),
+                0,
+            )
+            .unwrap();
+        let before = fs::read(scratch.0.join("profiles.json")).unwrap();
+        assert!(catalog.commit_cookie_profile(&thread, &fresh).is_err());
+        assert_eq!(fs::read(scratch.0.join("profiles.json")).unwrap(), before);
+        assert!(
+            !catalog
+                .profiles
+                .iter()
+                .any(|profile| profile.id == fresh.id())
+        );
+        assert!(
+            catalog
+                .reserve_cookie_profile(&thread, catalog.revision, "Default")
+                .is_err()
+        );
+    }
 }

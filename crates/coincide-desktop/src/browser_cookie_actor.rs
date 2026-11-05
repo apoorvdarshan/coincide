@@ -72,7 +72,7 @@ impl Actor {
             };
             self.readback = None;
             self.target = None;
-            return counts.expected == counts.observed && counts.expected == counts.matched;
+            return counts.exact();
         }
         if self.stopped {
             self.target = None;

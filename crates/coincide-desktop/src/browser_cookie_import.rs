@@ -61,6 +61,35 @@ fn validate_policy(requested: SameSite, actual: Option<&str>) -> Result<(), Fail
         Err(Failure::InvalidCookie)
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ReadbackCounts {
+    pub expected: usize,
+    pub observed: usize,
+    pub matched: usize,
+}
+impl ReadbackCounts {
+    pub fn exact(&self) -> bool {
+        self.expected == self.observed && self.expected == self.matched
+    }
+}
+fn readback_counts<E, A>(
+    expected: &[E],
+    actual: &[A],
+    matches: impl Fn(&E, &A) -> bool,
+) -> ReadbackCounts {
+    ReadbackCounts {
+        expected: expected.len(),
+        observed: actual.len(),
+        matched: if actual.len() > 1000 {
+            0
+        } else {
+            expected
+                .iter()
+                .filter(|expected| actual.iter().any(|actual| matches(expected, actual)))
+                .count()
+        },
+    }
+}
 #[cfg(target_os = "macos")]
 mod native {
     use super::*;
@@ -81,12 +110,6 @@ mod native {
                 .expires()
                 .is_some_and(|expiry| expiry < 0 || expiry as u64 <= now)
         }
-    }
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(in super::super) struct ReadbackCounts {
-        pub expected: usize,
-        pub observed: usize,
-        pub matched: usize,
     }
     pub(in super::super) struct ReadbackReceipt {
         result: Arc<std::sync::Mutex<Option<ReadbackCounts>>>,
@@ -327,25 +350,20 @@ mod native {
                     let _owner = &held;
                     let cookies = unsafe { cookies.as_ref() };
                     let observed = cookies.len();
-                    let matched = if observed <= 1000 {
+                    let counts = if observed <= 1000 {
                         let actual = cookies.to_vec();
-                        expected
-                            .iter()
-                            .filter(|expected| {
-                                actual
-                                    .iter()
-                                    .any(|cookie| matches_cookie(cookie, &expected.input).is_ok())
-                            })
-                            .count()
+                        readback_counts(&expected, &actual, |expected, cookie| {
+                            matches_cookie(cookie, &expected.input).is_ok()
+                        })
                     } else {
-                        0
-                    };
-                    if let Ok(mut result) = output.lock() {
-                        *result = Some(ReadbackCounts {
+                        ReadbackCounts {
                             expected: expected.len(),
                             observed,
-                            matched,
-                        });
+                            matched: 0,
+                        }
+                    };
+                    if let Ok(mut result) = output.lock() {
+                        *result = Some(counts);
                     }
                     ack.ack();
                 },
@@ -428,6 +446,25 @@ mod tests {
         assert_eq!(
             validate_policy(SameSite::Lax, Some("strict")),
             Err(Failure::InvalidCookie)
+        );
+    }
+    #[test]
+    fn readback_requires_exact_private_values_attributes_and_bounded_total_count() {
+        let expected = [("name", "synthetic-value", true)];
+        let exact = readback_counts(&expected, &expected, |a, b| a == b);
+        assert!(exact.exact());
+        let changed = [("name", "different-synthetic", true)];
+        assert!(!readback_counts(&expected, &changed, |a, b| a == b).exact());
+        let weak = [("name", "synthetic-value", false)];
+        assert_eq!(readback_counts(&expected, &weak, |a, b| a == b).matched, 0);
+        let extra = [expected[0], ("extra", "synthetic", false)];
+        let counts = readback_counts(&expected, &extra, |a, b| a == b);
+        assert_eq!(counts.matched, 1);
+        assert!(!counts.exact());
+        let oversized = vec![expected[0]; 1001];
+        assert_eq!(
+            readback_counts(&expected, &oversized, |a, b| a == b).matched,
+            0
         );
     }
 }
