@@ -631,7 +631,7 @@ impl Pump {
                 Command::Configure(settings) => Flight::Configure(settings.enabled),
                 _ => Flight::Control,
             };
-            match self.handle.try_send(command) {
+            match self.handle.try_send(command).map_err(|error| *error) {
                 Ok(id) => {
                     self.flights.insert(id, flight);
                 }
