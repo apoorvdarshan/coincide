@@ -308,6 +308,12 @@ fn check_components(path: &Path) -> Result<()> {
             "Cursor profile path may not contain parent traversal"
         );
         current.push(component);
+        // A Windows canonical path begins with a verbatim disk prefix (\\?\C:).
+        // It is not an addressable filesystem path until RootDir is appended.
+        // Inspecting the incomplete prefix fails with ERROR_INVALID_FUNCTION.
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         // macOS's standard /var and /tmp aliases are system-owned roots.
         #[cfg(target_os = "macos")]
         if current == Path::new("/var") || current == Path::new("/tmp") {
