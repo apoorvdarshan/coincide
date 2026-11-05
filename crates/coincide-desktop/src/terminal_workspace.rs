@@ -132,6 +132,8 @@ enum Update {
     Frame(PaneId, u64, Result<Option<Value>>),
     Closed(PaneId, u64, Result<()>),
     Copied(PaneId, u64, u64, Result<String>),
+    // Command failure is not a frame: later input tickets must not hide it.
+    ActionFailed(PaneId, String),
 }
 struct Binding {
     terminal: String,
@@ -146,8 +148,13 @@ fn worker(engine: SharedEngine, thread: String, rx: Receiver<Command>, tx: SyncS
         thread,
         rx,
         tx,
-        |method, params| crate::call(&engine, method, params),
-        |id| crate::read_terminal_frame(&engine, id, 0),
+        // This serialized worker is off the UI thread. Wait for Engine ownership
+        // rather than dropping a keystroke/list/create during normal contention.
+        |method, params| coincide_core::api::call(&engine, method, params),
+        |id| match crate::read_terminal_frame(&engine, id, 0) {
+            Err(error) if crate::engine_busy(&error) => Ok(None),
+            result => result,
+        },
     );
 }
 
@@ -227,6 +234,12 @@ fn run_worker(
             }
             Ok(Command::Act(key, ticket, action)) => {
                 let closing = matches!(action, Action::Close);
+                let failure = match &action {
+                    Action::Write(_) => "Terminal input was not sent",
+                    Action::Resize(_, _) => "Terminal resize failed",
+                    Action::Scroll(_, _) => "Terminal scroll failed",
+                    Action::Close => "Terminal close failed",
+                };
                 let result = (|| -> Result<()> {
                     let binding = bound
                         .get_mut(&key)
@@ -264,7 +277,10 @@ fn run_worker(
                         return;
                     }
                 } else if let Err(error) = result {
-                    if !send(&tx, Update::Frame(key, ticket, Err(error))) {
+                    if !send(
+                        &tx,
+                        Update::ActionFailed(key, format!("{failure}: {error}")),
+                    ) {
                         return;
                     }
                 }
@@ -474,6 +490,13 @@ impl TerminalWorkspace {
             };
             changed = true;
             match update {
+                Update::ActionFailed(key, message) => {
+                    if let Some(pane) = self.panes.get_mut(&key) {
+                        // Do not discard a lost-input warning because newer
+                        // keystrokes or resize operations advanced this pane.
+                        pane.notice = message;
+                    }
+                }
                 Update::Listed(Ok(tabs)) => {
                     for tab in tabs.iter().take(MAX_PANES) {
                         if let Some(id) = tab["terminalId"].as_str() {
@@ -1306,7 +1329,7 @@ mod tests {
         layout.panes(&mut out);
         out
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn nested_splits_close_only_target_and_collapse_empty_branches() {
         let mut layout = Layout::Pane(1);
         assert!(layout.split(1, 2, SplitAxis::Horizontal));
@@ -1325,7 +1348,7 @@ mod tests {
         assert_eq!(layout, Layout::Pane(3));
         assert!(layout.without(3).is_none());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn splitting_missing_pane_does_not_change_other_tabs() {
         let mut a = Layout::Pane(1);
         let b = Layout::Pane(7);
@@ -1333,7 +1356,7 @@ mod tests {
         assert_eq!(a, Layout::Pane(1));
         assert_eq!(b, Layout::Pane(7));
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn split_viewports_use_cell_metrics_and_stay_inside_parser_limits() {
         assert_eq!(viewport_size(800., 432.), (24, 100));
         assert_eq!(viewport_size(400., 216.), (12, 50));
@@ -1352,7 +1375,7 @@ mod tests {
             prefer_character_input: false,
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn navigation_keeps_alternate_screen_modifiers_and_ctrl_c_interrupt() {
         let control_shift = Modifiers {
             control: true,
@@ -1401,7 +1424,7 @@ mod tests {
             .is_none()
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn unicode_and_altgr_characters_are_not_reinterpreted_as_commands() {
         let mut altgr = event(
             "q",
@@ -1436,7 +1459,7 @@ mod tests {
             [{"text":"x","width":1},{"text":" ","width":1},{"text":" ","width":1},{"text":" ","width":1}]
         ]})
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn copy_bounds_reuse_real_selection_with_wide_combining_and_concealed_cells() {
         let frame = frame();
         let mut selection = TerminalSelection::default();
@@ -1478,6 +1501,10 @@ mod tests {
                             .lock()
                             .unwrap()
                             .push((method.to_owned(), params.clone()));
+                        if method == "terminal.write" && params["text"] == "fixture-rejected-input"
+                        {
+                            anyhow::bail!("fixture PTY queue full");
+                        }
                         Ok(match method {
                             "terminal.list" => json!([]),
                             "terminal.create" => {
@@ -1514,7 +1541,7 @@ mod tests {
             self.handle.join().unwrap();
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn worker_create_is_explicit_and_writes_remain_independently_bound() {
         let w = FakeWorker::new();
         assert_eq!(w.log.lock().unwrap().len(), 1);
@@ -1553,7 +1580,78 @@ mod tests {
         );
         w.finish();
     }
-    #[test]
+    #[::core::prelude::v1::test]
+    fn late_write_failure_survives_newer_input_and_frame_tickets_without_retry() {
+        let w = FakeWorker::new();
+        w.tx.send(Command::Adopt(1, "one".into())).unwrap();
+        w.tx.send(Command::Act(
+            1,
+            1,
+            Action::Write("fixture-rejected-input".into()),
+        ))
+        .unwrap();
+        w.tx.send(Command::Act(1, 2, Action::Write("next input".into())))
+            .unwrap();
+        w.tx.send(Command::Watch(vec![1])).unwrap();
+        // Even after UI advances to ticket2, the rejected write travels as an
+        // independent error, not an obsolete ticket1 frame that UI discards.
+        assert!(
+            matches!(w.next(), Update::ActionFailed(1, message) if message == "Terminal input was not sent: fixture PTY queue full")
+        );
+        assert!(matches!(w.next(), Update::Frame(1, 2, Ok(Some(_)))));
+        let writes = w
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "terminal.write")
+            .map(|(_, params)| params["text"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            writes,
+            vec![json!("fixture-rejected-input"), json!("next input")]
+        );
+        w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn real_worker_waits_for_engine_contention_before_listing_without_spawning_shells() {
+        struct FixtureDirectory(std::path::PathBuf);
+        impl Drop for FixtureDirectory {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let directory = FixtureDirectory(std::env::temp_dir().join(format!(
+            "coincide-terminal-contention-{}",
+            uuid::Uuid::new_v4()
+        )));
+        std::fs::create_dir(&directory.0).unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&directory.0.join("data.sqlite")).unwrap(),
+        )));
+        let guard = engine.lock().unwrap();
+        let (commands, rx) = mpsc::sync_channel(4);
+        let (tx, updates) = mpsc::sync_channel(4);
+        let (started, ready) = mpsc::sync_channel(1);
+        let shared = engine.clone();
+        let handle = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            worker(shared, "fixture-thread".into(), rx, tx);
+        });
+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(matches!(
+            updates.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(guard);
+        assert!(
+            matches!(updates.recv_timeout(Duration::from_secs(3)).unwrap(),Update::Listed(Ok(tabs)) if tabs.is_empty())
+        );
+        drop(commands);
+        drop(updates);
+        handle.join().unwrap();
+    }
+    #[::core::prelude::v1::test]
     fn worker_copy_uses_api_revision_and_rejects_pre_input_ticket() {
         let w = FakeWorker::new();
         let a = TerminalPoint { row: 0, col: 1 };
@@ -1580,7 +1678,7 @@ mod tests {
         );
         w.finish();
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn worker_frames_carry_pane_ticket_and_closed_sibling_does_not_receive_reads() {
         let w = FakeWorker::new();
         w.tx.send(Command::Adopt(1, "one".into())).unwrap();
