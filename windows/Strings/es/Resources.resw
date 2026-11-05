@@ -399,6 +399,9 @@
   <data name="Text_2f826a07716be31f" xml:space="preserve">
     <value>Select metadata rows to import first.</value>
   </data>
+  <data name="Text_2fa046e0af24b3e3" xml:space="preserve">
+    <value>No matching project files.</value>
+  </data>
   <data name="Text_30edcc4e98194755" xml:space="preserve">
     <value>Windows did not release the microphone cleanly. Restart Coincide before recording again.</value>
   </data>
@@ -491,6 +494,9 @@
   </data>
   <data name="Text_3dcc9cf911654522" xml:space="preserve">
     <value>This panel accepts up to 500 logins per reviewed import. Split larger exports before importing.</value>
+  </data>
+  <data name="Text_3df6af18defdbb1d" xml:space="preserve">
+    <value>Looking for project files…</value>
   </data>
   <data name="Text_3e00ba8ec988f9cf" xml:space="preserve">
     <value>Preview Checkpoint</value>
@@ -615,6 +621,9 @@
   <data name="Text_54021588d84f7ed1" xml:space="preserve">
     <value>Import Sessions</value>
   </data>
+  <data name="Text_54657e091a98261a" xml:space="preserve">
+    <value>Project files are unavailable. Your message is unchanged.</value>
+  </data>
   <data name="Text_54d1b2a64667e32e" xml:space="preserve">
     <value>Camera</value>
   </data>
@@ -657,6 +666,9 @@
   <data name="Text_5941b0a63184176f" xml:space="preserve">
     <value>That file is not a readable bounded password export. The previous review was preserved.</value>
   </data>
+  <data name="Text_597cfdc4387f6788" xml:space="preserve">
+    <value>Choose a file, then press Tab or Enter to insert its path.</value>
+  </data>
   <data name="Text_598a5dbb3832aa57" xml:space="preserve">
     <value>Añadir proyecto…</value>
   </data>
@@ -674,6 +686,9 @@
   </data>
   <data name="Text_5be3c6d61cd9182f" xml:space="preserve">
     <value>Notificaciones</value>
+  </data>
+  <data name="Text_5cb66bc05d062e98" xml:space="preserve">
+    <value>Matching project files</value>
   </data>
   <data name="Text_5cf3a3cabd49f456" xml:space="preserve">
     <value>Clone address or private GitHub owner/name</value>
@@ -744,8 +759,14 @@
   <data name="Text_671dbe01f42f297a" xml:space="preserve">
     <value>Próximas ejecuciones</value>
   </data>
+  <data name="Text_67f7fd3e0315100b" xml:space="preserve">
+    <value>The file or message changed. Type the mention again to refresh.</value>
+  </data>
   <data name="Text_67facd659d1004bb" xml:space="preserve">
     <value>This address cannot be saved as a bookmark.</value>
+  </data>
+  <data name="Text_683758251b7fd374" xml:space="preserve">
+    <value>Insert file mention</value>
   </data>
   <data name="Text_6849e258b7827aa4" xml:space="preserve">
     <value>Local profile created. Sign in only when you are ready to approve the provider's browser page.</value>
@@ -975,6 +996,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_8c7fc9051c0d8003" xml:space="preserve">
     <value>Terminal input limit reached or session closed.</value>
+  </data>
+  <data name="Text_8e481567ab04f07f" xml:space="preserve">
+    <value>File scan limit reached. These results are partial.</value>
   </data>
   <data name="Text_8e6c4d342f580bc5" xml:space="preserve">
     <value>Message text could not be searched.</value>
@@ -1291,6 +1315,9 @@ C++/WinRT + WinUI 3</value>
   <data name="Text_c5c4fa09a93a3460" xml:space="preserve">
     <value>Nuevo bot</value>
   </data>
+  <data name="Text_c75ae9393227c1dd" xml:space="preserve">
+    <value>Checking selected project file…</value>
+  </data>
   <data name="Text_c7637275f670c938" xml:space="preserve">
     <value>Poner en cola</value>
   </data>
@@ -1410,6 +1437,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_dac26646997609ea" xml:space="preserve">
     <value>Notify when work finishes or needs a response</value>
+  </data>
+  <data name="Text_dacda1e3d20741a2" xml:space="preserve">
+    <value>Close file suggestions</value>
   </data>
   <data name="Text_db41925aff2df0b0" xml:space="preserve">
     <value>Empezar con una plantilla</value>

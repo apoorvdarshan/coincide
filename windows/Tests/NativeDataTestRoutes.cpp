@@ -18,6 +18,7 @@
 #include "HostPersistenceTests.h"
 #include "RepositoryLeaseTests.h"
 #include "ConversationSearchStoreTests.h"
+#include "ProjectFileIndexTests.h"
 
 namespace coincide::tests {
 std::optional<int> data_test_route(int argc,wchar_t** argv){
@@ -28,6 +29,7 @@ std::optional<int> data_test_route(int argc,wchar_t** argv){
     if(flag==L"--git-repository-identity-tests")return git_repository_identity_tests(argument);
     if(flag==L"--repository-lease-tests")return repository_lease_tests(argument);
     if(flag==L"--conversation-search-store-tests")return conversation_search_store_tests(argument);
+    if(flag==L"--project-file-index-tests")return project_file_index_tests(argument);
     for(const auto& route:routes)if(route.first==flag)return route.second(argument);return{};
 }
 } // namespace coincide::tests

@@ -59,6 +59,7 @@
 #include "HostedInputRecovery.h"
 #include "ThreadFindBar.h"
 #include "ConversationSearchPanel.h"
+#include "ComposerFileMentions.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -178,6 +179,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::TextBox search{nullptr};
     std::shared_ptr<coincide::ThreadFindBar> thread_find;
     std::shared_ptr<coincide::ConversationSearchPanel> conversation_search;
+    std::shared_ptr<coincide::ComposerFileMentions> file_mentions;
     controls::TextBlock title{nullptr};
     controls::TextBlock state{nullptr};
     controls::ComboBox providers{nullptr};
@@ -452,11 +454,15 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             dirty_threads.insert(selected); save_timer.Stop(); save_timer.Start(); update_composer();
         });
         composer.KeyDown([this](const auto&, const xaml::Input::KeyRoutedEventArgs& args) {
+            if(file_mentions&&file_mentions->key(args.Key(),(GetKeyState(VK_CONTROL)&0x8000)!=0,(GetKeyState(VK_SHIFT)&0x8000)!=0,(GetKeyState(VK_MENU)&0x8000)!=0)){args.Handled(true);return;}
             if(args.Key()==winrt::Windows::System::VirtualKey::Enter&&((GetKeyState(VK_CONTROL)&0x8000)||(preferences.send_on_return&&!(GetKeyState(VK_SHIFT)&0x8000)&&!(GetKeyState(VK_MENU)&0x8000)))){
                 args.Handled(true);if(!selected.empty()&&thread_busy(selected))queue_message(false);else send_message();
             }
         });
         compose.Children().Append(composer);
+        const auto mention_owner=get_weak();file_mentions=coincide::ComposerFileMentions::create(composer,[mention_owner]()->std::optional<coincide::FileMentionRequest>{const auto self=mention_owner.get();return self?self->file_mention_request():std::nullopt;},
+            [mention_owner](const auto& request,const auto& trigger,const auto& relative){const auto self=mention_owner.get();if(!self||self->file_mention_request()!=std::optional(request))return false;const auto edit=coincide::ComposerFileMention::insert(request.text,trigger,coincide::ComposerFileMentions::utf16(winrt::to_hstring(relative)));self->composer.Text(coincide::ComposerFileMentions::wide(edit.text));self->composer.SelectionStart(static_cast<std::int32_t>(edit.caret));self->composer.SelectionLength(0);return true;});
+        compose.Children().Append(file_mentions->view());
         attachments_view = controls::StackPanel{}; attachments_view.Spacing(4); identify(attachments_view, L"Attachments");
         compose.Children().Append(attachments_view);
         controls::StackPanel actions;
@@ -516,6 +522,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
             closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
             if(thread_find)thread_find->close(false);
+            if(file_mentions)file_mentions->close();
             if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
             drain_sessions(); flush_dirty(); save_current();
@@ -571,6 +578,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     void open_thread(const std::string& id) {
         if (!writable) return;
+        if(file_mentions)file_mentions->invalidate();
         if(id!=selected&&thread_find)thread_find->close(false);
         save_current();
         try {
@@ -930,6 +938,12 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             remove.Click([this,id,i](const auto&,const auto&){if(selected!=id||workspace.thread(id).deleted_at)return;auto& a=workspace.thread(id).draft_attachments;if(i<a.size()){++draft_revision;a.erase(a.begin()+static_cast<std::ptrdiff_t>(i));save_current();render_attachments();update_composer();}});
             row.Children().Append(remove);attachments_view.Children().Append(row);
         }
+    }
+
+    std::optional<coincide::FileMentionRequest> file_mention_request(){
+        if(closing||quitting||dialog_open||selecting||!writable||selected.empty()||!composer.IsEnabled())return{};
+        const auto& thread=workspace.thread(selected);if(thread.deleted_at||thread.bot_id||!thread.project_id)return{};const auto& project=workspace.project(*thread.project_id);if(project.id==coincide::bots_container_id||project.path.empty())return{};
+        return coincide::FileMentionRequest{selected,project.id,std::filesystem::path(winrt::to_hstring(project.path).c_str()),coincide::ComposerFileMentions::utf16(composer.Text()),static_cast<std::size_t>(composer.SelectionStart()),static_cast<std::size_t>(composer.SelectionLength()),draft_revision};
     }
 
     std::filesystem::path working_directory(const coincide::Thread& thread) {

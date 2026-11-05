@@ -22,6 +22,7 @@ std::optional<int> run_contract_test(int argc,wchar_t** argv){
 std::optional<std::string> ui_test_suite(std::wstring_view flag){
     if(flag==L"--thread-find-panel-tests")return "thread-find-panel";
     if(flag==L"--conversation-search-panel-tests")return "conversation-search-panel";
+    if(flag==L"--composer-file-mentions-panel-tests")return "composer-file-mentions-panel";
     if(flag==L"--persona-panel-tests")return "persona-panel";
     if(flag==L"--browser-tool-panel-tests")return "browser-tool-panel";
     if(flag==L"--credentials-controller-panel-tests")return "credentials-controller-panel";

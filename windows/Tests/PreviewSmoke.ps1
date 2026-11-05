@@ -6,7 +6,7 @@ param(
     [string]$PreparedHostedData,
     [switch]$NativePanelsOnly,
     [switch]$SkipNativePanels,
-    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel')][string]$NativeSuite
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel','composer-file-mentions-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -193,6 +193,15 @@ foreach ($entry in @(@($first, 'Smoke A', 'END-A'), @($second, 'Smoke B', 'END-B
     }
 }
 $scheduledThread = [Guid]::NewGuid().ToString('B')
+$mentionThread = [Guid]::NewGuid().ToString('B')
+$mentionProject = [Guid]::NewGuid().ToString('B')
+$mentionRoot = Join-Path $data 'owned-mention-project'
+New-Item -ItemType Directory -Path $mentionRoot | Out-Null
+[IO.File]::WriteAllText((Join-Path $mentionRoot 'README.md'),'Owned metadata-only mention target',$utf8)
+$mentionAttachment = Join-Path $mentionRoot 'keep.txt'
+[IO.File]::WriteAllText($mentionAttachment,'Owned attachment must be preserved',$utf8)
+$threads += @{id=$mentionThread;title='File mentions fixture';project=$mentionProject;provider='claude';model='';pinned=$false;archived=$false}
+Write-JsonFile (Join-Path $data "threads\$mentionThread.json") @{version=1;id=$mentionThread;draft='Keep this project draft';messages=@();sessions=@();draftAttachments=@(@{path=$mentionAttachment;name='keep.txt';mediaType='text/plain'});queuedInputs=@()}
 $scheduledTask = [Guid]::NewGuid().ToString('B')
 $fixtureEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $due = $fixtureEpoch + 10
@@ -204,7 +213,7 @@ Write-JsonFile (Join-Path $data 'scheduled-tasks.json') @{format='coincide.windo
     id=$scheduledTask; threadID=$scheduledThread; name='Native schedule fixture'; prompt='hello'; awaitingApproval=$false; paused=$false; reviewRequired=$false;
     recurrence=@{kind='once'; timeZone='UTC'; date=$due; hour=9; minute=0; weekday=2; intervalMinutes=0; cron=''; weekdays=@()}; nextRunAt=$due
 })}
-Write-JsonFile (Join-Path $data 'workspace.json') @{version=1; projects=@(); threads=$threads}
+Write-JsonFile (Join-Path $data 'workspace.json') @{version=1; projects=@(@{id=$mentionProject;name='Mention project';path=$mentionRoot}); threads=$threads}
 $previousData = $env:COINCIDE_DATA_DIR
 $previousDiagnostics = $env:COINCIDE_DIAGNOSTICS_PATH
 $previousFixtureEpoch = $env:COINCIDE_FIXTURE_SCHEDULE_EPOCH
@@ -439,6 +448,29 @@ try {
             (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq ''
         } 'Send did not accept and clear the submitted draft.'
     }
+    Select-Thread 'Mention project / File mentions fixture'
+    Wait-Until { (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'Keep this project draft' } 'The owned project conversation did not open.'
+    Set-Message 'Keep @Read'
+    $mentionEditor=Find-Control $script:window 'Composer'
+    $mentionDocument=$mentionEditor.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern).DocumentRange
+    $mentionCaret=$mentionDocument.Clone()
+    $mentionCaret.MoveEndpointByRange([Windows.Automation.TextPatternRangeEndpoint]::Start,$mentionDocument,[Windows.Automation.TextPatternRangeEndpoint]::End)
+    $mentionCaret.Select()
+    Wait-Until {
+        $list=Find-Control $script:window 'FileMentionResults'
+        if(!$list){return $false}
+        $items=$list.FindAll([Windows.Automation.TreeScope]::Children,(New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ListItem)))
+        return $items.Count -eq 1 -and $items[0].Current.Name -eq 'README.md' -and (Find-Control $script:window 'InsertFileMention').Current.IsEnabled
+    } 'Project-scoped file suggestions did not publish the exact metadata result.'
+    $mentionInsert=Find-Control $script:window 'InsertFileMention'
+    if($mentionInsert.Current.IsOffscreen){$mentionInsert.GetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView()}
+    Invoke-Control 'InsertFileMention'
+    Wait-Until { (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'Keep @README.md ' } 'The selected file mention did not replace its original composer token.'
+    Select-Thread 'Smoke B'
+    Wait-Until { (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'Draft Smoke B' } 'File mention navigation changed another conversation draft.'
+    $mentioned=Get-Content (Join-Path $data "threads\$mentionThread.json") -Raw -Encoding UTF8|ConvertFrom-Json
+    if($mentioned.draft -ne 'Keep @README.md ' -or @($mentioned.messages).Count -or @($mentioned.sessions).Count -or @($mentioned.queuedInputs).Count -or @($mentioned.draftAttachments).Count -ne 1 -or $mentioned.draftAttachments[0].path -ne $mentionAttachment){throw 'File mention insertion sent input or changed saved history, queue or attachments.'}
+    $checks += 'Project file suggestions insert only the selected relative path and preserve drafts, attachments and empty history without starting a provider'
     Invoke-Control 'SearchMessages'
     Set-ControlValue 'ConversationSearchQuery' 'Reply 20 '
     Invoke-Control 'ConversationSearchStart'
@@ -621,7 +653,7 @@ try {
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel')}
+    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel','composer-file-mentions-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue
