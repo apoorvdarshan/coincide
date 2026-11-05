@@ -3046,7 +3046,7 @@ impl Render for Coincide {
             entity.update(cx, |this, cx| this.message(index, window, cx))
         })
         .flex_1()
-        .min_h_0();
+        .min_h(px(120.));
         let conversation_content = if self.session_import_open {
             div()
                 .id("session-import-surface")
@@ -3442,8 +3442,8 @@ impl Render for Coincide {
                             div()
                                 .id("terminal-workspace-surface")
                                 .h(px(320.))
-                                .min_h_0()
-                                .flex_shrink_0()
+                                .min_h(px(140.))
+                                .flex_shrink_1()
                                 .child(
                                     self.terminal_workspaces
                                         [self.terminal_visible_thread.as_ref().unwrap()]
@@ -3459,7 +3459,9 @@ impl Render for Coincide {
                                 .flex()
                                 .items_start()
                                 .justify_center()
-                                .min_h(px(180.))
+                                .min_h(px(140.))
+                                .max_h(px(320.))
+                                .flex_shrink_0()
                                 .overflow_y_scroll()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()

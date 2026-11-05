@@ -75,6 +75,7 @@ pub(super) struct ComposerSelection {
     catalog: Value,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
+    expanded: bool,
 }
 #[derive(Clone, Debug)]
 struct CatalogRequest {
@@ -439,6 +440,59 @@ impl Coincide {
             || thread["accessMode"] != draft.access
             || thread["interactionMode"] != draft.interaction;
         let disabled = lock.is_some() || conflict;
+        let saved = &thread["selection"];
+        let model = if saved["modelID"] == "default" {
+            "Provider default".to_owned()
+        } else {
+            text(saved, "modelID")
+        };
+        let pending = draft.provider != text(&draft.original, "provider")
+            || draft.account != draft.original["accountID"]
+            || (if draft.use_custom {
+                draft.custom.trim()
+            } else {
+                "default"
+            }) != draft.original["modelID"].as_str().unwrap_or("default");
+        let saved_provider = text(saved, "provider");
+        let account = if default_account_id(&saved["accountID"]) == Some("default") {
+            "Default account".to_owned()
+        } else {
+            account_label(&saved["accountID"])
+        };
+        let summary = format!(
+            "{} · {model} · {account}",
+            presentation::provider_name(&saved_provider)
+        );
+        let label = if self.selection_ui.expanded {
+            "Hide model & account"
+        } else if pending {
+            "Model & account · edits pending"
+        } else {
+            "Model & account"
+        };
+        let header = div()
+            .mb_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .child(div().flex_1().min_w_0().truncate().text_sm().child(summary))
+            .child(
+                Button::new("selection-disclosure")
+                    .label(label)
+                    .compact()
+                    .tooltip(
+                        lock.clone()
+                            .unwrap_or_else(|| "Edit provider, model and account".into()),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.expanded = !this.selection_ui.expanded;
+                        cx.notify();
+                    })),
+            );
+        if !self.selection_ui.expanded {
+            return header.into_any_element();
+        }
         let mut providers = div().flex().flex_wrap().gap_2();
         for provider in self.selection_ui.capabilities["providers"]
             .as_array()
@@ -570,7 +624,7 @@ impl Coincide {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
         );
-        pane=pane.child(div().text_xs().child(if discovery_supported {"Catalog refresh explicitly starts the provider's read-only discovery process. It sends no prompt and does not change selection.".to_owned()}else{discovery_reason}));
+        pane=pane.child(div().text_xs().child(if discovery_supported {"Refresh retrieves provider-reported models without sending a message or changing your selection.".to_owned()}else{discovery_reason}));
         let catalog = &self.selection_ui.catalog;
         let same_scope = catalog["provider"].as_str() == Some(draft.provider.as_str())
             && catalog["accountID"].as_str() == default_account_id(&draft.account);
@@ -633,7 +687,21 @@ impl Coincide {
             }
             pane = pane.child(models);
         }
-        pane.into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_w_0()
+            .child(header)
+            .child(
+                div()
+                    .id("selection-advanced-scroll")
+                    .max_h(px(120.))
+                    .overflow_y_scroll()
+                    .min_w_0()
+                    .child(pane),
+            )
+            .into_any_element()
     }
 }
 
