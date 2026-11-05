@@ -2,6 +2,7 @@ use anyhow::Result;
 mod assets;
 mod bot_settings;
 mod browser;
+mod command_palette;
 mod composer_attachments;
 mod credential_settings;
 mod credentials;
@@ -170,6 +171,9 @@ fn read_terminal_frame(engine: &SharedEngine, id: &str, offset: usize) -> Result
 
 struct Coincide {
     engine: SharedEngine,
+    command_palette: Entity<command_palette::CommandPalette>,
+    palette_revision: u64,
+    palette_entries: Vec<command_palette::PaletteEntry>,
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
@@ -306,6 +310,7 @@ impl Coincide {
             && !self.session_import_open
             && !self.credentials_open
             && !self.provider_settings.open
+            && !self.command_palette.read(cx).is_open()
         {
             self.selected.as_ref().map(|thread| text(thread, "id"))
         } else {
@@ -500,6 +505,7 @@ impl Coincide {
             panel.attach_actions(github_actions, github_writes, cx);
             panel
         });
+        let command_palette = cx.new(|cx| command_palette::CommandPalette::new(window, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -515,6 +521,13 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe_in(&command_palette, window, |this, _, event, window, cx| {
+                if let command_palette::PaletteEvent::Activated { revision, command } = event {
+                    this.activate_palette(*revision, command.clone(), window, cx);
+                }
+                this.sync_transcription_binding(cx);
+                cx.notify();
+            }),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
                 this.sync_transcription_binding(cx);
@@ -688,6 +701,9 @@ impl Coincide {
         });
         let mut this = Self {
             engine,
+            command_palette,
+            palette_revision: 0,
+            palette_entries: Vec::new(),
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
@@ -1069,6 +1085,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_palette(window, cx);
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
                 self.preserve_pending_draft(&mut v);
@@ -1146,12 +1163,179 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn palette_catalog(&self) -> Vec<command_palette::PaletteEntry> {
+        use command_palette::{PaletteCommand as C, PaletteEntry as E};
+        let entry = |command, title, subtitle| E {
+            command,
+            title,
+            subtitle,
+            keywords: Vec::new(),
+            enabled: true,
+            disabled_reason: None,
+        };
+        let mut entries = vec![
+            entry(
+                C::NewThread { project_id: None },
+                "New projectless conversation".into(),
+                None,
+            ),
+            entry(C::OpenSettings, "Open settings".into(), None),
+            entry(C::ShowSchedules, "Show schedules".into(), None),
+            entry(
+                C::SelectProject { project_id: None },
+                "All projects".into(),
+                None,
+            ),
+        ];
+        for project in &self.projects {
+            let id = text(project, "id");
+            if id.is_empty() {
+                continue;
+            }
+            let name = text(project, "name");
+            entries.push(entry(
+                C::SelectProject {
+                    project_id: Some(id.clone()),
+                },
+                format!("Show project: {name}"),
+                None,
+            ));
+            if !id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
+                entries.push(entry(
+                    C::NewThread {
+                        project_id: Some(id),
+                    },
+                    format!("New conversation in {name}"),
+                    None,
+                ));
+            }
+        }
+        for thread in &self.threads {
+            entries.push(entry(
+                C::OpenThread {
+                    thread_id: thread.id.clone(),
+                },
+                thread.title.clone(),
+                Some("Conversation".into()),
+            ));
+        }
+        entries
+    }
+    fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette
+            .update(cx, |palette, cx| palette.dismiss(window, cx));
+    }
+    fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.command_palette.read(cx).is_open() {
+            self.dismiss_palette(window, cx);
+        } else {
+            self.palette_revision = self.palette_revision.saturating_add(1);
+            self.palette_entries = self.palette_catalog();
+            let snapshot = command_palette::PaletteSnapshot {
+                revision: self.palette_revision,
+                entries: self.palette_entries.clone(),
+            };
+            if let Err(error) = self
+                .command_palette
+                .update(cx, |palette, cx| palette.open(snapshot, window, cx))
+            {
+                self.status = format!("Palette unavailable: {error}");
+            }
+        }
+        self.sync_transcription_binding(cx);
+        cx.notify();
+    }
+    fn sync_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.command_palette.read(cx).is_open() {
+            return;
+        }
+        if !window.is_window_active() || !window.visibility().is_visible() {
+            self.dismiss_palette(window, cx);
+            return;
+        }
+        let entries = self.palette_catalog();
+        if !palette_entries_equal(&entries, &self.palette_entries) {
+            self.palette_revision = self.palette_revision.saturating_add(1);
+            let snapshot = command_palette::PaletteSnapshot {
+                revision: self.palette_revision,
+                entries: entries.clone(),
+            };
+            if self
+                .command_palette
+                .update(cx, |palette, cx| palette.replace_snapshot(snapshot, cx))
+                .is_ok()
+            {
+                self.palette_entries = entries;
+            } else {
+                self.dismiss_palette(window, cx);
+            }
+        }
+    }
+    fn activate_palette(
+        &mut self,
+        revision: u64,
+        command: command_palette::PaletteCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use command_palette::PaletteCommand as C;
+        let current = self.palette_catalog();
+        if revision != self.palette_revision
+            || !palette_entries_equal(&current, &self.palette_entries)
+            || !current
+                .iter()
+                .any(|entry| entry.enabled && entry.command == command)
+        {
+            self.status = "Palette context changed; reopen it to choose again".into();
+            return;
+        }
+        match command {
+            C::OpenThread { thread_id } => self.select(&thread_id, window, cx),
+            C::SelectProject { project_id } => self.selected_project = project_id,
+            C::NewThread { project_id } => self.new_thread_in_project(
+                project_id
+                    .as_deref()
+                    .unwrap_or("00000000-0000-0000-0000-000000000000"),
+                window,
+                cx,
+            ),
+            C::OpenSettings => {
+                self.bots_open = false;
+                self.notifications_open = false;
+                self.transcription_open = false;
+                self.credentials_open = false;
+                self.provider_settings.open = false;
+                self.settings_open = true;
+                self.schedules_open = false;
+                self.workspace_open = false;
+                self.session_import_open = false;
+                self.refresh_settings(window, cx);
+            }
+            C::ShowSchedules => {
+                self.settings_open = false;
+                self.workspace_open = false;
+                self.session_import_open = false;
+                self.schedules_open = true;
+                self.refresh_schedules(cx);
+            }
+        }
+        self.sync_transcription_binding(cx);
+        cx.notify();
+    }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self
             .selected_project
             .clone()
             .or_else(|| self.selected.as_ref().map(|v| text(v, "projectID")))
             .unwrap_or_else(|| "00000000-0000-0000-0000-000000000000".into());
+        self.new_thread_in_project(&project, window, cx);
+    }
+    fn new_thread_in_project(
+        &mut self,
+        project: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
             // bot. The user chooses a saved bot in its existing native editor.
@@ -1169,7 +1353,7 @@ impl Coincide {
         let cwd = self
             .projects
             .iter()
-            .find(|p| p["id"] == project)
+            .find(|p| p["id"].as_str() == Some(project))
             .and_then(|p| p["path"].as_str())
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
@@ -1287,6 +1471,7 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
         if self
             .created_bot_thread_to_focus
@@ -3319,6 +3504,7 @@ impl Render for Coincide {
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         div()
+            .relative()
             .capture_key_down(
                 cx.listener(|this, event, window, cx| this.app_shortcut(event, window, cx)),
             )
@@ -3677,7 +3863,44 @@ impl Render for Coincide {
                     }),
             )
             .when_some(browser_pane, |view, pane| view.child(pane))
+            .when(self.command_palette.read(cx).is_open(), |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .justify_center()
+                        .pt_16()
+                        .bg(rgba(0x00000080))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(680.))
+                                .h(px(580.))
+                                .max_h_full()
+                                .child(self.command_palette.clone()),
+                        ),
+                )
+            })
     }
+}
+fn palette_entries_equal(
+    a: &[command_palette::PaletteEntry],
+    b: &[command_palette::PaletteEntry],
+) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.command == b.command
+                && a.title == b.title
+                && a.subtitle == b.subtitle
+                && a.keywords == b.keywords
+                && a.enabled == b.enabled
+                && a.disabled_reason == b.disabled_reason
+        })
 }
 fn schedule_date(value: &Value) -> String {
     if value.is_null() {
