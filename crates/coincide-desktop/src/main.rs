@@ -3820,39 +3820,57 @@ impl Render for Coincide {
                                 .id("composer-column")
                                 .w_full()
                                 .flex()
-                                .items_start()
+                                .flex_col()
+                                .items_center()
                                 .justify_center()
                                 .min_h(px(140.))
                                 .max_h(px(320.))
                                 .flex_shrink_0()
-                                .overflow_y_scroll()
+                                .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
                                 .child(
                                     div()
                                         .w_full()
                                         .min_w_0()
+                                        .min_h_0()
+                                        .max_h(px(296.))
+                                        .flex()
+                                        .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
                                         .p_3()
                                         .rounded(px(22.))
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(self.color(0x29303d))
-                                        .child(self.composer_selection_pane(cx))
-                                        .when_some(
-                                            self.composer_steering_pane(cx),
-                                            |view, steering| view.child(steering),
+                                        .child(
+                                            div()
+                                                .id("composer-accessories")
+                                                .min_h_0()
+                                                .max_h(px(160.))
+                                                .flex_shrink_1()
+                                                .overflow_y_scroll()
+                                                .child(self.composer_selection_pane(cx))
+                                                .when_some(
+                                                    self.composer_steering_pane(cx),
+                                                    |view, steering| view.child(steering),
+                                                )
+                                                .when_some(
+                                                    self.composer_context_pane(cx),
+                                                    |view, context| view.child(context),
+                                                )
+                                                .when_some(queue_pane, |view, queue| {
+                                                    view.child(queue)
+                                                })
+                                                .when_some(draft_images, |view, images| {
+                                                    view.child(images)
+                                                }),
                                         )
-                                        .when_some(
-                                            self.composer_context_pane(cx),
-                                            |view, context| view.child(context),
-                                        )
-                                        .when_some(queue_pane, |view, queue| view.child(queue))
-                                        .when_some(draft_images, |view, images| view.child(images))
                                         .child({
                                             let target = cx.entity().downgrade();
                                             div()
                                                 .id("composer-image-drop")
+                                                .flex_shrink_0()
                                                 .on_drop(cx.listener(
                                                     |this, paths: &ExternalPaths, _, cx| {
                                                         this.drop_image_paths(paths, cx)
@@ -3872,7 +3890,9 @@ impl Render for Coincide {
                                         })
                                         .child(
                                             div()
+                                                .id("composer-actions")
                                                 .flex()
+                                                .flex_shrink_0()
                                                 .flex_wrap()
                                                 .gap_2()
                                                 .mt_2()
@@ -3922,7 +3942,11 @@ impl Render for Coincide {
                                         )
                                         .child(
                                             div()
+                                                .id("composer-status")
                                                 .mt_2()
+                                                .max_h(px(32.))
+                                                .flex_shrink_0()
+                                                .overflow_y_scroll()
                                                 .text_sm()
                                                 .text_color(self.color(0xe4e9f2).opacity(0.7))
                                                 .child(self.status.clone()),

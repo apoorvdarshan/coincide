@@ -56,6 +56,25 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- 4ae5db4 passed all five Rust CI jobs, including the Linux output-limit fixture
+  correction and fixed SQLite. Native Saved Usage/defaults acceptance passed
+  real filtering, details, paging, exact project/global choices and invalid-default
+  no-orphan behavior; source document hashes stayed unchanged. Native text-only
+  steering passed one acknowledged message on the same turn, exact retained
+  draft, duplicate-submit prevention and saved last-request usage. Reference
+  Quote/cards passed, but context-only Send remains pending a real composer
+  clipping fix and fresh native retest; offscreen action attempts are excluded.
+- The next batch connects ordinary Codex Plan/full-access modes with explicit
+  model requirements, immutable bot/import restrictions and source-bound runtime
+  policy. Its full core run passed 434 unit tests and all integration targets;
+  desktop tests passed 295 unit tests and four integration targets, and strict
+  core Clippy passed. Mode controls and the bounded composer layout still need
+  their own native acceptance and next-commit CI.
+- A separate inherited-file-description writer-lock bug was reproduced with a
+  deterministic duplicate-descriptor test. Recovery leases now explicitly unlock
+  before closing, including constructor error paths; the regression and all
+  eight recovery-store tests pass without sleeps or retries.
+
 - Full-app native Quit passed on immutable 814e3c0 with fresh idle and active
   synthetic-Claude fixtures. Actual production CmdQ interrupted the active fake
   provider, waited for worker/control return and explicit Store close, and
@@ -112,7 +131,7 @@ off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last fully green Rust remote checkpoint is d4733f4; newer local results do not stand
+The last fully green Rust remote checkpoint is 4ae5db4; newer local results do not stand
 in for CI on the next pushed commit.
 
 ## Earlier parallel checkpoint (2026-11-05)

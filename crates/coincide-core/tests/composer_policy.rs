@@ -1,7 +1,4 @@
-use coincide_core::composer_selection;
-#[path = "../src/composer_policy.rs"]
-mod composer_policy;
-use composer_policy::*;
+use coincide_core::composer_policy::*;
 use serde_json::{Value, json};
 fn thread() -> Value {
     json!({"selection":{"provider":"codex","modelID":"default","accountID":""},"accessMode":"approval","interactionMode":"build","unknown":{"keep":true}})

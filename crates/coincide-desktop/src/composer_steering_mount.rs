@@ -11,10 +11,14 @@ impl Coincide {
             return None;
         }
         let draft = self.composer.read(cx).value().to_string();
+        let build_mode =
+            thread["interactionMode"].is_null() || thread["interactionMode"] == "build";
         let has_attachments = ["draftContext", "rustDraftImages"].iter().any(|key| {
             !thread[*key].is_null() && !thread[*key].as_array().is_some_and(Vec::is_empty)
         });
-        let enabled = !has_attachments && self.steering.can_submit(&id, &draft, &provider, running);
+        let enabled = build_mode
+            && !has_attachments
+            && self.steering.can_submit(&id, &draft, &provider, running);
         let mut pane = div().flex().flex_col().gap_1().child(
             Button::new("steer-active-turn").label("Steer active turn")
                 .disabled(!enabled).on_click(cx.listener(|this,_,_,cx| {
@@ -31,7 +35,10 @@ impl Coincide {
                 .child("Attached references and images need a normal send after the current turn.");
         }
         if let Some(message) = message {
-            pane = pane.child(message.message);
+            pane = pane.child(format!("Last steering result: {}", message.message));
+        }
+        if !build_mode {
+            pane = pane.child("Active-turn steering is available in Build mode.");
         }
         Some(pane.into_any_element())
     }

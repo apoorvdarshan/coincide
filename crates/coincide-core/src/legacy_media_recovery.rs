@@ -306,13 +306,25 @@ mod platform {
         }
         Ok(())
     }
+    struct WriterLease(File);
+    impl Drop for WriterLease {
+        fn drop(&mut self) {
+            // A concurrent fork can temporarily inherit the open description
+            // before CLOEXEC. Close alone would leave our writer lease held.
+            while unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) } != 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
     /// One exclusive writer per private directory. No automatic eviction/deletion, even of failed staging files.
     pub struct RecoveryStore {
         config: ServiceConfig,
         root: File,
         directory: File,
         database: File,
-        _lock: File,
+        _lock: WriterLease,
         directory_name: &'static str,
         validate_record: fn(&Value) -> RecoveryResult<()>,
         #[cfg(test)]
@@ -363,6 +375,7 @@ mod platform {
             if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
                 return Err(RecoveryError::Busy);
             }
+            let lock = WriterLease(lock);
             io(root.sync_all())?;
             let store = Self {
                 config: config.clone(),
@@ -654,6 +667,23 @@ mod platform {
         }
         fn receipt() -> Value {
             json!({"receiptId":uuid::Uuid::new_v4().to_string(),"operationId":uuid::Uuid::new_v4().to_string(),"threadId":uuid::Uuid::new_v4().to_string(),"generation":9,"committed":false,"error":"CommitUnknown","committedCandidateIds":[],"batch":{"threadSha256":"a".repeat(64),"references":[]}})
+        }
+        #[test]
+        fn ingestion_lease_drop_releases_even_with_inherited_open_description() {
+            let (_dir, cfg) = fixture();
+            let journal = IngestionStore::open(&cfg).unwrap();
+            // A concurrent fork can retain this shared open-file description
+            // until exec applies CLOEXEC. Dup models that lifetime exactly.
+            let inherited = journal.0._lock.0.try_clone().unwrap();
+            assert!(matches!(
+                IngestionStore::open(&cfg),
+                Err(RecoveryError::Busy)
+            ));
+            drop(journal);
+            let reopened =
+                IngestionStore::open(&cfg).expect("dropped owner must release its lease");
+            drop(inherited);
+            drop(reopened);
         }
         #[test]
         fn ingestion_owned_copy_fault_retains_exact_allocation_after_reopen() {
