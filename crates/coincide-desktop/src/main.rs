@@ -25,6 +25,7 @@ mod settings;
 mod terminal_selection;
 mod terminal_workspace;
 mod transcript;
+mod transcript_find;
 mod transcription_composer;
 mod transcription_settings;
 mod workspace;
@@ -167,9 +168,86 @@ fn read_terminal_frame(engine: &SharedEngine, id: &str, offset: usize) -> Result
     Ok(Some(frame))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FindReveal {
+    thread: String,
+    item: String,
+    generation: u64,
+    serial: u64,
+}
+fn find_sources(thread: &Value) -> Result<Vec<transcript_find::FindItem>> {
+    let items = thread["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Conversation items unavailable"))?;
+    anyhow::ensure!(
+        items.len() <= 2000,
+        "Find supports at most 2000 full messages"
+    );
+    let mut ids = std::collections::HashSet::new();
+    let mut size = 0usize;
+    let mut sources = Vec::with_capacity(items.len());
+    for item in items {
+        let id = item["id"]
+            .as_str()
+            .filter(|id| !id.is_empty() && id.len() <= 512 && !id.contains('\0'))
+            .ok_or_else(|| anyhow::anyhow!("Find requires stable message IDs"))?;
+        anyhow::ensure!(ids.insert(id), "Find requires unique message IDs");
+        let source = item["text"].as_str().unwrap_or("");
+        anyhow::ensure!(
+            source.len() <= 2 * 1024 * 1024,
+            "Find message exceeds 2 MiB"
+        );
+        size = size.saturating_add(id.len()).saturating_add(source.len());
+        anyhow::ensure!(
+            size <= 16 * 1024 * 1024,
+            "Find full-source snapshot exceeds 16 MiB"
+        );
+        sources.push(transcript_find::FindItem {
+            item_id: id.into(),
+            source: source.into(),
+        });
+    }
+    Ok(sources)
+}
+fn find_source_matches(thread: &Value, sources: &[transcript_find::FindItem]) -> bool {
+    thread["items"].as_array().is_some_and(|items| {
+        items.len() == sources.len()
+            && items.iter().zip(sources).all(|(item, source)| {
+                item["id"].as_str() == Some(source.item_id.as_str())
+                    && item["text"].as_str().unwrap_or("") == source.source.as_str()
+            })
+    })
+}
+fn find_snapshot_current(
+    thread: &Value,
+    thread_id: &str,
+    generation: u64,
+    current_generation: u64,
+    sources: &[transcript_find::FindItem],
+) -> bool {
+    thread["id"] == thread_id
+        && generation == current_generation
+        && find_source_matches(thread, sources)
+}
+fn find_row(thread: &Value, thread_id: &str, item_id: &str) -> Option<usize> {
+    if thread["id"] != thread_id {
+        return None;
+    }
+    thread["items"]
+        .as_array()?
+        .iter()
+        .position(|item| item["id"] == item_id)
+}
 struct Coincide {
     engine: SharedEngine,
     command_palette: Entity<command_palette::CommandPalette>,
+    transcript_find: Entity<transcript_find::TranscriptFind>,
+    find_thread: Option<String>,
+    find_generation: u64,
+    find_items: Vec<transcript_find::FindItem>,
+    find_pending: Option<FindReveal>,
+    find_revealed: Option<(String, String, u64)>,
+    find_last_serial: u64,
     palette_revision: u64,
     palette_entries: Vec<command_palette::PaletteEntry>,
     revision: u64,
@@ -498,6 +576,7 @@ impl Coincide {
             panel.attach_actions(github_actions, github_writes, cx);
             panel
         });
+        let transcript_find = cx.new(|cx| transcript_find::TranscriptFind::new(window, cx));
         let command_palette = cx.new(|cx| command_palette::CommandPalette::new(window, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
@@ -514,6 +593,9 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe_in(&transcript_find, window, |this, _, event, window, cx| {
+                this.find_event(event, window, cx);
+            }),
             cx.subscribe(&settings_search, |_, _, event, cx| { if matches!(event,InputEvent::Change) {cx.notify();} }),
             cx.subscribe(&model_input, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) { this.selection_model_changed(cx); }
@@ -701,6 +783,13 @@ impl Coincide {
         let mut this = Self {
             engine,
             command_palette,
+            transcript_find,
+            find_thread: None,
+            find_generation: 0,
+            find_items: Vec::new(),
+            find_pending: None,
+            find_revealed: None,
+            find_last_serial: 0,
             palette_revision: 0,
             palette_entries: Vec::new(),
             revision: 0,
@@ -1077,6 +1166,7 @@ impl Coincide {
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_palette(window, cx);
+        self.dismiss_find(window, cx);
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
                 self.preserve_pending_draft(&mut v);
@@ -1150,6 +1240,252 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn find_context_available(&self) -> bool {
+        self.selected.is_some()
+            && !self.settings_open
+            && !self.schedules_open
+            && !self.workspace_open
+            && !self.session_import_open
+    }
+    fn clear_find_reveal(&mut self, cx: &mut Context<Self>) {
+        if let Some((thread, item, _)) = self.find_revealed.take()
+            && let Some(index) = self
+                .selected
+                .as_ref()
+                .and_then(|selected| find_row(selected, &thread, &item))
+        {
+            self.transcript_list.splice(index..index + 1, 1);
+        }
+        self.find_pending = None;
+        cx.notify();
+    }
+    fn dismiss_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.transcript_find
+            .update(cx, |find, cx| find.dismiss(window, cx));
+        self.clear_find_reveal(cx);
+    }
+    fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.find_context_available() {
+            self.status = "Open a conversation to find text.".into();
+            cx.notify();
+            return;
+        }
+        let result = (|| -> Result<transcript_find::FindSnapshot> {
+            let thread = self.selected.as_ref().unwrap();
+            let items = find_sources(thread)?;
+            let generation = self
+                .find_generation
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("Find generation exhausted"))?;
+            Ok(transcript_find::FindSnapshot {
+                thread_id: text(thread, "id"),
+                generation,
+                items,
+            })
+        })();
+        match result {
+            Ok(snapshot) => {
+                self.clear_find_reveal(cx);
+                self.find_thread = Some(snapshot.thread_id.clone());
+                self.find_generation = snapshot.generation;
+                self.find_items = snapshot.items.clone();
+                if let Err(error) = self
+                    .transcript_find
+                    .update(cx, |find, cx| find.open(snapshot, window, cx))
+                {
+                    self.status = format!("Find unavailable: {error}");
+                    self.dismiss_find(window, cx);
+                }
+            }
+            Err(error) => {
+                self.status = format!("Find unavailable: {error}");
+                self.dismiss_find(window, cx);
+            }
+        }
+        cx.notify();
+    }
+    fn sync_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.transcript_find.read(cx).is_open() {
+            return;
+        }
+        let selected = self.selected.as_ref();
+        if !self.find_context_available()
+            || selected.map(|thread| text(thread, "id")) != self.find_thread
+        {
+            self.dismiss_find(window, cx);
+            if !self.find_context_available() {
+                window.blur(cx);
+            }
+            return;
+        }
+        if find_source_matches(selected.unwrap(), &self.find_items) {
+            return;
+        }
+        match find_sources(selected.unwrap()) {
+            Ok(items) if items == self.find_items => {}
+            Ok(items) => {
+                let Some(generation) = self.find_generation.checked_add(1) else {
+                    self.dismiss_find(window, cx);
+                    return;
+                };
+                self.find_pending = None;
+                if let Some((_, item, old_generation)) = &mut self.find_revealed {
+                    if items.iter().any(|entry| &entry.item_id == item) {
+                        *old_generation = generation;
+                    } else {
+                        self.find_revealed = None;
+                    }
+                }
+                self.find_generation = generation;
+                self.find_items = items.clone();
+                let snapshot = transcript_find::FindSnapshot {
+                    thread_id: self.find_thread.clone().unwrap(),
+                    generation,
+                    items,
+                };
+                if let Err(error) = self
+                    .transcript_find
+                    .update(cx, |find, cx| find.replace_snapshot(snapshot, cx))
+                {
+                    self.status = format!("Find stopped: {error}");
+                    self.dismiss_find(window, cx);
+                }
+            }
+            Err(error) => {
+                self.status = format!("Find stopped: {error}");
+                self.dismiss_find(window, cx);
+            }
+        }
+    }
+    fn find_event(
+        &mut self,
+        event: &transcript_find::FindEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use transcript_find::FindEvent as E;
+        match event {
+            E::Dismissed => {
+                if !self.transcript_find.read(cx).is_open() {
+                    self.clear_find_reveal(cx);
+                }
+            }
+            E::Cleared {
+                thread_id,
+                generation,
+                match_serial,
+            } => {
+                if self.find_thread.as_deref() == Some(thread_id.as_str())
+                    && *generation == self.find_generation
+                    && *match_serial >= self.find_last_serial
+                {
+                    self.find_last_serial = *match_serial;
+                    self.clear_find_reveal(cx);
+                }
+            }
+            E::Reveal {
+                thread_id,
+                item_id,
+                generation,
+                match_serial,
+                range,
+            } => {
+                if !self.find_context_available()
+                    || !self.transcript_find.read(cx).is_open()
+                    || self.find_thread.as_deref() != Some(thread_id.as_str())
+                    || *generation != self.find_generation
+                {
+                    return;
+                }
+                let Some(thread) = self.selected.as_ref() else {
+                    return;
+                };
+                let Some(index) = find_row(thread, thread_id, item_id) else {
+                    return;
+                };
+                if !find_snapshot_current(
+                    thread,
+                    thread_id,
+                    *generation,
+                    self.find_generation,
+                    &self.find_items,
+                ) {
+                    self.sync_find(window, cx);
+                    return;
+                }
+                let find = self.transcript_find.read(cx);
+                let Some(projection) = find.projection_for(thread_id, item_id, *generation) else {
+                    return;
+                };
+                let Some(state) = find.state_for(thread_id, item_id, *generation) else {
+                    return;
+                };
+                let rendered = state.read(cx).rendered_text();
+                let text = rendered.as_str();
+                if projection.match_serial != *match_serial
+                    || range.start >= range.end
+                    || range.end > text.len()
+                    || !text.is_char_boundary(range.start)
+                    || !text.is_char_boundary(range.end)
+                {
+                    return;
+                }
+                self.clear_find_reveal(cx);
+                self.find_last_serial = *match_serial;
+                self.find_revealed = Some((thread_id.clone(), item_id.clone(), *generation));
+                self.find_pending = Some(FindReveal {
+                    thread: thread_id.clone(),
+                    item: item_id.clone(),
+                    generation: *generation,
+                    serial: *match_serial,
+                });
+                self.transcript_list.splice(index..index + 1, 1);
+                self.transcript_list.scroll_to_reveal_item(index);
+                cx.notify();
+            }
+        }
+    }
+    fn find_body(
+        &mut self,
+        thread: &str,
+        item: &str,
+        source: String,
+        full: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TextView {
+        if full && self.find_context_available() && self.transcript_find.read(cx).is_open() {
+            let find = self.transcript_find.read(cx);
+            if let Some(state) = find.state_for(thread, item, self.find_generation) {
+                if let Some(projection) = find.projection_for(thread, item, self.find_generation) {
+                    let pending = FindReveal {
+                        thread: thread.into(),
+                        item: item.into(),
+                        generation: self.find_generation,
+                        serial: projection.match_serial,
+                    };
+                    if self.find_pending.as_ref() == Some(&pending) {
+                        match transcript::apply_find_projection(&state, &projection, cx) {
+                            Ok(true) => {
+                                if self.transcript_find.update(cx, |find, _| {
+                                    find.acknowledge_reveal(projection.match_serial)
+                                }) {
+                                    self.find_pending = None;
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                self.status = format!("Find reveal failed: {error}");
+                                self.find_pending = None;
+                            }
+                        }
+                    }
+                }
+                return transcript::managed_markdown(thread, item, &state, window, cx);
+            }
+        }
+        transcript::markdown(thread, item, source, window, cx)
+    }
     fn palette_catalog(&self) -> Vec<command_palette::PaletteEntry> {
         use command_palette::{PaletteCommand as C, PaletteEntry as E};
         let entry = |command, title, subtitle| E {
@@ -1216,6 +1552,7 @@ impl Coincide {
         if self.command_palette.read(cx).is_open() {
             self.dismiss_palette(window, cx);
         } else {
+            self.dismiss_find(window, cx);
             self.palette_revision = self.palette_revision.saturating_add(1);
             self.palette_entries = self.palette_catalog();
             let snapshot = command_palette::PaletteSnapshot {
@@ -1551,6 +1888,7 @@ impl Coincide {
         }
         self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
+        self.sync_find(window, cx);
     }
     fn refresh_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
@@ -2131,13 +2469,22 @@ impl Coincide {
                     .rposition(|item| item["kind"] == "user" && item["steered"] != true)
             });
         let settled = !source_running || running_start.is_some_and(|start| index < start);
-        if kind == "reasoning" && !self.settings["showReasoning"].as_bool().unwrap_or(true) {
+        let find_revealed =
+            self.find_revealed
+                .as_ref()
+                .is_some_and(|(thread, item, generation)| {
+                    thread == &source_id && item == &item_id && *generation == self.find_generation
+                });
+        if kind == "reasoning"
+            && !find_revealed
+            && !self.settings["showReasoning"].as_bool().unwrap_or(true)
+        {
             return div().into_any_element();
         }
         let body = text(item, "text");
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
-        let expanded = self.expanded.contains(&index);
+        let expanded = self.expanded.contains(&index) || find_revealed;
         let shown = if collapsible && !expanded {
             body.chars().take(180).collect()
         } else {
@@ -2175,6 +2522,14 @@ impl Coincide {
                     .child(div().max_w(px(240.)).truncate().text_xs().child(name))
             })
             .collect::<Vec<_>>();
+        let native_body = self.find_body(
+            &source_id,
+            &item_id,
+            shown,
+            !collapsible || expanded,
+            window,
+            cx,
+        );
         let card =
             div()
                 .id(SharedString::from(format!(
@@ -2268,7 +2623,15 @@ impl Coincide {
                                 else {
                                     return;
                                 };
-                                if !this.expanded.remove(&index) {
+                                if this
+                                    .find_revealed
+                                    .as_ref()
+                                    .is_some_and(|(thread, id, _)| thread == &source && id == &item)
+                                {
+                                    this.find_revealed = None;
+                                    this.find_pending = None;
+                                    this.expanded.remove(&index);
+                                } else if !this.expanded.remove(&index) {
                                     this.expanded.insert(index);
                                 }
                                 this.transcript_list.splice(index..index + 1, 1);
@@ -2279,7 +2642,7 @@ impl Coincide {
                 .child(transcript::preserve_selected_copy(
                     &source_id,
                     &item_id,
-                    transcript::markdown(&source_id, &item_id, shown, window, cx)
+                    native_body
                         .text_size(px(self.conversation_font_size()
                             + if kind == "assistant"
                                 && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
@@ -2709,6 +3072,14 @@ impl Render for Coincide {
                             .border_b_1()
                             .border_color(self.color(0x29303d))
                             .child(div().w_full().min_w_0().truncate().text_lg().child(title))
+                            .child(
+                                Button::new("transcript-find-open")
+                                    .label("Find")
+                                    .disabled(!self.find_context_available())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_find(window, cx)
+                                    })),
+                            )
                             .child(Button::new("terminal").label("Terminal").on_click(
                                 cx.listener(|this, _, window, cx| this.terminal(window, cx)),
                             ))
@@ -2827,6 +3198,19 @@ impl Render for Coincide {
                     .when_some(self.thread_management(cx), |view, management| {
                         view.child(management)
                     })
+                    .when(
+                        self.find_context_available() && self.transcript_find.read(cx).is_open(),
+                        |view| {
+                            view.child(
+                                div()
+                                    .id("transcript-find-surface")
+                                    .max_h(px(140.))
+                                    .flex_shrink_0()
+                                    .overflow_y_scroll()
+                                    .child(self.transcript_find.clone()),
+                            )
+                        },
+                    )
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when(self.terminal_visible_thread.is_some(), |view| {
@@ -3076,5 +3460,46 @@ mod liveness_tests {
                 .len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod find_mount_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn full_snapshot_includes_folded_reasoning_and_omits_draft_metadata() {
+        let long = format!("**bold** {} needle", "x".repeat(400));
+        let thread = json!({"id":"thread","draft":"private draft needle","items":[{"id":"reason","kind":"reasoning","text":long},{"id":"tool","kind":"tool","text":"`code` 中"}]});
+        let sources = find_sources(&thread).unwrap();
+        assert_eq!(sources[0].source, long);
+        assert_eq!(sources[1].source, "`code` 中");
+        assert!(
+            !sources
+                .iter()
+                .any(|item| item.source.contains("private draft"))
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn source_generation_and_thread_stamps_reject_stale_reveals() {
+        let mut thread = json!({"id":"thread","items":[{"id":"a","text":"old"}]});
+        let snapshot = find_sources(&thread).unwrap();
+        assert!(find_snapshot_current(&thread, "thread", 2, 2, &snapshot));
+        assert!(!find_snapshot_current(&thread, "thread", 1, 2, &snapshot));
+        assert!(!find_snapshot_current(&thread, "other", 2, 2, &snapshot));
+        thread["items"][0]["text"] = json!("new");
+        assert!(!find_snapshot_current(&thread, "thread", 2, 2, &snapshot));
+    }
+    #[::core::prelude::v1::test]
+    fn row_reveal_resolves_current_stable_id_and_refuses_ambiguous_snapshots() {
+        let mut thread =
+            json!({"id":"thread","items":[{"id":"a","text":"A"},{"id":"b","text":"B"}]});
+        assert_eq!(find_row(&thread, "thread", "b"), Some(1));
+        thread["items"].as_array_mut().unwrap().swap(0, 1);
+        assert_eq!(find_row(&thread, "thread", "b"), Some(0));
+        assert_eq!(find_row(&thread, "other", "b"), None);
+        thread["items"][1]["id"] = json!("b");
+        assert!(find_sources(&thread).is_err());
+        thread["items"][1]["id"] = Value::Null;
+        assert!(find_sources(&thread).is_err());
     }
 }

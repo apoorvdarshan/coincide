@@ -671,7 +671,7 @@ impl Coincide {
             "keyboard shortcuts send return new search command palette",
         ) {
             count += 1;
-            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Command / Control + N: new conversation; + F: search; + K: command palette; + comma: settings."));
+            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Command / Control + N: new conversation; + F: find in conversation; + K: command palette; + comma: settings."));
         }
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
@@ -814,7 +814,7 @@ impl Coincide {
                 cx.notify();
             }
             "n" => self.new_thread(window, cx),
-            "f" => self.search.read(cx).focus_handle(cx).focus(window, cx),
+            "f" => self.open_find(window, cx),
             "enter"
                 if !self.settings_open
                     && !self.schedules_open
