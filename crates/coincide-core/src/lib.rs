@@ -38,3 +38,5 @@ pub mod legacy_media;
 pub mod composer_selection;
 
 pub mod legacy_media_service;
+
+pub mod model_catalog;
