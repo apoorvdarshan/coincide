@@ -648,6 +648,45 @@ mod tests {
         ));
     }
     #[test]
+    fn disable_and_seen_controls_ack_in_order_and_cancel_subsequent_dispatch() {
+        let (mut runtime, state) = setup(Delivery::Accepted, 8);
+        let h = runtime.handle();
+        let original = key();
+        send(
+            &h,
+            Command::Configure(Settings {
+                enabled: true,
+                include_preview: false,
+            }),
+        );
+        receipt(&runtime);
+        send(&h, job(original));
+        assert!(matches!(
+            receipt(&runtime).outcome,
+            Outcome::Notification {
+                ack: Ack::Delivered(Delivery::Accepted),
+                ..
+            }
+        ));
+        send(&h, Command::Configure(Settings::default()));
+        send(&h, Command::ClearThread(original.thread));
+        send(&h, job(key()));
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Configured));
+        assert!(
+            matches!(receipt(&runtime).outcome, Outcome::Cleared { thread, error: None } if thread == original.thread)
+        );
+        assert!(matches!(
+            receipt(&runtime).outcome,
+            Outcome::Notification {
+                ack: Ack::Cancelled,
+                reason: Reason::Disabled,
+                ..
+            }
+        ));
+        assert_eq!(state.lock().unwrap().calls, vec!["status", "post", "clear"]);
+        runtime.shutdown().unwrap();
+    }
+    #[test]
     fn backend_panic_returns_uncertain_identity_without_requeue() {
         struct Panics;
         impl Backend for Panics {
