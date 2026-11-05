@@ -455,7 +455,7 @@ impl LegacyMediaSettingsPanel {
         });
         cx.notify();
         cx.spawn(async move |this,cx| {
-            let result: anyhow::Result<_> = async { Ok(picker.await??) }.await;
+            let result: anyhow::Result<_> = async { picker.await? }.await;
             let _=this.update(cx,|this,cx| {
                 this.choosing=false;
                 if this.closing || revision!=this.revision { cx.notify(); return; }

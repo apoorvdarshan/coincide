@@ -545,7 +545,7 @@ impl BrowserSettings {
             prompt: Some("Preview browser metadata JSON".into()),
         });
         cx.spawn(async move |this, cx| {
-            let paths: Result<_> = async { Ok(picker.await??) }.await;
+            let paths: Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| {
                 if !finish_import_choice(&mut this.workers, generation, this.generation) {
                     this.import_busy = false;

@@ -487,10 +487,10 @@ impl GitHubActions {
         self.locked = true;
         self.records = json!({});
         self.notice = "Loading history before enabling writes…".into();
-        if !self.busy {
-            if let Some(scope) = self.scope.clone() {
-                self.start(Work::History(scope), cx);
-            }
+        if !self.busy
+            && let Some(scope) = self.scope.clone()
+        {
+            self.start(Work::History(scope), cx);
         }
         cx.notify();
     }
@@ -502,10 +502,10 @@ impl GitHubActions {
         self.locked = true;
         self.history_known = false;
         self.notice = "Baseline invalidated by reload; loading durable history.".into();
-        if !self.busy {
-            if let Some(scope) = self.scope.clone() {
-                self.start(Work::History(scope), cx);
-            }
+        if !self.busy
+            && let Some(scope) = self.scope.clone()
+        {
+            self.start(Work::History(scope), cx);
         }
         cx.notify();
     }
@@ -621,7 +621,7 @@ impl GitHubActions {
                 if state == "succeeded"
                     && sent_body
                         .as_ref()
-                        .is_some_and(|sent| self.body.read(cx).value().to_string() == *sent)
+                        .is_some_and(|sent| self.body.read(cx).value().as_str() == sent.as_str())
                 {
                     self.body
                         .update(cx, |input, cx| input.set_value("", window, cx));

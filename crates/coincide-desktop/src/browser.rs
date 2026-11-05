@@ -757,10 +757,9 @@ impl BrowserController {
                         .tabs
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
+                        && !tab.credential_console_suppressed.load(Ordering::Acquire)
                     {
-                        if !tab.credential_console_suppressed.load(Ordering::Acquire) {
-                            tab.title = title;
-                        }
+                        tab.title = title;
                     }
                 }
                 NativeEvent::Load {

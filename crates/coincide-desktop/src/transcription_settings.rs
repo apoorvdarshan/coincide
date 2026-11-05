@@ -392,7 +392,7 @@ impl TranscriptionSettings {
             prompt: Some(prompt.into()),
         });
         cx.spawn(async move |this, cx| {
-            let paths: anyhow::Result<_> = async { Ok(picker.await??) }.await;
+            let paths: anyhow::Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| {
                 this.picker = false;
                 if !this.workflow.workers.finish_picker() { cx.notify(); return; }

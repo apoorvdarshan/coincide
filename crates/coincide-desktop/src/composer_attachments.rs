@@ -57,7 +57,7 @@ impl Coincide {
         self.status = "Choose PNG, JPEG, GIF, or WebP images to attach.".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let paths: Result<_> = async { Ok(picker.await??) }.await;
+            let paths: Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| match paths {
                 Ok(Some(paths)) => this.start_image_import(
                     thread,

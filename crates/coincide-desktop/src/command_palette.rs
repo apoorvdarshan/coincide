@@ -422,14 +422,13 @@ impl CommandPalette {
         }
     }
     fn scroll_selected(&self) {
-        if let Some(model) = &self.model {
-            if let Some(i) = model
+        if let Some(model) = &self.model
+            && let Some(i) = model
                 .rows
                 .iter()
                 .position(|&i| Some(&model.snapshot.entries[i].command) == model.selected.as_ref())
-            {
-                self.scroll.scroll_to_item(i);
-            }
+        {
+            self.scroll.scroll_to_item(i);
         }
     }
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
