@@ -2,6 +2,7 @@ use anyhow::Result;
 mod assets;
 mod bot_settings;
 mod browser;
+mod browser_settings;
 mod command_palette;
 mod composer_attachments;
 mod composer_selection;
