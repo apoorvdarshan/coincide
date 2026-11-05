@@ -1547,7 +1547,14 @@ impl Coincide {
                     serial: *match_serial,
                 });
                 self.transcript_list.splice(index..index + 1, 1);
-                self.transcript_list.scroll_to_reveal_item(index);
+                // The expanded/previously hidden row is now unmeasured.
+                // Pixel-based reveal uses its zero height and can anchor the
+                // preceding row; direct item anchoring mounts the exact target
+                // and stops tail-following before the native line reveal.
+                self.transcript_list.scroll_to(ListOffset {
+                    item_ix: index,
+                    offset_in_item: px(0.),
+                });
                 cx.notify();
             }
         }
@@ -3817,5 +3824,18 @@ mod find_mount_tests {
         assert!(consume_open_activation(&mut requested, "other"));
         assert!(requested.is_none());
         assert!(!consume_open_activation(&mut requested, "other"));
+    }
+    #[::core::prelude::v1::test]
+    fn find_mount_anchors_an_unmeasured_row_without_tail_following() {
+        let list =
+            ListState::new(100, ListAlignment::Bottom, px(500.)).with_uniform_item_height(px(20.));
+        list.splice(74..75, 1);
+        list.scroll_to(ListOffset {
+            item_ix: 74,
+            offset_in_item: px(0.),
+        });
+        assert_eq!(list.logical_scroll_top().item_ix, 74);
+        assert_eq!(list.logical_scroll_top().offset_in_item, px(0.));
+        assert!(!list.is_following_tail());
     }
 }
