@@ -48,8 +48,8 @@ if sys.argv[1:]==['app-server']:
   # macOS temporary paths may start with /var while cwd resolves /private/var.
   # Both must designate exactly this fixture image, not an unrelated path.
   assert pathlib.Path(block['path']).resolve()==pathlib.Path('image '+str(i)+'.png').resolve()
- write({'id':r['id'],'result':{}})
- complete({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
+ write({'id':r['id'],'result':{'turn':{'id':'image-turn'}}})
+ complete({'method':'turn/completed','params':{'threadId':'image-codex','turn':{'id':'image-turn','status':'completed'}}})
 elif '--input-format' in sys.argv:
  r=read();write({'type':'control_response','response':{'subtype':'success','request_id':r['request_id']}})
  r=read();assert r['type']=='user'
