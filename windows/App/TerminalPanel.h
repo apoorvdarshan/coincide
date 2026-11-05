@@ -78,7 +78,10 @@ struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
         ui::RichTextBlock text;text.FontFamily(xaml::Media::FontFamily(L"Consolas"));text.FontSize(14);
         text.LineHeight(line_height_);text.LineStackingStrategy(xaml::LineStackingStrategy::BlockLineHeight);
         text.TextWrapping(xaml::TextWrapping::NoWrap);text.IsTextSelectionEnabled(true);identify(text,L"TerminalRowText");
-        text.SelectionChanged([selected=selected_,changed=selection_changed_](const auto& sender,const auto&){
+        // RichTextBlock raises SelectionChanged before notifying SelectedText.
+        // Observe the published property so programmatic/UIA selections cannot
+        // leave our context cache one selection behind the native control.
+        text.RegisterPropertyChangedCallback(ui::RichTextBlock::SelectedTextProperty(),[selected=selected_,changed=selection_changed_](const auto& sender,const auto&){
             const auto value=sender.template as<ui::RichTextBlock>().SelectedText();if(!value.empty()){*selected=winrt::to_string(value);if(changed)changed();}
         });
         docs::Paragraph paragraph;paragraph.Margin({0,0,0,0});
