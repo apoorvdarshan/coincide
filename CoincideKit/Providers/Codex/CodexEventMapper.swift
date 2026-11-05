@@ -9,6 +9,8 @@ struct CodexEventMapper {
     var threadID: String?
     let presentation: CodexPresentation
     private(set) var turnID: String?
+    /// An unfinished reply. Sending `turn/steer` now makes Codex abandon its text mid-sentence.
+    private(set) var streamingAssistantID: String?
     /// Turns that ended. Background commands they started may still report output and finish.
     private var finishedTurnIDs: Set<String> = []
     private var adoptsNextTurn = false
@@ -44,12 +46,14 @@ struct CodexEventMapper {
         guard turnID != id, !finishedTurnIDs.contains(id) else { return }
         if let turnID { finishedTurnIDs.insert(turnID) }
         turnID = id
+        streamingAssistantID = nil
         adoptsNextTurn = false
     }
 
     mutating func endTurn() {
         if let turnID { finishedTurnIDs.insert(turnID) }
         turnID = nil
+        streamingAssistantID = nil
         adoptsNextTurn = false
     }
 
@@ -185,6 +189,7 @@ struct CodexEventMapper {
             return itemCompleted(item)
         case "item/agentMessage/delta":
             guard let itemID, !delta.isEmpty else { return [] }
+            streamingAssistantID = itemID
             return [.assistantTextDelta(itemID: itemID, delta: delta)]
         case "item/reasoning/summaryTextDelta":
             guard let itemID, !delta.isEmpty else { return [] }
@@ -220,6 +225,8 @@ struct CodexEventMapper {
 
     private mutating func itemStarted(_ item: JSONValue) -> [AgentEvent] {
         guard let id = item["id"]?.string else { return [] }
+        // A new item is also a boundary if Codex abandoned an earlier one without completing it.
+        streamingAssistantID = item["type"]?.string == "agentMessage" ? id : nil
         switch item["type"]?.string {
         case "plan":
             proposedPlan = item["text"]?.string
@@ -239,9 +246,14 @@ struct CodexEventMapper {
         guard let id = item["id"]?.string else { return [] }
         switch item["type"]?.string {
         case "agentMessage":
-            var text = item["text"]?.string ?? ""
+            if streamingAssistantID == id { streamingAssistantID = nil }
+            let text = item["text"]?.string ?? ""
             if item["delivery"]?.string == "async", let questions = item["questions"]?.array, !questions.isEmpty {
-                text = CodexPresentation.asyncQuestionsMarkdown(text: text, questions: questions)
+                let request = CodexPresentation.asyncQuestions(id: "\(turnID ?? "")/\(id)", questions: questions)
+                if !request.questions.isEmpty {
+                    let body = CodexPresentation.asyncQuestionText(text, request: request)
+                    return [.assistantText(itemID: id, text: body), .userInputRequested(request)]
+                }
             }
             guard !text.isEmpty else { return [] }
             return [.assistantText(itemID: id, text: text)]

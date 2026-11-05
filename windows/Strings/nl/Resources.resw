@@ -1,0 +1,1654 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="Accounts" xml:space="preserve">
+    <value>Accounts</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Voeg project toe…</value>
+  </data>
+  <data name="AgentTools" xml:space="preserve">
+    <value>Agent tools</value>
+  </data>
+  <data name="AllThreads" xml:space="preserve">
+    <value>All Threads</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>Sta toe</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Archiveer</value>
+  </data>
+  <data name="ArchivedThreads" xml:space="preserve">
+    <value>Gearchiveerde threads</value>
+  </data>
+  <data name="Attach" xml:space="preserve">
+    <value>Voeg bijlage toe</value>
+  </data>
+  <data name="Bots" xml:space="preserve">
+    <value>Bots</value>
+  </data>
+  <data name="Browser" xml:space="preserve">
+    <value>Browser</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Annuleer</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Sluit</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>Verbinden…</value>
+  </data>
+  <data name="Delete" xml:space="preserve">
+    <value>Verwijder</value>
+  </data>
+  <data name="DeletedThreads" xml:space="preserve">
+    <value>Deleted Threads</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>Weiger</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Sluit</value>
+  </data>
+  <data name="EndSession" xml:space="preserve">
+    <value>End session</value>
+  </data>
+  <data name="FindInThread" xml:space="preserve">
+    <value>Find in conversation</value>
+  </data>
+  <data name="Git" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="ImportSessions" xml:space="preserve">
+    <value>Import Sessions</value>
+  </data>
+  <data name="ImportedSession" xml:space="preserve">
+    <value>Imported Session</value>
+  </data>
+  <data name="Instructions" xml:space="preserve">
+    <value>Instructies</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Bericht</value>
+  </data>
+  <data name="Model" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="ModelSettings" xml:space="preserve">
+    <value>Modelinstellingen</value>
+  </data>
+  <data name="MoveToProject" xml:space="preserve">
+    <value>Verplaats naar project</value>
+  </data>
+  <data name="NewChat" xml:space="preserve">
+    <value>Nieuwe chat</value>
+  </data>
+  <data name="OneHour" xml:space="preserve">
+    <value>1 hour</value>
+  </data>
+  <data name="OneWeek" xml:space="preserve">
+    <value>1 week</value>
+  </data>
+  <data name="Passwords" xml:space="preserve">
+    <value>Wachtwoorden</value>
+  </data>
+  <data name="Plan" xml:space="preserve">
+    <value>Plan</value>
+  </data>
+  <data name="Preview" xml:space="preserve">
+    <value>Voorbeeld</value>
+  </data>
+  <data name="Projectless" xml:space="preserve">
+    <value>No Project</value>
+  </data>
+  <data name="Projects" xml:space="preserve">
+    <value>Projecten</value>
+  </data>
+  <data name="PullRequests" xml:space="preserve">
+    <value>Pull requests</value>
+  </data>
+  <data name="Queue" xml:space="preserve">
+    <value>Wachtrij</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Klaar</value>
+  </data>
+  <data name="Reasoning" xml:space="preserve">
+    <value>Redeneren</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Opnieuw</value>
+  </data>
+  <data name="Refresh" xml:space="preserve">
+    <value>Vernieuw</value>
+  </data>
+  <data name="Remove" xml:space="preserve">
+    <value>Verwijder</value>
+  </data>
+  <data name="Rename" xml:space="preserve">
+    <value>Wijzig naam</value>
+  </data>
+  <data name="Restore" xml:space="preserve">
+    <value>Herstellen</value>
+  </data>
+  <data name="Resume" xml:space="preserve">
+    <value>Hervatten</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>Bewaar</value>
+  </data>
+  <data name="Schedules" xml:space="preserve">
+    <value>Schedules</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Zoek</value>
+  </data>
+  <data name="Send" xml:space="preserve">
+    <value>Verstuur</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Instellingen</value>
+  </data>
+  <data name="Settle" xml:space="preserve">
+    <value>Als afgehandeld markeren</value>
+  </data>
+  <data name="Settled" xml:space="preserve">
+    <value>Afgehandeld</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Toon gearchiveerde threads</value>
+  </data>
+  <data name="Snooze" xml:space="preserve">
+    <value>Snooze</value>
+  </data>
+  <data name="Speed" xml:space="preserve">
+    <value>Snelheid</value>
+  </data>
+  <data name="Steer" xml:space="preserve">
+    <value>Bijsturen</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Verstuur</value>
+  </data>
+  <data name="Terminal" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Text_000125d3e4d67ba0" xml:space="preserve">
+    <value>Finishing the repository operation before quitting…</value>
+  </data>
+  <data name="Text_00f010942da2c5ec" xml:space="preserve">
+    <value>Remove Bot</value>
+  </data>
+  <data name="Text_011d7c8a4b6c110a" xml:space="preserve">
+    <value> logins imported. The source CSV was preserved; it contains unencrypted passwords.</value>
+  </data>
+  <data name="Text_01503d73cfbe08ad" xml:space="preserve">
+    <value>The verified profile was selected.</value>
+  </data>
+  <data name="Text_0172b15ac260ce5e" xml:space="preserve">
+    <value>Sign in opens only the provider's verification page when requested. Finish using an existing account; this panel never creates an external account or changes a global CLI login.</value>
+  </data>
+  <data name="Text_02a54a8c94b77916" xml:space="preserve">
+    <value>New worktree folder</value>
+  </data>
+  <data name="Text_02e6aeb6b7771acd" xml:space="preserve">
+    <value>Herhaal elke</value>
+  </data>
+  <data name="Text_0359ce99f4f79118" xml:space="preserve">
+    <value>Saving creates an approval card. The schedule runs only after you explicitly approve the saved prompt and timing.</value>
+  </data>
+  <data name="Text_0379fc73608ab971" xml:space="preserve">
+    <value>Gereed</value>
+  </data>
+  <data name="Text_03b15a3ee7b50b5f" xml:space="preserve">
+    <value>Share terminal output only with this conversation. Access lasts until revoked or Coincide closes. Agents cannot type or execute commands through this connection.</value>
+  </data>
+  <data name="Text_03f42eea72154959" xml:space="preserve">
+    <value>Username</value>
+  </data>
+  <data name="Text_0487f33d9ddaabde" xml:space="preserve">
+    <value>Over</value>
+  </data>
+  <data name="Text_04e69db649437ee9" xml:space="preserve">
+    <value>Imported Session</value>
+  </data>
+  <data name="Text_05b37f9ddc3cf3a3" xml:space="preserve">
+    <value>Refresh to load pull requests for the selected repository. GitHub CLI uses your existing sign-in.</value>
+  </data>
+  <data name="Text_05e7f192d6a89c19" xml:space="preserve">
+    <value>Retry saving disabled preferences</value>
+  </data>
+  <data name="Text_061cc20e3432dead" xml:space="preserve">
+    <value>Pauzeren</value>
+  </data>
+  <data name="Text_0642714aeddc17c2" xml:space="preserve">
+    <value>An agent needs your response.</value>
+  </data>
+  <data name="Text_0673a0b3ae1a3a58" xml:space="preserve">
+    <value>Wait for the repository operation to finish before sending terminal input.</value>
+  </data>
+  <data name="Text_06d5543325c70d5c" xml:space="preserve">
+    <value>The disabled preference is still pending a successful save.</value>
+  </data>
+  <data name="Text_0911a156db3ad35b" xml:space="preserve">
+    <value>Approve schedule</value>
+  </data>
+  <data name="Text_099b18e1bd8a1154" xml:space="preserve">
+    <value>Uren</value>
+  </data>
+  <data name="Text_09a047c5960c5edc" xml:space="preserve">
+    <value>Up to 4,000 characters. Personality shapes tone, while Instructions define the job.</value>
+  </data>
+  <data name="Text_0a11c2ffb8309d1a" xml:space="preserve">
+    <value>Niet gevonden</value>
+  </data>
+  <data name="Text_0a6e2bfcd881949d" xml:space="preserve">
+    <value>Cron-expressie</value>
+  </data>
+  <data name="Text_0b978fa5dd3e4463" xml:space="preserve">
+    <value>This navigation is blocked.</value>
+  </data>
+  <data name="Text_0e8b82d208236286" xml:space="preserve">
+    <value>The confirmation could not be shown. No action was started.</value>
+  </data>
+  <data name="Text_0f811b617ba5423a" xml:space="preserve">
+    <value>Als afgehandeld markeren</value>
+  </data>
+  <data name="Text_0fbf6dc6a1966408" xml:space="preserve">
+    <value>Volgende</value>
+  </data>
+  <data name="Text_1073223d7aac885a" xml:space="preserve">
+    <value>The conversation or draft changed. The transcript was discarded.</value>
+  </data>
+  <data name="Text_11326fd2590f4e5e" xml:space="preserve">
+    <value>Standaard</value>
+  </data>
+  <data name="Text_11fb54d70f2e16aa" xml:space="preserve">
+    <value>Bladwijzer voor deze pagina</value>
+  </data>
+  <data name="Text_12851f11f274a7fb" xml:space="preserve">
+    <value>Selected conversation</value>
+  </data>
+  <data name="Text_12861ac71662a3ee" xml:space="preserve">
+    <value>Create Worktree</value>
+  </data>
+  <data name="Text_12d6dde9b30c3093" xml:space="preserve">
+    <value>Sluit</value>
+  </data>
+  <data name="Text_1351e0f681727ace" xml:space="preserve">
+    <value>The preview process stopped.</value>
+  </data>
+  <data name="Text_142e390b955f4f74" xml:space="preserve">
+    <value>Working…</value>
+  </data>
+  <data name="Text_14a47aa5e644806d" xml:space="preserve">
+    <value>Select a conversation to manage its schedules.</value>
+  </data>
+  <data name="Text_16db387578b99689" xml:space="preserve">
+    <value>Allow full access by default in new chats</value>
+  </data>
+  <data name="Text_16f09b6d340e9f85" xml:space="preserve">
+    <value>Session ended. The next message can start a fresh verified session.</value>
+  </data>
+  <data name="Text_17b5c0061baf42a4" xml:space="preserve">
+    <value>Default reasoning effort</value>
+  </data>
+  <data name="Text_181d8c50dd577ce6" xml:space="preserve">
+    <value>Remove Selected</value>
+  </data>
+  <data name="Text_199f5853f4e718f7" xml:space="preserve">
+    <value>Projecten</value>
+  </data>
+  <data name="Text_19f361adab1c6776" xml:space="preserve">
+    <value>Recording… Stop to transcribe, or Cancel to discard.</value>
+  </data>
+  <data name="Text_1a0c41d456e2a2ec" xml:space="preserve">
+    <value>Action needed</value>
+  </data>
+  <data name="Text_1e571a852c803bbc" xml:space="preserve">
+    <value>Answer every required question before submitting.</value>
+  </data>
+  <data name="Text_1ed5bb575207cece" xml:space="preserve">
+    <value>Wekelijks</value>
+  </data>
+  <data name="Text_1ee35c64166b9bec" xml:space="preserve">
+    <value>Choose a profile, then check its status. Existing CLI logins are preserved.</value>
+  </data>
+  <data name="Text_1f23a6f1d2e255fd" xml:space="preserve">
+    <value>Find in message text</value>
+  </data>
+  <data name="Text_1f7698c061c208c9" xml:space="preserve">
+    <value>Open</value>
+  </data>
+  <data name="Text_200678f33346fc6e" xml:space="preserve">
+    <value>Inserted into draft</value>
+  </data>
+  <data name="Text_227494b1230c5a55" xml:space="preserve">
+    <value>Worktree removal is unavailable in this window.</value>
+  </data>
+  <data name="Text_232f88877550dfa9" xml:space="preserve">
+    <value>Microfoon</value>
+  </data>
+  <data name="Text_236af47b384b6ef4" xml:space="preserve">
+    <value>Review setup</value>
+  </data>
+  <data name="Text_23999f07a784c4f4" xml:space="preserve">
+    <value>Ready. Record starts the microphone only after you choose it.</value>
+  </data>
+  <data name="Text_240732794d597f70" xml:space="preserve">
+    <value>Tuesday</value>
+  </data>
+  <data name="Text_250a7fc28124c361" xml:space="preserve">
+    <value>Read only</value>
+  </data>
+  <data name="Text_26f91b6796e33111" xml:space="preserve">
+    <value>Herstellen</value>
+  </data>
+  <data name="Text_26fcd0e8ed49d7f4" xml:space="preserve">
+    <value>Account status unavailable</value>
+  </data>
+  <data name="Text_293aedd8bf1fd296" xml:space="preserve">
+    <value>Reviewed — resume future runs</value>
+  </data>
+  <data name="Text_2998563d980cf5b2" xml:space="preserve">
+    <value>Wacht op goedkeuring</value>
+  </data>
+  <data name="Text_2c15ce0df25b5485" xml:space="preserve">
+    <value>Searching message text…</value>
+  </data>
+  <data name="Text_2ccedee13720d916" xml:space="preserve">
+    <value>MIT License · Copyright 2026 Apoorv Darshan. Native Windows development builds are not signed public releases.</value>
+  </data>
+  <data name="Text_2ceb11be2290bb1b" xml:space="preserve">
+    <value>Annuleer</value>
+  </data>
+  <data name="Text_2d05099c8b47e2f0" xml:space="preserve">
+    <value>Read and Write Files</value>
+  </data>
+  <data name="Text_2d230d2f96a02db5" xml:space="preserve">
+    <value>The browser library action could not be completed.</value>
+  </data>
+  <data name="Text_2d4f0968dc0883f8" xml:space="preserve">
+    <value>Provider accounts</value>
+  </data>
+  <data name="Text_2db03ce6a5aec7ab" xml:space="preserve">
+    <value>Verified account metadata</value>
+  </data>
+  <data name="Text_2e1b793ad988b6ed" xml:space="preserve">
+    <value>With Full Access off, actions follow the app's approval rules.</value>
+  </data>
+  <data name="Text_2e354c5165af4d70" xml:space="preserve">
+    <value>Use Track Remote Branch to create a local checkout.</value>
+  </data>
+  <data name="Text_2ee366cbb0141712" xml:space="preserve">
+    <value>Sta toe</value>
+  </data>
+  <data name="Text_2f029efdf7291184" xml:space="preserve">
+    <value>The instruction workspace could not be reserved.</value>
+  </data>
+  <data name="Text_2f826a07716be31f" xml:space="preserve">
+    <value>Select metadata rows to import first.</value>
+  </data>
+  <data name="Text_30edcc4e98194755" xml:space="preserve">
+    <value>Windows did not release the microphone cleanly. Restart Coincide before recording again.</value>
+  </data>
+  <data name="Text_3153174500d06571" xml:space="preserve">
+    <value>Restore Checkpoint</value>
+  </data>
+  <data name="Text_319ccfc06c45f9a4" xml:space="preserve">
+    <value>Eenmalig</value>
+  </data>
+  <data name="Text_31c4f8ab533d133d" xml:space="preserve">
+    <value>Select a local branch first.</value>
+  </data>
+  <data name="Text_31d653c51878aa90" xml:space="preserve">
+    <value>Default model ID</value>
+  </data>
+  <data name="Text_32322dc45e502559" xml:space="preserve">
+    <value>Weiger</value>
+  </data>
+  <data name="Text_337dd38e3527e5d9" xml:space="preserve">
+    <value>Copy to Composer</value>
+  </data>
+  <data name="Text_33adf3cc8c3b4713" xml:space="preserve">
+    <value>Sneltoets</value>
+  </data>
+  <data name="Text_33f85f24c0f5f008" xml:space="preserve">
+    <value>Bewaar</value>
+  </data>
+  <data name="Text_345be9d2d7ce0228" xml:space="preserve">
+    <value>Gebruik</value>
+  </data>
+  <data name="Text_34bc4cc9fb5b7aa4" xml:space="preserve">
+    <value>Instructies</value>
+  </data>
+  <data name="Text_359b8da94e7c2bf7" xml:space="preserve">
+    <value>This conversation has no Computer Use access.</value>
+  </data>
+  <data name="Text_35ff0dcc73e8e41a" xml:space="preserve">
+    <value>Showing first 10,000 matches</value>
+  </data>
+  <data name="Text_365e0ea3db8f9c26" xml:space="preserve">
+    <value>This conversation can inspect native windows.</value>
+  </data>
+  <data name="Text_36f0e292c4ded521" xml:space="preserve">
+    <value>Save voice settings before recording.</value>
+  </data>
+  <data name="Text_37522710280eddce" xml:space="preserve">
+    <value>Delete Branch</value>
+  </data>
+  <data name="Text_38059c4aedacfa00" xml:space="preserve">
+    <value>Delete Checkpoint</value>
+  </data>
+  <data name="Text_381a70a025ce4cb2" xml:space="preserve">
+    <value>Balance: Unavailable · Rate limits: Unavailable</value>
+  </data>
+  <data name="Text_38c0cd9b7a567b9d" xml:space="preserve">
+    <value>Agent tools</value>
+  </data>
+  <data name="Text_3914cb410fca44d4" xml:space="preserve">
+    <value>Importeren</value>
+  </data>
+  <data name="Text_394ac6bb96eecec0" xml:space="preserve">
+    <value>Terminal display buffer limit reached.</value>
+  </data>
+  <data name="Text_3995b548fdecb2db" xml:space="preserve">
+    <value>The selected logins were not imported. Review the selection and local storage, then try again.</value>
+  </data>
+  <data name="Text_399d6e9c8b38a349" xml:space="preserve">
+    <value>Cron</value>
+  </data>
+  <data name="Text_3a74160d60635df0" xml:space="preserve">
+    <value>No model selected</value>
+  </data>
+  <data name="Text_3abc86e625cc6b97" xml:space="preserve">
+    <value>Schedules in this conversation</value>
+  </data>
+  <data name="Text_3bb786d3b55ba37c" xml:space="preserve">
+    <value>Geannuleerd</value>
+  </data>
+  <data name="Text_3bcd13f5c30447c7" xml:space="preserve">
+    <value>Only usage reported by this app's provider sessions is included. Context snapshots and account balances are separate from turn totals.</value>
+  </data>
+  <data name="Text_3cfa792585bbe850" xml:space="preserve">
+    <value>You have unsaved edits. Save or discard them before switching bots.</value>
+  </data>
+  <data name="Text_3d2d8dcbafbaab7a" xml:space="preserve">
+    <value>Compare checkpoint with</value>
+  </data>
+  <data name="Text_3dcc9cf911654522" xml:space="preserve">
+    <value>This panel accepts up to 500 logins per reviewed import. Split larger exports before importing.</value>
+  </data>
+  <data name="Text_3e00ba8ec988f9cf" xml:space="preserve">
+    <value>Preview Checkpoint</value>
+  </data>
+  <data name="Text_3e178098bb55daf3" xml:space="preserve">
+    <value>Commitbericht</value>
+  </data>
+  <data name="Text_3fd70a61149c0ed1" xml:space="preserve">
+    <value>Loading pull request…</value>
+  </data>
+  <data name="Text_41431c2bbdc5f824" xml:space="preserve">
+    <value>Voeg bijlage toe</value>
+  </data>
+  <data name="Text_417b90913e05bc17" xml:space="preserve">
+    <value>Voorbeeld</value>
+  </data>
+  <data name="Text_41b0f0819b67cacb" xml:space="preserve">
+    <value>Staged</value>
+  </data>
+  <data name="Text_42719c2e25d9255b" xml:space="preserve">
+    <value>Remove this bot? Keep its conversations as chats, or remove them too. Its folder and files are never deleted.</value>
+  </data>
+  <data name="Text_42e470ef1d707a28" xml:space="preserve">
+    <value>Autoplay</value>
+  </data>
+  <data name="Text_44ef1526bf1d8106" xml:space="preserve">
+    <value>Morgen</value>
+  </data>
+  <data name="Text_44f87c21d186fcea" xml:space="preserve">
+    <value>Repeat</value>
+  </data>
+  <data name="Text_44fa1773e1e78784" xml:space="preserve">
+    <value>Saved</value>
+  </data>
+  <data name="Text_45ce61667628ecd4" xml:space="preserve">
+    <value>Markeren als gereed voor review</value>
+  </data>
+  <data name="Text_46572f544f43f202" xml:space="preserve">
+    <value>Each added profile has its own native CLI login. Coincide stores profile labels and verified account routing metadata; passwords and tokens stay with the CLI.</value>
+  </data>
+  <data name="Text_46a3d392a61a63f0" xml:space="preserve">
+    <value>Open Coincide from its tray icon. Quit stops its agents and terminals; interrupted schedules require review after relaunch.</value>
+  </data>
+  <data name="Text_46bd91cf9ae909f5" xml:space="preserve">
+    <value>Selected metadata file</value>
+  </data>
+  <data name="Text_47a9f592c61daa59" xml:space="preserve">
+    <value>Voice</value>
+  </data>
+  <data name="Text_4890edb184128d64" xml:space="preserve">
+    <value>Schedule proposals always require your approval in the Schedules panel. Computer Use permissions are managed separately in Settings.</value>
+  </data>
+  <data name="Text_499f3644e41825d9" xml:space="preserve">
+    <value>Keep Awake uses an app-owned sleep request. Windows, the lid policy or ASUS software can still request hibernation. Quit releases the request.</value>
+  </data>
+  <data name="Text_4a2f004629efd538" xml:space="preserve">
+    <value>Pull requests laden…</value>
+  </data>
+  <data name="Text_4baba93d34a3603b" xml:space="preserve">
+    <value>Refresh manager status</value>
+  </data>
+  <data name="Text_4c2254c3453e1fca" xml:space="preserve">
+    <value>Gearchiveerde threads</value>
+  </data>
+  <data name="Text_4c9671058ab55d2b" xml:space="preserve">
+    <value>The conversation finished.</value>
+  </data>
+  <data name="Text_4d1422b9bc3d0a7e" xml:space="preserve">
+    <value>Dagelijks</value>
+  </data>
+  <data name="Text_4d27276533f167f5" xml:space="preserve">
+    <value>Er is geen spraak gehoord.</value>
+  </data>
+  <data name="Text_4e206ee507e440b6" xml:space="preserve">
+    <value>Kies bestand…</value>
+  </data>
+  <data name="Text_4e207ae69a6c4490" xml:space="preserve">
+    <value>Enter URL</value>
+  </data>
+  <data name="Text_4e2666a7e40bc5f8" xml:space="preserve">
+    <value>Discard and Switch</value>
+  </data>
+  <data name="Text_4ebe0a2ad2bb163e" xml:space="preserve">
+    <value>System language</value>
+  </data>
+  <data name="Text_4ed0f8cd13bc52ab" xml:space="preserve">
+    <value>Delete schedule</value>
+  </data>
+  <data name="Text_4f8eb0976f1c0f5f" xml:space="preserve">
+    <value>Approve reviewed action</value>
+  </data>
+  <data name="Text_4f97b1ac351cdf90" xml:space="preserve">
+    <value>Enter sends; Shift+Enter inserts a line break</value>
+  </data>
+  <data name="Text_4fb1215f3f1f4cea" xml:space="preserve">
+    <value>Mark this original stopped session reviewed after reading its saved conversation and resolved inputs? Earlier uncertain delivery and model outcomes remain uncertain. This starts no provider and replays no input. End Hosted Session can then retire this generation.</value>
+  </data>
+  <data name="Text_5160ee9161a47fed" xml:space="preserve">
+    <value>Reported cost: </value>
+  </data>
+  <data name="Text_5210f42b7f74ddd4" xml:space="preserve">
+    <value>Recover saved input</value>
+  </data>
+  <data name="Text_5225bc94eed346a8" xml:space="preserve">
+    <value>The selected browser metadata file could not be opened.</value>
+  </data>
+  <data name="Text_53543c9d8520bd07" xml:space="preserve">
+    <value>Token totals unavailable</value>
+  </data>
+  <data name="Text_5360d33e7f91fb81" xml:space="preserve">
+    <value>Laden…</value>
+  </data>
+  <data name="Text_53a526d5c80c3e28" xml:space="preserve">
+    <value>Standaard</value>
+  </data>
+  <data name="Text_54021588d84f7ed1" xml:space="preserve">
+    <value>Import Sessions</value>
+  </data>
+  <data name="Text_54d1b2a64667e32e" xml:space="preserve">
+    <value>Camera</value>
+  </data>
+  <data name="Text_54d7d627cfbaf10c" xml:space="preserve">
+    <value>Verplaats naar project</value>
+  </data>
+  <data name="Text_5507b36022816801" xml:space="preserve">
+    <value>Terminal input</value>
+  </data>
+  <data name="Text_564b2e41be68de6e" xml:space="preserve">
+    <value>Agent tool access</value>
+  </data>
+  <data name="Text_565adaaff41a281c" xml:space="preserve">
+    <value>Window Management</value>
+  </data>
+  <data name="Text_56d7ae194448aa0c" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="Text_57adf424d57c8a0f" xml:space="preserve">
+    <value>Verstuur</value>
+  </data>
+  <data name="Text_57b81a835c9cc2de" xml:space="preserve">
+    <value>Bladwijzers</value>
+  </data>
+  <data name="Text_5825d709ca961b07" xml:space="preserve">
+    <value>Preparing microphone…</value>
+  </data>
+  <data name="Text_58551fe10ab302e4" xml:space="preserve">
+    <value>Choose Folder</value>
+  </data>
+  <data name="Text_586fe03d90a0a5f2" xml:space="preserve">
+    <value>Sessies zoeken</value>
+  </data>
+  <data name="Text_58c754018ec47b5f" xml:space="preserve">
+    <value>Geschiedenis</value>
+  </data>
+  <data name="Text_5908d0912f71510e" xml:space="preserve">
+    <value>Full Access</value>
+  </data>
+  <data name="Text_5941b0a63184176f" xml:space="preserve">
+    <value>That file is not a readable bounded password export. The previous review was preserved.</value>
+  </data>
+  <data name="Text_598a5dbb3832aa57" xml:space="preserve">
+    <value>Voeg project toe…</value>
+  </data>
+  <data name="Text_59eca5c3b90eef1b" xml:space="preserve">
+    <value>Computerbediening</value>
+  </data>
+  <data name="Text_5a03bb9c5bb00e22" xml:space="preserve">
+    <value>Cost unavailable</value>
+  </data>
+  <data name="Text_5a23443668c1104a" xml:space="preserve">
+    <value>Refresh local totals</value>
+  </data>
+  <data name="Text_5baa9bc2702f80df" xml:space="preserve">
+    <value>Selected days</value>
+  </data>
+  <data name="Text_5be3c6d61cd9182f" xml:space="preserve">
+    <value>Berichtgeving</value>
+  </data>
+  <data name="Text_5cf3a3cabd49f456" xml:space="preserve">
+    <value>Clone address or private GitHub owner/name</value>
+  </data>
+  <data name="Text_5d929ff1619ac0c9" xml:space="preserve">
+    <value>Zoek</value>
+  </data>
+  <data name="Text_5da52af9b083c29a" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="Text_5df91180dbad2083" xml:space="preserve">
+    <value>Up to 20,000 characters. Standing instructions apply to this bot’s conversations without appearing in the transcript.</value>
+  </data>
+  <data name="Text_5e8250fb85d64c23" xml:space="preserve">
+    <value>Sluit</value>
+  </data>
+  <data name="Text_5ee7b60f847eee36" xml:space="preserve">
+    <value>Saturday</value>
+  </data>
+  <data name="Text_60320a18282b2b33" xml:space="preserve">
+    <value>Wijzig naam</value>
+  </data>
+  <data name="Text_60b035d19e451230" xml:space="preserve">
+    <value>Manager needs setup in its own app.</value>
+  </data>
+  <data name="Text_612bdafe4f589b3c" xml:space="preserve">
+    <value>Multiple Downloads</value>
+  </data>
+  <data name="Text_62a98f22b8308ea9" xml:space="preserve">
+    <value>No provider usage has been recorded for this selection.</value>
+  </data>
+  <data name="Text_62c75c025c5c6db1" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Text_62c7ef96f831327b" xml:space="preserve">
+    <value>Toon gearchiveerde threads</value>
+  </data>
+  <data name="Text_64b94e4bdb16dfc5" xml:space="preserve">
+    <value>All Threads</value>
+  </data>
+  <data name="Text_64ef2a6c2dd1d3d1" xml:space="preserve">
+    <value>Wijzig</value>
+  </data>
+  <data name="Text_6578b674c8c810cf" xml:space="preserve">
+    <value>No Project</value>
+  </data>
+  <data name="Text_6607f3c90e5c7daf" xml:space="preserve">
+    <value>Browser</value>
+  </data>
+  <data name="Text_661045907dd942bc" xml:space="preserve">
+    <value>Commit</value>
+  </data>
+  <data name="Text_66242229134ba7c5" xml:space="preserve">
+    <value>Saving conversations and stopping background work…</value>
+  </data>
+  <data name="Text_6673f9a868c4c0b4" xml:space="preserve">
+    <value>Import Browser Data</value>
+  </data>
+  <data name="Text_669b18c6d2d9c95b" xml:space="preserve">
+    <value>Geen</value>
+  </data>
+  <data name="Text_66dcbbc0355c2759" xml:space="preserve">
+    <value>Sunday</value>
+  </data>
+  <data name="Text_671dbe01f42f297a" xml:space="preserve">
+    <value>Volgende uitvoeringen</value>
+  </data>
+  <data name="Text_67facd659d1004bb" xml:space="preserve">
+    <value>This address cannot be saved as a bookmark.</value>
+  </data>
+  <data name="Text_6849e258b7827aa4" xml:space="preserve">
+    <value>Local profile created. Sign in only when you are ready to approve the provider's browser page.</value>
+  </data>
+  <data name="Text_68db52366de956f2" xml:space="preserve">
+    <value>Taakinstructie</value>
+  </data>
+  <data name="Text_698cdaf5b2ca193e" xml:space="preserve">
+    <value>Manager status is unavailable. No sign-in or unlock was attempted.</value>
+  </data>
+  <data name="Text_69f800801812a5f0" xml:space="preserve">
+    <value>files</value>
+  </data>
+  <data name="Text_6a7b371e36f1089b" xml:space="preserve">
+    <value>Preview is read only. Git synchronization changes require a separate review and approval.</value>
+  </data>
+  <data name="Text_6b641f165101ea5e" xml:space="preserve">
+    <value>Connect password managers through their existing Windows command-line tools. Managers start off. Opening Settings does not read a vault, sign in or unlock an account.</value>
+  </data>
+  <data name="Text_6bc6cc871fcc41d4" xml:space="preserve">
+    <value>Open Conversation</value>
+  </data>
+  <data name="Text_6c10562f68801c89" xml:space="preserve">
+    <value>Selected profile</value>
+  </data>
+  <data name="Text_6c40036f33c26fc1" xml:space="preserve">
+    <value>Use Worktree</value>
+  </data>
+  <data name="Text_6c5e4faac0945d55" xml:space="preserve">
+    <value>Reset Edits</value>
+  </data>
+  <data name="Text_6cab772a3053c40e" xml:space="preserve">
+    <value>Override model defaults in this project</value>
+  </data>
+  <data name="Text_6cb3cd2447cb9c6d" xml:space="preserve">
+    <value>Favorite model IDs, one per line</value>
+  </data>
+  <data name="Text_6d23f05ce0b214c5" xml:space="preserve">
+    <value>Save Bot</value>
+  </data>
+  <data name="Text_6d902e023d4de304" xml:space="preserve">
+    <value>Select an instruction file to configure its Git copy.</value>
+  </data>
+  <data name="Text_6dbd35f7b7fe2484" xml:space="preserve">
+    <value>Preview a Claude Code or Codex conversation before importing. The original file stays unchanged; imported threads start in approval mode.</value>
+  </data>
+  <data name="Text_6e177256a2e13332" xml:space="preserve">
+    <value>End session</value>
+  </data>
+  <data name="Text_6f4c2c96b3efcd2a" xml:space="preserve">
+    <value>Check this profile's current compatible account before using it.</value>
+  </data>
+  <data name="Text_6f62b207f1adab07" xml:space="preserve">
+    <value>Computer Use is on. No conversation is selected.</value>
+  </data>
+  <data name="Text_6fd859b892ac9cb0" xml:space="preserve">
+    <value>Create a new branch</value>
+  </data>
+  <data name="Text_7030546b1c47d2da" xml:space="preserve">
+    <value>Show in File Explorer</value>
+  </data>
+  <data name="Text_7124eaeee470846f" xml:space="preserve">
+    <value>That CSV could not be read. No logins were imported.</value>
+  </data>
+  <data name="Text_72fb39ae70ed43d2" xml:space="preserve">
+    <value>Full access allows commands and file changes without asking. Defaults never change an existing conversation.</value>
+  </data>
+  <data name="Text_7405fd7d5819142e" xml:space="preserve">
+    <value>Volledige toegang</value>
+  </data>
+  <data name="Text_740c1828fbc2e9b1" xml:space="preserve">
+    <value>Retain input and recover</value>
+  </data>
+  <data name="Text_74133cd943448e25" xml:space="preserve">
+    <value>Delivery was not confirmed. Review the conversation before resuming.</value>
+  </data>
+  <data name="Text_7417792bbe720149" xml:space="preserve">
+    <value>Opnieuw</value>
+  </data>
+  <data name="Text_74e9656896c4ba39" xml:space="preserve">
+    <value>Saved Personality (Unavailable)</value>
+  </data>
+  <data name="Text_7543f42f6a135d28" xml:space="preserve">
+    <value>Select a conversation to grant access.</value>
+  </data>
+  <data name="Text_758e0a78aecff1f6" xml:space="preserve">
+    <value>Browser agent control could not be changed.</value>
+  </data>
+  <data name="Text_76293c58814dd2e9" xml:space="preserve">
+    <value>Kopieer code</value>
+  </data>
+  <data name="Text_776dcedc065668bd" xml:space="preserve">
+    <value>One window for the coding agents you already use.</value>
+  </data>
+  <data name="Text_77b8838ab23082b6" xml:space="preserve">
+    <value>Provider profiles</value>
+  </data>
+  <data name="Text_77e4a1b4e60a09bb" xml:space="preserve">
+    <value>Choose password CSV…</value>
+  </data>
+  <data name="Text_786fbc619c3915f9" xml:space="preserve">
+    <value>The repository lease could not be acquired.</value>
+  </data>
+  <data name="Text_79296bd60f533fb0" xml:space="preserve">
+    <value>CPU threads</value>
+  </data>
+  <data name="Text_79b809ebbb68446d" xml:space="preserve">
+    <value>Latest context snapshot: </value>
+  </data>
+  <data name="Text_79e8cc71a5975b04" xml:space="preserve">
+    <value>Bericht</value>
+  </data>
+  <data name="Text_7a07940a2b62f185" xml:space="preserve">
+    <value>Branch</value>
+  </data>
+  <data name="Text_7a853b4c14e7dc55" xml:space="preserve">
+    <value>Import Selected</value>
+  </data>
+  <data name="Text_7ab739b86be86ef4" xml:space="preserve">
+    <value>Password settings could not be loaded. Managers remain off; the original file was preserved.</value>
+  </data>
+  <data name="Text_7ac990562fe96c90" xml:space="preserve">
+    <value>I reviewed this destination and these instruction changes</value>
+  </data>
+  <data name="Text_7b7163270e57e8b4" xml:space="preserve">
+    <value>Vernieuw</value>
+  </data>
+  <data name="Text_7b9d13ea440cd1d7" xml:space="preserve">
+    <value>Thursday</value>
+  </data>
+  <data name="Text_7c5de6879135f667" xml:space="preserve">
+    <value>Coincide for Windows · Development preview
+C++/WinRT + WinUI 3</value>
+  </data>
+  <data name="Text_7d24125b454a4d47" xml:space="preserve">
+    <value>Manager is locked. Open its own app to unlock it.</value>
+  </data>
+  <data name="Text_7d2cce0f1781764c" xml:space="preserve">
+    <value>Review stopped input</value>
+  </data>
+  <data name="Text_7d736af6cd8199c8" xml:space="preserve">
+    <value>Open a terminal for this conversation.</value>
+  </data>
+  <data name="Text_7e22a6d6884b0161" xml:space="preserve">
+    <value>Eerdere gesprekken</value>
+  </data>
+  <data name="Text_7f5869b3d14d7cbc" xml:space="preserve">
+    <value>Aanbieder</value>
+  </data>
+  <data name="Text_80495269815e81b0" xml:space="preserve">
+    <value>Profile label</value>
+  </data>
+  <data name="Text_823190519895dcf1" xml:space="preserve">
+    <value>Downloading…</value>
+  </data>
+  <data name="Text_82521c4c60652c01" xml:space="preserve">
+    <value>Starting terminal…</value>
+  </data>
+  <data name="Text_82edcb7eb1e37318" xml:space="preserve">
+    <value>Cancel import</value>
+  </data>
+  <data name="Text_831262ec45aa79b1" xml:space="preserve">
+    <value>Could not read text from the clipboard.</value>
+  </data>
+  <data name="Text_8352c6fa87ade989" xml:space="preserve">
+    <value>Ctrl+Enter always sends. During an active turn it queues your message.</value>
+  </data>
+  <data name="Text_83624ec551f05025" xml:space="preserve">
+    <value>Computer Use works with native Windows apps for any provider. Websites use Coincide Browser. Password, script, shell and elevated-app access are unavailable.</value>
+  </data>
+  <data name="Text_83688e4f1568299f" xml:space="preserve">
+    <value>Retry saving disabled setting</value>
+  </data>
+  <data name="Text_850da60a15c7009a" xml:space="preserve">
+    <value>Nieuw tabblad</value>
+  </data>
+  <data name="Text_85208064f7b81ba8" xml:space="preserve">
+    <value>Each run sends the prompt into this conversation with its current agent, model and access. Busy conversations receive only the latest pending run. Coincide must be open; missed runs are skipped.</value>
+  </data>
+  <data name="Text_8537fcae4b754448" xml:space="preserve">
+    <value>Worktree branch</value>
+  </data>
+  <data name="Text_853b2b66af857bfb" xml:space="preserve">
+    <value>No matching messages</value>
+  </data>
+  <data name="Text_85994a70cd39166c" xml:space="preserve">
+    <value>Actief</value>
+  </data>
+  <data name="Text_868a566fb9603774" xml:space="preserve">
+    <value>Toetsenbord</value>
+  </data>
+  <data name="Text_87635abe82b91acc" xml:space="preserve">
+    <value>Pull requests</value>
+  </data>
+  <data name="Text_891154308b5f7c33" xml:space="preserve">
+    <value>Use this provider by default in this project</value>
+  </data>
+  <data name="Text_89118d3a7be870ca" xml:space="preserve">
+    <value>Hervatten</value>
+  </data>
+  <data name="Text_89ae02aa9d5f4734" xml:space="preserve">
+    <value>Whisper model</value>
+  </data>
+  <data name="Text_89af6f121c563240" xml:space="preserve">
+    <value>Use Ctrl, Shift or Alt with a letter, number or F1–F12. Clear a field to disable it. Editor shortcuts retain their text-editing behavior.</value>
+  </data>
+  <data name="Text_8a4ff2bd9c13498c" xml:space="preserve">
+    <value>Record</value>
+  </data>
+  <data name="Text_8a98ed44668fdc49" xml:space="preserve">
+    <value>Passwords and one-time codes are handed directly to the approved browser frame. Agents receive only the username and fill status. Each approval expires and is canceled when its frame navigates.</value>
+  </data>
+  <data name="Text_8b60bf2db1580306" xml:space="preserve">
+    <value>Threads</value>
+  </data>
+  <data name="Text_8c12d8939e4e4834" xml:space="preserve">
+    <value>Unstage</value>
+  </data>
+  <data name="Text_8c48717a0ecf96af" xml:space="preserve">
+    <value>Checking instruction synchronization…</value>
+  </data>
+  <data name="Text_8c6779721edd93a9" xml:space="preserve">
+    <value>Hidden model IDs, one per line</value>
+  </data>
+  <data name="Text_8c7fc9051c0d8003" xml:space="preserve">
+    <value>Terminal input limit reached or session closed.</value>
+  </data>
+  <data name="Text_8e6c4d342f580bc5" xml:space="preserve">
+    <value>Message text could not be searched.</value>
+  </data>
+  <data name="Text_8e6e61bcc3d05c09" xml:space="preserve">
+    <value>Native executable path</value>
+  </data>
+  <data name="Text_8f26e0f086cc2787" xml:space="preserve">
+    <value>Unit</value>
+  </data>
+  <data name="Text_8f4be9f086eb530f" xml:space="preserve">
+    <value>Herstel</value>
+  </data>
+  <data name="Text_8fb36ad31d5c0382" xml:space="preserve">
+    <value>Local Fonts</value>
+  </data>
+  <data name="Text_9082c8006bafc3c5" xml:space="preserve">
+    <value>Imported</value>
+  </data>
+  <data name="Text_91f1aa7348ed337e" xml:space="preserve">
+    <value>Allow sign-in to </value>
+  </data>
+  <data name="Text_9225f60f05e0cd91" xml:space="preserve">
+    <value>Search bookmarks and history</value>
+  </data>
+  <data name="Text_924b6af1b3308707" xml:space="preserve">
+    <value>Include instruction-only pushes in automatic sync</value>
+  </data>
+  <data name="Text_926b0a10a1ca1107" xml:space="preserve">
+    <value>Acknowledge missing input</value>
+  </data>
+  <data name="Text_92b5f7e86bacd038" xml:space="preserve">
+    <value>First run date</value>
+  </data>
+  <data name="Text_92c081dd9af79a04" xml:space="preserve">
+    <value>Select a remote branch first.</value>
+  </data>
+  <data name="Text_9400cb7b4f9ce6c6" xml:space="preserve">
+    <value>No schedules in this conversation.</value>
+  </data>
+  <data name="Text_95406343a65299ae" xml:space="preserve">
+    <value>Offline dictation uses a locally installed whisper.cpp CLI and a model in Coincide's model folder. Audio is transcribed on this PC. Text is inserted into the original draft only; it is never sent automatically.</value>
+  </data>
+  <data name="Text_955656e78a18bdcc" xml:space="preserve">
+    <value>Exited</value>
+  </data>
+  <data name="Text_95bc8722b2708f8b" xml:space="preserve">
+    <value>Gepauzeerd</value>
+  </data>
+  <data name="Text_95c0936acb7153b6" xml:space="preserve">
+    <value>Not checked. Refresh is explicit.</value>
+  </data>
+  <data name="Text_95d74db7ff0ae9aa" xml:space="preserve">
+    <value>New schedule</value>
+  </data>
+  <data name="Text_960e357aec877554" xml:space="preserve">
+    <value>Enable Computer Use</value>
+  </data>
+  <data name="Text_961c6fbdac61d3aa" xml:space="preserve">
+    <value>Computer Use is off.</value>
+  </data>
+  <data name="Text_965c503c3e42fdfe" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="Text_970d041a28d1067d" xml:space="preserve">
+    <value>Push</value>
+  </data>
+  <data name="Text_972f543862d4d8fd" xml:space="preserve">
+    <value>Git copy filename</value>
+  </data>
+  <data name="Text_9777d224c8fab6f1" xml:space="preserve">
+    <value>Geen toekomstige uitvoeringen</value>
+  </data>
+  <data name="Text_978464661758a212" xml:space="preserve">
+    <value>Friday</value>
+  </data>
+  <data name="Text_97a98f731b91f87d" xml:space="preserve">
+    <value>Review interrupted delivery</value>
+  </data>
+  <data name="Text_97c7f25a581b01d7" xml:space="preserve">
+    <value>Revoke access</value>
+  </data>
+  <data name="Text_9832bfc9c3ae7e9e" xml:space="preserve">
+    <value>All providers</value>
+  </data>
+  <data name="Text_9899f07ee811b5ca" xml:space="preserve">
+    <value>1 hour</value>
+  </data>
+  <data name="Text_992eff3017ea9c13" xml:space="preserve">
+    <value>Search text is too long or unavailable.</value>
+  </data>
+  <data name="Text_99e360f40b25f306" xml:space="preserve">
+    <value>Saved logins are available. Each fill still needs Allow once.</value>
+  </data>
+  <data name="Text_9b26ee7433b506fb" xml:space="preserve">
+    <value>Open a browser tab to begin.</value>
+  </data>
+  <data name="Text_9bdbeae64e12a946" xml:space="preserve">
+    <value>Native executable overrides apply to this Windows app. Leave a path empty for discovery. Enabling a provider does not sign you in.</value>
+  </data>
+  <data name="Text_9c13a2548d254014" xml:space="preserve">
+    <value>Klaar</value>
+  </data>
+  <data name="Text_9c666009a7be1bff" xml:space="preserve">
+    <value>Snooze</value>
+  </data>
+  <data name="Text_9d8b8aa2b404c2c8" xml:space="preserve">
+    <value>Instellingen</value>
+  </data>
+  <data name="Text_9eaa6e7fbfd5cdd7" xml:space="preserve">
+    <value>Wednesday</value>
+  </data>
+  <data name="Text_9f5f87369390e0db" xml:space="preserve">
+    <value>Compare Checkpoints</value>
+  </data>
+  <data name="Text_9f85648909e7705f" xml:space="preserve">
+    <value>Taaknaam</value>
+  </data>
+  <data name="Text_9f9b794bd3d61346" xml:space="preserve">
+    <value>Track Remote Branch</value>
+  </data>
+  <data name="Text_a0ca791d0f13f0e5" xml:space="preserve">
+    <value>Archiveer</value>
+  </data>
+  <data name="Text_a0f113d1aea9e3af" xml:space="preserve">
+    <value>MIDI Devices</value>
+  </data>
+  <data name="Text_a20c185606f42958" xml:space="preserve">
+    <value>Sensors</value>
+  </data>
+  <data name="Text_a29d18f09586c166" xml:space="preserve">
+    <value>Create Separate Folder</value>
+  </data>
+  <data name="Text_a2a0957c540f74ab" xml:space="preserve">
+    <value>This conversation currently controls the desktop.</value>
+  </data>
+  <data name="Text_a36aef46efe431eb" xml:space="preserve">
+    <value>Modellen</value>
+  </data>
+  <data name="Text_a394602078145344" xml:space="preserve">
+    <value>Review stopped session</value>
+  </data>
+  <data name="Text_a3a27a128ad87f31" xml:space="preserve">
+    <value>Wachtwoorden</value>
+  </data>
+  <data name="Text_a3b9964327605427" xml:space="preserve">
+    <value>Voer een HTTP- of HTTPS-adres in zonder gebruikersnaam of wachtwoord.</value>
+  </data>
+  <data name="Text_a459f8877eb03e1b" xml:space="preserve">
+    <value>Repository folder</value>
+  </data>
+  <data name="Text_a45a194b58837e4f" xml:space="preserve">
+    <value>Actief</value>
+  </data>
+  <data name="Text_a47b660ae8e7a832" xml:space="preserve">
+    <value>Werkdagen</value>
+  </data>
+  <data name="Text_a588118951643777" xml:space="preserve">
+    <value>Default speed tier</value>
+  </data>
+  <data name="Text_a58d2e30fc010b33" xml:space="preserve">
+    <value>Save and Switch</value>
+  </data>
+  <data name="Text_a65a21a0c181bff2" xml:space="preserve">
+    <value>The CSV picker could not open. No logins were imported.</value>
+  </data>
+  <data name="Text_a6e837218738a71d" xml:space="preserve">
+    <value>Planmodus</value>
+  </data>
+  <data name="Text_a7551ae0109d2164" xml:space="preserve">
+    <value>Checkpoints</value>
+  </data>
+  <data name="Text_a86d72b46f54703d" xml:space="preserve">
+    <value>An empty folder uses Home. Automatic checkpoints are disabled for Home, its parent and disk roots.</value>
+  </data>
+  <data name="Text_ab7d3a22ccbf21a0" xml:space="preserve">
+    <value>Loading instructions…</value>
+  </data>
+  <data name="Text_abd480ab5c691fa7" xml:space="preserve">
+    <value>Redeneren</value>
+  </data>
+  <data name="Text_ac1dc7fac3bccfe2" xml:space="preserve">
+    <value>Enter text to search this conversation.</value>
+  </data>
+  <data name="Text_ac9d80c3d9c0aade" xml:space="preserve">
+    <value>Keep active work running when the window closes</value>
+  </data>
+  <data name="Text_acae74732f544fca" xml:space="preserve">
+    <value>Dagen</value>
+  </data>
+  <data name="Text_ae18597c1147a56c" xml:space="preserve">
+    <value>Reported tokens: Unavailable</value>
+  </data>
+  <data name="Text_ae5da213b7f896ed" xml:space="preserve">
+    <value>Stage</value>
+  </data>
+  <data name="Text_ae6467645c5d5ef3" xml:space="preserve">
+    <value>The desktop is available.</value>
+  </data>
+  <data name="Text_ae7eb83a4e723ac5" xml:space="preserve">
+    <value>This conversation can inspect native windows and send input.</value>
+  </data>
+  <data name="Text_aed9c16a7eddcb50" xml:space="preserve">
+    <value>Review the conversation to check what already ran. Resuming schedules only future occurrences.</value>
+  </data>
+  <data name="Text_b055b780a919f111" xml:space="preserve">
+    <value>Verbinden…</value>
+  </data>
+  <data name="Text_b0b86b8ca6ab13bd" xml:space="preserve">
+    <value>Aanbieders</value>
+  </data>
+  <data name="Text_b1afc4e7f0066c17" xml:space="preserve">
+    <value>No CSV selected.</value>
+  </data>
+  <data name="Text_b2d55a10e667f515" xml:space="preserve">
+    <value>The manager preference could not be saved. Disabled managers stay off in this session.</value>
+  </data>
+  <data name="Text_b3d4f79d9d8b71e5" xml:space="preserve">
+    <value>Verstuur</value>
+  </data>
+  <data name="Text_b41d16492dcf7c90" xml:space="preserve">
+    <value>Repository setup</value>
+  </data>
+  <data name="Text_b46d3613edb66558" xml:space="preserve">
+    <value>Interval</value>
+  </data>
+  <data name="Text_b4b253c20d6919bb" xml:space="preserve">
+    <value>New Branch</value>
+  </data>
+  <data name="Text_b4e7361610c3c30e" xml:space="preserve">
+    <value>Refresh Models</value>
+  </data>
+  <data name="Text_b582b187159f68bb" xml:space="preserve">
+    <value>Uitvoeren om</value>
+  </data>
+  <data name="Text_b5a14d20e2063f7f" xml:space="preserve">
+    <value>Checkpoint</value>
+  </data>
+  <data name="Text_b5d0adb0baba328a" xml:space="preserve">
+    <value>Language changes apply when you reopen Coincide.</value>
+  </data>
+  <data name="Text_b64c802763d498e1" xml:space="preserve">
+    <value>Reply font size</value>
+  </data>
+  <data name="Text_b663fa25462d8aa9" xml:space="preserve">
+    <value>Preparing preview…</value>
+  </data>
+  <data name="Text_b6fa8b5eb62ca073" xml:space="preserve">
+    <value>Sta eenmaal toe</value>
+  </data>
+  <data name="Text_b76b3aa54cc8a601" xml:space="preserve">
+    <value>Add or select a local provider profile.</value>
+  </data>
+  <data name="Text_b86ddcac0696aa7f" xml:space="preserve">
+    <value>Git synchronization</value>
+  </data>
+  <data name="Text_b879392543a89272" xml:space="preserve">
+    <value>Reset keyboard shortcuts</value>
+  </data>
+  <data name="Text_b92cc63abe7d60fd" xml:space="preserve">
+    <value>Manager is configured. Its own app may require approval when used.</value>
+  </data>
+  <data name="Text_b99af8f463fbfa26" xml:space="preserve">
+    <value>Save for approval</value>
+  </data>
+  <data name="Text_b9cc43eb67f1373a" xml:space="preserve">
+    <value>Release desktop</value>
+  </data>
+  <data name="Text_ba18e7a6fd244edb" xml:space="preserve">
+    <value>Defaults for new conversations. Provider and account availability is checked when the app starts a delivery.</value>
+  </data>
+  <data name="Text_bb96e9629185582e" xml:space="preserve">
+    <value>The master switch is saved. Conversation permissions last only in this app session and must be granted again after disabling Computer Use or restarting Coincide. Opening these settings never inspects a window or starts the helper.</value>
+  </data>
+  <data name="Text_bcfe28fd459857ba" xml:space="preserve">
+    <value>Automatic instruction sync is waiting for valid settings and available workspaces.</value>
+  </data>
+  <data name="Text_be9a2afda356a007" xml:space="preserve">
+    <value>Read Clipboard</value>
+  </data>
+  <data name="Text_bf44d6249426d16c" xml:space="preserve">
+    <value>Account status, balances and rate limits are unavailable. Check a profile explicitly in Accounts.</value>
+  </data>
+  <data name="Text_bf9c9810624e0c87" xml:space="preserve">
+    <value>Review versturen</value>
+  </data>
+  <data name="Text_c0ca59b445c8e250" xml:space="preserve">
+    <value>Wait for work in the affected repositories to finish before changing instructions or Git references.</value>
+  </data>
+  <data name="Text_c0f4254f45363d61" xml:space="preserve">
+    <value>Worktrees</value>
+  </data>
+  <data name="Text_c2c9910c3206ce2f" xml:space="preserve">
+    <value>Choose a bookmark HTML/JSON export or supported browser metadata file. Preview and select rows before importing. Cookies, passwords and sign-ins are excluded.</value>
+  </data>
+  <data name="Text_c3ac225273c8316b" xml:space="preserve">
+    <value>Algemeen</value>
+  </data>
+  <data name="Text_c4525d2fe5250dbb" xml:space="preserve">
+    <value>Switch Branch</value>
+  </data>
+  <data name="Text_c5c4fa09a93a3460" xml:space="preserve">
+    <value>Nieuwe bot</value>
+  </data>
+  <data name="Text_c7637275f670c938" xml:space="preserve">
+    <value>Wachtrij</value>
+  </data>
+  <data name="Text_c82317db41b29853" xml:space="preserve">
+    <value>Model-ID</value>
+  </data>
+  <data name="Text_c82ec093ac725aca" xml:space="preserve">
+    <value>The browser process stopped.</value>
+  </data>
+  <data name="Text_c842bdfd3dc7ecf1" xml:space="preserve">
+    <value>Samenvoegen…</value>
+  </data>
+  <data name="Text_c91f9df574a74c30" xml:space="preserve">
+    <value>Create Review Worktree</value>
+  </data>
+  <data name="Text_c9261cecd5546990" xml:space="preserve">
+    <value>Lettertype van antwoorden</value>
+  </data>
+  <data name="Text_c92f0fc51b31c60e" xml:space="preserve">
+    <value>Custom model IDs, one per line</value>
+  </data>
+  <data name="Text_c9757b387904aaba" xml:space="preserve">
+    <value>Time zone</value>
+  </data>
+  <data name="Text_c9b9e80e4a82d845" xml:space="preserve">
+    <value>Grant access</value>
+  </data>
+  <data name="Text_ca7bf081fffde7fa" xml:space="preserve">
+    <value>matching messages</value>
+  </data>
+  <data name="Text_cac4c9636dbe7d3d" xml:space="preserve">
+    <value>Nieuwe chat</value>
+  </data>
+  <data name="Text_cb6a9c1a1757adbc" xml:space="preserve">
+    <value>Jij</value>
+  </data>
+  <data name="Text_cb85ddee44d77e9e" xml:space="preserve">
+    <value>Stop the agents and close their terminals before changing this repository or worktree.</value>
+  </data>
+  <data name="Text_cbf29ce484222325" xml:space="preserve">
+    <value />
+  </data>
+  <data name="Text_cbfd70a8bcc150ba" xml:space="preserve">
+    <value>Reviewbericht</value>
+  </data>
+  <data name="Text_ccac3b05d6709b74" xml:space="preserve">
+    <value>Choose repository folder…</value>
+  </data>
+  <data name="Text_cd104d19b5a0ef92" xml:space="preserve">
+    <value>Plan</value>
+  </data>
+  <data name="Text_cd154be35b039a26" xml:space="preserve">
+    <value>Thread actions</value>
+  </data>
+  <data name="Text_cd225b15c0dda097" xml:space="preserve">
+    <value>Create Branch</value>
+  </data>
+  <data name="Text_ce7d8dfab1df75e0" xml:space="preserve">
+    <value>Passkeys use the browser's native WebAuthn handoff when available. Bitwarden private-key extraction and Windows Hello sign-in are not connected in this Windows candidate.</value>
+  </data>
+  <data name="Text_ce9c449b1ea0acc3" xml:space="preserve">
+    <value>Keep Awake on battery too</value>
+  </data>
+  <data name="Text_cee8f527d673b607" xml:space="preserve">
+    <value>Agentbesturing</value>
+  </data>
+  <data name="Text_d001953bf6bcf290" xml:space="preserve">
+    <value>Snooze opheffen</value>
+  </data>
+  <data name="Text_d0680e7343dedb27" xml:space="preserve">
+    <value>Weiger</value>
+  </data>
+  <data name="Text_d1bb1f13cc349256" xml:space="preserve">
+    <value>Bijsturen</value>
+  </data>
+  <data name="Text_d31c12afb0700a40" xml:space="preserve">
+    <value>The repository folder could not be selected.</value>
+  </data>
+  <data name="Text_d32d5436ebcdb941" xml:space="preserve">
+    <value>Remove Conversations</value>
+  </data>
+  <data name="Text_d4942995ed3dab21" xml:space="preserve">
+    <value>The confirmation could not be shown. No repository changes were made.</value>
+  </data>
+  <data name="Text_d598b67df9ee9065" xml:space="preserve">
+    <value>All threads</value>
+  </data>
+  <data name="Text_d5a79b5f1ddbd0c3" xml:space="preserve">
+    <value>Keep Awake while Coincide is running</value>
+  </data>
+  <data name="Text_d6ad76dc2c1704a5" xml:space="preserve">
+    <value>Each bot keeps its own conversations, personality and instructions. Opening a conversation does not send a message.</value>
+  </data>
+  <data name="Text_d6f8ebda89cceb1f" xml:space="preserve">
+    <value>Bekijk diff</value>
+  </data>
+  <data name="Text_d70e957037f58cd3" xml:space="preserve">
+    <value>Allow terminal status, output and interrupt</value>
+  </data>
+  <data name="Text_d71de823d3bf0ed6" xml:space="preserve">
+    <value>Matches message text literally, including code and markup. One result per message.</value>
+  </data>
+  <data name="Text_d77161a4e928fdfd" xml:space="preserve">
+    <value>Retain input and resolve</value>
+  </data>
+  <data name="Text_d8bbc6ae6b1e90b8" xml:space="preserve">
+    <value>1 week</value>
+  </data>
+  <data name="Text_d9ad53251f2330a5" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="Text_d9cf21b33b26b096" xml:space="preserve">
+    <value>Terminal is running.</value>
+  </data>
+  <data name="Text_dac26646997609ea" xml:space="preserve">
+    <value>Notify when work finishes or needs a response</value>
+  </data>
+  <data name="Text_db41925aff2df0b0" xml:space="preserve">
+    <value>Begin met voorinstelling</value>
+  </data>
+  <data name="Text_db9694f31d64cfc8" xml:space="preserve">
+    <value>Your answer</value>
+  </data>
+  <data name="Text_dc0ac38569b2f0df" xml:space="preserve">
+    <value>Not a Git repository.</value>
+  </data>
+  <data name="Text_dc673e73b5c13aea" xml:space="preserve">
+    <value>Verwijder</value>
+  </data>
+  <data name="Text_dc91fbc5acf8e4f5" xml:space="preserve">
+    <value>I understand the documented Antigravity account risk</value>
+  </data>
+  <data name="Text_dd77071fc37f6e63" xml:space="preserve">
+    <value> logins ready for local review. Skipped rows: </value>
+  </data>
+  <data name="Text_de483d657caae16e" xml:space="preserve">
+    <value>Remove Worktree</value>
+  </data>
+  <data name="Text_de77364afa46d798" xml:space="preserve">
+    <value>The pull request action could not be prepared.</value>
+  </data>
+  <data name="Text_de84d8cdded66021" xml:space="preserve">
+    <value>Loading session preview…</value>
+  </data>
+  <data name="Text_df355ef5f370fd71" xml:space="preserve">
+    <value>Gebruik thuismap</value>
+  </data>
+  <data name="Text_df8e15fc3771c1bf" xml:space="preserve">
+    <value>Could not dismiss the question. Try again.</value>
+  </data>
+  <data name="Text_e0955919920ee87d" xml:space="preserve">
+    <value>Day</value>
+  </data>
+  <data name="Text_e117b24625d0110a" xml:space="preserve">
+    <value>bottom</value>
+  </data>
+  <data name="Text_e24130f1123560a0" xml:space="preserve">
+    <value>Snelheid</value>
+  </data>
+  <data name="Text_e2931872be0e0cbf" xml:space="preserve">
+    <value>Choose permissions, then grant access to the selected conversation. Checkbox changes alone do not grant access. Capture may expose private information, and input can change apps and files.</value>
+  </data>
+  <data name="Text_e2d9b23cbf75b73d" xml:space="preserve">
+    <value>This conversation can inspect and capture native windows.</value>
+  </data>
+  <data name="Text_e33355ddf7739b77" xml:space="preserve">
+    <value>Full access allows commands and file changes without asking. Leave it off to require approval.</value>
+  </data>
+  <data name="Text_e364de6132887260" xml:space="preserve">
+    <value>Keep the display on too</value>
+  </data>
+  <data name="Text_e376f1c3a929b34c" xml:space="preserve">
+    <value>Enable Voice</value>
+  </data>
+  <data name="Text_e3d1cce921ae26d5" xml:space="preserve">
+    <value>Default provider for new chats</value>
+  </data>
+  <data name="Text_e48bd9e6c2a3109d" xml:space="preserve">
+    <value>Accounts</value>
+  </data>
+  <data name="Text_e53ab3f2dd7b578c" xml:space="preserve">
+    <value>Checkpoint message</value>
+  </data>
+  <data name="Text_e5eed4a789aa2741" xml:space="preserve">
+    <value>Reported cost: Unavailable</value>
+  </data>
+  <data name="Text_e66240ab33ffe32d" xml:space="preserve">
+    <value>Zet thread vast of maak los</value>
+  </data>
+  <data name="Text_e754804a0afa990c" xml:space="preserve">
+    <value>Waiting for this conversation</value>
+  </data>
+  <data name="Text_e7bee6e9a9b5394c" xml:space="preserve">
+    <value>Private</value>
+  </data>
+  <data name="Text_e7bf49555654cbfb" xml:space="preserve">
+    <value>Modelinstellingen</value>
+  </data>
+  <data name="Text_e826eddf7869186d" xml:space="preserve">
+    <value>Global master (read only)</value>
+  </data>
+  <data name="Text_e8c19a0d8c839bd8" xml:space="preserve">
+    <value>Unreported usage is excluded. No subscription charge or estimated model price is inferred.</value>
+  </data>
+  <data name="Text_e8fc428c12cf0dea" xml:space="preserve">
+    <value>Geen toekomstige uitvoeringen. Kies een later tijdstip.</value>
+  </data>
+  <data name="Text_e972b82767254130" xml:space="preserve">
+    <value>Offline speech engine</value>
+  </data>
+  <data name="Text_e98ac7343c467ff4" xml:space="preserve">
+    <value>Another conversation currently controls the desktop.</value>
+  </data>
+  <data name="Text_e9ff6e9a514d8cf9" xml:space="preserve">
+    <value>Monday</value>
+  </data>
+  <data name="Text_ea47f4110bb2b0b3" xml:space="preserve">
+    <value>Remote</value>
+  </data>
+  <data name="Text_ea4f08110bb8f15d" xml:space="preserve">
+    <value>Verwijder</value>
+  </data>
+  <data name="Text_ea654a4dc5fd0d5b" xml:space="preserve">
+    <value>Could not submit the answer. Try again.</value>
+  </data>
+  <data name="Text_eaa716b54ca20f71" xml:space="preserve">
+    <value>Keep a Git copy while the local instructions and their links stay in place. Review each manual change. Automatic sync is off until explicitly approved.</value>
+  </data>
+  <data name="Text_eb14831998868b6b" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="Text_eb4678c45dbbdec5" xml:space="preserve">
+    <value> with </value>
+  </data>
+  <data name="Text_ec6d1ce476382a2c" xml:space="preserve">
+    <value>Keep Editing</value>
+  </data>
+  <data name="Text_ed830958c87f2475" xml:space="preserve">
+    <value>Import selected logins</value>
+  </data>
+  <data name="Text_ee0ec27fb03d880e" xml:space="preserve">
+    <value>Minuten</value>
+  </data>
+  <data name="Text_ee2fcaedf9743ec6" xml:space="preserve">
+    <value>Locatie</value>
+  </data>
+  <data name="Text_ee76ff334a4a16ff" xml:space="preserve">
+    <value>Algemene instructies</value>
+  </data>
+  <data name="Text_eef696df53dffcc1" xml:space="preserve">
+    <value>Choose whisper-cli.exe…</value>
+  </data>
+  <data name="Text_ef2e3c30436f9942" xml:space="preserve">
+    <value>Reported tokens: </value>
+  </data>
+  <data name="Text_ef95e345b26702fb" xml:space="preserve">
+    <value>Deleted Threads</value>
+  </data>
+  <data name="Text_efcf950b3cc4fc3b" xml:space="preserve">
+    <value>Taal</value>
+  </data>
+  <data name="Text_f00d4ba89be99c25" xml:space="preserve">
+    <value>Mark reviewed</value>
+  </data>
+  <data name="Text_f04fdae057270487" xml:space="preserve">
+    <value>Link an instruction Git copy before using synchronization actions.</value>
+  </data>
+  <data name="Text_f0cab2483f66aa2e" xml:space="preserve">
+    <value>Aangepast</value>
+  </data>
+  <data name="Text_f0e261e04eda82ff" xml:space="preserve">
+    <value>Weergave</value>
+  </data>
+  <data name="Text_f0e6f67c08e8527e" xml:space="preserve">
+    <value>Could not save browser tabs.</value>
+  </data>
+  <data name="Text_f26586dbd448082e" xml:space="preserve">
+    <value>Geschiedenis wissen</value>
+  </data>
+  <data name="Text_f2d616b20d62240d" xml:space="preserve">
+    <value>Schedules</value>
+  </data>
+  <data name="Text_f3487376426f1154" xml:space="preserve">
+    <value>Bewaar gesprekken</value>
+  </data>
+  <data name="Text_f3c95fbc8093e5b0" xml:space="preserve">
+    <value>Defaults apply to</value>
+  </data>
+  <data name="Text_f3ff78cc329d3528" xml:space="preserve">
+    <value>Previous</value>
+  </data>
+  <data name="Text_f4fbdbee8845e29a" xml:space="preserve">
+    <value>Manager is ready. Each fill still needs Allow once.</value>
+  </data>
+  <data name="Text_f5af49563512943c" xml:space="preserve">
+    <value>Nieuw gesprek</value>
+  </data>
+  <data name="Text_f5dac1f86c58f916" xml:space="preserve">
+    <value>All projects</value>
+  </data>
+  <data name="Text_f6c399e3730ba76a" xml:space="preserve">
+    <value>Edit schedule</value>
+  </data>
+  <data name="Text_f6e1665c7022a1f8" xml:space="preserve">
+    <value>Password</value>
+  </data>
+  <data name="Text_f739c7a36d16183c" xml:space="preserve">
+    <value>Find in conversation</value>
+  </data>
+  <data name="Text_f79e097f95e39761" xml:space="preserve">
+    <value>Local history retains the most recent 10,000 recorded turns. All-time totals cover retained history.</value>
+  </data>
+  <data name="Text_f7a5eea7c80c2137" xml:space="preserve">
+    <value>Bots</value>
+  </data>
+  <data name="Text_f8e484a5ee1dc9b1" xml:space="preserve">
+    <value>Rename Branch</value>
+  </data>
+  <data name="Text_f92789320708efed" xml:space="preserve">
+    <value>Next run</value>
+  </data>
+  <data name="Text_fa24a7a1eaf02308" xml:space="preserve">
+    <value>Plan by default in new chats</value>
+  </data>
+  <data name="Text_fb419463d301c7ac" xml:space="preserve">
+    <value>The scheduled turn finished. Review its conversation for details.</value>
+  </data>
+  <data name="Text_fc2490f62b243fa2" xml:space="preserve">
+    <value>Navigation failed.</value>
+  </data>
+  <data name="Text_fc755793d4eaeca7" xml:space="preserve">
+    <value>The password export picker could not open. No logins were imported.</value>
+  </data>
+  <data name="Text_fc81af00a9886564" xml:space="preserve">
+    <value>The library was saved, but its browser view could not be refreshed.</value>
+  </data>
+  <data name="Text_fda3e4a519cfc5ba" xml:space="preserve">
+    <value>Afgehandeld</value>
+  </data>
+  <data name="Text_fe0172ddce73f897" xml:space="preserve">
+    <value>Transcriberen…</value>
+  </data>
+  <data name="Text_feae03c8b61454b4" xml:space="preserve">
+    <value>Voice is off until you enable it. No model or speech engine is downloaded automatically.</value>
+  </data>
+  <data name="Text_ffe937fcb36c0286" xml:space="preserve">
+    <value>Refresh status</value>
+  </data>
+  <data name="ThreadActions" xml:space="preserve">
+    <value>Thread actions</value>
+  </data>
+  <data name="Threads" xml:space="preserve">
+    <value>Threads</value>
+  </data>
+  <data name="TogglePin" xml:space="preserve">
+    <value>Zet thread vast of maak los</value>
+  </data>
+  <data name="Tomorrow" xml:space="preserve">
+    <value>Morgen</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Herstel</value>
+  </data>
+  <data name="Unsnooze" xml:space="preserve">
+    <value>Snooze opheffen</value>
+  </data>
+  <data name="Usage" xml:space="preserve">
+    <value>Gebruik</value>
+  </data>
+  <data name="Voice" xml:space="preserve">
+    <value>Voice</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Jij</value>
+  </data>
+  <data name="clear" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="fullPage" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="query" xml:space="preserve">
+    <value>tab</value>
+  </data>
+  <data name="selector" xml:space="preserve">
+    <value>files</value>
+  </data>
+  <data name="top" xml:space="preserve">
+    <value>bottom</value>
+  </data>
+  <data name="url" xml:space="preserve">
+    <value>tab</value>
+  </data>
+</root>

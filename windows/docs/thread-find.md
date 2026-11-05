@@ -1,0 +1,16 @@
+# Find in the current conversation
+
+The conversation menu exposes **Find in conversation**. Ctrl+F opens it unless that key has an explicit configured app assignment. Enter/F3 moves forward; Shift+Enter/Shift+F3 moves backward; Escape or Close returns focus to the composer. Existing Ctrl+K sidebar search and ordinary transcript selection behavior are unchanged.
+
+Search is a case-insensitive literal search of the open thread's `Message.text` bodies, including current streamed text that may not yet be flushed to disk. There is one navigation result per matching message, in message order, with wraparound. Drafts, outbox entries, attachment contents/names, provider metadata and unopened histories are excluded. Code and Markdown syntax are searched as message source text. The native excerpt reveals the actual source spelling and source syntax; navigation scrolls to the rendered message rather than treating Markdown byte offsets as rendered text offsets.
+
+The pure `Core/TranscriptFind.h` scanner uses invariant Unicode folding and linear KMP matching, with query-sized source-offset storage. Queries are limited to 1,024 UTF-8 bytes. The first 10,000 matching messages are retained; an explicit status identifies truncation. Excerpts remain bounded at complete UTF-8 boundaries. Full source text is not truncated during scanning.
+
+`App/ThreadFindBar.h` debounces queries/stream changes for 200 ms. It snapshots only the selected thread's message IDs/text on the UI apartment, then scans on a worker with cancellation checkpoints. No mutable workspace references cross the await. A generation token, selected thread, current query and ready-state latch guard publication and keyboard navigation. Streaming refresh preserves the selected stable message ID without navigating or moving keyboard focus. Find suspends follow-latest scrolling until closed, so incoming output cannot undo a search jump. Changing threads closes the bar; no query is applied to an unrelated lazy transcript.
+
+Checks registered for the existing Windows CI:
+
+- `CoincideTranscriptFindTests` / CTest `transcript-find`, run by `windows/build.ps1`: Unicode/source spans, literal markup, message boundaries, wraparound, stable selection, bounded excerpts/results, long history, invalid text, cancellation and read-only behavior.
+- `--thread-find-panel-tests`: initialized native XAML controls, actual automation Invoke, debounce/cancellation, excerpts, message navigation, stream refresh, thread changes, draft/outbox exclusion, failures/stale-keyboard denial, close lifetime and retained provider state. Included in the default `PreviewSmoke.ps1` native suite list; all prior suites remain registered.
+
+Local verification: 32 portable scanner assertions passed with Clang C++20 `/O2` equivalent (`-O2 -Wall -Wextra -Werror -pedantic`), plus resource generation/check and diff whitespace checks. Windows compilation, the new initialized native fixture, actual Ctrl+F/F3 focus routing and virtualized message-scroll acceptance await Windows CI/physical validation. The ASUS laptop was offline and was not contacted. New UI strings use the existing generated resource/fallback system; translation quality is not accepted by these checks.

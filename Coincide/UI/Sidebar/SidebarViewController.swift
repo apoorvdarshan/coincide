@@ -907,9 +907,24 @@ final class SidebarViewController: NSViewController {
         case .bots, .pinned, .header, .chats:
             // A click on a section's header, outside its buttons, collapses or expands it.
             if let section = node.section { toggleSection(section) }
-        case .bot, .thread, .empty:
+        case .bot, .thread:
+            focusComposerAfterClick(at: row, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+        case .empty:
             break
         }
+    }
+
+    /// Mouse activation hands typing to the chat after AppKit finishes selecting the row. Selection-change callbacks
+    /// alone also run for arrow keys and bulk actions, which must keep their focus in the outline.
+    func focusComposerAfterClick(at row: Int, modifiers: NSEvent.ModifierFlags) {
+        guard modifiers.intersection([.command, .shift]).isEmpty,
+            outlineView.selectedRowIndexes.count == 1, outlineView.isRowSelected(row),
+            let node = sidebarNode(atRow: row), let selectedThreadID
+        else { return }
+        let isOpenThread = node.threadID == selectedThreadID
+        let isOpenBot = node.botID.map { store.summary(selectedThreadID)?.botID == $0 } ?? false
+        guard isOpenThread || isOpenBot else { return }
+        outlineView.onActivate?()
     }
 
     @objc private func rowDoubleClicked() {

@@ -408,19 +408,36 @@ struct CodexPresentation: Sendable {
 
     // MARK: Plans and messages
 
-    /// An asynchronous question message (`delivery: "async"`) with its suggested answers; the user replies
-    /// with their next message.
-    static func asyncQuestionsMarkdown(text: String, questions: [JSONValue]) -> String {
-        var parts = [text.trimmingCharacters(in: .whitespacesAndNewlines)]
-        for question in questions {
-            let title = question["title"]?.string.flatMap(nonEmpty)
-            let options = (question["options"]?.array ?? []).compactMap { $0.string.flatMap(nonEmpty) }
-            var lines: [String] = []
-            if let title, !text.contains(title) { lines.append("**\(title)**") }
-            lines += options.map { "- \($0)" }
-            if !lines.isEmpty { parts.append(lines.joined(separator: "\n")) }
+    /// Async questions are message items, not outstanding server requests. Reuse the native question controls
+    /// but send the answer as the user's next message (or steer it into the active turn).
+    static func asyncQuestions(id: String, questions: [JSONValue]) -> UserInputRequest {
+        let questions = questions.enumerated().compactMap { index, question -> UserQuestion? in
+            guard let prompt = question["title"]?.string.flatMap(nonEmpty) else { return nil }
+            var seen = Set<String>()
+            let options = (question["options"]?.array ?? []).compactMap { value -> UserQuestion.Option? in
+                guard let label = value.string.flatMap(nonEmpty), seen.insert(label).inserted else { return nil }
+                return .init(label: label)
+            }
+            return UserQuestion(id: "\(id)/\(index)", prompt: prompt, options: options)
         }
-        return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return UserInputRequest(id: "codex-async/\(id)", questions: questions, responseMode: .userMessage)
+    }
+
+    /// Some versions include the suggested answers in both `text` and `questions`. The buttons own those
+    /// options; remove only matching list entries, preserving surrounding prose and fenced code verbatim.
+    static func asyncQuestionText(_ text: String, request: UserInputRequest) -> String {
+        let labels = Set(request.questions.flatMap(\.options).map(\.label))
+        var fence: String?
+        return text.components(separatedBy: "\n").filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let marker = ["```", "~~~"].first(where: { trimmed.hasPrefix($0) }) {
+                if fence == marker { fence = nil } else if fence == nil { fence = marker }
+                return true
+            }
+            guard fence == nil else { return true }
+            let entry = trimmed.replacingOccurrences(of: #"^(?:[-*+•]|\d+[.)])\s+"#, with: "", options: .regularExpression)
+            return entry == trimmed || !labels.contains(entry)
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// A notice for an MCP server that could not start, or nil while it is starting or ready.

@@ -708,12 +708,39 @@ struct CodexEventMapperTests {
             ])
     }
 
-    @Test func asyncQuestionsListTheirSuggestedAnswers() throws {
+    @Test func asyncQuestionsUseNativeControlsAndMessageReplies() throws {
         var mapper = mapper()
         let events = try mapper.feed([
             #"{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m","text":"Which branch?","phase":"final_answer","memoryCitation":null,"delivery":"async","questions":[{"title":"Which branch?","options":["main","dev"]},{"title":"Squash?","options":null}]},"threadId":"T","turnId":"R1","completedAtMs":1}}"#
         ])
-        #expect(events == [.assistantText(itemID: "m", text: "Which branch?\n\n- main\n- dev\n\n**Squash?**")])
+        #expect(events == [
+            .assistantText(itemID: "m", text: "Which branch?"),
+            .userInputRequested(UserInputRequest(id: "codex-async/R1/m", questions: [
+                UserQuestion(id: "R1/m/0", prompt: "Which branch?", options: [.init(label: "main"), .init(label: "dev")]),
+                UserQuestion(id: "R1/m/1", prompt: "Squash?"),
+            ], responseMode: .userMessage)),
+        ])
+    }
+
+    @Test func asyncChoicesAreRemovedFromMarkdownWithoutChangingProseOrCode() throws {
+        let request = CodexPresentation.asyncQuestions(id: "m", questions: [
+            ["title": "Publish?", "options": ["Wait for my review", "Submit after checks pass", "Wait for my review"]],
+            ["title": "   ", "options": ["ignored"]],
+        ])
+        #expect(request.questions.count == 1)
+        #expect(request.questions[0].options.map(\.label) == ["Wait for my review", "Submit after checks pass"])
+        let text = "Context stays.\n\nPublish?\n\n- Wait for my review\n- Submit after checks pass\n\n* Wait for my review\n2. Submit after checks pass"
+        #expect(CodexPresentation.asyncQuestionText(text, request: request) == "Context stays.\n\nPublish?")
+        let code = "```text\n- Wait for my review\n```\nKeep Submit after checks pass in this sentence.\n- An unrelated choice"
+        #expect(CodexPresentation.asyncQuestionText(code, request: request) == code)
+    }
+
+    @Test func questionResponseModesAreBackwardCompatibleAndSurviveTheHostWire() throws {
+        let old = try JSONDecoder().decode(UserInputRequest.self, from: Data(#"{"id":"blocking","questions":[]}"#.utf8))
+        #expect(old.responseMode == nil)
+        let request = UserInputRequest(id: "async", questions: [UserQuestion(id: "q", prompt: "Why?")], responseMode: .userMessage)
+        let event = AgentEvent.userInputRequested(request)
+        #expect(try AgentHostWire.decode(AgentEvent.self, from: AgentHostWire.encode(event)) == event)
     }
 
     @Test func outputOfOlderTurnsIsNeverTakenForANewTurn() throws {
@@ -1786,6 +1813,168 @@ struct CodexUsageLimitsTests {
 }
 
 extension CodexSessionTests {
+    private func assistantItem(_ transport: FakeCodexTransport, method: String, id: String = "reply", text: String = "") {
+        transport.notify(method, [
+            "threadId": "T", "turnId": "R1", "item": ["type": "agentMessage", "id": .string(id), "text": .string(text)],
+        ])
+    }
+
+    @Test func steeringLetsTheStreamingReplyFinishBeforeDeliveringTheMessage() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, log) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        assistantItem(transport, method: "item/started")
+        transport.notify("item/agentMessage/delta", ["threadId": "T", "turnId": "R1", "itemId": "reply", "delta": "I’ll remove the brand"])
+        let steering = Task { try await session.steer(input("and keep the model")) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").isEmpty)
+        // Completing another thread's reply cannot release this thread's follow-up.
+        transport.notify("item/completed", [
+            "threadId": "OTHER", "turnId": "R1", "item": ["type": "agentMessage", "id": "reply", "text": "Other reply."],
+        ])
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").isEmpty)
+        assistantItem(transport, method: "item/completed", text: "I’ll remove the brand name from the hardware list.")
+        try await waitUntil { transport.requests("turn/steer").count == 1 }
+        try await steering.value
+        #expect(log.events.contains(.assistantText(itemID: "reply", text: "I’ll remove the brand name from the hardware list.")))
+        #expect(transport.requests("turn/steer").first?.at("params.input")?[0]?["text"] == "and keep the model")
+        #expect(transport.requests("turn/interrupt").isEmpty)
+    }
+
+    @Test func followUpsWaitingForAReplyKeepTheirOrderAcrossNewReplies() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { params in
+            if params["input"]?[0]?["text"] == "first follow-up" {
+                assistantItem(transport, method: "item/started", id: "next-reply")
+            }
+            return .result(["turnId": "R1"])
+        }
+        let (session, _) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        assistantItem(transport, method: "item/started")
+        let first = Task { try await session.steer(input("first follow-up")) }
+        try await Task.sleep(for: .milliseconds(100))
+        let second = Task { try await session.steer(input("second follow-up")) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").isEmpty)
+        assistantItem(transport, method: "item/completed", text: "First full reply.")
+        try await waitUntil { transport.requests("turn/steer").count == 1 }
+        try await first.value
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").count == 1)
+        assistantItem(transport, method: "item/completed", id: "next-reply", text: "Next full reply.")
+        try await waitUntil { transport.requests("turn/steer").count == 2 }
+        try await second.value
+        #expect(transport.requests("turn/steer").map { $0.at("params.input")?[0]?["text"]?.string }
+            == ["first follow-up", "second follow-up"])
+    }
+
+    @Test(arguments: ["commandExecution", "reasoning"])
+    func steeringDuringWorkDoesNotWaitForTheWholeTurn(kind: String) async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, log) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        transport.notify("item/started", ["threadId": "T", "turnId": "R1", "item": ["type": .string(kind), "id": "work"]])
+        try await session.steer(input("change direction"))
+        #expect(transport.requests("turn/steer").count == 1)
+        #expect(log.completions.isEmpty)
+    }
+
+    @Test func anEmptyReplyCompletionStillReleasesTheWaitingSteer() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, _) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        assistantItem(transport, method: "item/started")
+        let steering = Task { try await session.steer(input()) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").isEmpty)
+        assistantItem(transport, method: "item/completed")
+        try await waitUntil { transport.requests("turn/steer").count == 1 }
+        try await steering.value
+        #expect(transport.requests("turn/steer").count == 1)
+    }
+
+    @Test(arguments: ["completed", "failed", "stop", "closed"])
+    func aWaitingSteerIsReturnedToTheRunnerWhenItsTurnCannotTakeIt(ending: String) async throws {
+        let transport = FakeCodexTransport()
+        let (session, _) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        assistantItem(transport, method: "item/started")
+        var finished = false
+        let steering = Task {
+            defer { finished = true }
+            try await session.steer(input("preserve this follow-up"))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requests("turn/steer").isEmpty)
+        switch ending {
+        case "stop": session.interrupt()
+        case "closed": transport.crash(status: 1, stderr: "Connection lost")
+        default:
+            assistantItem(transport, method: "item/completed", text: "The full reply.")
+            // Final-answer completion and turn completion can arrive before the waiting task runs again.
+            transport.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": .string(ending)]])
+        }
+        try await waitUntil { finished }
+        await #expect(throws: AgentError.self) { try await steering.value }
+        #expect(transport.requests("turn/steer").isEmpty)
+    }
+
+    @Test func stoppingDoesNotMakeALaterSteerWaitForAnUnansweredEarlierRequest() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .silent }
+        let (session, _) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        try await session.send(input())
+        let first = Task { try await session.steer(input("first")) }
+        try await waitUntil { transport.requests("turn/steer").count == 1 }
+        var finished = false
+        let second = Task {
+            defer { finished = true }
+            try await session.steer(input("second"))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        session.interrupt()
+        try await waitUntil { finished }
+        await #expect(throws: AgentError.self) { try await second.value }
+        #expect(transport.requests("turn/steer").count == 1)
+        transport.answer("turn/steer", with: ["turnId": "R1"])
+        try await first.value
+    }
+
+    @Test func adoptingTheActualTurnDoesNotKeepAnAbandonedReplyBusy() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/start"] = { _ in .silent }
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, _) = makeSession(transports: [transport])
+        defer { session.shutdown() }
+        try await session.start()
+        let sending = Task { try await session.send(input()) }
+        try await waitUntil { !transport.requests("turn/start").isEmpty }
+        transport.notify("item/agentMessage/delta", ["threadId": "T", "turnId": "guessed", "itemId": "old-reply", "delta": "Old text"])
+        transport.answer("turn/start", with: ["turn": ["id": "R1", "status": "inProgress", "startedAt": 1]])
+        try await sending.value
+        let steering = Task { try await session.steer(input("actual turn")) }
+        try await waitUntil { transport.requests("turn/steer").count == 1 }
+        try await steering.value
+        #expect(transport.requests("turn/steer").first?.at("params.expectedTurnId") == "R1")
+    }
+
     @Test func steeringSendsTheMessageIntoTheActiveTurn() async throws {
         let transport = FakeCodexTransport()
         transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }

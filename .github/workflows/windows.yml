@@ -1,0 +1,68 @@
+name: Windows
+
+on:
+  pull_request:
+    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+  push:
+    branches: [main]
+    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Windows native build and core tests
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check shared label resources
+        run: |
+          python windows/scripts/test-sync-resources.py
+          python windows/scripts/sync-resources.py --check
+      - name: Check prepared-host guards in Windows PowerShell 5.1 and PowerShell 7
+        shell: pwsh
+        run: |
+          & "$env:WINDIR/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./windows/Tests/PreparedHostGuardTests.ps1 -ExpectedMajor 5 -Report ./windows/build/prepared-host-powershell-test-result.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$PSHOME/pwsh.exe" -NoLogo -NoProfile -NonInteractive -File ./windows/Tests/PreparedHostGuardTests.ps1 -ExpectedMajor 7 -Report ./windows/build/prepared-host-pwsh-test-result.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run core tests, then build WinUI
+        id: build
+        shell: pwsh
+        run: ./windows/build.ps1
+      - name: Check long-thread switching in the native window
+        shell: pwsh
+        run: ./windows/Tests/PreviewSmoke.ps1
+      - name: Save native UI verification results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Windows-native-UI-results
+          path: windows/build/ui-smoke/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save Windows runtime test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Windows-runtime-test-results
+          path: windows/build/*-test-result.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save Windows development build
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Coincide-Windows-x64-preview
+          path: windows/build/x64/Release/
+          if-no-files-found: error
+          retention-days: 7

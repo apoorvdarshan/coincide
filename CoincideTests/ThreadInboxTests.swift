@@ -6,6 +6,55 @@ import Testing
 
 @MainActor
 struct ThreadInboxTests {
+    @Test func clickingAThreadFocusesItsComposerAndAcceptsTypingImmediately() throws {
+        let folder = TemporaryDirectory("inbox-click-focus")
+        let store = AppStore.shared
+        let project = store.addProject(at: folder.url)
+        defer { store.removeProject(project.id) }
+        let first = store.createThread(in: project.id).id
+        let second = store.createThread(in: project.id).id
+        let sidebar = SidebarViewController()
+        let outline = try #require(findOutline(in: sidebar.view))
+        let composer = ComposerViewController()
+        let window = TerminalFocus.KeyWindow(size: NSSize(width: 1000, height: 700))
+        defer { window.close() }
+        window.contentView?.addSubview(sidebar.view)
+        window.contentView?.addSubview(composer.view)
+        sidebar.select(threadID: first)
+        composer.threadID = first
+        sidebar.onSelectThread = { composer.threadID = $0 }
+        let row = try #require((0..<outline.numberOfRows).first {
+            (outline.item(atRow: $0) as? SidebarNode)?.threadID == second
+        })
+        window.makeFirstResponder(outline)
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        // Keyboard selection keeps the outline usable for further navigation.
+        #expect(window.firstResponder === outline)
+        #expect(composer.threadID == second)
+        sidebar.focusComposerAfterClick(at: row, modifiers: [])
+        #expect(window.firstResponder === composer.textView)
+        window.firstResponder?.keyDown(with: TerminalFocus.key("q", keyCode: 12, in: window))
+        #expect(composer.textView.string == "q")
+
+        // Clicking the already-open conversation must work too, without a selection-change notification.
+        window.makeFirstResponder(outline)
+        sidebar.focusComposerAfterClick(at: row, modifiers: [])
+        #expect(window.firstResponder === composer.textView)
+        #expect(composer.textView.string == "q")
+
+        for modifier in [NSEvent.ModifierFlags.command, .shift] {
+            window.makeFirstResponder(outline)
+            sidebar.focusComposerAfterClick(at: row, modifiers: modifier)
+            #expect(window.firstResponder === outline)
+        }
+        outline.selectRowIndexes(IndexSet((0..<outline.numberOfRows).filter {
+            guard let id = (outline.item(atRow: $0) as? SidebarNode)?.threadID else { return false }
+            return [first, second].contains(id)
+        }), byExtendingSelection: false)
+        sidebar.focusComposerAfterClick(at: row, modifiers: [])
+        #expect(window.firstResponder === outline)
+    }
+
     @Test func archivingSeveralThreadsHandsOffOnlyToTheSurvivingNeighbour() async {
         let folder = TemporaryDirectory("inbox-neighbour")
         let store = AppStore.shared

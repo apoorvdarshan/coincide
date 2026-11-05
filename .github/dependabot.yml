@@ -18,3 +18,7 @@ updates:
     cooldown:
       default-days: 7
       include: ["apoorvdarshan/store-release*"]
+  - package-ecosystem: nuget
+    directory: /windows/App
+    schedule:
+      interval: weekly

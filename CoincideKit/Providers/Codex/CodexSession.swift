@@ -22,6 +22,8 @@ final class CodexSession: AgentSession {
     private var replacedThreads = 0
     private var isShutDown = false
     private var turn: Turn?
+    /// Keeps messages sent during the same reply in order while they wait for a safe steering boundary.
+    private var steeringRequests: [UUID] = []
     private var interruptWatchdog: Task<Void, Never>?
     private var approvals: [String: PendingApproval] = [:]
     private var questions: [String: PendingQuestions] = [:]
@@ -141,19 +143,30 @@ final class CodexSession: AgentSession {
     nonisolated static let steerWaitLimit: Duration = .seconds(10)
 
     /// Adds the message to the running turn with `turn/steer`, as T3 Code does. Codex only takes it once the turn
-    /// has its id, so a steer sent before `turn/start` answers waits for it a little; Codex refuses the message when
-    /// that turn is no longer the active one.
+    /// has its id, so a steer sent before `turn/start` answers waits for it a little. An assistant message already
+    /// streaming is allowed to finish first: native steering abandons that message, leaving a cut-off sentence in
+    /// the transcript. Tools and reasoning can still be steered immediately. If the turn ends while waiting, the
+    /// runner sends the message next instead.
     func steer(_ input: AgentTurnInput) async throws {
-        if let pending = turn, pending.id == nil, !pending.interruptRequested {
-            let deadline = ContinuousClock.now + Self.steerWaitLimit
-            while let current = turn, current.token == pending.token, current.id == nil, !current.interruptRequested,
-                !isShutDown, ContinuousClock.now < deadline
-            {
-                try await Task.sleep(for: .milliseconds(50))
-            }
+        let turnToken = turn?.token
+        let request = UUID()
+        steeringRequests.append(request)
+        defer { steeringRequests.removeAll { $0 == request } }
+        // Serializing the delivery as well as the boundary wait prevents concurrent follow-ups overtaking one
+        // another when the reply completes or Codex is still acknowledging an earlier steer.
+        while steeringRequests.first != request, let current = turn, current.token == turnToken,
+            !current.interruptRequested, !isShutDown
+        {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let deadline = ContinuousClock.now + Self.steerWaitLimit
+        while let current = turn, current.token == turnToken, !current.interruptRequested, !isShutDown {
+            if current.id != nil, mapper.streamingAssistantID == nil { break }
+            if current.id == nil, ContinuousClock.now >= deadline { break }
+            try await Task.sleep(for: .milliseconds(50))
         }
         guard !isShutDown, let connection, let threadID = mapper.threadID, let current = turn, current.sent,
-            let turnID = current.id, !current.interruptRequested
+            current.token == turnToken, steeringRequests.first == request, let turnID = current.id, !current.interruptRequested
         else {
             throw AgentError.providerError(String(localized: "Codex can't take a message for this turn now."))
         }

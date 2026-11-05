@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64"><Configuration>Release</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{D8D1731A-87FA-40D8-BAE5-07D8190B7E20}</ProjectGuid>
+    <ProjectName>Coincide</ProjectName><RootNamespace>Coincide</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <TargetPlatformVersion>$(WindowsTargetPlatformVersion)</TargetPlatformVersion>
+    <WindowsTargetPlatformMinVersion>10.0.19041.0</WindowsTargetPlatformMinVersion>
+    <AppContainerApplication>false</AppContainerApplication><AppxPackage>false</AppxPackage>
+    <WindowsPackageType>None</WindowsPackageType><WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <RuntimeIdentifiers>win-x64;win-arm64;win10-x64;win10-arm64</RuntimeIdentifiers>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <UseWinUI>true</UseWinUI><CppWinRTOptimized>true</CppWinRTOptimized>
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle><NuGetTargetMoniker>native,Version=v0.0</NuGetTargetMoniker>
+    <NuGetTargetPlatformIdentifier>Windows</NuGetTargetPlatformIdentifier>
+    <NuGetTargetPlatformVersion>$(WindowsTargetPlatformVersion)</NuGetTargetPlatformVersion>
+    <DefaultLanguage>en-US</DefaultLanguage>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet>
+    <DesktopCompatible>true</DesktopCompatible>
+    <PlatformToolset Condition="'$(VisualStudioVersion)'=='17.0'">v143</PlatformToolset>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'!='Debug'">false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)..\build\$(Platform)\$(Configuration)\</OutDir>
+    <CoincideCompilerJobs Condition="'$(CoincideCompilerJobs)' == ''">2</CoincideCompilerJobs>
+    <IntDir>$(MSBuildThisFileDirectory)..\build\obj\$(Platform)\$(Configuration)\</IntDir>
+    <GeneratedFilesDir>$(IntDir)GeneratedFiles\</GeneratedFilesDir>
+    <TargetName>Coincide</TargetName><LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard><WarningLevel>Level4</WarningLevel>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader><AdditionalOptions>/MP$(CoincideCompilerJobs) /bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link><SubSystem>Windows</SubSystem><AdditionalDependencies>user32.lib;shlwapi.lib;shell32.lib;ole32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+    <Manifest><AdditionalManifestFiles>app.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles></Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
+    <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />
+  </ItemGroup>
+  <ItemGroup><ClCompile Include="main.cpp" /><ClCompile Include="NativeBackgroundHost.cpp" /><ClCompile Include="..\Tests\HostedAppFixture.cpp" /><ClCompile Include="..\Tests\NativeTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeHostTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeHostedFacadeTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeBrowserLibraryTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeInstructionGitTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeBrowserTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeProviderTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeDataTestRoutes.cpp" /><ClCompile Include="..\Tests\NativePlatformTestRoutes.cpp" /><ClCompile Include="..\Tests\NativePanelTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeDesktopPanelTestRoutes.cpp" /><ClInclude Include="WorkspaceStore.h" /><ClInclude Include="..\Core\Workspace.h" /></ItemGroup>
+  <ItemGroup><PRIResource Include="..\Strings\**\*.resw" /></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
