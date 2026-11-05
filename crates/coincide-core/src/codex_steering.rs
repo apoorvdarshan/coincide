@@ -116,10 +116,8 @@ impl Server {
                     view.assistant = Some(p["item"]["id"].as_str().unwrap_or("").to_owned());
                 }
             }
-            Some("item/completed") => {
-                if view.assistant.as_deref() == p["item"]["id"].as_str() {
-                    view.assistant = None;
-                }
+            Some("item/completed") if view.assistant.as_deref() == p["item"]["id"].as_str() => {
+                view.assistant = None;
             }
             _ => {}
         }

@@ -54,6 +54,37 @@ Work is coordinated in this conversation with built-in subagents. The earlier
 headless restriction was explicitly lifted for isolated acceptance; the original
 Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
+Latest verification and current gates:
+
+- Full-app native Quit passed on immutable 814e3c0 with fresh idle and active
+  synthetic-Claude fixtures. Actual production CmdQ interrupted the active fake
+  provider, waited for worker/control return and explicit Store close, and
+  preserved the exact 65-byte Unicode/newline draft. The draft was saved and
+  loaded through the real API/UI; an unsaved-edit race is not claimed. Failed
+  fixture setup/input attempts were retained and excluded from these passes.
+- New ordinary-thread project/global defaults passed six tests. Codex usage
+  capture retains source-bound latest-request snapshots with atomic history and
+  transcript persistence; snapshots are not additive turn totals or costs.
+  Saved Usage Settings now has bounded background reads, filters and paging;
+  native presentation acceptance is pending.
+- Composer quote/reference editing, escaped provider envelopes, exact saved
+  context, historical handoff and queue/schedule isolation passed eight scoped
+  tests, including an isolated fake-provider boundary. Native interaction is
+  pending. Codex-only text steering requires the active source turn's actual
+  acknowledgement and saved transcript; its explicit desktop control retains
+  drafts and awaits final integration checks.
+- d4733f4 passed all five Rust CI jobs. On 814e3c0, four jobs passed and Linux
+  core failed the existing GitHub output-limit fixture. A finite shell-builtin
+  producer and explicit failure diagnostics replace its external infinite
+  producer; the next exact CI result must verify that change.
+- A parallel Mac core run stalled in SQLite's Unix VFS global mutex. The bundled
+  SQLite 3.51.1 has a matching upstream deadlock fixed in 3.51.2. The smallest
+  supported dependency upgrade is rusqlite 0.39 / SQLite 3.51.3; only those two
+  locked packages changed. With that fix, the normal parallel run passed all 429
+  unit tests and all core integration targets. The final desktop run passed 289
+  unit tests and all four integration targets. CI parallel coverage is retained;
+  the next pushed commit still needs its own remote results.
+
 - The real Mac native Quit fixture passed: three unsaved CmdQ requests were
   vetoed; the synthetic draft was persisted and verified before the one-use quit
   permit; a final CmdQ exited the fixture gracefully. This is guard acceptance,
@@ -76,13 +107,12 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
   have scoped native evidence. Metadata chooser interaction and broader browser,
   transcript and terminal acceptance remain open.
 
-The parent normal-quit mount is undergoing final review and isolated whole-app
-acceptance. It freezes new work, retains recovery controls, drains owned workers
+The parent normal-quit mount freezes new work, retains recovery controls, drains owned workers
 off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last verified remote checkpoint is 79cd0e4; newer local results do not stand
+The last fully green Rust remote checkpoint is d4733f4; newer local results do not stand
 in for CI on the next pushed commit.
 
 ## Earlier parallel checkpoint (2026-11-05)

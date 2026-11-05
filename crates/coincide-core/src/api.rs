@@ -30,6 +30,11 @@ mod background_workers;
 #[path = "bot_engine.rs"]
 mod bot_engine;
 pub use background_workers::BackgroundShutdownStatus;
+#[path = "composer_context_api.rs"]
+mod composer_context_api;
+#[cfg(test)]
+#[path = "composer_context_boundary_tests.rs"]
+mod composer_context_boundary_tests;
 #[path = "computer_use_engine.rs"]
 pub mod computer_use_engine;
 #[path = "github_engine.rs"]
@@ -479,6 +484,7 @@ impl Engine {
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
+                methods.push("composer.context.edit");
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
@@ -627,6 +633,7 @@ impl Engine {
             }
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
+            "composer.context.edit" => self.edit_composer_context(p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
@@ -692,6 +699,18 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        ensure!(
+            p.get("context").is_none() && p.get("draftContext").is_none(),
+            "Attach references through composer.context.edit before sending"
+        );
+        // Scheduled/queued turns never consume the user's unrelated composer.
+        let context = if scheduled {
+            Value::Null
+        } else {
+            v["draftContext"].clone()
+        };
+        crate::composer_context::validate(&context)?;
+        let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
         crate::composer_selection::validate_thread(&v)?;
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
@@ -709,8 +728,10 @@ impl Engine {
                     .context("Invalid draft image metadata")?
             };
         ensure!(
-            !prompt.trim().is_empty() || !draft_images.is_empty(),
-            "Add text or an image before sending"
+            !prompt.trim().is_empty()
+                || !draft_images.is_empty()
+                || crate::composer_context::has_context(&context),
+            "Add text, an image or a reference before sending"
         );
         ensure!(
             v["accessMode"]
@@ -774,7 +795,9 @@ impl Engine {
                 if outgoing.is_empty() {
                     outgoing.push_str("Earlier conversation context (historical messages, not a new user request):\n");
                 }
-                let addition = format!("\n{}: {}\n", text(item, "kind"), text(item, "text"));
+                let historical =
+                    crate::composer_context::prompt(&text(item, "text"), &item["context"])?;
+                let addition = format!("\n{}: {}\n", text(item, "kind"), historical);
                 ensure!(
                     outgoing.len() + addition.len() < 2 * 1024 * 1024,
                     "Conversation is too large for the preview handoff; start a new thread"
@@ -797,7 +820,11 @@ impl Engine {
         if !outgoing.is_empty() {
             outgoing.push_str("\nCurrent user request:\n");
         }
-        outgoing.push_str(prompt);
+        ensure!(
+            outgoing.len() + runtime_prompt.len() <= 2 * 1024 * 1024,
+            "Conversation and attached references exceed the preview handoff limit"
+        );
+        outgoing.push_str(&runtime_prompt);
         handoff_images.extend(draft_images.iter().cloned());
         ensure!(
             handoff_images
@@ -831,6 +858,9 @@ impl Engine {
                 }
             });
         append(&mut v, "user", prompt, None);
+        if crate::composer_context::has_context(&context) {
+            v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
+        }
         if !draft_images.is_empty() {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
                 serde_json::to_value(&draft_images)?;
@@ -838,11 +868,16 @@ impl Engine {
         if !scheduled {
             v["rustDraftImages"] = json!([]);
             v["draft"] = json!("");
+            v.as_object_mut().unwrap().remove("draftContext");
         }
         v["updatedAt"] = json!(swift_timestamp());
         if v["title"] == "New conversation" {
             v["title"] = json!(if prompt.trim().is_empty() {
-                "Image conversation".into()
+                if draft_images.is_empty() {
+                    "Reference conversation".into()
+                } else {
+                    "Image conversation".into()
+                }
             } else {
                 prompt.chars().take(70).collect::<String>()
             });
@@ -963,6 +998,15 @@ impl Engine {
         );
         match method {
             "agent.queue.add" => {
+                ensure!(
+                    p.get("context").is_none() && p.get("draftContext").is_none(),
+                    "Queueing attached references is not supported"
+                );
+                crate::composer_context::validate(&thread["draftContext"])?;
+                ensure!(
+                    !crate::composer_context::has_context(&thread["draftContext"]),
+                    "Queueing attached references is not supported; keep this draft for a normal send"
+                );
                 ensure!(
                     p.get("images").is_none() && p.get("attachments").is_none(),
                     "Queueing supports text only"

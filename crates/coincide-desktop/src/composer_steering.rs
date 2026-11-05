@@ -57,9 +57,15 @@ impl SteeringController {
             let mut engine = engine
                 .try_lock()
                 .map_err(|_| "Engine is busy; draft retained".to_owned())?;
-            engine
-                .execute(method, params)
-                .map_err(|error| error.to_string())
+            let reply = engine.dispatch(json!({"method":method,"params":params}));
+            if let Some(error) = reply.get("error") {
+                Err(error["message"]
+                    .as_str()
+                    .unwrap_or("Steering failed")
+                    .to_owned())
+            } else {
+                Ok(reply["result"].clone())
+            }
         }))
     }
     fn with_backend(backend: Backend) -> Self {

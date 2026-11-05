@@ -12,6 +12,8 @@ mod composer_attachments;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_selection;
+mod composer_steering;
+mod composer_steering_mount;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
@@ -328,6 +330,7 @@ struct Coincide {
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
     usage_history: usage_history_mount::Mount,
+    steering: composer_steering::SteeringController,
     computer_use_mount: Option<computer_use_mount::Mount>,
     computer_use_open: bool,
     computer_use_status: String,
@@ -676,6 +679,7 @@ impl Coincide {
             notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
         });
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
+        let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
@@ -971,6 +975,7 @@ impl Coincide {
             settings_search,
             settings_section: Default::default(),
             usage_history,
+            steering,
             computer_use_mount,
             computer_use_open: false,
             computer_use_status,
@@ -2256,6 +2261,13 @@ impl Coincide {
             cx.notify();
         }
         self.usage_history.poll(cx);
+        if let Some(thread) = &self.selected {
+            self.steering
+                .observe_draft(&text(thread, "id"), self.composer.read(cx).value().as_ref());
+        }
+        if self.steering.poll() {
+            cx.notify();
+        }
         self.poll_browser(window, cx);
         self.sync_browser_settings(cx);
         self.sync_github_context(cx);
@@ -2875,9 +2887,7 @@ impl Coincide {
                     self.status = "Agent running · approval required for changes".into();
                     if let Some(thread) = self.selected.as_mut() {
                         thread["draft"] = json!("");
-                        if thread.get("draftContext").is_some() {
-                            thread["draftContext"] = json!([]);
-                        }
+                        thread.as_object_mut().unwrap().remove("draftContext");
                     }
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
@@ -2954,6 +2964,7 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
+        let context_pane = self.transcript_context_pane(&item["context"]);
         let previews = images
             .iter()
             .take(20)
@@ -3054,7 +3065,7 @@ impl Coincide {
                             ))
                         }),
                 )
-                .when_some(self.transcript_context_pane(&item["context"]), |view, context| view.child(context))
+                .when_some(context_pane, |view, context| view.child(context))
                 .when(collapsible, |view| {
                     let source = source_id.clone();
                     let item = item_id.clone();
@@ -3828,6 +3839,10 @@ impl Render for Coincide {
                                         .border_1()
                                         .border_color(self.color(0x29303d))
                                         .child(self.composer_selection_pane(cx))
+                                        .when_some(
+                                            self.composer_steering_pane(cx),
+                                            |view, steering| view.child(steering),
+                                        )
                                         .when_some(
                                             self.composer_context_pane(cx),
                                             |view, context| view.child(context),

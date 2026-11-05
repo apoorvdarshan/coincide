@@ -860,13 +860,18 @@ mod tests {
                 .contains("timed out")
         );
         assert!(started.elapsed() < Duration::from_secs(2));
-        let (dir, runner) = fake("yes fixture");
+        // A finite shell-builtin producer avoids dependence on an external
+        // `yes` executable/descendant while still exercising the real pipe cap.
+        let chunk = "x".repeat(4096);
+        let (dir, runner) = fake(&format!(
+            "chunk='{chunk}'\ni=0\nwhile [ \"$i\" -lt 769 ]; do printf '%s' \"$chunk\"; i=$((i + 1)); done"
+        ));
+        let error = runner
+            .capture(dir.path(), &[], &cancelled)
+            .expect_err("Oversized fixture output must be rejected");
         assert!(
-            runner
-                .capture(dir.path(), &[], &cancelled)
-                .unwrap_err()
-                .to_string()
-                .contains("exceeds 3 MiB")
+            error.to_string().contains("exceeds 3 MiB"),
+            "Expected the output-limit rejection, got: {error:#}"
         );
         let (dir, runner) = fake("printf private-sentinel >&2; exit 3");
         let error = runner.capture(dir.path(), &[], &cancelled).unwrap_err();

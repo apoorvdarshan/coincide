@@ -2,6 +2,7 @@
 use coincide_core::local_usage::{
     CaptureCoverage, CounterSummary, Figure, Query, Report, Source, since_days,
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{base::Disableable, component::button::Button, *};
 
 pub enum UsageHistoryEvent {

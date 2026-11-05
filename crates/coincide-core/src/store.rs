@@ -1978,6 +1978,14 @@ mod saved_usage_tests {
             )
             .unwrap();
         assert_eq!(store.saved_usage_snapshot().unwrap().0, b"[]");
+        // Inject corruption into this private fixture only; normal writes are
+        // protected by the schema's json_valid CHECK. Reads must still reject
+        // malformed/oversized legacy or externally damaged rows without fallback.
+        store
+            .connection()
+            .unwrap()
+            .execute_batch("PRAGMA ignore_check_constraints=ON")
+            .unwrap();
         store
             .connection()
             .unwrap()
@@ -1989,7 +1997,7 @@ mod saved_usage_tests {
             .unwrap()
             .execute(
                 "UPDATE documents SET document=zeroblob(?1)",
-                [DOCUMENT_LIMIT + 1],
+                [(DOCUMENT_LIMIT + 1) as i64],
             )
             .unwrap();
         assert!(
@@ -2009,7 +2017,7 @@ mod saved_usage_tests {
             .unwrap()
             .execute(
                 "UPDATE original_files SET data=zeroblob(?1)",
-                [DOCUMENT_LIMIT + 1],
+                [(DOCUMENT_LIMIT + 1) as i64],
             )
             .unwrap();
         assert!(store.saved_usage_snapshot().is_err());
