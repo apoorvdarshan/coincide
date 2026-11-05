@@ -209,3 +209,106 @@ fn cli_scroll_dispatches_history_and_revision_safe_selection() {
     );
     fixture.request("app.quit", json!({}), true);
 }
+
+#[test]
+fn cli_scroll_rejects_malformed_requests_without_moving_viewport() {
+    let mut fixture = Fixture::new();
+    let (terminal, frame) = fixture.terminal();
+    let valid = json!({"terminalId":terminal,"revision":frame["revision"],"scroll":{"kind":"top"}});
+    let mut invalid = vec![Value::Null, json!([]), json!({})];
+    for field in ["terminalId", "revision", "scroll"] {
+        let mut request = valid.clone();
+        request.as_object_mut().unwrap().remove(field);
+        invalid.push(request);
+    }
+    for revision in [json!(-1), json!(1.5), json!("1"), Value::Null] {
+        let mut request = valid.clone();
+        request["revision"] = revision;
+        invalid.push(request);
+    }
+    for scroll in [
+        json!({"kind":"unknown"}),
+        json!({"kind":"lines"}),
+        json!({"kind":"lines","lines":2147483648_i64}),
+        json!({"kind":"lines","lines":-2147483649_i64}),
+        json!({"kind":"lines","lines":1.5}),
+        json!({"kind":"lines","lines":"1"}),
+        json!({"kind":"lines","lines":true}),
+        json!({"kind":"top","typo":1}),
+        json!({"kind":"top","lines":1}),
+        json!("top"),
+        Value::Null,
+    ] {
+        let mut request = valid.clone();
+        request["scroll"] = scroll;
+        invalid.push(request);
+    }
+    let mut unknown_field = valid.clone();
+    unknown_field["rowOffset"] = json!(1);
+    invalid.push(unknown_field);
+    let mut bad_id = valid.clone();
+    bad_id["terminalId"] = json!(7);
+    invalid.push(bad_id);
+    let mut future_revision = valid;
+    future_revision["revision"] = json!(frame["revision"].as_u64().unwrap() + 1);
+    invalid.push(future_revision);
+    for request in invalid {
+        fixture.request("terminal.scroll", request, false);
+        let after = fixture.request("terminal.read", json!({"terminalId":terminal}), true);
+        assert_eq!(after["revision"], frame["revision"]);
+        assert_eq!(after["viewport"], frame["viewport"]);
+        assert_eq!(after["lines"], frame["lines"]);
+    }
+    // Valid extreme deltas must clamp, rather than overflow or be rejected.
+    let top = fixture.scroll(&terminal, &frame, json!({"kind":"lines","lines":i32::MAX}));
+    assert_eq!(top["frame"]["viewport"]["displayOffset"], 3);
+    let page = fixture.scroll(&terminal, &top["frame"], json!({"kind":"pageDown"}));
+    let up = fixture.scroll(&terminal, &page["frame"], json!({"kind":"pageUp"}));
+    assert_eq!(up["frame"]["viewport"]["displayOffset"], 3);
+    let bottom = fixture.scroll(
+        &terminal,
+        &up["frame"],
+        json!({"kind":"lines","lines":i32::MIN}),
+    );
+    assert_eq!(bottom["frame"]["viewport"]["atBottom"], true);
+    fixture.request("terminal.close", json!({"terminalId":terminal}), true);
+    fixture.request("app.quit", json!({}), true);
+}
+
+#[test]
+fn cli_scroll_isolates_alternate_screen_and_rejects_output_stale_revision() {
+    let mut fixture = Fixture::new();
+    let (terminal, frame) = fixture.terminal();
+    let history = fixture.scroll(&terminal, &frame, json!({"kind":"top"}));
+    fixture.request(
+        "terminal.write",
+        json!({"terminalId":terminal,"text":"next\n"}),
+        true,
+    );
+    let alternate = fixture.ready(&terminal, "alt-ready");
+    assert_eq!(alternate["viewport"]["alternateScreen"], true);
+    assert_eq!(alternate["viewport"]["historySize"], 0);
+    fixture.request("terminal.scroll", json!({"terminalId":terminal,"revision":history["frame"]["revision"],"scroll":{"kind":"top"}}), false);
+    for scroll in [
+        json!({"kind":"top"}),
+        json!({"kind":"lines","lines":i32::MAX}),
+        json!({"kind":"pageUp"}),
+    ] {
+        let unchanged = fixture.scroll(&terminal, &alternate, scroll);
+        assert_eq!(unchanged["changed"], false);
+        assert_eq!(unchanged["frame"]["revision"], alternate["revision"]);
+        assert_eq!(unchanged["frame"]["lines"], alternate["lines"]);
+    }
+    fixture.request(
+        "terminal.write",
+        json!({"terminalId":terminal,"text":"next\n"}),
+        true,
+    );
+    let restored = fixture.ready(&terminal, "main-ready");
+    assert_eq!(restored["viewport"]["alternateScreen"], false);
+    assert_eq!(restored["viewport"]["historySize"], 3);
+    let top = fixture.scroll(&terminal, &restored, json!({"kind":"top"}));
+    assert_eq!(top["frame"]["lines"], history["frame"]["lines"]);
+    fixture.request("terminal.close", json!({"terminalId":terminal}), true);
+    fixture.request("app.quit", json!({}), true);
+}
