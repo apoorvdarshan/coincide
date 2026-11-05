@@ -102,6 +102,26 @@ fn account_label(account: &Value) -> String {
         other => format!("Unsupported stored account: {other}"),
     }
 }
+fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Option<String> {
+    let id = match account {
+        Value::Null => "default",
+        Value::String(id) if id.is_empty() || id == "default" => "default",
+        Value::String(id) => id,
+        _ => {
+            return Some(
+                "The stored account ID has an unsupported type; it has been retained.".into(),
+            );
+        }
+    };
+    match provider["accountPolicy"].as_str() {
+        Some("default_only") if id != "default" => Some("This provider supports only the default account. Choose Use default account to replace the retained account ID.".into()),
+        Some("default_only") => None,
+        Some("configured_antigravity") if !configured.is_object() => Some("Configured account metadata is unavailable. Refresh capabilities or open Antigravity accounts.".into()),
+        Some("configured_antigravity") if configured.get(id).is_none() => Some(format!("Account '{id}' is not configured. Choose a configured account or open Antigravity accounts.")),
+        Some("configured_antigravity") => None,
+        _ => Some("Account support is not described by current capabilities.".into()),
+    }
+}
 impl Coincide {
     /// Existing provider setup explicitly applied a saved selection. Rebase only
     /// that thread; unrelated selection drafts and the message draft survive.
@@ -272,6 +292,9 @@ impl Coincide {
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
         let known_provider = provider.is_some();
+        let account_problem = provider.and_then(|provider| {
+            account_problem(provider, &draft.account, &self.selection_ui.accounts)
+        });
         let default_supported = provider.is_some_and(|p| {
             p["models"]
                 .as_array()
@@ -330,7 +353,7 @@ impl Coincide {
             .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider)
+                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || account_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -340,6 +363,9 @@ impl Coincide {
                         this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
                     }))))
             .child(div().text_xs().child("This runtime supports approval access and build interaction only. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
+        if let Some(reason) = account_problem {
+            pane = pane.child(div().text_sm().child(reason));
+        }
         if let Some(reason) = lock {
             pane = pane.child(div().text_sm().child(reason));
         }
@@ -432,5 +458,19 @@ mod tests {
             assert_eq!(draft.params(&thread).unwrap()["accountId"], account);
             assert!(!account_label(&account).is_empty());
         }
+    }
+    #[::core::prelude::v1::test]
+    fn account_compatibility_requires_explicit_replacement_without_auth_claims() {
+        let default_only = json!({"accountPolicy":"default_only"});
+        let configured = json!({"accountPolicy":"configured_antigravity"});
+        assert!(account_problem(&default_only, &json!("other"), &Value::Null).is_some());
+        for alias in [Value::Null, json!(""), json!("default")] {
+            assert!(account_problem(&default_only, &alias, &Value::Null).is_none());
+        }
+        assert!(
+            account_problem(&configured, &json!("a"), &json!({"a":{"name":"Account A"}})).is_none()
+        );
+        assert!(account_problem(&configured, &json!("a"), &json!({})).is_some());
+        assert!(account_problem(&configured, &Value::Null, &Value::Null).is_some());
     }
 }
