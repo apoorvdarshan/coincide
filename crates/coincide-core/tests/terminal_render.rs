@@ -300,3 +300,135 @@ fn full_width_terminal_cursor_reports_insertion_boundary_after_last_cell() {
     assert_eq!(page["cursor"]["col"], 7);
     assert_eq!(page["cursor"]["insertionCol"], 8);
 }
+
+#[test]
+fn scrollback_navigation_copies_history_and_invalidates_old_coordinates() {
+    use coincide_core::terminal::TerminalScroll;
+    let mut fixture = Fixture::new(3, 8, &["\x1b[2J\x1b[Ha\r\nb\r\nc\r\nd\r\ne\r\nf"]);
+    let live = fixture.snapshot(0);
+    assert_eq!(live["lines"], json!(["d", "e", "f"]));
+    assert_eq!(live["viewport"]["historySize"], 3);
+    assert_eq!(live["viewport"]["atBottom"], true);
+    assert!(fixture.terminal.scroll(TerminalScroll::Top).unwrap());
+    let history = fixture.snapshot(0);
+    assert_eq!(history["lines"], json!(["a", "b", "c"]));
+    assert_eq!(history["viewport"]["displayOffset"], 3);
+    assert_eq!(history["cursor"]["visible"], false);
+    let start = TerminalPoint { row: 0, col: 0 };
+    let end = TerminalPoint { row: 2, col: 7 };
+    assert!(
+        fixture
+            .terminal
+            .copy_selection(live["revision"].as_u64().unwrap(), start, end)
+            .is_err()
+    );
+    let copied = fixture
+        .terminal
+        .copy_selection(history["revision"].as_u64().unwrap(), start, end)
+        .unwrap();
+    assert_eq!(copied, "a\nb\nc");
+    assert_eq!(copied, selected_text(&history, start, end).unwrap());
+    let plain = fixture.terminal.snapshot().unwrap();
+    assert_eq!(plain["viewport"], history["viewport"]);
+    assert_eq!(plain["lines"], history["lines"]);
+    assert!(fixture.terminal.scroll(TerminalScroll::Bottom).unwrap());
+    assert_eq!(fixture.snapshot(0)["lines"], live["lines"]);
+}
+
+#[test]
+fn scrollback_clamps_extreme_deltas_and_noops_preserve_revision() {
+    use coincide_core::terminal::TerminalScroll;
+    let mut fixture = Fixture::new(3, 8, &["0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7"]);
+    fixture.snapshot(0);
+    fixture.terminal.scroll(TerminalScroll::Lines(1)).unwrap();
+    assert_eq!(fixture.snapshot(0)["viewport"]["displayOffset"], 1);
+    fixture.terminal.scroll(TerminalScroll::PageUp).unwrap();
+    assert_eq!(fixture.snapshot(0)["viewport"]["displayOffset"], 4);
+    fixture
+        .terminal
+        .scroll(TerminalScroll::Lines(i32::MAX))
+        .unwrap();
+    let top = fixture.snapshot(0);
+    assert_eq!(top["viewport"]["displayOffset"], 5);
+    assert!(
+        !fixture
+            .terminal
+            .scroll(TerminalScroll::Lines(i32::MAX))
+            .unwrap()
+    );
+    assert!(!fixture.terminal.scroll(TerminalScroll::Top).unwrap());
+    assert_eq!(fixture.snapshot(0)["revision"], top["revision"]);
+    fixture.terminal.scroll(TerminalScroll::PageDown).unwrap();
+    assert_eq!(fixture.snapshot(0)["viewport"]["displayOffset"], 2);
+    fixture
+        .terminal
+        .scroll(TerminalScroll::Lines(i32::MIN))
+        .unwrap();
+    let bottom = fixture.snapshot(0);
+    assert_eq!(bottom["viewport"]["displayOffset"], 0);
+    assert!(!fixture.terminal.scroll(TerminalScroll::Bottom).unwrap());
+    assert!(!fixture.terminal.scroll(TerminalScroll::Lines(0)).unwrap());
+    assert_eq!(fixture.snapshot(0)["revision"], bottom["revision"]);
+}
+
+#[test]
+fn scrollback_stays_anchored_during_output_and_alt_screen_has_no_history() {
+    use coincide_core::terminal::TerminalScroll;
+    let mut fixture = Fixture::new(
+        3,
+        8,
+        &[
+            "a\r\nb\r\nc\r\nd\r\ne\r\nf",
+            "\r\ng",
+            "\x1b[?1049h\x1b[2J\x1b[HALT",
+            "\x1b[?1049l",
+        ],
+    );
+    fixture.snapshot(0);
+    fixture.terminal.scroll(TerminalScroll::Top).unwrap();
+    let before = fixture.snapshot(0);
+    let after = fixture.next(1);
+    assert_eq!(after["lines"], before["lines"]);
+    assert_eq!(after["viewport"]["displayOffset"], 4);
+    assert!(after["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
+    let alternate = fixture.next(2);
+    assert_eq!(alternate["viewport"]["alternateScreen"], true);
+    assert_eq!(alternate["viewport"]["historySize"], 0);
+    assert!(!fixture.terminal.scroll(TerminalScroll::Top).unwrap());
+    assert!(
+        !fixture
+            .terminal
+            .scroll(TerminalScroll::Lines(i32::MAX))
+            .unwrap()
+    );
+    assert_eq!(fixture.snapshot(2)["lines"][0], "ALT");
+    let restored = fixture.next(3);
+    assert_eq!(restored["viewport"]["alternateScreen"], false);
+    assert_eq!(restored["viewport"]["historySize"], 4);
+    fixture.terminal.scroll(TerminalScroll::Top).unwrap();
+    assert_eq!(fixture.snapshot(3)["lines"], before["lines"]);
+}
+
+#[test]
+fn scrollback_copy_preserves_wide_combining_wraps_and_concealment() {
+    use coincide_core::terminal::TerminalScroll;
+    let mut fixture = Fixture::new(
+        3,
+        8,
+        &["界e\u{301}123456\r\n\x1b[8msecret\x1b[0m!\r\nx\r\ny\r\nz"],
+    );
+    fixture.snapshot(0);
+    fixture.terminal.scroll(TerminalScroll::Top).unwrap();
+    let history = fixture.snapshot(0);
+    let start = TerminalPoint { row: 0, col: 1 };
+    let end = TerminalPoint { row: 2, col: 6 };
+    let copied = fixture
+        .terminal
+        .copy_selection(history["revision"].as_u64().unwrap(), start, end)
+        .unwrap();
+    assert_eq!(copied, "界e\u{301}123456\n      !");
+    assert_eq!(selected_text(&history, start, end).unwrap(), copied);
+    let page = fixture.terminal.styled_snapshot(1, 1).unwrap();
+    assert_eq!(page["grid"][0], history["grid"][1]);
+    assert_eq!(page["viewport"], history["viewport"]);
+}
