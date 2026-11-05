@@ -33,16 +33,28 @@ pub fn credential_fill_available() -> bool {
 
 /// Both arguments come from the selected thread/tab on the UI thread. The
 /// lookup exposes metadata only. The retained native target is never public IPC.
+type CompletionAck = Box<dyn FnOnce()>;
+type CompletionTracker = Box<dyn Fn() -> CompletionAck>;
+
 pub struct BrowserCredentialSink<F> {
     lookup: F,
     target: Option<NativeCredentialTarget>,
+    completion_tracker: Option<CompletionTracker>,
 }
 impl<F> BrowserCredentialSink<F> {
     pub fn new(lookup: F) -> Self {
         Self {
             lookup,
             target: None,
+            completion_tracker: None,
         }
+    }
+    pub fn with_completion_tracker(
+        mut self,
+        tracker: impl Fn() -> CompletionAck + 'static,
+    ) -> Self {
+        self.completion_tracker = Some(Box::new(tracker));
+        self
     }
     pub fn with_target(mut self, target: Option<NativeCredentialTarget>) -> Self {
         self.target = target;
@@ -62,6 +74,13 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
         totp: Option<&str>,
         completion: Box<dyn FnOnce(Result<(), Failure>)>,
     ) {
+        let ack = self.completion_tracker.as_ref().map(|tracker| tracker());
+        let completion: Box<dyn FnOnce(Result<(), Failure>)> = Box::new(move |result| {
+            completion(result);
+            if let Some(ack) = ack {
+                ack();
+            }
+        });
         if let Err(error) =
             validate_delivery(binding, permit.is_valid(), (self.lookup)(&binding.tab))
         {

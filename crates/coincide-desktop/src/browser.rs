@@ -2,6 +2,10 @@
 //! callbacks return bounded payloads without holding an engine mutex.
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
+#[path = "browser_shutdown.rs"]
+mod shutdown;
+pub use shutdown::BrowserShutdownStatus;
+use shutdown::TrackedEvaluation;
 
 use crate::browser_settings::{ProfileCatalog, ProfileChoice, ProfileRequest, ProfileSnapshot};
 use crate::credentials::{FillJob, deliver_fill};
@@ -115,6 +119,7 @@ pub struct BrowserController {
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
+    shutdown: shutdown::Shutdown,
 }
 
 impl BrowserController {
@@ -177,10 +182,58 @@ impl BrowserController {
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
+            shutdown: shutdown::Shutdown::default(),
         })
     }
 
+    /// Revoke access and close admission; keep native owners alive for real callbacks.
+    pub fn request_shutdown(&mut self, cx: &mut App) {
+        if self.shutdown.callbacks.closed() {
+            return;
+        }
+        self.shutdown.close();
+        for tabs in self.tabs.values() {
+            for tab in tabs {
+                tab.navigation.fetch_add(1, Ordering::AcqRel);
+                tab.credential_console_suppressed
+                    .store(true, Ordering::Release);
+                let _ = tab.console.borrow_mut().read(true);
+            }
+        }
+        self.set_thread_visible(None, cx);
+        for upload in self.uploads.values() {
+            upload.work.cancel();
+        }
+        self.uploads.clear();
+        self.waits.clear();
+        self.replies.clear();
+        for _ in self.events.try_iter() {}
+    }
+    /// Native release is deliberately unconfirmed; no file/profile deletion or
+    /// semantic cancellation is used as completion evidence.
+    pub fn poll_shutdown(&mut self) -> BrowserShutdownStatus {
+        let downloads_pending = self
+            .tabs
+            .keys()
+            .map(|thread| {
+                let list = self.downloads.borrow().list(thread, None);
+                list["downloads"].as_array().map_or(0, |rows| {
+                    rows.iter()
+                        .filter(|row| {
+                            matches!(row["state"].as_str(), Some("downloading" | "unconfirmed"))
+                        })
+                        .count()
+                })
+            })
+            .sum();
+        let views = self.tabs.values().map(Vec::len).sum();
+        self.shutdown
+            .status(downloads_pending, views, self.contexts.len())
+    }
     pub fn execute(&mut self, request: BrowserRequest, window: &mut Window, cx: &mut App) {
+        if self.shutdown.callbacks.closed() {
+            return;
+        }
         let id = request.id.clone();
         let thread_id = request.thread_id.clone();
         match self.handle(request, window, cx) {
@@ -204,6 +257,10 @@ impl BrowserController {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Option<Value>> {
+        ensure!(
+            !self.shutdown.callbacks.closed(),
+            "Browser is shutting down"
+        );
         request.validate()?;
         let thread = &request.thread_id;
         match &request.action {
@@ -293,10 +350,10 @@ impl BrowserController {
                 let probe_ticket = ticket.clone();
                 let protected = tab.credential_console_suppressed.clone();
                 let navigation = tab.navigation.clone();
-                tab.view
-                    .read(cx)
-                    .raw()
-                    .evaluate_script_with_callback(&source, move |payload| {
+                tab.view.read(cx).raw().evaluate_script_tracked(
+                    &source,
+                    &self.shutdown.callbacks,
+                    move |payload| {
                         let _ = sender.try_send(NativeEvent::UploadProbe {
                             id: id.clone(),
                             ticket: probe_ticket.clone(),
@@ -307,7 +364,8 @@ impl BrowserController {
                                 false,
                             ),
                         });
-                    })?;
+                    },
+                )?;
                 self.uploads.insert(
                     request.id.clone(),
                     PendingUpload {
@@ -396,7 +454,7 @@ impl BrowserController {
                     .view
                     .read(cx)
                     .raw()
-                    .evaluate_script_with_callback(&source, move |payload| {
+                    .evaluate_script_tracked(&source, &self.shutdown.callbacks, move |payload| {
                         let result = public_script_reply(
                             &payload,
                             navigation.load(Ordering::Acquire) == epoch,
@@ -421,6 +479,10 @@ impl BrowserController {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<String> {
+        ensure!(
+            !self.shutdown.callbacks.closed(),
+            "Browser is shutting down"
+        );
         ensure!(
             self.tabs.values().map(Vec::len).sum::<usize>() < 128,
             "Browser has reached its 128-tab limit"
@@ -457,7 +519,10 @@ impl BrowserController {
         let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
         let navigation_handler = navigation.clone();
+        let navigation_closed = self.shutdown.callbacks.closed.clone();
+        let download_closed = self.shutdown.callbacks.closed.clone();
         let load_navigation = navigation.clone();
+        let load_closed = self.shutdown.callbacks.closed.clone();
         let profile = self.profiles.selected(thread);
         let profile_key = profile.key(thread);
         if let ProfileChoice::Persistent(id) = &profile {
@@ -496,7 +561,8 @@ impl BrowserController {
                     .receive(message.body(), &message.uri().to_string());
             })
             .with_navigation_handler(move |url| {
-                let allowed = allow_native_navigation(&url);
+                let allowed =
+                    !navigation_closed.load(Ordering::Acquire) && allow_native_navigation(&url);
                 if allowed {
                     navigation_handler.fetch_add(1, Ordering::AcqRel);
                 }
@@ -505,7 +571,10 @@ impl BrowserController {
             .with_download_started_handler(move |url, destination| {
                 // Wry 0.53 registers GTK callbacks on the shared context without
                 // matching the source webview. Fail closed until that is fixed.
-                if cfg!(target_os = "linux") || download_suppressed.load(Ordering::Acquire) {
+                if cfg!(target_os = "linux")
+                    || download_closed.load(Ordering::Acquire)
+                    || download_suppressed.load(Ordering::Acquire)
+                {
                     return false;
                 }
                 let result = start_downloads.borrow_mut().start(
@@ -547,6 +616,9 @@ impl BrowserController {
                 });
             })
             .with_on_page_load_handler(move |event, url| {
+                if load_closed.load(Ordering::Acquire) {
+                    return;
+                }
                 if matches!(event, wry::PageLoadEvent::Started) {
                     load_navigation.fetch_add(1, Ordering::AcqRel);
                 } else if load_console_suppressed.swap(false, Ordering::AcqRel) {
@@ -601,6 +673,7 @@ impl BrowserController {
             credential_console_suppressed,
             navigation,
         });
+        self.shutdown.ever_native = true;
         self.active.insert(thread.into(), id.clone());
         // New background tabs must not steal another thread's browser pane.
         let visible = self.visible.clone();
@@ -609,6 +682,11 @@ impl BrowserController {
     }
 
     pub fn poll(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        if self.shutdown.callbacks.closed() {
+            let discarded = self.events.try_iter().take(512).count();
+            self.replies.clear();
+            return discarded > 0;
+        }
         let events = self.events.try_iter().take(512).collect::<Vec<_>>();
         let mut changed = !events.is_empty();
         for event in events {
@@ -636,12 +714,13 @@ impl BrowserController {
                                 let request = upload.request.clone();
                                 let ticket = upload.ticket.clone();
                                 let work = upload.work.clone();
-                                std::thread::spawn(move || {
+                                let worker = std::thread::spawn(move || {
                                     let _permit = permit;
                                     let result = prepare_upload_script(&request, &ticket, &work)
                                         .map_err(|e| e.to_string());
                                     let _ = sender.try_send(result);
                                 });
+                                self.shutdown.track(worker);
                             }
                         } else {
                             let upload = self.uploads.remove(&id).expect("existing upload");
@@ -747,18 +826,22 @@ impl BrowserController {
                     tab.view
                         .read(cx)
                         .raw()
-                        .evaluate_script_with_callback(&source, move |payload| {
-                            let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
-                                id: id.clone(),
-                                thread_id: thread_id.clone(),
-                                result: public_script_reply(
-                                    &payload,
-                                    navigation.load(Ordering::Acquire) == epoch,
-                                    protected.load(Ordering::Acquire),
-                                    false,
-                                ),
-                            }));
-                        })
+                        .evaluate_script_tracked(
+                            &source,
+                            &self.shutdown.callbacks,
+                            move |payload| {
+                                let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
+                                    id: id.clone(),
+                                    thread_id: thread_id.clone(),
+                                    result: public_script_reply(
+                                        &payload,
+                                        navigation.load(Ordering::Acquire) == epoch,
+                                        protected.load(Ordering::Acquire),
+                                        false,
+                                    ),
+                                }));
+                            },
+                        )
                         .map_err(|e| e.to_string())
                 });
                 if let Err(error) = result {
@@ -828,19 +911,23 @@ impl BrowserController {
                     tab.view
                         .read(cx)
                         .raw()
-                        .evaluate_script_with_callback(&source, move |payload| {
-                            let _ = sender.try_send(NativeEvent::WaitReply {
-                                id: id.clone(),
-                                thread: thread.clone(),
-                                tab: tab_id.clone(),
-                                result: public_script_reply(
-                                    &payload,
-                                    navigation.load(Ordering::Acquire) == epoch,
-                                    protected.load(Ordering::Acquire),
-                                    false,
-                                ),
-                            });
-                        })
+                        .evaluate_script_tracked(
+                            &source,
+                            &self.shutdown.callbacks,
+                            move |payload| {
+                                let _ = sender.try_send(NativeEvent::WaitReply {
+                                    id: id.clone(),
+                                    thread: thread.clone(),
+                                    tab: tab_id.clone(),
+                                    result: public_script_reply(
+                                        &payload,
+                                        navigation.load(Ordering::Acquire) == epoch,
+                                        protected.load(Ordering::Acquire),
+                                        false,
+                                    ),
+                                });
+                            },
+                        )
                         .map_err(Into::into)
                 });
                 if let Err(error) = result {
@@ -869,6 +956,10 @@ impl BrowserController {
         current_thread: &str,
         request: ProfileRequest,
     ) -> Result<()> {
+        ensure!(
+            !self.shutdown.callbacks.closed(),
+            "Browser is shutting down"
+        );
         if let crate::browser_settings::ProfileOperation::Select(ProfileChoice::Persistent(id)) =
             &request.operation
         {
@@ -902,12 +993,15 @@ impl BrowserController {
 
     /// Native parent hook only. Do not register this capability as an agent action.
     pub fn credential_fill_available(&self) -> bool {
-        credential_bridge::credential_fill_available()
+        !self.shutdown.callbacks.closed() && credential_bridge::credential_fill_available()
     }
 
     /// Metadata for the selected tab of the native parent's selected thread.
     /// Native URL access avoids trusting a JavaScript location/IPC response.
     pub fn credential_page(&self, thread: &str, cx: &App) -> Option<PageBinding> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
         let id = self.active.get(thread)?;
         let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
         if tab.loading {
@@ -931,6 +1025,9 @@ impl BrowserController {
         jobs: &Receiver<FillJob>,
         cx: &App,
     ) -> bool {
+        if self.shutdown.callbacks.closed() {
+            return jobs.try_iter().take(2).count() > 0;
+        }
         let mut changed = false;
         for job in jobs.try_iter().take(2) {
             if let Some(active) = self.active.get(thread).cloned() {
@@ -967,7 +1064,14 @@ impl BrowserController {
                     .filter(|page| page.tab == tab)
                     .ok_or(Failure::StalePage)
             })
-            .with_target(target);
+            .with_target(target)
+            .with_completion_tracker({
+                let callbacks = self.shutdown.callbacks.clone();
+                move || {
+                    let ack = callbacks.begin();
+                    Box::new(move || ack.ack())
+                }
+            });
             deliver_fill(job, &mut sink);
             changed = true;
         }
@@ -978,6 +1082,9 @@ impl BrowserController {
         self.replies.drain(..).collect()
     }
     pub fn active_view(&self, thread: &str) -> Option<Entity<WebView>> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
         let id = self.active.get(thread)?;
         self.tabs
             .get(thread)?
@@ -989,6 +1096,11 @@ impl BrowserController {
         self.visible.as_deref() == Some(thread)
     }
     pub fn set_thread_visible(&mut self, thread: Option<&str>, cx: &mut App) {
+        let thread = if self.shutdown.callbacks.closed() {
+            None
+        } else {
+            thread
+        };
         self.visible = thread.map(str::to_owned);
         for (owner, tabs) in &self.tabs {
             for tab in tabs {
