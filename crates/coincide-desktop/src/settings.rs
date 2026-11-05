@@ -9,6 +9,7 @@ pub(super) enum SettingsSection {
     Automation,
     Accounts,
     Browser,
+    Media,
 }
 impl SettingsSection {
     fn id(self) -> &'static str {
@@ -19,6 +20,7 @@ impl SettingsSection {
             Self::Automation => "automation",
             Self::Accounts => "accounts",
             Self::Browser => "browser",
+            Self::Media => "media",
         }
     }
     fn label(self) -> &'static str {
@@ -29,6 +31,7 @@ impl SettingsSection {
             Self::Automation => "Automation and alerts",
             Self::Accounts => "Providers and passwords",
             Self::Browser => "Browser",
+            Self::Media => "Historical images",
         }
     }
 }
@@ -539,6 +542,7 @@ impl Coincide {
             S::Automation,
             S::Accounts,
             S::Browser,
+            S::Media,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -717,6 +721,12 @@ impl Coincide {
                 "antigravity provider configured account models",
             ),
             (
+                S::Media,
+                "media",
+                "Restore historical images",
+                "historical legacy images photos attachments recovery folder mapping",
+            ),
+            (
                 S::Browser,
                 "browser",
                 "Browser profiles and imports",
@@ -743,6 +753,7 @@ impl Coincide {
                                 this.transcription_open = id == "transcription";
                                 this.credentials_open = id == "passwords";
                                 this.browser_settings_open = id == "browser";
+                                this.media.opened = id == "media";
                                 this.provider_settings.open = false;
                                 if id == "antigravity" {
                                     this.open_antigravity_settings(window, cx);
