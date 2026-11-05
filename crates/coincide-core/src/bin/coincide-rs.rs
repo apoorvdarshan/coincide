@@ -163,7 +163,7 @@ fn main() -> Result<()> {
         "status" => ("app.status", json!({})),
         "capabilities" => ("app.capabilities", json!({})),
         "projects" => ("projects.list", json!({})),
-        "providers" => ("providers.list", json!({})),
+        "agents" | "providers" => ("providers.list", json!({})),
         "attach" => {
             return operation(
                 &data.join("control.sock"),
@@ -296,7 +296,7 @@ fn main() -> Result<()> {
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }
@@ -376,7 +376,8 @@ impl Invocation {
     fn parse(raw: Vec<String>) -> Result<Self> {
         let command = raw.first().map(String::as_str).unwrap_or("help");
         let (minimum, maximum) = match command {
-            "help" | "serve" | "quit" | "capabilities" | "projects" | "providers" | "api" => (0, 0),
+            "help" | "serve" | "quit" | "capabilities" | "projects" | "agents" | "providers"
+            | "api" => (0, 0),
             "status" | "threads" => (0, 1),
             "read" | "open" | "new" | "fork" | "stop" | "pending" | "archive" | "restore"
             | "wait" | "git-status" => (1, 1),

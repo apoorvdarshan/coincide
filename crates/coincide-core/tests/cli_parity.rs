@@ -232,6 +232,9 @@ fn cli_usage_rejects_unknown_duplicate_and_unsupported_options_before_transport(
         vec!["answer", FIRST, "request", "{"],
         vec!["api", "--wait"],
         vec!["quit", "unexpected"],
+        vec!["agents", "unexpected"],
+        vec!["agents", "--refresh"],
+        vec!["agents", "--wait"],
         vec!["wait"],
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -295,6 +298,77 @@ fn malformed_local_syntax_never_connects_to_control() {
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn agents_and_providers_share_truthful_listing_without_extra_discovery() {
+    use std::{
+        fs,
+        io::{BufRead, BufReader},
+        os::unix::net::UnixListener,
+    };
+    let directory = tempfile::Builder::new()
+        .prefix("ca-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let data = directory.path().join("data");
+    fs::create_dir(&data).unwrap();
+    let listener = UnixListener::bind(data.join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let expected = json!({
+        "catalog":[{"provider":"codex","name":"Codex"},{"provider":"claude","name":"Claude Code"}],
+        "runtimeConnected":["codex","claude"],
+        "discovery":{"fixture":"metadata only","authenticationChecked":false},
+        "discoveryOnly":true,
+        "future":{"preserve":["raw","fields"]}
+    });
+    let response = expected.clone();
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for _ in 0..2 {
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(stream) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "listing command did not connect"
+                        );
+                        std::thread::yield_now();
+                    }
+                    Err(error) => panic!("synthetic listing peer: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "providers.list");
+            assert_eq!(request["params"], json!({}));
+            writeln!(
+                stream,
+                "{}",
+                json!({"id":request["id"],"result":response.clone()})
+            )
+            .unwrap();
+        }
+    });
+    for name in ["agents", "providers"] {
+        let mut command = Command::new(BINARY);
+        command.arg(name).env("COINCIDE_RUST_DATA_DIR", &data);
+        let (code, reply) = run(command, None);
+        assert_eq!(code, 0, "{reply}");
+        assert_eq!(reply["result"], expected);
+    }
+    worker.join().unwrap();
+    assert!(
+        !data.join("coincide.sqlite").exists(),
+        "listing must not create an Engine or discover providers locally"
     );
 }
 
