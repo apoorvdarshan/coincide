@@ -2,6 +2,7 @@
 //! Transport MUST validate authoritative stored roots, and run prepare outside
 //! any Engine lock. This entity never owns/locks Engine or executes gh itself.
 use anyhow::{Context as _, Result, ensure};
+use coincide_core::github_write::{WriteShutdownStatus, WriteWorkers};
 use gpui_kit::{
     base::Disableable,
     component::{
@@ -409,6 +410,7 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
 
 pub struct GitHubActions {
     transport: WriteTransport,
+    workers: WriteWorkers,
     scope: Option<ActionScope>,
     generation: u64,
     busy: bool,
@@ -442,6 +444,7 @@ impl GitHubActions {
         });
         Self {
             transport,
+            workers: WriteWorkers::default(),
             scope: None,
             generation: 0,
             busy: false,
@@ -461,6 +464,17 @@ impl GitHubActions {
             rx,
             _poll: poll,
         }
+    }
+    pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
+        self.workers.request_shutdown();
+        self.confirmation = None;
+        self.locked = true;
+        self.notice =
+            "GitHub actions are closing. Dispatched writes are not cancelled or retried.".into();
+        cx.notify();
+    }
+    pub fn shutdown_status(&self) -> WriteShutdownStatus {
+        self.workers.status()
     }
     pub fn set_scope(&mut self, scope: Option<ActionScope>, cx: &mut Context<Self>) {
         if self.scope == scope {
@@ -499,16 +513,20 @@ impl GitHubActions {
         if self.busy {
             return;
         }
+        let Ok(_admission) = self.workers.begin() else {
+            return;
+        };
         let scope = work.scope().clone();
         let submitting = matches!(&work, Work::Submit(_));
         let generation = self.generation;
         let api = self.transport.clone();
         let tx = self.tx.clone();
         self.busy = true;
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let result = execute(&mut |method, p| api(method, p), work);
             let _ = tx.send((generation, scope, submitting, result));
         });
+        self.workers.track(worker);
         cx.notify();
     }
     fn prepare(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -624,12 +642,21 @@ impl GitHubActions {
                 };
             }
         }
+        if self.workers.status().closed {
+            self.confirmation = None;
+            self.locked = true;
+            self.history_known = false;
+        }
         cx.notify();
     }
 }
 impl Render for GitHubActions {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let disabled = self.busy || !self.history_known || self.locked || self.scope.is_none();
+        let disabled = self.workers.status().closed
+            || self.busy
+            || !self.history_known
+            || self.locked
+            || self.scope.is_none();
         // Confirmation owns the remaining panel; the editor/history cannot
         // push its decision controls below the viewport. Only the full snapshot
         // and exact action body scroll, with a persistent native scroll handle.

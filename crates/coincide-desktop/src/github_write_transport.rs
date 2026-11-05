@@ -2,7 +2,11 @@
 //! the durable ledger, supply its location, or replace the configured gh path.
 use crate::github_actions::WriteTransport;
 use anyhow::{Context as _, Result, bail, ensure};
-use coincide_core::{api::SharedEngine, github_write::GithubWriteService, store::Store};
+use coincide_core::{
+    api::SharedEngine,
+    github_write::{GithubWriteService, WriteShutdownStatus, WriteWorkers},
+    store::Store,
+};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
@@ -29,6 +33,7 @@ struct State {
 pub struct NativeWrites {
     engine: SharedEngine,
     state: Arc<Mutex<State>>,
+    workers: WriteWorkers,
 }
 
 fn registered(marker: Option<&Value>) -> Result<bool> {
@@ -67,17 +72,66 @@ fn reserve_setup(store: &mut Store) -> Result<PathBuf> {
     Ok(data)
 }
 
+pub struct NativeWriteShutdownStatus {
+    pub transport: WriteShutdownStatus,
+    pub service: Option<WriteShutdownStatus>,
+    pub state_pending: bool,
+}
+impl NativeWriteShutdownStatus {
+    pub fn ready(&self) -> bool {
+        !self.state_pending
+            && self.transport.ready()
+            && self.service.is_none_or(|status| status.ready())
+    }
+}
 impl NativeWrites {
+    pub fn request_shutdown(&self) {
+        self.workers.request_shutdown();
+        if let Ok(state) = self.state.try_lock()
+            && let Some(service) = &state.service
+        {
+            service.request_shutdown();
+        }
+    }
+    pub fn shutdown_status(&self) -> NativeWriteShutdownStatus {
+        let transport = self.workers.status();
+        let Ok(state) = self.state.try_lock() else {
+            return NativeWriteShutdownStatus {
+                transport,
+                service: None,
+                state_pending: true,
+            };
+        };
+        let service = state.service.clone();
+        drop(state);
+        let service = service.map(|service| {
+            // Also covers a late open/initialize racing the close request.
+            if transport.closed {
+                service.request_shutdown();
+            }
+            service.shutdown_status()
+        });
+        NativeWriteShutdownStatus {
+            transport,
+            service,
+            state_pending: false,
+        }
+    }
     /// Starts only metadata/SQLite work; never runs gh or queries an account.
     pub fn new(engine: SharedEngine) -> Self {
         let this = Self {
             engine,
+            workers: WriteWorkers::default(),
             state: Arc::new(Mutex::new(State {
                 service: None,
                 data: None,
                 status: Status::Opening,
             })),
         };
+        let _admission = this
+            .workers
+            .begin()
+            .expect("new transport admission is open");
         let worker = this.clone();
         let spawned = std::thread::Builder::new()
             .name("github-ledger-open".into())
@@ -92,7 +146,10 @@ impl NativeWrites {
                             .engine
                             .lock()
                             .map_err(|_| anyhow::anyhow!("Engine unavailable"))?;
-                        ensure!(!engine.shutdown, "Application is shutting down");
+                        ensure!(
+                            !engine.shutdown && !engine.admissions_frozen(),
+                            "Application is shutting down"
+                        );
                         (
                             engine.store.data_directory()?,
                             engine.github_cli_path()?,
@@ -113,8 +170,9 @@ impl NativeWrites {
                 })();
                 worker.finish(result);
             });
-        if let Err(error) = spawned {
-            this.fail(error.to_string());
+        match spawned {
+            Ok(worker) => this.workers.track(worker),
+            Err(error) => this.fail(error.to_string()),
         }
         this
     }
@@ -127,6 +185,11 @@ impl NativeWrites {
     fn finish(&self, result: Result<(PathBuf, Option<GithubWriteService>)>) {
         match result {
             Ok((data, service)) => {
+                if self.workers.status().closed
+                    && let Some(service) = &service
+                {
+                    service.request_shutdown();
+                }
                 if let Ok(mut state) = self.state.lock() {
                     state.status = if service.is_some() {
                         Status::Ready
@@ -145,6 +208,9 @@ impl NativeWrites {
     }
     /// Explicit native first-setup action only. No retry/reinitialize API.
     pub fn initialize_from_user_action(&self) -> bool {
+        let Ok(_admission) = self.workers.begin() else {
+            return false;
+        };
         let Ok(mut state) = self.state.try_lock() else {
             return false;
         };
@@ -163,7 +229,10 @@ impl NativeWrites {
                             .engine
                             .lock()
                             .map_err(|_| anyhow::anyhow!("Engine unavailable"))?;
-                        ensure!(!engine.shutdown, "Application is shutting down");
+                        ensure!(
+                            !engine.shutdown && !engine.admissions_frozen(),
+                            "Application is shutting down"
+                        );
                         let gh = engine.github_cli_path()?;
                         let data = reserve_setup(&mut engine.store)?;
                         (data, gh)
@@ -173,8 +242,9 @@ impl NativeWrites {
                 })();
                 worker.finish(result);
             });
-        if let Err(error) = spawned {
-            self.fail(error.to_string());
+        match spawned {
+            Ok(worker) => self.workers.track(worker),
+            Err(error) => self.fail(error.to_string()),
         }
         true
     }
@@ -183,6 +253,7 @@ impl NativeWrites {
         Arc::new(move |method, params| this.call(method, params))
     }
     fn call(&self, method: &str, params: Value) -> Result<Value> {
+        let _admission = self.workers.begin()?;
         let allowed: &[&str] = match method {
             "github.write.history" => &["threadId", "expectedRoot", "repository", "number"],
             "github.write.prepare" => &[
@@ -275,6 +346,30 @@ mod tests {
         }
     }
     #[test]
+    fn closed_transport_refuses_setup_and_calls_without_initializing_ledger() {
+        let fixture = Fixture::new();
+        let transport = NativeWrites {
+            engine: Arc::new(Mutex::new(coincide_core::api::Engine::new(fixture.store()))),
+            workers: WriteWorkers::default(),
+            state: Arc::new(Mutex::new(State {
+                service: None,
+                data: Some(fixture.0.clone()),
+                status: Status::FirstSetup,
+            })),
+        };
+        transport.request_shutdown();
+        assert!(!transport.initialize_from_user_action());
+        assert!(
+            transport
+                .call("github.write.submit", json!({}))
+                .unwrap_err()
+                .to_string()
+                .contains("shutting down")
+        );
+        assert!(transport.shutdown_status().ready());
+        assert!(ledger_absent(&fixture.0).unwrap());
+    }
+    #[test]
     fn setup_reservation_survives_restart_and_missing_whole_ledger() {
         let fixture = Fixture::new();
         let mut store = fixture.store();
@@ -348,6 +443,7 @@ cat snapshot.json
         let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(store)));
         let transport = NativeWrites {
             engine: engine.clone(),
+            workers: WriteWorkers::default(),
             state: Arc::new(Mutex::new(State {
                 service: Some(service),
                 data: Some(data),

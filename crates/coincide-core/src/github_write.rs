@@ -208,12 +208,92 @@ impl Record {
         json!({"mutationId":self.mutation_id,"status":self.status,"result":self.result,"error":self.error})
     }
 }
+/// Thread ownership is independent of semantic results and the concurrency Slot.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteShutdownStatus {
+    pub closed: bool,
+    pub active_calls: usize,
+    pub running: usize,
+    pub returned: u64,
+    pub panicked: u64,
+    pub unclassified: u64,
+}
+impl WriteShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.closed
+            && self.active_calls == 0
+            && self.running == 0
+            && self.panicked == 0
+            && self.unclassified == 0
+    }
+}
+#[derive(Default)]
+struct WriteWorkerState {
+    totals: WriteShutdownStatus,
+    workers: Vec<crate::agent::WorkerCompletion>,
+}
+#[derive(Clone, Default)]
+pub struct WriteWorkers(Arc<Mutex<WriteWorkerState>>);
+pub struct WriteCallGuard(WriteWorkers);
+impl Drop for WriteCallGuard {
+    fn drop(&mut self) {
+        let mut state = self.0.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.totals.active_calls -= 1;
+    }
+}
+impl WriteWorkers {
+    /// Admission and active-call reservation are atomic with closing the gate.
+    pub fn begin(&self) -> Result<WriteCallGuard> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        ensure!(!state.totals.closed, "GitHub writes are shutting down");
+        state.totals.active_calls += 1;
+        Ok(WriteCallGuard(self.clone()))
+    }
+    /// Callers retain their admission guard through this registration.
+    pub fn track(&self, worker: std::thread::JoinHandle<()>) {
+        let completion = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::agent::WorkerCompletion::observe(worker)
+        }));
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match completion {
+            Ok(completion) => state.workers.push(completion),
+            // The shared observer could not start. Never infer exit from a
+            // dropped JoinHandle, semantic result, or the Slot counter.
+            Err(_) => state.totals.unclassified += 1,
+        }
+    }
+    pub fn request_shutdown(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .totals
+            .closed = true;
+    }
+    pub fn status(&self) -> WriteShutdownStatus {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let workers = std::mem::take(&mut state.workers);
+        for completion in workers {
+            use crate::agent::WorkerThreadStatus;
+            match completion.status() {
+                WorkerThreadStatus::Running => state.workers.push(completion),
+                WorkerThreadStatus::Returned => state.totals.returned += 1,
+                WorkerThreadStatus::Panicked => state.totals.panicked += 1,
+                WorkerThreadStatus::Unclassified => state.totals.unclassified += 1,
+            }
+        }
+        WriteShutdownStatus {
+            running: state.workers.len(),
+            ..state.totals
+        }
+    }
+}
 struct Inner {
     gh: Gh,
     db: Mutex<Connection>,
     baselines: Mutex<HashMap<String, Baseline>>,
     slots: Arc<AtomicUsize>,
     _lease: LedgerLease,
+    workers: WriteWorkers,
 }
 #[derive(Clone)]
 pub struct GithubWriteService(Arc<Inner>);
@@ -422,7 +502,15 @@ impl GithubWriteService {
             baselines: Mutex::new(HashMap::new()),
             slots: Arc::new(AtomicUsize::new(0)),
             _lease: lease,
+            workers: WriteWorkers::default(),
         })))
+    }
+    /// Close admission without cancelling or retrying any dispatched mutation.
+    pub fn request_shutdown(&self) {
+        self.0.workers.request_shutdown();
+    }
+    pub fn shutdown_status(&self) -> WriteShutdownStatus {
+        self.0.workers.status()
     }
     fn slot(&self) -> Result<Slot> {
         let mut n = self.0.slots.load(Ordering::Acquire);
@@ -453,6 +541,7 @@ impl GithubWriteService {
     }
     /// Blocking read-only network preparation. Parent MUST call outside Engine/UI locks.
     pub fn prepare(&self, thread: &str, stored_root: &Path, p: &Value) -> Result<Value> {
+        let _admission = self.0.workers.begin()?;
         let scope = Scope::bind(thread, stored_root, p, true)?;
         ensure!(
             !self.blocked(&scope)?,
@@ -489,6 +578,7 @@ impl GithubWriteService {
     /// Durable acceptance is synchronous; preflight and one write execute on a worker.
     /// All duplicate IDs return the immutable existing result; never redispatch.
     pub fn submit(&self, thread: &str, stored_root: &Path, p: &Value) -> Result<Value> {
+        let _admission = self.0.workers.begin()?;
         let scope = Scope::bind(thread, stored_root, p, true)?;
         let id = p["mutationId"].as_str().context("mutationId required")?;
         uuid(id)?;
@@ -568,7 +658,9 @@ impl GithubWriteService {
                 let _slot = slot;
                 service.execute(&worker_id, &worker_scope, &baseline, &action);
             });
-        if spawn.is_err() {
+        if let Ok(worker) = spawn {
+            self.0.workers.track(worker);
+        } else {
             self.finish(
                 id,
                 "rejected",
@@ -1113,6 +1205,38 @@ else:
   print(json.dumps({'merged':True,'sha':'b'*40}),flush=True)
  else:raise AssertionError('Unexpected method')
 "#;
+    #[test]
+    fn shutdown_preserves_dispatched_write_and_never_retries_it() {
+        let (dir, service, scope) = fixture();
+        let request = request(&service, &scope, comment());
+        submit(&service, &request).unwrap();
+        service.request_shutdown();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !service.shutdown_status().ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(result(&service, &request).unwrap()["status"], "succeeded");
+        assert_eq!(writes(dir.path()), 1);
+        assert!(
+            submit(&service, &request).is_err(),
+            "closed admission never redispatches even duplicate IDs"
+        );
+        assert_eq!(writes(dir.path()), 1);
+    }
+    #[test]
+    fn closed_service_rejects_new_work_without_touching_ledger() {
+        let (dir, service, _) = fixture();
+        service.request_shutdown();
+        assert!(service.shutdown_status().ready());
+        for result in [
+            service.prepare("bad", dir.path(), &json!({})),
+            service.submit("bad", dir.path(), &json!({})),
+        ] {
+            assert!(result.unwrap_err().to_string().contains("shutting down"));
+        }
+        assert!(!dir.path().join("calls.jsonl").exists());
+    }
     fn fixture() -> (tempfile::TempDir, GithubWriteService, Value) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -1461,5 +1585,82 @@ else:
             .unwrap();
         assert_eq!(result(&service, &request).unwrap()["status"], "uncertain");
         assert_eq!(history(&service, &p)["blocked"], true);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use std::sync::{Condvar, atomic::AtomicBool};
+    #[test]
+    fn write_shutdown_waits_for_registration_and_tls_join_after_semantic_completion() {
+        struct Gate(Arc<(Mutex<bool>, Condvar)>, Arc<AtomicBool>);
+        impl Drop for Gate {
+            fn drop(&mut self) {
+                self.1.store(true, Ordering::SeqCst);
+                let lock = self.0.0.lock().unwrap();
+                drop(self.0.1.wait_while(lock, |blocked| *blocked).unwrap());
+            }
+        }
+        thread_local! { static EXIT:std::cell::RefCell<Option<Gate>>=const {std::cell::RefCell::new(None)}; }
+        let workers = WriteWorkers::default();
+        let permit = workers.begin().unwrap();
+        workers.request_shutdown();
+        assert!(
+            !workers.status().ready(),
+            "admitted call may still register worker"
+        );
+        assert!(workers.begin().is_err());
+        let gate = Arc::new((Mutex::new(true), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = false;
+                self.0.1.notify_all();
+            }
+        }
+        let _release = Release(gate.clone());
+        let entered = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let g = gate.clone();
+        let e = entered.clone();
+        let worker = std::thread::spawn(move || {
+            EXIT.with(|slot| *slot.borrow_mut() = Some(Gate(g, e)));
+            let _ = tx.send("semantic result published / Slot dropped");
+        });
+        workers.track(worker);
+        drop(permit);
+        rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !entered.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(workers.status().running, 1);
+        assert!(!workers.status().ready());
+        *gate.0.lock().unwrap() = false;
+        gate.1.notify_all();
+        while !workers.status().ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(workers.status().returned, 1);
+    }
+    #[test]
+    fn write_shutdown_retains_panicked_outcome_as_not_ready() {
+        let workers = WriteWorkers::default();
+        let permit = workers.begin().unwrap();
+        workers.track(std::thread::spawn(|| {
+            panic!("synthetic write worker panic")
+        }));
+        drop(permit);
+        workers.request_shutdown();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while workers.status().running != 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(workers.status().panicked, 1);
+        assert!(!workers.status().ready());
     }
 }
