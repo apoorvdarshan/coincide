@@ -249,6 +249,7 @@ impl BrowserController {
                 thread: current_thread.into(),
                 generation: prepared.reservation.context.generation,
                 expired,
+                undispatched: remaining.len(),
                 ..Default::default()
             };
             // Named native contexts count even when no WKWebView ever exists.

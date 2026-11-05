@@ -198,6 +198,16 @@ impl Flow {
             .unwrap_or(1)
     }
     pub(crate) fn retry_cleanup(&mut self) {
+        let previous = self.cleanup_workers.status();
+        // Explicit cleanup retry may recover a known failed thread creation;
+        // never replace a running/panicked/unclassified actual worker owner.
+        if previous.spawn_error.is_some()
+            && previous.unjoined == 0
+            && previous.panicked == 0
+            && previous.unclassified == 0
+        {
+            self.cleanup_workers = WorkerOwner::default();
+        }
         // Dedicated owner stays open for cleanup after general admissions close.
         // Capture only shared custody; failed thread creation cannot drop owners.
         let cleanup = self.cleanup.clone();
@@ -478,6 +488,7 @@ impl BrowserSettings {
                 .child(Button::new("cookie-import").label("Import selected hosts into NEW profile").disabled(disabled||flow.selected.is_empty()).on_click(cx.listener(|this,_,_,cx|{let name=this.name.read(cx).value().to_string();this.cookie_flow.request_import(name);cx.notify();})));
         }
         if flow.cleanup_count() != 0 {
+            view=view.child(format!("{} private snapshot cleanup owner(s) remain. Closing waits until cleanup is confirmed.",flow.cleanup_count()));
             view = view.child(
                 Button::new("cookie-retry-cleanup")
                     .label("Retry private snapshot cleanup")
