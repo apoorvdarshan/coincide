@@ -1,5 +1,53 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SettingsSection {
+    #[default]
+    All,
+    Appearance,
+    Conversation,
+    Automation,
+    Accounts,
+}
+impl SettingsSection {
+    fn id(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Appearance => "appearance",
+            Self::Conversation => "conversation",
+            Self::Automation => "automation",
+            Self::Accounts => "accounts",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All settings",
+            Self::Appearance => "Appearance",
+            Self::Conversation => "Conversation",
+            Self::Automation => "Automation and alerts",
+            Self::Accounts => "Providers and passwords",
+        }
+    }
+}
+fn settings_match(
+    selected: SettingsSection,
+    section: SettingsSection,
+    query: &str,
+    terms: &str,
+) -> bool {
+    if selected != SettingsSection::All && selected != section {
+        return false;
+    }
+    let text = format!("{} {terms}", section.label()).to_lowercase();
+    query
+        .chars()
+        .take(256)
+        .collect::<String>()
+        .to_lowercase()
+        .split_whitespace()
+        .all(|term| text.contains(term))
+}
+
 // IDs and surface colors match the original macOS AppTheme catalog. Unknown
 // imported theme IDs fall back for display without rewriting the stored value.
 struct Palette {
@@ -464,15 +512,239 @@ impl Coincide {
     }
 
     pub(super) fn settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        use SettingsSection as S;
+        let query = self.settings_search.read(cx).value().to_string();
+        let matches =
+            |section, terms| settings_match(self.settings_section, section, &query, terms);
         let setting =
             |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
-        let mode = setting("appearance", json!("system"));
-        let mut pane = div()
+        let mut nav = div().flex().flex_wrap().gap_2();
+        for section in [
+            S::All,
+            S::Appearance,
+            S::Conversation,
+            S::Automation,
+            S::Accounts,
+        ] {
+            nav = nav.child(
+                Button::new(SharedString::from(format!(
+                    "settings-section-{}",
+                    section.id()
+                )))
+                .label(section.label())
+                .when(self.settings_section == section, |button| button.primary())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings_section = section;
+                    cx.notify();
+                })),
+            );
+        }
+        let mut content = div().flex().flex_col().gap_2();
+        let mut count = 0;
+        if matches(S::Appearance, "appearance system light dark color theme") {
+            count += 1;
+            let mode = setting("appearance", json!("system"));
+            content = content.child(self.setting_choices(
+                "Appearance",
+                "appearance",
+                mode.clone(),
+                vec![
+                    ("System", json!("system")),
+                    ("Light", json!("light")),
+                    ("Dark", json!("dark")),
+                ],
+                cx,
+            ));
+            for (dark, key, label, fallback) in [
+                (true, "darkTheme", "Dark theme", "carbon"),
+                (false, "lightTheme", "Light theme", "carbon-light"),
+            ] {
+                if mode == "system" || (mode == "dark" && dark) || (mode == "light" && !dark) {
+                    content = content.child(
+                        self.setting_choices(
+                            label,
+                            key,
+                            setting(key, json!(fallback)),
+                            PALETTES
+                                .iter()
+                                .filter(|p| p.dark == dark)
+                                .map(|p| (p.name, json!(p.id)))
+                                .collect(),
+                            cx,
+                        ),
+                    );
+                }
+            }
+        }
+        if matches(S::Appearance, "conversation font size text smaller larger") {
+            count += 1;
+            let size = self.conversation_font_size();
+            content = content.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(format!("Conversation font size: {size:.0}")),
+                    )
+                    .child(
+                        Button::new("font-smaller")
+                            .label("Smaller")
+                            .disabled(size <= 10.)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.change_setting(
+                                    "fontSize",
+                                    json!((this.conversation_font_size() - 1.).max(10.)),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        Button::new("font-larger")
+                            .label("Larger")
+                            .disabled(size >= 24.)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.change_setting(
+                                    "fontSize",
+                                    json!((this.conversation_font_size() + 1.).min(24.)),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
+            );
+        }
+        for (section, terms, label, key, fallback, choices) in [
+            (
+                S::Appearance,
+                "reply font serif system typeface",
+                "Reply font",
+                "replyTypeface",
+                json!("newYork"),
+                vec![("Serif", json!("newYork")), ("System", json!("system"))],
+            ),
+            (
+                S::Conversation,
+                "your messages left right side alignment",
+                "Your messages",
+                "userMessageSide",
+                json!("right"),
+                vec![("Right", json!("right")), ("Left", json!("left"))],
+            ),
+            (
+                S::Conversation,
+                "reasoning thinking show hide",
+                "Reasoning",
+                "showReasoning",
+                json!(true),
+                vec![("Show", json!(true)), ("Hide", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "send messages return command control keyboard shortcuts",
+                "Send messages with",
+                "sendOnReturn",
+                json!(true),
+                vec![
+                    ("Return", json!(true)),
+                    ("Command / Control + Return", json!(false)),
+                ],
+            ),
+        ] {
+            if matches(section, terms) {
+                count += 1;
+                content = content.child(self.setting_choices(
+                    label,
+                    key,
+                    setting(key, fallback),
+                    choices,
+                    cx,
+                ));
+            }
+        }
+        if matches(
+            S::Conversation,
+            "keyboard shortcuts send return new search command palette",
+        ) {
+            count += 1;
+            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Command / Control + N: new conversation; + F: search; + K: command palette; + comma: settings."));
+        }
+        if matches(S::Automation, "keep awake sleep display power") {
+            count += 1;
+            content = content.child(self.awake_settings(cx));
+        }
+        for (section, id, label, terms) in [
+            (
+                S::Automation,
+                "bots",
+                "Bots and bot instructions",
+                "bots bot instructions automation",
+            ),
+            (
+                S::Automation,
+                "transcription",
+                "Local transcription",
+                "local transcription microphone recording speech audio",
+            ),
+            (
+                S::Automation,
+                "notifications",
+                "Desktop notifications",
+                "desktop notifications alerts sound",
+            ),
+            (
+                S::Accounts,
+                "antigravity",
+                "Antigravity accounts",
+                "antigravity provider configured account models",
+            ),
+            (
+                S::Accounts,
+                "passwords",
+                "Password managers",
+                "password managers bitwarden 1password credentials vault",
+            ),
+        ] {
+            if matches(section, terms) {
+                count += 1;
+                content = content.child(
+                    div().p_3().child(
+                        Button::new(SharedString::from(format!("settings-{id}")))
+                            .label(label)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.bots_open = id == "bots";
+                                this.notifications_open = id == "notifications";
+                                this.transcription_open = id == "transcription";
+                                this.credentials_open = id == "passwords";
+                                this.provider_settings.open = false;
+                                if id == "antigravity" {
+                                    this.open_antigravity_settings(window, cx);
+                                }
+                                window.blur(cx);
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    ),
+                );
+            }
+        }
+        if count == 0 {
+            content = content.child(div().p_3().child(
+                "No matching settings in this section. Choose All settings or change the search.",
+            ));
+        }
+        div()
             .id("settings-pane")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
+            .flex()
+            .flex_col()
             .p_4()
+            .gap_3()
             .child(
                 div()
                     .flex()
@@ -489,86 +761,18 @@ impl Coincide {
                             })),
                     ),
             )
-            .child(self.setting_choices(
-                "Appearance",
-                "appearance",
-                mode.clone(),
-                vec![
-                    ("System", json!("system")),
-                    ("Light", json!("light")),
-                    ("Dark", json!("dark")),
-                ],
-                cx,
-            ));
-        for (dark, key, label, fallback) in [
-            (true, "darkTheme", "Dark theme", "carbon"),
-            (false, "lightTheme", "Light theme", "carbon-light"),
-        ] {
-            if mode == "system" || (mode == "dark" && dark) || (mode == "light" && !dark) {
-                pane = pane.child(
-                    self.setting_choices(
-                        label,
-                        key,
-                        setting(key, json!(fallback)),
-                        PALETTES
-                            .iter()
-                            .filter(|p| p.dark == dark)
-                            .map(|p| (p.name, json!(p.id)))
-                            .collect(),
-                        cx,
-                    ),
-                );
-            }
-        }
-        let size = self.conversation_font_size();
-        pane = pane.child(div().flex().items_center().gap_3().p_3().border_b_1().border_color(self.color(0x29303d))
-            .child(div().flex_1().child(format!("Conversation font size: {size:.0}")))
-            .child(Button::new("font-smaller").label("Smaller").disabled(size <= 10.).on_click(cx.listener(|this, _, window, cx| this.change_setting("fontSize", json!((this.conversation_font_size()-1.).max(10.)), window, cx))))
-            .child(Button::new("font-larger").label("Larger").disabled(size >= 24.).on_click(cx.listener(|this, _, window, cx| this.change_setting("fontSize", json!((this.conversation_font_size()+1.).min(24.)), window, cx)))))
-            .child(self.setting_choices("Reply font", "replyTypeface", setting("replyTypeface",json!("newYork")), vec![("Serif",json!("newYork")),("System",json!("system"))],cx))
-            .child(self.setting_choices("Your messages", "userMessageSide", setting("userMessageSide",json!("right")), vec![("Right",json!("right")),("Left",json!("left"))],cx))
-            .child(self.setting_choices("Reasoning", "showReasoning", setting("showReasoning",json!(true)), vec![("Show",json!(true)),("Hide",json!(false))],cx))
-            .child(self.setting_choices("Send messages with", "sendOnReturn", setting("sendOnReturn",json!(true)), vec![("Return",json!(true)),("Command / Control + Return",json!(false))],cx))
-            .child(div().p_3().child("Shift-Return always inserts a new line. Command / Control + Return sends from the message composer."))
-            .child(div().p_3().child("Shortcuts: Command / Control + N — new conversation; + F — search; + comma — settings."))
-            .child(self.awake_settings(cx))
-            .child(div().p_3().flex().gap_2()
-                .child(Button::new("settings-bots").label("Bots and bot instructions")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.notifications_open = false;
-                        this.bots_open = true;
-                        this.transcription_open = false;
-                        this.credentials_open = false;
-                        this.provider_settings.open = false;
-                        this.sync_transcription_binding(cx);
-                        cx.notify();
-                    })))
-                .child(Button::new("settings-transcription").label("Local transcription")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.notifications_open = false;
-                        this.transcription_open = true;
-                        this.bots_open = false;
-                        this.credentials_open = false;
-                        this.provider_settings.open = false;
-                        // The hidden composer must not retain keyboard focus
-                        // or cursor-blink notifications during transcription.
-                        window.blur(cx);
-                        this.sync_transcription_binding(cx);
-                        cx.notify();
-                    }))))
-            .child(div().p_3().child(Button::new("settings-notifications").label("Desktop notifications")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.notifications_open = true;
-                    this.bots_open = false;
-                    this.transcription_open = false;
-                    this.credentials_open = false;
-                    this.provider_settings.open = false;
-                    window.blur(cx);
-                    this.sync_transcription_binding(cx);
-                    cx.notify();
-                }))))
-            .child(div().p_3().text_sm().child(self.settings_status.clone()));
-        pane.into_any_element()
+            .child(Input::new(&self.settings_search))
+            .child(nav)
+            .child(
+                div()
+                    .id("settings-results")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+            .child(div().text_sm().child(self.settings_status.clone()))
+            .into_any_element()
     }
 
     pub(super) fn app_shortcut(
@@ -621,5 +825,39 @@ impl Coincide {
             _ => return,
         }
         cx.stop_propagation();
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn search_matches_all_tokens_and_respects_stable_section_filter() {
+        use SettingsSection as S;
+        assert!(settings_match(
+            S::All,
+            S::Accounts,
+            "ANTIGRAVITY account",
+            "Antigravity configured account"
+        ));
+        assert!(!settings_match(
+            S::Conversation,
+            S::Accounts,
+            "account",
+            "Antigravity configured account"
+        ));
+        assert!(!settings_match(
+            S::All,
+            S::Accounts,
+            "account impossible",
+            "Antigravity configured account"
+        ));
+        assert!(settings_match(
+            S::All,
+            S::Automation,
+            "alerts",
+            "notifications"
+        ));
+        assert_eq!(S::Accounts.id(), "accounts");
     }
 }

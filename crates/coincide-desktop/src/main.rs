@@ -4,6 +4,7 @@ mod bot_settings;
 mod browser;
 mod command_palette;
 mod composer_attachments;
+mod composer_selection;
 mod credential_settings;
 mod credentials;
 mod github_actions;
@@ -180,6 +181,8 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    settings_search: Entity<InputState>,
+    settings_section: settings::SettingsSection,
     bots_open: bool,
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
     notifications_open: bool,
@@ -234,7 +237,7 @@ struct Coincide {
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
-    model_binding: Option<(String, String, String)>,
+    selection_ui: composer_selection::ComposerSelection,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -473,6 +476,8 @@ impl Coincide {
         let notification_panel = cx.new(|cx| {
             notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
         });
+        let settings_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -509,6 +514,10 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe(&settings_search, |_, _, event, cx| { if matches!(event,InputEvent::Change) {cx.notify();} }),
+            cx.subscribe(&model_input, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) { this.selection_model_changed(cx); }
+            }),
             cx.subscribe_in(&command_palette, window, |this, _, event, window, cx| {
                 if let command_palette::PaletteEvent::Activated { revision, command } = event {
                     this.activate_palette(*revision, command.clone(), window, cx);
@@ -703,6 +712,8 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            settings_search,
+            settings_section: Default::default(),
             bots_open: false,
             bot_panel,
             notifications_open: false,
@@ -756,7 +767,7 @@ impl Coincide {
             pending_drafts: Default::default(),
             composer,
             model_input,
-            model_binding: None,
+            selection_ui: Default::default(),
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -1447,6 +1458,7 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_composer_selection(window, cx);
         self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
         if self
@@ -2091,69 +2103,6 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn select_provider(&mut self, provider: &str, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
-            return;
-        };
-        match call(
-            &self.engine,
-            "agent.select",
-            json!({"threadId":thread,"provider":provider}),
-        ) {
-            Ok(thread) => {
-                self.selected = Some(thread);
-                self.model_binding = None;
-                self.status = format!("Selected {provider}");
-            }
-            Err(error) => self.status = error.to_string(),
-        }
-        cx.notify();
-    }
-    fn sync_model_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let binding = self.selected.as_ref().map(|thread| {
-            (
-                text(thread, "id"),
-                text(&thread["selection"], "provider"),
-                text(&thread["selection"], "modelID"),
-            )
-        });
-        if self.model_binding == binding {
-            return;
-        }
-        let model = binding
-            .as_ref()
-            .map(|(_, _, model)| model.clone())
-            .filter(|model| model != "default")
-            .unwrap_or_default();
-        self.model_input
-            .update(cx, |input, cx| input.set_value(model, window, cx));
-        self.model_binding = binding;
-    }
-    fn apply_model(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref() else {
-            return;
-        };
-        let model = self.model_input.read(cx).value().to_string();
-        if model.len() > 512 || model.chars().any(char::is_control) {
-            self.status = "Model ID must be at most 512 bytes without control characters.".into();
-            cx.notify();
-            return;
-        }
-        let model = model.trim();
-        match call(
-            &self.engine,
-            "agent.select",
-            json!({"threadId":thread["id"],"provider":thread["selection"]["provider"],"accountId":thread["selection"]["accountID"],"model":if model.is_empty(){"default"}else{model}}),
-        ) {
-            Ok(thread) => {
-                self.selected = Some(thread);
-                self.model_binding = None;
-                self.status = "Model selection saved.".into();
-            }
-            Err(error) => self.status = error.to_string(),
-        }
-        cx.notify();
-    }
     fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self
             .selected
@@ -2543,7 +2492,7 @@ impl Render for Coincide {
         self.session_import_panel
             .update(cx, |panel, cx| panel.set_project(import_project, cx));
         self.sync_workspace_context(cx);
-        self.sync_model_input(window, cx);
+        self.sync_composer_selection(window, cx);
         if let Some(thread) = self.selected.as_mut()
             && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
         {
@@ -2915,103 +2864,7 @@ impl Render for Coincide {
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(self.color(0x29303d))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_wrap()
-                                                .gap_2()
-                                                .mb_2()
-                                                .child(
-                                                    Button::new("provider-codex")
-                                                        .label("Codex")
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.select_provider("codex", cx)
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("provider-claude")
-                                                        .label("Claude")
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.select_provider("claude", cx)
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("provider-grok")
-                                                        .label("Grok")
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.select_provider("grok", cx)
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("provider-cursor")
-                                                        .label("Cursor")
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.select_provider("cursor", cx)
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("provider-opencode")
-                                                        .label("OpenCode")
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.select_provider("opencode", cx)
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("provider-antigravity-setup")
-                                                        .accessibility_id(
-                                                            "provider-antigravity-setup",
-                                                        )
-                                                        .label("Antigravity setup")
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.open_antigravity_settings(
-                                                                    window, cx,
-                                                                );
-                                                                this.sync_transcription_binding(cx);
-                                                            },
-                                                        )),
-                                                )
-                                                .child(
-                                                    div().text_sm().child(
-                                                        self.selected
-                                                            .as_ref()
-                                                            .map(|v| {
-                                                                text(&v["selection"], "provider")
-                                                            })
-                                                            .unwrap_or_default(),
-                                                    ),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .gap_2()
-                                                .items_center()
-                                                .mb_2()
-                                                .child(div().text_sm().child("Model ID"))
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .child(Input::new(&self.model_input)),
-                                                )
-                                                .child(
-                                                    Button::new("apply-model")
-                                                        .label("Apply model")
-                                                        .disabled(
-                                                            self.selected.as_ref().is_none_or(
-                                                                |thread| {
-                                                                    self.running.contains(&text(
-                                                                        thread, "id",
-                                                                    ))
-                                                                },
-                                                            ),
-                                                        )
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.apply_model(cx)
-                                                        })),
-                                                ),
-                                        )
+                                        .child(self.composer_selection_pane(cx))
                                         .when_some(queue_pane, |view, queue| view.child(queue))
                                         .when_some(draft_images, |view, images| view.child(images))
                                         .child({
