@@ -1,6 +1,8 @@
 //! A private Cursor profile keeps model writes and native-session resumes away
 //! from the active app's profile. Inactive native databases are copied before SQLite opens them.
 use super::*;
+#[path = "provider_cursor_auth.rs"]
+mod auth;
 use rusqlite::{
     Connection, OpenFlags,
     backup::{Backup, StepResult},
@@ -15,16 +17,17 @@ pub(super) struct Profile {
     pub directory: PathBuf,
     pub default_model: Option<String>,
     _lock: File,
+    authentication: auth::Authentication,
 }
 impl Profile {
     pub fn prepare(directory: &Path, session: Option<&str>) -> Result<Self> {
-        ensure!(
-            std::env::var("CURSOR_AUTH_TOKEN").is_ok_and(|value| !value.trim().is_empty())
-                || std::env::var("CURSOR_API_KEY").is_ok_and(|value| !value.trim().is_empty()),
-            "Cursor requires CURSOR_AUTH_TOKEN or CURSOR_API_KEY for isolated in-memory authentication; Keychain/file login reuse is not connected yet"
-        );
+        // Resolve identity before any private profile creation/copy. Explicit
+        // credentials retain precedence; implicit login never changes usage policy.
+        let authentication = auth::Authentication::resolve()?;
         let source = source_directory()?;
-        Self::prepare_from(directory, &source, session)
+        let mut profile = Self::prepare_from(directory, &source, session)?;
+        profile.authentication = authentication;
+        Ok(profile)
     }
     fn prepare_from(directory: &Path, source: &Path, session: Option<&str>) -> Result<Self> {
         ensure!(
@@ -224,10 +227,11 @@ impl Profile {
             directory,
             default_model,
             _lock: lock,
+            authentication: auth::Authentication::inherited(),
         })
     }
     pub fn environment(&self) -> Vec<(OsString, OsString)> {
-        vec![
+        let mut environment = vec![
             (
                 "CURSOR_CONFIG_DIR".into(),
                 self.directory.as_os_str().to_owned(),
@@ -238,7 +242,9 @@ impl Profile {
             ),
             ("AGENT_CLI_CREDENTIAL_STORE".into(), "memory".into()),
             ("DIRENV_DISABLE".into(), "1".into()),
-        ]
+        ];
+        self.authentication.append_environment(&mut environment);
+        environment
     }
 }
 fn source_directory() -> Result<PathBuf> {
@@ -490,6 +496,32 @@ mod tests {
         );
         drop(profile);
         assert!(Profile::prepare_from(&target, &source, None).is_ok());
+    }
+    #[test]
+    fn reused_login_is_child_environment_only_never_a_private_or_original_profile_write() {
+        let (dir, source, config) = source();
+        let original_auth = br#"{"accessToken":"synthetic-original-login","unknown":true}"#;
+        fs::write(source.join("auth.json"), original_auth).unwrap();
+        let target = dir.path().join("private");
+        let mut profile = Profile::prepare_from(&target, &source, None).unwrap();
+        profile.authentication =
+            auth::Authentication::synthetic(b"synthetic-scoped-token".to_vec()).unwrap();
+        let environment = profile.environment();
+        assert!(environment.iter().any(|(key,value)| key=="CURSOR_AUTH_TOKEN" && value=="synthetic-scoped-token"));
+        assert!(
+            environment
+                .iter()
+                .any(|(key, value)| key == "AGENT_CLI_CREDENTIAL_STORE" && value == "memory")
+        );
+        assert!(!target.join("auth.json").exists());
+        let private_config = fs::read(target.join("cli-config.json")).unwrap();
+        assert!(
+            !String::from_utf8(private_config)
+                .unwrap()
+                .contains("synthetic-scoped-token")
+        );
+        assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), config);
+        assert_eq!(fs::read(source.join("auth.json")).unwrap(), original_auth);
     }
     #[test]
     fn snapshot_preserves_native_id_blobs_unknown_metadata_and_original_permissions() {
