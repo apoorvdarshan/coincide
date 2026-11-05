@@ -16,6 +16,7 @@ pub(super) struct Actor {
     remaining: VecDeque<PreparedCookie>,
     applied: Vec<PreparedCookie>,
     status: ImportStatus,
+    published: Option<ImportStatus>,
     stopped: bool,
     marker_attempted: bool,
 }
@@ -278,6 +279,7 @@ impl BrowserController {
                 remaining,
                 applied: Vec::new(),
                 status: status.clone(),
+                published: Some(status.clone()),
                 stopped: false,
                 marker_attempted: false,
             });
@@ -318,7 +320,12 @@ impl BrowserController {
                 }
                 actor.status.revision = self.profiles.revision;
             }
-            Some(actor.status.clone())
+            if actor.published.as_ref() == Some(&actor.status) {
+                None
+            } else {
+                actor.published = Some(actor.status.clone());
+                Some(actor.status.clone())
+            }
         }
     }
 }
