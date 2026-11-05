@@ -18,7 +18,7 @@ r=read()
 if r['method']=='model/list':
  if (root/'fail-catalog').exists():
   write({'id':r['id'],'error':{'code':-32603,'message':'synthetic failure'}});sys.exit(0)
- write({'id':r['id'],'result':{'data':[{'model':'reported-model','serviceTiers':[{'id':'default'},{'id':'priority','name':'Fast'}]}],'nextCursor':None}});sys.exit(0)
+ write({'id':r['id'],'result':{'data':[{'model':'reported-model','supportedReasoningEfforts':[{'reasoningEffort':'high'}],'serviceTiers':[{'id':'default'},{'id':'priority','name':'Fast'}]}],'nextCursor':None}});sys.exit(0)
 assert r['method'] in ['thread/start','thread/resume']
 ack={'thread':{'id':'speed-source'},'model':'reported-model'}
 if (root/'tier').exists():ack['serviceTier']=(root/'tier').read_text()
@@ -94,6 +94,106 @@ fn speed_only_repair_preserves_raw_fields_and_rejects_other_mutations() {
     let mut effort = thread.clone();
     effort["selection"]["effort"] = json!("high");
     assert!(crate::composer_selection::repair_clear_speed(&minimal, &effort).is_err());
+}
+
+#[test]
+fn combined_repair_obeys_existing_bot_import_running_recovery_and_freeze_gates() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+    let mut thread = engine.execute("threads.create", &json!({})).unwrap();
+    let id = text(&thread, "id");
+    thread["selection"] = json!({"provider":"codex","modelID":"reported-model","accountID":"default","effort":"high","speed":"priority"});
+    thread["draft"] = json!("exact café\n");
+    thread["draftContext"] = json!([{"future":"preserve"}]);
+    thread["rustDraftImages"] = json!([{"future":"preserve"}]);
+    let clear = json!({"threadId":id,"effort":null,"speed":null});
+    for field in ["botID", "rustBotContext"] {
+        let mut blocked = thread.clone();
+        blocked[field] = json!("fixed");
+        engine.store.save(&blocked).unwrap();
+        let revision = engine.revision;
+        assert_eq!(
+            engine
+                .execute("agent.selection.capabilities", &json!({"threadId":id}))
+                .unwrap()["repairOptionsClearAvailable"],
+            false
+        );
+        assert!(engine.execute("agent.select", &clear).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), blocked);
+        assert_eq!(engine.revision, revision);
+    }
+    engine.store.save(&thread).unwrap();
+    engine.runs.insert(
+        id.clone(),
+        Running {
+            usage_context: None,
+            session: Session::fixture_worker(|_, _| {}),
+            provider: "codex".into(),
+            transcript_start: 0,
+            pending: HashMap::new(),
+            schedule_claim: None,
+            queue_claim: None,
+            cancelled: false,
+            events: VecDeque::new(),
+            persistence_error: None,
+        },
+    );
+    let revision = engine.revision;
+    assert_eq!(
+        engine
+            .execute("agent.selection.capabilities", &json!({"threadId":id}))
+            .unwrap()["repairOptionsClearAvailable"],
+        false
+    );
+    assert!(engine.execute("agent.select", &clear).is_err());
+    assert_eq!(engine.store.thread(&id).unwrap(), thread);
+    assert_eq!(engine.revision, revision);
+    engine.runs.remove(&id);
+    engine.unsaved_threads.insert(id.clone(), thread.clone());
+    assert_eq!(
+        engine
+            .execute("agent.selection.capabilities", &json!({"threadId":id}))
+            .unwrap()["repairOptionsClearAvailable"],
+        false
+    );
+    assert!(engine.execute("agent.select", &clear).is_err());
+    assert_eq!(engine.store.thread(&id).unwrap(), thread);
+    assert_eq!(engine.revision, revision);
+    engine.unsaved_threads.remove(&id);
+    let mut imported = thread.clone();
+    imported["id"] = json!(Uuid::new_v4().to_string());
+    engine
+        .store
+        .import_cli_session(
+            &imported,
+            "ImportedSessions/options-repair-fixture.json",
+            b"synthetic source",
+        )
+        .unwrap();
+    let imported_id = text(&imported, "id");
+    assert_eq!(
+        engine
+            .execute(
+                "agent.selection.capabilities",
+                &json!({"threadId":imported_id})
+            )
+            .unwrap()["repairOptionsClearAvailable"],
+        false
+    );
+    assert!(
+        engine
+            .execute(
+                "agent.select",
+                &json!({"threadId":imported_id,"effort":null,"speed":null})
+            )
+            .is_err()
+    );
+    assert_eq!(engine.store.thread(&imported_id).unwrap(), imported);
+    assert_eq!(engine.revision, revision);
+    engine.freeze_admissions();
+    assert!(engine.execute("agent.select", &clear).is_err());
+    assert_eq!(engine.store.thread(&id).unwrap(), thread);
+    assert_eq!(engine.revision, revision);
 }
 
 #[cfg(unix)]
@@ -205,7 +305,9 @@ fn speed_fixture_child() {
     send(&mut engine, &id);
     engine.execute("agent.select", &standard).unwrap();
     send(&mut engine, &id);
-    engine.execute("agent.select", &params).unwrap();
+    let mut combined = params.clone();
+    combined["effort"] = json!("high");
+    engine.execute("agent.select", &combined).unwrap();
     std::fs::write(root.join("fail-catalog"), b"synthetic").unwrap();
     refresh(&mut engine, "failed");
     let before = engine.store.thread(&id).unwrap();
@@ -224,15 +326,36 @@ fn speed_fixture_child() {
         .execute("agent.selection.capabilities", &json!({"threadId":id}))
         .unwrap();
     assert_eq!(caps["locked"], true);
-    assert_eq!(caps["repairSpeedClearAvailable"], true);
+    assert_eq!(caps["repairSpeedClearAvailable"], false);
+    assert_eq!(caps["repairClearAvailable"], false);
+    assert_eq!(caps["repairOptionsClearAvailable"], true);
+    for bad in [
+        json!({"threadId":id,"effort":null}),
+        json!({"threadId":id,"speed":null}),
+        json!({"threadId":id,"effort":null,"speed":null,"model":"other"}),
+        json!({"threadId":id,"effort":null,"speed":null,"interactionMode":"plan"}),
+        json!({"threadId":id,"effort":null,"speed":null,"provider":"claude"}),
+        json!({"threadId":id,"effort":null,"speed":null,"extra":true}),
+    ] {
+        assert!(engine.execute("agent.select", &bad).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        assert_eq!(engine.revision, revision);
+    }
     let repaired = engine
-        .execute("agent.select", &json!({"threadId":id,"speed":null}))
+        .execute(
+            "agent.select",
+            &json!({"threadId":id,"effort":null,"speed":null}),
+        )
         .unwrap();
     let mut expected = before;
     expected["selection"]
         .as_object_mut()
         .unwrap()
         .remove("speed");
+    expected["selection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("effort");
     // save updates timestamp; all other thread data remains exact.
     expected["updatedAt"] = repaired["updatedAt"].clone();
     assert_eq!(repaired, expected);

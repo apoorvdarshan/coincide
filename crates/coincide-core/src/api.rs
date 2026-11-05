@@ -622,6 +622,10 @@ impl Engine {
                         && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
                         && crate::composer_selection::repair_clear_speed(&json!({"threadId":id,"speed":null}),&thread).is_ok());
+                    result["repairOptionsClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
+                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
+                        && crate::composer_selection::repair_clear_options(&json!({"threadId":id,"effort":null,"speed":null}),&thread).is_ok());
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -633,6 +637,13 @@ impl Engine {
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
+                if p.get("effort").is_some_and(Value::is_null) && p.get("speed").is_some_and(Value::is_null)
+                    && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&v)
+                {
+                    v["selection"] = selection;
+                    self.store.save(&v)?; self.revision += 1;
+                    return Ok(v);
+                }
                 if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
                     && let Ok(selection) = crate::composer_selection::repair_clear_effort(p,&v)
                 {

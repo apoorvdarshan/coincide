@@ -20,7 +20,7 @@ pub fn capabilities() -> Value {
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();
     json!({"provenance":"static_runtime_contract","authenticationChecked":false,"modelsDiscovered":false,
-        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false,"repairSpeedClearAvailable":false})
+        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false,"repairSpeedClearAvailable":false,"repairOptionsClearAvailable":false})
 }
 
 pub fn default_account(value: &Value) -> bool {
@@ -268,6 +268,32 @@ pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Val
 }
 pub(crate) fn repair_clear_speed(params: &Value, current: &Value) -> Result<Value> {
     repair_clear_option(params, current, "speed")
+}
+/// Separate explicit exit when both saved options require revoked proof.
+/// Neither single-option repair is allowed to remove the other option.
+pub(crate) fn repair_clear_options(params: &Value, current: &Value) -> Result<Value> {
+    ensure!(
+        !current["selection"]["effort"].is_null() && !current["selection"]["speed"].is_null(),
+        "Combined repair requires both saved effort and speed"
+    );
+    ensure!(
+        params.get("effort").is_some_and(Value::is_null)
+            && params.get("speed").is_some_and(Value::is_null),
+        "Combined repair requires explicit effort: null and speed: null"
+    );
+    // Both removals were explicitly requested. Reuse the exact existing repair
+    // validation for every remaining field, including bot/mode/unknown gates.
+    let mut remaining = current.clone();
+    remaining["selection"]
+        .as_object_mut()
+        .context("Invalid saved selection")?
+        .remove("speed");
+    let mut remaining_params = params.clone();
+    remaining_params
+        .as_object_mut()
+        .context("Selection request must be an object")?
+        .remove("speed");
+    repair_clear_effort(&remaining_params, &remaining)
 }
 fn repair_clear_option(params: &Value, current: &Value, option: &str) -> Result<Value> {
     ensure!(
