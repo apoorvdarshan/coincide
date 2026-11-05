@@ -23,8 +23,6 @@ pub mod computer_use_engine;
 mod github_engine;
 #[path = "github_threads_engine.rs"]
 mod github_threads_engine;
-#[path = "thread_resolution.rs"]
-mod thread_resolution;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]
@@ -33,6 +31,8 @@ pub mod notification_events;
 mod organization_api;
 #[path = "session_import_api.rs"]
 mod session_import_api;
+#[path = "thread_resolution.rs"]
+mod thread_resolution;
 #[path = "workspace_api.rs"]
 mod workspace_api;
 #[cfg(test)]

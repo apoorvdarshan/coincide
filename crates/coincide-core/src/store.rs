@@ -369,12 +369,20 @@ impl Store {
         let mut statement = self.db.prepare(
             "SELECT id FROM threads WHERE replace(replace(replace(replace(lower(id),'urn:uuid:',''),'-',''),'{',''),'}','')=?1 LIMIT 2"
         )?;
-        let matches = statement.query_map([id.simple().to_string()], |row| row.get::<_,String>(0))?
+        let matches = statement
+            .query_map([id.simple().to_string()], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ensure!(matches.len()<=1,"Thread UUID is ambiguous in stored identities");
-        let Some(stored) = matches.into_iter().next() else {return Ok(None)};
-        ensure!(Uuid::parse_str(&stored).context("Invalid stored thread UUID")? == id,
-            "Stored thread UUID does not match the requested identity");
+        ensure!(
+            matches.len() <= 1,
+            "Thread UUID is ambiguous in stored identities"
+        );
+        let Some(stored) = matches.into_iter().next() else {
+            return Ok(None);
+        };
+        ensure!(
+            Uuid::parse_str(&stored).context("Invalid stored thread UUID")? == id,
+            "Stored thread UUID does not match the requested identity"
+        );
         Ok(Some(stored))
     }
 
