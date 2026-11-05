@@ -98,7 +98,9 @@ pub(super) fn run(
     drop(images);
     let mut transport =
         Transport::spawn_with_environment(&launch, &args, &[], &profile.environment())?;
-    transport.write(&rpc(1,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"Coincide","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}})))?;
+    // Cursor's variant picker exposes opaque variant IDs. Request its base-ID
+    // model picker so the inherited profile model is compared without remapping.
+    transport.write(&rpc(1,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"Coincide","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false,"_meta":{"parameterizedModelPicker":true}}})))?;
     let mut stage = 1;
     let mut session = None;
     let started = Instant::now();
