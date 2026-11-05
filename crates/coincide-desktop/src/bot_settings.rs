@@ -739,4 +739,53 @@ mod fixture_tests {
                 .all(|entry| entry.unwrap().file_name() == "rust")
         );
     }
+    #[test]
+    fn real_api_preserves_imported_envelope_unknown_fields_casing_and_whitespace() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("synthetic-source");
+        fs::create_dir_all(source.join("threads")).unwrap();
+        let id = "ABCD1234-0000-4000-8000-000000000001";
+        let envelope = json!({"addedStarters":true,"starterLineup":7,"futureEnvelope":{"keep":42},"bots":[{
+            "id":id,"name":"Original","persona":"Original instructions","avatar":{"futureLook":true},
+            "personality":{"preset":"unknown-future-preset","custom":"preserved"},
+            "selection":{"provider":"claude","modelID":"future-model","unknown":true},
+            "accessMode":"approval","interactionMode":"build","folder":"/synthetic/bot-folder","futureBot":{"keep":true}
+        }]});
+        let original = serde_json::to_vec_pretty(&envelope).unwrap();
+        fs::write(source.join("bots.json"), &original).unwrap();
+        let mut store = Store::open(&fixture.0.join("rust/state.sqlite")).unwrap();
+        store.import_legacy(&source).unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut api = |method: &str, params| call(&engine, method, params);
+        let Outcome::Read(read) = run(&mut api, Action::Read(id.to_lowercase())).unwrap() else {
+            panic!("read")
+        };
+        assert_eq!(read.origin, "imported");
+        let persona = "  \nKeep exact whitespace\n  ";
+        let Outcome::Saved(_, saved) = run(
+            &mut api,
+            Action::Write(Write {
+                key: id.into(),
+                id: Some(id.to_lowercase()),
+                baseline: read.baseline,
+                fields: Fields {
+                    name: "  Renamed  ".into(),
+                    persona: persona.into(),
+                },
+            }),
+        )
+        .unwrap() else {
+            panic!("save")
+        };
+        assert_eq!(saved.bot["id"], id);
+        assert_eq!(saved.bot["name"], "Renamed");
+        assert_eq!(saved.bot["persona"], persona);
+        let mut expected = envelope.clone();
+        expected["bots"][0]["name"] = json!("Renamed");
+        expected["bots"][0]["persona"] = json!(persona);
+        let store = &engine.lock().unwrap().store;
+        assert_eq!(store.document("bots.json").unwrap().unwrap(), expected);
+        assert_eq!(store.original("bots.json").unwrap().unwrap(), original);
+        assert_eq!(fs::read(source.join("bots.json")).unwrap(), original);
+    }
 }
