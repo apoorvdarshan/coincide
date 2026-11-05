@@ -152,6 +152,9 @@ mod process {
     }
     impl Lease {
         pub(super) fn start(spec: &CommandSpec) -> Result<Self> {
+            Self::start_with_timeout(spec, Duration::from_secs(2))
+        }
+        fn start_with_timeout(spec: &CommandSpec, timeout: Duration) -> Result<Self> {
             let mut command = Command::new(spec.program);
             command
                 .args(&spec.arguments)
@@ -184,7 +187,7 @@ mod process {
                 return Err(std::io::Error::last_os_error())
                     .context("configure idle sleep handshake");
             }
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + timeout;
             let mut received = Vec::new();
             while Instant::now() < deadline {
                 let mut bytes = [0; 64];
@@ -247,6 +250,65 @@ mod process {
     impl Drop for Lease {
         fn drop(&mut self) {
             let _ = self.stop();
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        fn fixture(script: &'static str) -> CommandSpec {
+            CommandSpec {
+                program: "/bin/sh",
+                arguments: vec!["-c", script],
+            }
+        }
+        // These commands have no power effects: no inhibitor utility is used.
+        #[test]
+        fn harmless_helper_is_reaped_on_explicit_release() {
+            let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            lease.check_running().unwrap();
+            lease.stop().unwrap();
+            assert!(lease.reaped);
+            assert!(lease.child.try_wait().unwrap().is_some());
+            lease.stop().unwrap();
+        }
+        #[test]
+        fn harmless_helper_is_reaped_on_drop() {
+            let lease = Lease::start(&fixture(HELPER)).unwrap();
+            let pid = i32::try_from(lease.child.id()).unwrap();
+            drop(lease);
+            // The child has been waited, rather than abandoned as a zombie.
+            let mut status = 0;
+            // SAFETY: waitpid inspects this already-reaped test child only.
+            assert_eq!(
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+        }
+        #[test]
+        fn readiness_rejects_missing_command_exit_and_invalid_output() {
+            let missing = CommandSpec {
+                program: "/nonexistent/coincide-idle-fixture",
+                arguments: vec![],
+            };
+            assert!(Lease::start(&missing).is_err());
+            assert!(Lease::start(&fixture("exit 7")).is_err());
+            assert!(
+                Lease::start(&fixture("printf 'invalid\n'; exec /bin/cat >/dev/null")).is_err()
+            );
+        }
+        #[test]
+        fn silent_helper_times_out_without_inhibiting_sleep() {
+            assert!(
+                Lease::start_with_timeout(
+                    &fixture("exec /bin/cat >/dev/null"),
+                    Duration::from_millis(30)
+                )
+                .is_err()
+            );
         }
     }
 }
