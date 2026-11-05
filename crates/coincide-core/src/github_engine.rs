@@ -14,7 +14,10 @@ pub(super) struct GithubState {
 }
 impl GithubState {
     pub(super) fn unavailable() -> Self {
-        Self { service: None, error: "GitHub is unavailable in this isolated engine".into() }
+        Self {
+            service: None,
+            error: "GitHub is unavailable in this isolated engine".into(),
+        }
     }
 
     pub fn discover() -> Self {

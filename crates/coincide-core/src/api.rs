@@ -107,7 +107,11 @@ impl Engine {
             store,
             idle_sleep,
             notification_events,
-            github: if discover { github_engine::GithubState::discover() } else { github_engine::GithubState::unavailable() },
+            github: if discover {
+                github_engine::GithubState::discover()
+            } else {
+                github_engine::GithubState::unavailable()
+            },
             runs: HashMap::new(),
             revision: 0,
             requested_open: None,
@@ -1104,7 +1108,9 @@ impl Engine {
             .context("Choose a project working directory first")
     }
     pub fn poll(&mut self) {
-        if self.model_catalog.poll() { self.revision += 1; }
+        if self.model_catalog.poll() {
+            self.revision += 1;
+        }
         self.workspace_pending
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
         self.workspace_results

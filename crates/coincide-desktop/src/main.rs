@@ -11,6 +11,7 @@ mod credentials;
 mod github_actions;
 mod github_review;
 mod github_write_transport;
+mod legacy_media_settings;
 mod microphone;
 mod microphone_settings;
 mod navigation;
