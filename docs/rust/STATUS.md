@@ -56,6 +56,21 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- The model-control follow-up passed 494 core unit tests (six isolated child
+  entrypoints invoked by parents), strict core Clippy, 333 desktop unit tests
+  and all four integration targets. Explicit Codex speed and Standard controls
+  preserve effort/modes; stale effort/speed has separate minimal repair actions.
+  Exact explicit Astra models now keep stored null while using Medium only when
+  a current private catalog actually advertises it. Reported and app defaults
+  are labelled separately. Missing proof blocks execution while explicit catalog
+  refresh or validated model replacement remains available. Synthetic protocol
+  tests passed; combined native speed/Astra acceptance is pending.
+- The isolated native effort v4 flow passed catalog discovery, High, Plan
+  preservation, explicit provider-default clear and failed-refresh repair.
+  Ordinary Quit exited normally; exact draft, context, image metadata/bytes,
+  unknown fields and empty history were preserved, with two catalog calls and
+  zero runtime provider calls. This is scoped acceptance on fb6f447, not a claim
+  that the later Astra policy or every provider is accepted natively.
 - The next local feature batch passed 489 core unit tests (five isolated child
   entrypoints are invoked by parent fixtures), strict feature core Clippy over
   all targets, 12 bookmark core regressions and 11 desktop browser-settings
