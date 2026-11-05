@@ -80,6 +80,30 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             packaging.layout(self.root, 'macos')
 
+    def test_store_tool_cannot_pass_desktop_layout(self):
+        self.fixture()
+        (self.root / 'bin/coincide-rust').unlink()
+        (self.root / 'bin/coincide-rs').unlink()
+        manifest = packaging.manifest(self.root, 'linux', 'test', 'a' * 40, 'store-tool')
+        self.assertEqual(packaging.validate(self.root, manifest)['kind'], 'store-tool')
+        manifest['kind'] = 'desktop-preview'
+        with self.assertRaises(OSError):
+            packaging.validate(self.root, manifest)
+
+    def test_malformed_manifest(self):
+        self.fixture()
+        for value in (None, [], 'bad', {}, {'format': 1}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                packaging.validate(self.root, value)
+
+    def test_malformed_labels(self):
+        manifest = self.fixture()
+        for key, value in (('commit', 13), ('commit', '../'), ('version', []),
+                           ('kind', 'release'), ('platform', 'unknown')):
+            changed = dict(manifest, **{key: value})
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                packaging.validate(self.root, changed)
+
     def test_no_metadata_escalation(self):
         manifest = self.fixture()
         manifest['channel'] = 'stable'

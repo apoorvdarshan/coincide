@@ -38,6 +38,7 @@ def rehearse(binary):
     require(binary.is_file(), 'store binary required')
     initial_hash = hashlib.sha256(binary.read_bytes()).hexdigest()
     checks = []
+    skipped = []
     with tempfile.TemporaryDirectory(prefix='coincide-synthetic-rehearsal-') as temporary:
         root = Path(temporary).resolve()
         source = root / 'synthetic-swift'
@@ -56,7 +57,8 @@ def rehearse(binary):
         def run(db, success):
             result = subprocess.run([str(binary), 'import', str(source), str(db)],
                                     cwd=root, env=env, capture_output=True, timeout=60)
-            require((result.returncode == 0) == success, 'unexpected import exit status')
+            require((result.returncode == 0) == success,
+                    'unexpected import exit status: ' + result.stderr.decode('utf-8', errors='replace')[:2000])
             require(files(source) == before, 'synthetic source changed')
         db = root / 'candidate/store.sqlite'
         run(db, True)
@@ -81,14 +83,40 @@ def rehearse(binary):
         before = files(source)
         bad = root / 'invalid/store.sqlite'
         run(bad, False)
-        rejected = inspect(bad)
-        require(not rejected['threads'] and not rejected['original_files'] and
-                not rejected['imported_threads'] and
-                'legacy_source' not in dict(rejected['metadata']), 'failed import committed data')
+        def require_empty(db):
+            rejected = inspect(db)
+            require(not rejected['threads'] and not rejected['original_files'] and
+                    not rejected['imported_threads'] and
+                    'legacy_source' not in dict(rejected['metadata']), 'failed import committed data')
+        require_empty(bad)
         checks.append('invalid input transaction rollback')
+        (source / 'threads/broken.json').unlink()
+        (source / 'threads/duplicate.json').write_text(json.dumps(document), encoding='utf-8')
+        before = files(source)
+        duplicate_db = root / 'duplicate/store.sqlite'
+        run(duplicate_db, False)
+        require_empty(duplicate_db)
+        checks.append('duplicate thread identity transaction rollback')
+        (source / 'threads/duplicate.json').unlink()
+        target = root / 'synthetic-outside-source.bin'
+        target.write_bytes(b'synthetic outside capture')
+        link = source / 'attachments/link.bin'
+        try:
+            link.symlink_to(target)
+        except OSError as error:
+            if os.name != 'nt' or error.winerror != 1314:
+                raise
+            skipped.append('symlink rejection: Windows lacks symlink privilege')
+        else:
+            before = files(source)
+            linked_db = root / 'symlink/store.sqlite'
+            run(linked_db, False)
+            require_empty(linked_db)
+            require(target.read_bytes() == b'synthetic outside capture', 'symlink target changed')
+            checks.append('symlink import refused without source or target mutation')
     require(hashlib.sha256(binary.read_bytes()).hexdigest() == initial_hash, 'store binary changed during rehearsal')
     return {'checks': checks, 'store_sha256': initial_hash,
-            'scope': 'synthetic only', 'cutover_ready': False}
+            'skipped': skipped, 'scope': 'synthetic only', 'cutover_ready': False}
 
 
 if __name__ == '__main__':
