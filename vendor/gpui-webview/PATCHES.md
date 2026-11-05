@@ -64,6 +64,32 @@ strong owner cycle; opaque identities cannot settle a different view; closed adm
 closed. No WebView/window/native runtime is created by these tests.
 
 Root owns path patch/lock/workspace exclusion/CI filters/scratch manifests and
-Cargo allocation. Standalone vendor tests need a selected gpui-kit backend and
-matching gpui-fast feature if applicable; no worker Cargo was run. Preserve all
+Cargo allocation. The standalone default/PRE backend is the mandatory
+`gpui-kit` dependency named `gpui` (`package = "gpui-pre"`, `=0.3.11`), even
+with `gpui-kit` default features disabled. Kit defaults enable only component
+and assets; there is no `gpui-kit/gpui-pre` Cargo feature. Fast is a separate
+optional backend and is not enabled by this test command. No test-support
+feature is required by the eight ordinary Rust release tests. Preserve all
 existing upstream tests and platform modules. Native validation remains pending.
+
+## Own-package test registration
+
+The production `lib.rs` registers `release.rs`; execute its eight unit tests in
+this package's actual feature context, rather than source-including the module
+in a host package that does not declare its `gpui-fast` feature:
+
+```sh
+cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture
+```
+
+Run from the repository root. This workspace-excluded manifest does not inherit
+the root package patches, so the explicit real PRE path patch is necessary.
+The parent must resolve and commit this standalone test lock before enabling
+the locked CI invocation; the recorded upstream lock hash remains provenance
+for the original published file, not an assertion about a locally resolved test
+lock. No new dependencies or fake backend feature are added by registration.
+Both existing Mac/Linux jobs add this invocation and require all eight tests
+passed with none ignored. The previous desktop source-inclusion fixture remains
+in place until the own-manifest invocation is actually verified; it must not be
+removed before equivalent coverage passes. No worker Cargo/native execution
+was performed when preparing this registration.

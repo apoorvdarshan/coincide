@@ -91,6 +91,13 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support prepaint_transaction --locked -- --nocapture
+      - name: Test actual vendored WebView release unit module
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -o pipefail
+          cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
+          grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
       - name: Test synthetic desktop fixtures with notification, microphone and computer-use adapters
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use
       - name: Test isolated desktop helper transport without native launch
@@ -155,3 +162,10 @@ jobs:
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
       - name: Test WebView release receipts without a native window
         run: cargo test -p coincide-desktop --locked --test webview_release_integration
+      - name: Test actual vendored WebView release unit module
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -o pipefail
+          cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
+          grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
