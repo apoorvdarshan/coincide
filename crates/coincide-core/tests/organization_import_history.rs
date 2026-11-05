@@ -170,3 +170,75 @@ fn codex_same_encoding_repeated_prompts_are_retained() {
     .unwrap();
     assert_eq!(preview.messages.len(), 3);
 }
+
+fn claude(id: &str, parent: Option<&str>, role: &str, content: Value) -> Value {
+    json!({"sessionId":ID,"cwd":"/synthetic","uuid":id,"parentUuid":parent,
+        "type":role,"message":{"role":role,"content":content,"model":"synthetic-model"},"future":{"preserved":true}})
+}
+#[test]
+fn claude_selects_latest_ancestry_and_counts_unsupported_content() {
+    let mut sidechain = claude("side", None, "assistant", json!("sidechain"));
+    sidechain["isSidechain"] = json!(true);
+    let bytes = rollout(vec![
+        claude("root", None, "user", json!("question")),
+        claude("stale", Some("root"), "assistant", json!("stale branch")),
+        sidechain,
+        claude(
+            "latest",
+            Some("root"),
+            "assistant",
+            json!([
+            {"type":"text","text":"answer"},{"type":"thinking","thinking":"private"},
+            {"type":"tool_use","name":"fake","input":{}},{"type":"image","source":{}}]),
+        ),
+    ]);
+    let preview = preview_claude(&bytes).unwrap();
+    assert_eq!(preview.provider, ImportProvider::Claude);
+    assert_eq!(
+        preview
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>(),
+        ["question", "answer"]
+    );
+    assert_eq!(preview.omitted_records, 5);
+    assert_eq!(preview.model.as_deref(), Some("synthetic-model"));
+    assert_eq!(preview.original(), bytes);
+}
+#[test]
+fn claude_rejects_cycles_incomplete_chains_and_mixed_sessions() {
+    assert!(preview_claude(&rollout(vec![
+        claude("a", Some("b"), "user", json!("a")),
+        claude("b", Some("a"), "assistant", json!("b"))
+    ]))
+    .is_err());
+    assert!(preview_claude(&rollout(vec![claude(
+        "a",
+        Some("missing"),
+        "user",
+        json!("a")
+    )]))
+    .is_err());
+    let mut other = claude("b", None, "assistant", json!("b"));
+    other["sessionId"] = json!(Uuid::nil().to_string());
+    assert!(preview_claude(&rollout(vec![claude("a", None, "user", json!("a")), other])).is_err());
+    assert!(preview_claude(&rollout(vec![
+        meta(),
+        claude("a", None, "user", json!("a"))
+    ]))
+    .is_err());
+}
+#[test]
+fn claude_last_revision_wins_and_unicode_is_bounded() {
+    let bytes = rollout(vec![
+        claude("a", None, "user", json!("old")),
+        claude("a", None, "user", json!("🦀".repeat(MAX_TEXT + 1))),
+    ]);
+    let preview = preview_claude(&bytes).unwrap();
+    assert_eq!(preview.messages.len(), 1);
+    assert_eq!(preview.omitted_records, 1);
+    assert!(preview.shortened_text);
+    assert_eq!(preview.messages[0].text.chars().count(), MAX_TEXT + 2);
+    assert!(preview_claude(&vec![b'a'; MAX_RECORD_BYTES + 1]).is_err());
+}
