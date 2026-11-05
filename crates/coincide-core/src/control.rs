@@ -71,9 +71,8 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
             }
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
                     let response = (|| -> Result<Value> {
+                        configure_client_stream(&stream)?;
                         let request = read_frame(&mut stream)?;
                         Ok(engine
                             .lock()
@@ -110,13 +109,26 @@ pub fn serve(_path: PathBuf, _engine: SharedEngine) -> Result<Server> {
     anyhow::bail!("Windows named-pipe transport is not implemented yet")
 }
 #[cfg(unix)]
+fn configure_client_stream(stream: &UnixStream) -> Result<()> {
+    // Darwin/BSD accept() inherits O_NONBLOCK from the listener; Linux does not.
+    // The listener must remain nonblocking for the polling loop, but each framed
+    // exchange needs blocking I/O with a deadline. Otherwise a client connected
+    // just before writing is rejected with WouldBlock and then sees BrokenPipe.
+    stream
+        .set_nonblocking(false)
+        .context("Configuring control client blocking I/O")?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    Ok(())
+}
+#[cfg(unix)]
 pub fn request(path: &Path, request: &Value) -> Result<Value> {
     let mut stream =
         UnixStream::connect(path).context("Cannot reach the Rust Coincide instance")?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-    write_frame(&mut stream, request)?;
-    read_frame(&mut stream)
+    write_frame(&mut stream, request).context("Sending control request")?;
+    read_frame(&mut stream).context("Reading control reply")
 }
 #[cfg(not(unix))]
 pub fn request(_path: &Path, _request: &Value) -> Result<Value> {
@@ -193,5 +205,66 @@ mod tests {
         );
         drop(server);
         assert!(!path.exists());
+    }
+    #[test]
+    fn accepted_nonblocking_listener_stream_becomes_blocking() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let _client = UnixStream::connect(&path).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        configure_client_stream(&stream).unwrap();
+        // This deterministically catches inherited nonblocking mode on Darwin,
+        // independent of the timing of a client's first write.
+        let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_eq!(flags & libc::O_NONBLOCK, 0);
+        assert!(stream.read_timeout().unwrap().is_some());
+        assert!(stream.write_timeout().unwrap().is_some());
+    }
+
+    #[test]
+    fn server_waits_for_delayed_and_split_request_frame() {
+        use std::sync::mpsc;
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&dir.path().join("instance/db")).unwrap(),
+        )));
+        let path = dir.path().join("instance/control.sock");
+        let _server = serve(path.clone(), engine).unwrap();
+        let mut client = UnixStream::connect(&path).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut reader = client.try_clone().unwrap();
+        let (sender, response) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = sender.send(read_frame(&mut reader));
+        });
+        // A valid connection must wait for the request, not immediately return
+        // an error because the first read arrived before any bytes did.
+        assert!(matches!(
+            response.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        client
+            .write_all(b"{\"id\":7,\"method\":\"app.status\"")
+            .unwrap();
+        // Frame boundaries are newlines, not the currently available bytes.
+        assert!(matches!(
+            response.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        client.write_all(b",\"params\":{}}\n").unwrap();
+        let reply = response
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["result"]["preview"], true);
+        assert!(reply.get("error").is_none());
     }
 }

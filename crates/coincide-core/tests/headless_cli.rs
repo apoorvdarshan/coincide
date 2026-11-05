@@ -24,6 +24,7 @@ impl Drop for ChildGuard {
     }
 }
 struct Reply {
+    command: String,
     status: ExitStatus,
     value: Option<Value>,
     stdout: String,
@@ -33,7 +34,8 @@ impl Reply {
     fn success(self) -> Value {
         assert!(
             self.status.success(),
-            "CLI failed: stdout={} stderr={}",
+            "CLI {} failed: stdout={} stderr={}",
+            self.command,
             self.stdout,
             self.stderr
         );
@@ -44,7 +46,8 @@ impl Reply {
     fn failure(self) -> Value {
         assert!(
             !self.status.success(),
-            "Expected CLI error, got {}",
+            "Expected CLI {} error, got {}",
+            self.command,
             self.stdout
         );
         self.value
@@ -89,6 +92,11 @@ impl Fixture {
     }
     fn run(&self, args: &[&str], input: Option<Value>) -> Reply {
         let (out, err) = self.logs("cli");
+        let command = input
+            .as_ref()
+            .and_then(|value| value["method"].as_str())
+            .map(|method| format!("api {method}"))
+            .unwrap_or_else(|| args.first().copied().unwrap_or("help").to_owned());
         let mut child = ChildGuard(
             self.command()
                 .args(args)
@@ -123,6 +131,7 @@ impl Fixture {
         let stdout = fs::read_to_string(out).unwrap();
         let stderr = fs::read_to_string(err).unwrap();
         Reply {
+            command,
             status,
             value: serde_json::from_str(&stdout).ok(),
             stdout,
