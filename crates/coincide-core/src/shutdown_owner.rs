@@ -12,6 +12,7 @@ pub struct CoreOwnerShutdownStatus {
     pub terminals: terminal_shutdown::TerminalsShutdownStatus,
     pub active_turns: usize,
     pub unsaved_threads: usize,
+    pub pending_usage_records: usize,
     pub pending_schedule_completions: usize,
     pub schedule_error: Option<String>,
 }
@@ -44,6 +45,7 @@ impl CoreOwnerShutdownStatus {
             && self.terminals.ready()
             && self.active_turns == 0
             && self.unsaved_threads == 0
+            && self.pending_usage_records == 0
             && self.pending_schedule_completions == 0
             && self.schedule_error.is_none()
     }
@@ -102,6 +104,7 @@ impl Engine {
             terminals: self.poll_terminals_shutdown(),
             active_turns: self.runs.len(),
             unsaved_threads: self.unsaved_threads.len(),
+            pending_usage_records: self.pending_usage.len(),
             pending_schedule_completions: self.schedule_completions.len(),
             schedule_error: self.schedule_error.clone(),
         })

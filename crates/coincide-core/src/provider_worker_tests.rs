@@ -44,6 +44,7 @@ fn retire(engine: &mut Engine, id: &str, session: Session) {
     engine.insert_running(
         id.to_owned(),
         Running {
+            usage_context: None,
             session,
             provider: "codex".into(),
             transcript_start: 0,

@@ -420,6 +420,13 @@ impl Store {
     }
 
     pub fn save(&mut self, document: &Value) -> Result<()> {
+        self.save_with_usage(document, None)
+    }
+    pub(crate) fn save_with_usage(
+        &mut self,
+        document: &Value,
+        record: Option<&Value>,
+    ) -> Result<()> {
         self.connection()?;
         let id = validate_thread(document)?;
         let existing: Option<String> = self
@@ -434,7 +441,55 @@ impl Store {
             existing.as_deref().is_none_or(|stored| stored == id),
             "Thread ID differs only by letter case from an existing thread"
         );
-        let tx = self.connection_mut()?.transaction()?;
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(record) = record {
+            ensure!(
+                record["threadID"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    == Some(Uuid::parse_str(id)?),
+                "Usage record thread identity mismatch"
+            );
+            let local_size: Option<i64> = tx.query_row("SELECT length(CAST(document AS BLOB)) FROM documents WHERE name='usage-history.json'", [], |r|r.get(0)).optional()?;
+            let old: Option<Value> = if let Some(size) = local_size {
+                ensure!(
+                    size <= crate::organization::DOCUMENT_LIMIT as i64,
+                    "Usage history exceeds limit"
+                );
+                let raw: String = tx.query_row(
+                    "SELECT document FROM documents WHERE name='usage-history.json'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Some(serde_json::from_str(&raw)?)
+            } else {
+                let size: Option<i64> = tx
+                    .query_row(
+                        "SELECT length(data) FROM original_files WHERE path='usage-history.json'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(size) = size {
+                    ensure!(
+                        size <= crate::organization::DOCUMENT_LIMIT as i64,
+                        "Captured usage history exceeds limit"
+                    );
+                    let raw: Vec<u8> = tx.query_row(
+                        "SELECT data FROM original_files WHERE path='usage-history.json'",
+                        [],
+                        |r| r.get(0),
+                    )?;
+                    Some(serde_json::from_slice(&raw)?)
+                } else {
+                    None
+                }
+            };
+            let next = crate::agent::usage_capture::append_history(old.as_ref(), record)?;
+            tx.execute("INSERT INTO documents(name,document) VALUES ('usage-history.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [next.to_string()])?;
+        }
         tx.execute("INSERT INTO threads(id,document) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET document=excluded.document", params![id,document.to_string()])?;
         let body = search_text(document).to_lowercase();
         let indexed: Option<String> = tx

@@ -30,6 +30,8 @@ mod images;
 mod opencode;
 #[path = "provider_transport.rs"]
 mod transport;
+#[path = "usage_capture.rs"]
+pub(crate) mod usage_capture;
 pub use images::{ImageAttachment, validate_images};
 
 /// Protocol selection is separate from executable discovery and account selection.
@@ -177,6 +179,7 @@ pub struct Session {
     pub events: Receiver<Event>,
     control: Sender<Control>,
     completion: WorkerCompletion,
+    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -222,11 +225,15 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
     ) -> Self {
-        Self::spawn_worker(move |commands, events_tx| {
+        let usage = Arc::new(Mutex::new(None));
+        let output = usage.clone();
+        let mut session = Self::spawn_worker(move |commands, events_tx| {
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| validate_images(&provider, &images))
                 .and_then(|()| match provider {
-                    Provider::Codex => run(launch, images, instructions, commands, events_tx),
+                    Provider::Codex => {
+                        run(launch, images, instructions, commands, events_tx, output)
+                    }
                     Provider::Claude => {
                         claude::run(launch, images, instructions, commands, events_tx)
                     }
@@ -255,7 +262,12 @@ impl Session {
             if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));
             }
-        })
+        });
+        session.usage = usage;
+        session
+    }
+    pub(crate) fn take_usage(&self) -> Option<usage_capture::Snapshot> {
+        self.usage.lock().ok()?.take()
     }
     fn spawn_worker(work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static) -> Self {
         let (events_tx, events) = mpsc::channel();
@@ -267,6 +279,7 @@ impl Session {
             events,
             control,
             completion: WorkerCompletion::observe(worker),
+            usage: Arc::new(Mutex::new(None)),
         }
     }
     #[cfg(test)]
@@ -274,6 +287,10 @@ impl Session {
         work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static,
     ) -> Self {
         Self::spawn_worker(work)
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_usage(&self, snapshot: usage_capture::Snapshot) {
+        *self.usage.lock().unwrap() = Some(snapshot);
     }
     pub fn worker_completion(&self) -> WorkerCompletion {
         self.completion.clone()
@@ -352,7 +369,9 @@ fn run(
     instructions: Option<String>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
+    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
 ) -> Result<()> {
+    let mut capture = usage_capture::Capture::default();
     let image_paths = images
         .iter()
         .map(|image| image.path().to_path_buf())
@@ -418,6 +437,7 @@ fn run(
                         let id = frame["result"]["thread"]["id"]
                             .as_str()
                             .context("Codex returned no thread ID")?;
+                        capture.bind_thread(id);
                         events.send(Event::Session(id.into()))?;
                         transport.write(&request(
                             3,
@@ -425,11 +445,17 @@ fn run(
                             turn_params(id, &launch, &image_paths),
                         ))?;
                     }
+                    3 => capture.bind_turn(&frame["result"]["turn"]["id"]),
                     _ => {}
                 }
                 stage += 1;
             } else if frame["method"] == "turn/completed" {
                 ensure!(stage >= 3, "Codex completed a turn before it was started");
+                if let Some(snapshot) = capture.complete(&frame["params"])
+                    && let Ok(mut output) = usage.lock()
+                {
+                    *output = Some(snapshot);
+                }
                 if frame["params"]["turn"]["status"] == "failed" {
                     bail!("Codex turn failed: {}", frame["params"]["turn"]["error"]);
                 }
@@ -442,6 +468,9 @@ fn run(
                 );
                 completed = true;
             } else {
+                if frame["method"] == "thread/tokenUsage/updated" {
+                    capture.update(&frame["params"]);
+                }
                 events.send(Event::Frame(frame))?;
             }
         }
