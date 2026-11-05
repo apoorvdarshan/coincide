@@ -167,11 +167,16 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                 };
                 let mut texts = Vec::new();
                 for block in blocks {
-                    if let Some(text) = block["text"].as_str() {
-                        texts.push(text)
-                    } else {
-                        preview.omitted_records += 1;
+                    if matches!(
+                        block["type"].as_str(),
+                        Some("input_text" | "output_text" | "text")
+                    ) {
+                        if let Some(text) = block["text"].as_str() {
+                            texts.push(text);
+                            continue;
+                        }
                     }
+                    preview.omitted_records += 1;
                 }
                 (role.to_owned(), texts.join("\n"), id)
             }
