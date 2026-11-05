@@ -329,6 +329,7 @@ mod platform {
             -5 => CaptureError::Conversion,
             -6 => CaptureError::DeviceChanged,
             -7 => CaptureError::InvalidLimit,
+            -8 => CaptureError::Busy,
             _ => CaptureError::Unavailable,
         }
     }
