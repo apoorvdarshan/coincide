@@ -68,10 +68,9 @@ fn main() -> Result<()> {
             | "wait"
     ) || (cmd == "status" && args.len() > 1)
     {
-        let threads = request_result(&socket, "threads.list", json!({"includeArchived":true}))?;
-        args[1] = resolve_thread(
+        args[1] = resolve_reference(
+            &socket,
             &args[1],
-            &threads,
             std::env::var("COINCIDE_THREAD_ID").ok().as_deref(),
         )?;
     }
@@ -512,8 +511,11 @@ fn request_result(socket: &std::path::Path, method: &str, params: Value) -> Resu
         .cloned()
         .context("Control response has no result")
 }
-fn resolve_thread(name: &str, threads: &Value, current: Option<&str>) -> Result<String> {
-    let entries = threads.as_array().context("Invalid thread list")?;
+fn resolve_reference(
+    socket: &std::path::Path,
+    name: &str,
+    current: Option<&str>,
+) -> Result<String> {
     let target = if name == "this" {
         let current =
             current.context("this requires COINCIDE_THREAD_ID from the launching thread")?;
@@ -522,15 +524,29 @@ fn resolve_thread(name: &str, threads: &Value, current: Option<&str>) -> Result<
     } else {
         name
     };
-    if let Ok(id) = uuid::Uuid::parse_str(target) {
-        return entries
-            .iter()
-            .find_map(|thread| {
-                let text = thread["id"].as_str()?;
-                (uuid::Uuid::parse_str(text).ok() == Some(id)).then(|| text.to_owned())
-            })
-            .context("Thread ID not found");
+    if let Ok(requested) = uuid::Uuid::parse_str(target) {
+        // Resolve only a scalar ID: exact-ID operations must not depend on the
+        // size of the full library or a thread's transcript/metadata document.
+        let result = request_result(socket, "threads.resolve_id", json!({"threadId":target}))?;
+        let fields = result
+            .as_object()
+            .context("Invalid resolved thread ID response")?;
+        anyhow::ensure!(fields.len() == 1, "Invalid resolved thread ID response");
+        let stored = fields
+            .get("threadId")
+            .and_then(Value::as_str)
+            .context("Missing resolved thread ID")?;
+        anyhow::ensure!(
+            uuid::Uuid::parse_str(stored).context("Invalid resolved thread ID")? == requested,
+            "Resolved thread ID does not match requested UUID"
+        );
+        return Ok(stored.to_owned());
     }
+    let threads = request_result(socket, "threads.list", json!({"includeArchived":true}))?;
+    resolve_named_thread(target, &threads)
+}
+fn resolve_named_thread(target: &str, threads: &Value) -> Result<String> {
+    let entries = threads.as_array().context("Invalid thread list")?;
     let prefix = target.len() >= 4 && target.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
     let by_id: Vec<_> = entries
         .iter()
