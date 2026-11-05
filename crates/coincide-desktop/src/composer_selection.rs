@@ -317,7 +317,10 @@ impl Coincide {
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
                 .child(Button::new("provider-antigravity-setup").accessibility_id("provider-antigravity-setup").label("Antigravity accounts")
-                    .on_click(cx.listener(|this,_,window,cx|{this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);}))))
+                    .on_click(cx.listener(|this,_,window,cx|{
+                        this.bots_open=false;this.notifications_open=false;this.transcription_open=false;this.credentials_open=false;
+                        this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
+                    }))))
             .child(div().text_xs().child("Access: approval · Interaction: build. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
         if let Some(reason) = lock {
             pane = pane.child(div().text_sm().child(reason));
