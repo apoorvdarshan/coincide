@@ -598,3 +598,118 @@ fn input_modes_are_independent_of_alternate_screen_and_reset_by_ris() {
     );
     assert!(reset["revision"].as_u64() > enabled["revision"].as_u64());
 }
+
+#[test]
+fn swift_zsh_markers_anchor_wrapped_unicode_concealed_output_and_report_cwd() {
+    let command = "printf a-very-long-argument";
+    let bytes = format!(
+        "\x1b]7;file://localhost/tmp/sub%20dir/%E7%95%8C\x07\x1b]133;A\x07\x1b]1337;CoincidePrompt=2\x07location\r\n$ {command}\r\n\x1b]1337;CoincideCommand={command}\x07\x1b]133;C\x07界e\u{301}\r\n\x1b[8msecret\x1b[0m!\r\n\x1b]133;D;1\x07\x1b]133;A\x07location\r\n$ "
+    );
+    let mut fixture = Fixture::new(6, 12, &[&bytes]);
+    let frame = fixture.snapshot(0);
+    assert_eq!(frame["shell"]["command"], command);
+    assert_eq!(frame["shell"]["exitStatus"], 1);
+    assert_eq!(frame["shell"]["cwd"]["path"], "/tmp/sub dir/界");
+    assert_eq!(frame["shell"]["cwd"]["trusted"], false);
+    assert_eq!(
+        fixture.terminal.snapshot().unwrap()["shell"],
+        frame["shell"]
+    );
+    assert_eq!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .unwrap(),
+        format!("$ {command}\n界e\u{301}\n      !")
+    );
+}
+
+#[test]
+fn bash_delayed_command_marks_use_prompt_anchor_instead_of_matching_output_suffix() {
+    let command = "echo a-long-argument";
+    let bytes = format!(
+        "\x1b]133;A\x07\x1b]1337;CoincidePrompt=1\x07$ {command}\r\nfirst\r\nshadow {command}\r\nlast\r\n\x1b]1337;CoincideCommand={command}\x07\x1b]133;D;0\x07\x1b]133;A\x07$ "
+    );
+    let mut fixture = Fixture::new(6, 12, &[&bytes]);
+    let frame = fixture.snapshot(0);
+    assert_eq!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .unwrap(),
+        format!("$ {command}\nfirst\nshadow {command}\nlast")
+    );
+}
+
+#[test]
+fn command_anchors_fail_closed_after_resize_clear_or_transient_alternate_screen() {
+    let marked = "\x1b]133;A\x07$ echo x\r\n\x1b]1337;CoincideCommand=echo x\x07\x1b]133;C\x07x\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ";
+    for destructive in ["\x1b[3J", "\x1b[?1049h\x1b[?1049l", "\x1bc"] {
+        let mut fixture = Fixture::new(4, 30, &[marked, destructive]);
+        let before = fixture.snapshot(0);
+        assert!(
+            fixture
+                .terminal
+                .last_command_output(before["revision"].as_u64().unwrap())
+                .unwrap()
+                .is_some()
+        );
+        let after = fixture.next(1);
+        assert!(
+            fixture
+                .terminal
+                .last_command_output(before["revision"].as_u64().unwrap())
+                .is_err()
+        );
+        assert!(
+            fixture
+                .terminal
+                .last_command_output(after["revision"].as_u64().unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+    let mut fixture = Fixture::new(4, 30, &[marked]);
+    fixture.snapshot(0);
+    fixture.terminal.resize(5, 40).unwrap();
+    let frame = fixture.snapshot(0);
+    assert!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn command_anchor_does_not_guess_after_history_fills_or_missing_prompt_mark() {
+    let mut bytes = String::from(
+        "\x1b]133;A\x07$ echo x\r\n\x1b]1337;CoincideCommand=echo x\x07\x1b]133;C\x07",
+    );
+    bytes.push_str(&"x\r\n".repeat(10010));
+    bytes.push_str("\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+    let mut fixture = Fixture::new(3, 20, &[&bytes]);
+    let frame = fixture.snapshot(0);
+    assert_eq!(frame["viewport"]["historySize"], 10000);
+    assert!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .is_none()
+    );
+    let bytes =
+        "$ echo x\r\nshadow echo x\r\n\x1b]1337;CoincideCommand=echo x\x07\x1b]133;D;0\x07$ ";
+    let mut fixture = Fixture::new(4, 20, &[bytes]);
+    let frame = fixture.snapshot(0);
+    assert!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
