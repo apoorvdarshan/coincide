@@ -50,6 +50,10 @@ jobs:
             rust-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo fmt --all --check
       - run: cargo test -p coincide-core --locked
+        id: core_tests
+      - name: Diagnose Windows PTY and control tests after core failure
+        if: ${{ failure() && runner.os == 'Windows' && steps.core_tests.outcome == 'failure' }}
+        run: cargo test -p coincide-core --locked --no-fail-fast --test terminal_windows --test control_windows -- --nocapture
       - run: cargo clippy -p coincide-core --all-targets --locked -- -D warnings
         if: runner.os != 'Windows'
   desktop:
