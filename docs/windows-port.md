@@ -11,7 +11,18 @@ with real recognition and remaining voice parity still unverified. These decisio
 
 ## Current completion checklist — 2026-11-05
 
-The full Windows port is **in progress**, not complete or released. The latest frozen Windows candidate passed
+- [x] Pushed native hosted-conversation/tool foundation: `2fdefa6`.
+- [x] New working candidate: **3,457 checks / 65 suites**, native owner-recovery acceptance, **18 ordinary flows** and **18 hosted flows plus Quit** pass.
+- [x] Native panel foundation: **19 panels / 499 checks**; browser path portability separately checked with real long/8.3 paths.
+- [ ] Background queue/recovery robustness: latest full-app crash test stops before the crash because queue delivery becomes uncertain; its original ID/text remain saved. An earlier candidate passed the six crash/relaunch checks, which does not establish the latest case fixed.
+- [x] Instruction Git-root correction: **80 native checks** pass with both normal and real 8.3 TEMP paths; nested/junction/forged-root refusal remains covered.
+- [ ] Exact-revision Windows CI for the corrected source. The previous foundation run failed the now-corrected folder validation.
+- [ ] Initial-marker/missing-host-generation owner recovery and the remaining feature/platform acceptance listed below.
+- [ ] Signed packaging, updates and distribution acceptance. No public release is authorized.
+
+The owner-recovery and UI-driver changes require exact-revision CI acceptance; the separate background queue failure remains open.
+
+The full Windows port is **in progress**, not complete or released. The pushed frozen Windows candidate passed
 **3,378 automated checks across 64 suites** on the physical laptop. Native acceptance also passed **19 panels / 499
 checks** and **18 full-app flows**. The updated screenshot fixture separately passes all 43 browser checks with both
 physical and real 8.3 TEMP spellings; these repeated checks are not added to the totals.

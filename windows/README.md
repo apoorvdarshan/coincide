@@ -19,11 +19,16 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
-The latest frozen candidate passed **3,378 automated checks across 64 suites** on the physical Windows laptop.
+The pushed foundation candidate passed **3,378 automated checks across 64 suites** on the physical Windows laptop.
 Native acceptance also passed **19 panels / 499 checks** and **18 app flows**. Its hosted variant passed the same
 18 flows plus orderly Quit, and six actual UI-crash/relaunch checks with unchanged host/provider identities,
 no duplicate input commands, exact transcript/index/ACK convergence and final scoped process exit. Exact-revision
 CI, real-service acceptance and the remaining parity work are separate gates.
+
+The newer recovery candidate passes **3,457 checks / 65 suites**, explicit native recovery acceptance and the
+18 ordinary/hosted app flows. The latest crash test stops before the crash because queue delivery becomes uncertain;
+its original input remains saved. Instruction Git-root handling now separately passes **80 checks** with normal and
+real 8.3 paths. Exact-revision CI and background queue robustness remain open in the parity checklist.
 
 The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**,
 `./windows/Tests/PreviewSmoke.ps1` exercises native long-thread switching, drafts, Send/Unicode/final-text reconciliation,

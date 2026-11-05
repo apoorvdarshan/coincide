@@ -56,7 +56,10 @@ struct Pins {std::vector<Handle> handles;explicit Pins(const std::filesystem::pa
     if(!local_file::local_path(path)||path!=path.lexically_normal())throw std::invalid_argument("Choose a literal local synchronization folder");
     auto part=path.root_path();const auto pin=[&](const auto& folder){Handle handle(CreateFileW(folder.c_str(),FILE_LIST_DIRECTORY|FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr));BY_HANDLE_FILE_INFORMATION info{};if(!handle||!GetFileInformationByHandle(handle.value,&info)||!(info.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)||(info.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_OFFLINE)))throw std::runtime_error("A synchronization folder is linked or unavailable");handles.push_back(std::move(handle));};pin(part);
     for(const auto& item:path.relative_path()){part/=item;if(create&&!CreateDirectoryW(part.c_str(),nullptr)&&GetLastError()!=ERROR_ALREADY_EXISTS)throw std::runtime_error("Could not prepare synchronization settings");pin(part);}
-}};
+}
+    git_identity::DirectoryID identity()const{return git_identity::detail::identity(handles.back().value);}
+    std::filesystem::path physical()const{return git_identity::detail::physical_name(handles.back().value);}
+};
 struct Snapshot {bool exists{};std::filesystem::path resolved;std::string bytes,hash,identity;};
 inline Snapshot read(const std::filesystem::path& path,bool allow_link=false,const std::filesystem::path& expected={},std::size_t maximum=1024*1024){
     Snapshot result;const auto attributes=GetFileAttributesW(path.c_str());if(attributes==INVALID_FILE_ATTRIBUTES){const auto error=GetLastError();if(error==ERROR_FILE_NOT_FOUND||error==ERROR_PATH_NOT_FOUND){result.resolved=path;return result;}throw std::runtime_error("The synchronized instruction file is unavailable");}
@@ -136,7 +139,8 @@ inline std::filesystem::path discover_gh(){
     throw std::runtime_error("Install GitHub CLI and sign in explicitly before creating a private instruction repository");
 }
 inline Runner native_runner(){return [](const Command& command,const Cancel& cancel){
-    if(command.isolated_fixture){auto relative=command.cwd.lexically_relative(std::filesystem::temp_directory_path());if(command.tool!=code_hosting::Tool::git||relative.empty()||relative.is_absolute()||!relative.begin()->wstring().starts_with(L"Coincide-Instruction-Git-")||!local_file::within(std::filesystem::temp_directory_path(),command.cwd))throw std::runtime_error("Isolated Git configuration requires the exact owned synthetic fixture tree");}
+    std::unique_ptr<files::Pins> fixture_temporary,fixture_cwd;
+    if(command.isolated_fixture){fixture_temporary=std::make_unique<files::Pins>(std::filesystem::temp_directory_path());fixture_cwd=std::make_unique<files::Pins>(command.cwd);const auto temporary=fixture_temporary->physical(),cwd=fixture_cwd->physical();const auto relative=cwd.lexically_relative(temporary);if(command.tool!=code_hosting::Tool::git||relative.empty()||relative.is_absolute()||!relative.begin()->wstring().starts_with(L"Coincide-Instruction-Git-")||!local_file::within(temporary,cwd))throw std::runtime_error("Isolated Git configuration requires the exact owned synthetic fixture tree");}
     if(cancel&&cancel())throw std::runtime_error("Instruction sync was cancelled");const auto executable=command.tool==code_hosting::Tool::git?GitService::discover_git():discover_gh();
     std::vector<std::wstring> args;if(command.tool==code_hosting::Tool::git)args={L"--no-pager",L"--literal-pathspecs",L"-c",L"color.ui=false",L"-c",L"core.fsmonitor=false",L"-c",L"core.hooksPath=NUL",L"-c",L"core.autocrlf=false",L"-c",L"commit.gpgsign=false",L"-c",L"credential.interactive=false",L"-c",L"core.askPass="};args.insert(args.end(),command.arguments.begin(),command.arguments.end());
     auto environment=code_hosting::Service::child_environment({command.tool,command.cwd,command.tool==code_hosting::Tool::gh?std::vector<std::wstring>{L"--hostname",L"github.com"}:std::vector<std::wstring>{}, {},0,false});
@@ -198,13 +202,13 @@ public:
     void discard(const std::shared_ptr<const Review>& review){std::lock_guard lock(gate_);if(!review)return;const auto at=reviews_.find(review->id);if(at!=reviews_.end()&&at->second==review)reviews_.erase(at);}
     void discard_all(){std::lock_guard lock(gate_);reviews_.clear();}
     Status status(const Binding& selected,const Cancel& cancel={})const{
-        std::lock_guard lock(gate_);validate(selected);files::Pins repo(selected.repository);Status result;const auto git=[&](std::vector<std::wstring> args,bool failure=false){return run(selected,std::move(args),false,cancel,failure);};const auto identity=git_identity::lookup(selected.repository);if(identity.state!=git_identity::State::ready||!identity.value||!local_file::equal_path(identity.value->root.wstring(),selected.repository.wstring()))throw std::runtime_error("Choose the top folder of an available instruction Git worktree");result.identity=identity.value;
+        std::lock_guard lock(gate_);validate(selected);files::Pins repo(selected.repository);Status result;const auto git=[&](std::vector<std::wstring> args,bool failure=false){return run(selected,std::move(args),false,cancel,failure);};const auto identity=git_identity::lookup(selected.repository);if(identity.state!=git_identity::State::ready||!identity.value||identity.value->root_id!=repo.identity())throw std::runtime_error("Choose the top folder of an available instruction Git worktree");result.identity=identity.value;
         auto source=selected.source;source.exists=std::filesystem::is_regular_file(source.path);if(source.exists)static_cast<void>(InstructionService::read(source));
         result.source=files::read(source.path,true,source.resolved);result.copy=files::read(selected.repository/wide(selected.copy));
         if(!local_file::equal_path(result.source.resolved.wstring(),selected.source.resolved.wstring()))throw std::runtime_error("The instruction link target changed; relink it explicitly before syncing");
         if(result.copy.exists&&result.copy.resolved.filename().wstring()!=wide(selected.copy))throw std::runtime_error("Use the existing instruction Git copy's exact filename case before linking or syncing");
         const auto root=trim(git({L"rev-parse",L"--show-toplevel"}).output);
-        if(!local_file::equal_path(std::filesystem::path(wide(root)).lexically_normal().wstring(),selected.repository.wstring()))throw std::runtime_error("Choose the top folder of an existing Git worktree");
+        files::Pins reported_root(std::filesystem::path(wide(root)).lexically_normal());if(reported_root.identity()!=repo.identity())throw std::runtime_error("Choose the top folder of an existing Git worktree");
         for(const auto& path:zero_paths(git({L"ls-files",L"-z"}).output))if(path!=selected.copy&&local_file::equal_path(wide(path),wide(selected.copy)))throw std::runtime_error("A tracked instruction path has another filename case; preserve that exact Git path before syncing");
         const auto attribute_bytes=git({L"check-attr",L"-z",L"filter",L"working-tree-encoding",L"text",L"eol",L"--",wide(selected.copy)}).output;const auto attrs=git_parse::split(attribute_bytes,'\0');
         constexpr std::string_view names[]{"filter","working-tree-encoding","text","eol"};if(attrs.size()!=13||!attrs.back().empty())throw std::runtime_error("Git instruction attributes could not be verified");
@@ -251,7 +255,7 @@ public:
         if(!review.address.empty())review.detail+="\n"+review.address;return issue(std::move(review));
     }
     std::shared_ptr<const Review> attach(InstructionFile source,const std::filesystem::path& repository,std::string copy,const Cancel& cancel={}){
-        std::lock_guard lock(gate_);loaded();static_cast<void>(InstructionService::read(source));Binding selected;selected.source=std::move(source);selected.repository=std::filesystem::canonical(repository);selected.copy=std::move(copy);validate(selected);
+        std::lock_guard lock(gate_);loaded();static_cast<void>(InstructionService::read(source));files::Pins selected_root(repository);Binding selected;selected.source=std::move(source);selected.repository=selected_root.physical();selected.copy=std::move(copy);validate(selected);
         if(bindings_.size()>=64)throw std::runtime_error("Keep at most 64 instruction Git links");for(const auto& value:bindings_)if(local_file::equal_path(value.source.resolved.wstring(),selected.source.resolved.wstring())||local_file::equal_path((value.repository/wide(value.copy)).wstring(),(selected.repository/wide(selected.copy)).wstring()))throw std::runtime_error("This instruction source or Git copy is already linked");
         auto snapshot=status(selected,cancel);return issue({{},selected.id,"Link instruction Git copy","Saves this explicit link only. Source, links and repository files stay in place.",snapshot.source.bytes,Action::attach,std::move(snapshot),std::move(selected),false});
     }
@@ -276,11 +280,11 @@ public:
     Outcome apply(const std::shared_ptr<const Review>& reviewed,const Cancel& cancel={}){
         std::lock_guard lock(gate_);loaded();if(!reviewed)throw std::runtime_error("Review an instruction action before approving it");const auto at=reviews_.find(reviewed->id);if(at==reviews_.end()||at->second!=reviewed)throw std::runtime_error("This instruction confirmation expired or was already used");auto plan=at->second;reviews_.erase(at);store_.verify_current();if(cancel&&cancel())throw std::runtime_error("Instruction synchronization was cancelled before dispatch");
         if(plan->action==Action::setup){
-            const auto& selected=plan->binding;files::Pins parent(selected.repository.parent_path());const auto current=files::read(selected.source.path,true,selected.source.resolved);
+            auto selected=plan->binding;files::Pins parent(selected.repository.parent_path());const auto current=files::read(selected.source.path,true,selected.source.resolved);
             if(!files::same(current,plan->before.source)||suspected_secret(current.bytes))throw std::runtime_error("Instructions changed after setup review; preview again");
             if(std::filesystem::exists(selected.repository)){if(!std::filesystem::is_directory(selected.repository)||!std::filesystem::is_empty(selected.repository)||local_file::has_reparse(selected.repository))throw std::runtime_error("The setup destination changed; existing files were preserved");}
             else if(!CreateDirectoryW(selected.repository.c_str(),nullptr))throw std::runtime_error("Could not create the reviewed instruction repository folder");
-            files::Pins destination(selected.repository);
+            files::Pins destination(selected.repository);selected.repository=destination.physical();validate(selected);
             if(plan->setup==SetupKind::clone)run(selected,{L"clone",L"--no-hardlinks",L"--no-recurse-submodules",L"--template=",L"--",wide(plan->address),L"."},true,cancel);
             else{run(selected,{L"init",L"--initial-branch=main",L"--template=",L"--",L"."},true,cancel);files::create(selected.repository/wide(selected.copy),current.bytes);const auto before=status(selected,cancel);static_cast<void>(commit_copy(selected,before,cancel));}
             if(plan->setup==SetupKind::private_github){const auto auth=runner_({code_hosting::Tool::gh,selected.repository,{L"auth",L"status",L"--hostname",L"github.com"},{},false,{}},cancel);if(auth.status)throw std::runtime_error("GitHub CLI authentication is unavailable. Sign in explicitly with the existing CLI; the local instruction repository was retained and nothing was pushed.");

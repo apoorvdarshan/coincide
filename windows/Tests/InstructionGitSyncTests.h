@@ -1,10 +1,11 @@
 #pragma once
 #include "../Runtime/InstructionGitSync.h"
+#include "GitRepositoryIdentityTests.h"
 #include <fstream>
 
 namespace coincide {
 inline int instruction_git_sync_tests(const std::filesystem::path& report){
-    namespace git=instruction_git;unsigned checks{};bool owned{};
+    namespace git=instruction_git;unsigned checks{};bool owned{},distinct_short_alias{};
     const auto root=std::filesystem::temp_directory_path()/(L"Coincide-Instruction-Git-"+git::wide(background_host::new_guid()));
     struct Cleanup{std::filesystem::path path;bool& owned;~Cleanup(){if(owned){std::error_code error;std::filesystem::remove_all(path,error);}}}cleanup{root,owned};
     const auto check=[&](bool result,const char* message){++checks;if(!result)throw std::runtime_error(message);};const auto rejects=[&](auto action,const char* message){bool rejected{};try{action();}catch(...){rejected=true;}check(rejected,message);};
@@ -40,6 +41,20 @@ inline int instruction_git_sync_tests(const std::filesystem::path& report){
         check(local_file::read(source,1024).bytes==original&&local_file::read(repo/L"Global.md",1024).bytes==original,"Local setup must preserve the source and create an exact UTF-8 Git copy");
         check(run(repo,{L"log",L"-1",L"--format=",L"--name-only"})=="Global.md","The initial commit may contain only the instruction copy");
         check(service.status(id).step==git::CopyStep::in_step,"A newly committed equal copy must record the agreed digest");
+        {
+            git::files::Pins pinned(repo);auto physical=service.bindings().front();physical.repository=pinned.physical();auto alias=physical;std::wstring short_name(32768,L'\0');const auto count=GetShortPathNameW(repo.c_str(),short_name.data(),static_cast<DWORD>(short_name.size()));
+            check(count&&count<short_name.size(),"The owned instruction worktree must expose its existing DOS spelling");short_name.resize(count);alias.repository=short_name;distinct_short_alias=!local_file::equal_path(alias.repository.wstring(),physical.repository.wstring());
+            const auto long_status=service.status(physical),short_status=service.status(alias);
+            check(long_status.identity&&short_status.identity&&long_status.identity->root_id==short_status.identity->root_id&&long_status.identity->common_id==short_status.identity->common_id&&short_status.step==git::CopyStep::in_step&&local_file::equal_path(service.bindings().front().repository.wstring(),physical.repository.wstring()),"Physical and DOS-alias selections must preserve the same repository identity, synchronized text and physically stored setup binding");
+            std::ofstream(report.wstring()+L".aliases")<<"physical="<<git::narrow(physical.repository)<<"\nselected="<<git::narrow(alias.repository)<<"\nstored="<<git::narrow(service.bindings().front().repository)<<"\ndistinct="<<distinct_short_alias<<"\n";
+            git::Service alias_service(root/L"alias-data",runner);const auto alias_review=alias_service.attach(file,alias.repository,"Global.md");check(alias_review->before.identity->root_id==long_status.identity->root_id&&local_file::equal_path(alias_review->binding.repository.wstring(),physical.repository.wstring())&&!std::filesystem::exists(root/L"alias-data"),"Reviewing an alias selection must bind its physical top level without writing settings");alias_service.discard(alias_review);
+            const auto nested=repo/L"nested";std::filesystem::create_directory(nested);auto nested_binding=physical;nested_binding.repository=nested;const auto before_nested=calls;
+            rejects([&]{service.status(nested_binding);},"A nested selected directory must not become the top-level instruction worktree through identity normalization");check(calls==before_nested,"Nested instruction selections must fail before invoking Git");
+            git::Runner forged=[&](git::Command command,const auto& cancel)->git::Result{if(command.arguments==std::vector<std::wstring>{L"rev-parse",L"--show-toplevel"})return {0,git::narrow(nested)+"\n"};return runner(std::move(command),cancel);};git::Service forged_root(root/L"forged-data",forged);
+            rejects([&]{forged_root.status(alias);},"A Git-reported different physical top level must be refused even through a valid selected alias");
+            {git_identity_fixture::Junction junction(root/L"repository-junction",physical.repository);git::Service linked(root/L"junction-data",runner);const auto before_link=calls;rejects([&]{linked.attach(file,junction.path,"Global.md");},"Canonicalization must not erase a selected repository junction before its safety check");check(calls==before_link,"Repository junction selections must fail before Git or settings mutation");}
+            std::filesystem::remove(nested);
+        }
         rejects([&]{service.apply(setup);},"A setup confirmation must be single-use");
         rejects([&]{service.attach(file,repo,"Global.md");},"Duplicate source or copy links must never become independent conflicting sync jobs");
         std::ofstream(source,std::ios::binary)<<"Local synthetic change\n";auto to_copy=service.preview(id,git::Action::use_source);
@@ -118,7 +133,7 @@ inline int instruction_git_sync_tests(const std::filesystem::path& report){
         std::ofstream(eol_repo/L".gitattributes",std::ios::binary)<<"Global.md filter=fixture-unconfigured\n";rejects([&]{eol_service.status(eol_id);},"Custom clean/smudge filters must be refused before status or instruction data can invoke them");std::ofstream(eol_repo/L".gitattributes",std::ios::binary)<<"Global.md text eol=lf\n";
         const auto link_count=service.bindings().size();service.apply(service.preview(id,git::Action::unlink));check(service.bindings().size()+1==link_count&&std::filesystem::exists(source)&&std::filesystem::exists(repo/L"Global.md")&&std::filesystem::exists(repo/L".git"),"Unlink must retain master, copy and complete repository history");
         check(private_calls==0&&mutations>0,"Ordinary native tests used local Git only, never GitHub auth, accounts, model calls or network remotes");
-        std::ofstream(report,std::ios::binary)<<"PASS: "<<checks<<" instruction Git sync checks (owned temporary trees and local bare remote only)\n";return 0;
+        std::ofstream(report,std::ios::binary)<<"PASS: "<<checks<<" instruction Git sync checks (owned temporary trees and local bare remote only); distinct DOS alias="<<(distinct_short_alias?"verified":"unavailable")<<"\n";return 0;
     }catch(const winrt::hresult_error& error){std::ofstream(report,std::ios::binary)<<"FAIL after "<<checks<<": "<<winrt::to_string(error.message())<<'\n';}
     catch(const std::exception& error){std::ofstream(report,std::ios::binary)<<"FAIL after "<<checks<<": "<<error.what()<<'\n';}return 1;
 }

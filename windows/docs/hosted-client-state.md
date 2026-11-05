@@ -45,3 +45,39 @@ freshness. The lazy facade uses it to expose `not_submitted` for a definite loca
 pre-enqueue refusal, without downgrading accepted/uncertain or previously enqueued
 IDs. Root preserves the draft and calls `record_not_submitted` and
 `retire_not_delivered` only for that affirmative current-instance proof.
+
+
+## Restored definite input decisions
+
+A crash can occur after `rejected`, `not_submitted` or `cancelled` is durable in the
+input journal and before the UI preserves the original input/decision in both
+files. Those IDs correctly remain outside `reconcile_ids`; their absence from
+reconciliation must never hide them from owner recovery or imply cleanup.
+
+`terminal_recovery_inputs(key)` returns detached `HostedTerminalInputRecovery`
+snapshots with the exact original key, binding, input ID, operation and definite
+disposition. Both the snapshot and binding support equality for revalidation after
+an owner dialog. The helper returns no prompt, attachment or credential payload.
+Prepared, accepted, uncertain, delivered, settled and administrative-resolution
+records cannot use this recovery path.
+
+The app locates an exact-ID original user row, queued record or prior retained
+reference. It must not infer that a current draft belongs to an old ID. After
+explicit native owner review, it preserves the original content/settings and
+attachments as historical reference where available, or records the owner's
+explicit acknowledgment that the original is unavailable. It then saves the
+actual transcript and workspace index and calls
+`retire_recovered_not_delivered(snapshot, actualProof, ownerReviewed, retention)`.
+`HostedInputRetention` permits only `original_preserved` or
+`unavailable_acknowledged`. The call validates the exact current snapshot, original
+binding and same-epoch two-file durability, refuses stale writers, and retires
+only that terminal metadata. A failed save or crash leaves it discoverable for
+another explicit review. Account bootstrap invalidates an older snapshot.
+
+These proofs are internal app contracts, never agent-supplied JSON or cached
+in-memory save assumptions. Cancellation addresses saved future work; recovery
+creates no new claim about earlier provider/model outcomes. This path does not
+submit input, start a provider, replace a generation, ACK events or migrate work.
+`Tests/HostedTerminalRecoveryTests.h` covers the actual owned index-write failure,
+crash/reopen discovery and eventual generation retirement alongside strict
+binding/evidence rejection and stale-writer cases.

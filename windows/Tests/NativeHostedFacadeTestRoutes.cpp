@@ -9,6 +9,7 @@
 #include "OpenCodeAccountScopeTests.h"
 #include "NativeHostEntrypointTests.h"
 #include "HostedAppBootstrapTests.h"
+#include "HostedInputRecoveryTests.h"
 #include <future>
 
 namespace coincide::tests {
@@ -34,6 +35,7 @@ std::optional<int> hosted_facade_test_route(int argc,wchar_t** argv){
     if(flag==L"--native-background-host-tests")return on_mta([=]{return native_background_host_tests(report);});
     if(flag==L"--opencode-account-scope-tests")return on_mta([=]{return opencode_account_scope_tests(report);});
     if(flag==L"--hosted-app-bootstrap-tests")return on_mta([=]{return hosted_app_bootstrap_tests(report);});
+    if(flag==L"--hosted-input-recovery-tests")return on_mta([=]{return hosted_input_recovery_tests(report);});
     if(flag==L"--native-host-entrypoint-tests")return on_mta([=]{return native_host_entrypoint_tests(report);});
     return{};
 }

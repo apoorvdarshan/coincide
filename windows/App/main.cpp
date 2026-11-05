@@ -56,6 +56,7 @@
 #include "../Runtime/HostedClientState.h"
 #include "../Runtime/HostToolContextStore.h"
 #include "../Runtime/HostedAgentSession.h"
+#include "HostedInputRecovery.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -1738,8 +1739,42 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if(decision==L"done"){co_await winrt::resume_background();try{coincide::background_host::Client client(scope,std::nullopt,std::chrono::seconds(2));const auto current=client.status(key,full.epoch);if(!saved_host_binding(*generation,current)||current.live||current.busy||!current.queued.empty()||!current.prompts.empty()||current.last!=full.last||current.acknowledged!=full.last)throw std::runtime_error("The stopped session changed after owner review.");coincide::background_host::Command review;review.operation=coincide::background_host::Operation::review;review.key=key;review.epoch=full.epoch;if(coincide::background_host::text(client.call(review),L"status",32)!="ok")throw std::runtime_error("The reviewed original session could not be confirmed.");}catch(...){request_failure=std::current_exception();}try{co_await owner;}catch(...){co_return;}if(request_failure)std::rethrow_exception(request_failure);const auto at=running.find(id);if(at!=running.end()&&at->second.session==session)at->second.status="Stopped session reviewed. End Hosted Session can now retire its original generation.";}
         }catch(...){failure=std::current_exception();}dialog_open=false;const auto at=running.find(id);if(reserved&&at!=running.end()&&at->second.session==session&&at->second.pending_actions)--at->second.pending_actions;if(failure&&!closing)try{std::rethrow_exception(failure);}catch(...){report_exception();}if(!closing&&selected==id){render_queue();update_composer();}
     }
+    winrt::fire_and_forget recover_terminal_input(std::string id,std::string delivery){
+        auto lifetime=get_strong();if(closing||quitting||dialog_open||!writable)co_return;
+        std::shared_ptr<coincide::AgentSession> session;bool reserved{};std::exception_ptr failure;coincide::HostedInputRecovery::Effects effects;
+        try{
+            ensure_host_metadata();auto& thread=workspace.thread(id);store->load_thread(thread);const coincide::background_host::Key key{id,thread.provider};
+            const auto candidates=host_clients->terminal_recovery_inputs(key);const auto input=std::find_if(candidates.begin(),candidates.end(),[&](const auto& value){return same_delivery(value.delivery_id,delivery);});
+            if(input==candidates.end())throw std::runtime_error("This saved input no longer has the original definite recovery state.");
+            const auto reviewed=*input;const auto plan=coincide::HostedInputRecovery::plan(thread,reviewed);
+            if(const auto at=running.find(id);at!=running.end()){
+                if(at->second.pending_actions)throw std::runtime_error("Wait for the current conversation action before recovery.");
+                for(const auto& [ignored,event]:at->second.pending_host_receipts){(void)ignored;if(event.receipt&&same_delivery(event.receipt->delivery_id,delivery))throw std::runtime_error("Save the original provider receipts before reviewing this input.");}
+                session=at->second.session;++at->second.pending_actions;reserved=true;
+            }
+            dialog_open=true;
+            auto explanation="Recorded state: "+coincide::HostedInputRecovery::disposition(reviewed.disposition)+".\n\n";
+            explanation+=plan.available()?"Retain the exact saved input in this conversation and clear its recovery record? Only this old future queue entry is removed. Your current draft, attachments and other queued messages stay as they are. Recovery sends no message and starts no provider.\n\nSaved input:\n"+plan.preview:"The original input could not be located by its saved ID. Your current draft cannot be assumed to be that input. Keep all current messages, draft, attachments and other saved inputs, acknowledge the missing original, and clear only this recovery record? Recovery sends no message and starts no provider.";
+            const auto decision=co_await coincide::native_user_prompt(root.XamlRoot(),coincide::ui_text(L"Recover saved input"),winrt::to_hstring(explanation),plan.available()?coincide::ui_text(L"Retain input and recover"):coincide::ui_text(L"Acknowledge missing input"),GetTickCount64()+900000,[weak=get_weak(),id,provider=reviewed.key.provider]{const auto self=weak.get();if(!self||self->closing||self->quitting||self->selected!=id)return true;try{return self->workspace.thread(id).provider!=provider;}catch(...){return true;}});
+            if(decision==L"done"){
+                if(closing||quitting||selected!=id)throw std::runtime_error("The original conversation changed before recovery.");
+                const auto at=running.find(id);if((at==running.end()?std::shared_ptr<coincide::AgentSession>{}:at->second.session)!=session)throw std::runtime_error("The conversation runtime changed during review; review the saved input again.");
+                const auto current=host_clients->terminal_recovery_inputs(key);if(std::none_of(current.begin(),current.end(),[&](const auto& value){return value==reviewed;}))throw std::runtime_error("The original recovery state changed after review.");
+                auto& actual=workspace.thread(id);dirty_threads.insert(id);dirty_index=true;
+                effects=coincide::HostedInputRecovery::apply(actual,plan,true);
+                try{save_thread_durably(actual);dirty_threads.erase(id);save_workspace_index();}catch(...){dirty_threads.insert(id);dirty_index=true;throw;}
+                const auto cursor=hosted_cursor(actual,reviewed.key.provider);if(!cursor||cursor->epoch!=reviewed.binding.epoch)throw std::runtime_error("The actual saved recovery prefix changed; its record was retained for review.");
+                host_clients->retire_recovered_not_delivered(reviewed,{*cursor,true,true},true,plan.retention);
+                if(at!=running.end())at->second.status="Saved input recovered. Its retained data is saved; no message was sent.";
+            }
+        }catch(...){failure=std::current_exception();}
+        dialog_open=false;const auto at=running.find(id);if(reserved&&at!=running.end()&&at->second.session==session&&at->second.pending_actions)--at->second.pending_actions;
+        if(failure&&!closing)try{std::rethrow_exception(failure);}catch(...){report_exception();}
+        if(!closing&&selected==id)try{for(const auto& row:effects.rows)refresh_hosted_row(workspace.thread(id),row);render_queue();update_composer();}catch(...){report_exception();}
+    }
     void remove_saved_input(const std::string& id,const std::string& delivery){
         if(closing||quitting||!writable)return;try{auto& thread=workspace.thread(id);const auto saved=std::find_if(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,delivery);});if(saved==thread.queued_inputs.end())return;
+            if(host_clients){const auto recoverable=host_clients->terminal_recovery_inputs({id,thread.provider});if(std::any_of(recoverable.begin(),recoverable.end(),[&](const auto& value){return same_delivery(value.delivery_id,delivery);})){recover_terminal_input(id,delivery);return;}}
             auto active=running.find(id);const auto cursor=hosted_cursor(thread,thread.provider);
             if(!cursor&&host_clients){const auto generation=host_clients->get({id,thread.provider});if(generation&&!generation->retired)throw std::runtime_error("The original hosted cursor is unavailable; the saved input was retained for recovery.");}
             if(active==running.end()&&!cursor){const auto old=thread.queued_inputs;const auto retained=retained_saved_input(*saved,thread.provider,"local-queue");const auto existing=std::find_if(thread.messages.begin(),thread.messages.end(),[&](const auto& value){return value.id==retained.id;});const bool added=existing==thread.messages.end();if(added)thread.messages.push_back(retained);std::erase_if(thread.queued_inputs,[&](const auto& value){return same_delivery(value.id,delivery);});try{save_thread_durably(thread);save_workspace_index();}catch(...){thread.queued_inputs=old;if(added)thread.messages.pop_back();throw;}if(selected==id){if(added)transcript.Items().Append(message_row(thread.messages.back(),thread.provider));render_queue();update_composer();}return;}
@@ -1751,15 +1786,16 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             });
         }catch(...){report_exception();}
     }
-    void resume_saved_queue(const std::string& id){if(closing||quitting||!writable)return;try{auto& run=session_for(id);if(run.pending_actions||run.host_review)throw std::runtime_error("Review the original hosted state before resuming saved work.");session_action(id,[](auto& session){return session.resume_queue();},[](auto& current,bool accepted,bool uncertain){current.status=accepted&&!uncertain?"Saved queue resumed. Entries remain saved until their actual delivery receipts.":"Queue resume was not confirmed. Saved input IDs and text were retained; review before retrying.";});}catch(...){report_exception();}}
+    void resume_saved_queue(const std::string& id){if(closing||quitting||!writable)return;try{if(host_clients&&!host_clients->terminal_recovery_inputs({id,workspace.thread(id).provider}).empty())throw std::runtime_error("Recover the recorded saved input before resuming this queue.");auto& run=session_for(id);if(run.pending_actions||run.host_review)throw std::runtime_error("Review the original hosted state before resuming saved work.");session_action(id,[](auto& session){return session.resume_queue();},[](auto& current,bool accepted,bool uncertain){current.status=accepted&&!uncertain?"Saved queue resumed. Entries remain saved until their actual delivery receipts.":"Queue resume was not confirmed. Saved input IDs and text were retained; review before retrying.";});}catch(...){report_exception();}}
     void render_queue(){
-        if(!queued_view)return;queued_view.Children().Clear();if(selected.empty())return;const auto& thread=workspace.thread(selected);const auto active=running.find(selected);const bool available=writable&&!closing&&!quitting&&(active==running.end()||!active->second.pending_actions);
+        if(!queued_view)return;queued_view.Children().Clear();if(selected.empty())return;const auto& thread=workspace.thread(selected);const auto active=running.find(selected);const bool available=writable&&!closing&&!quitting&&!dialog_open&&(active==running.end()||!active->second.pending_actions);
         std::optional<coincide::HostedClientGeneration> generation;try{if(host_clients)generation=host_clients->get({thread.id,thread.provider});}catch(...){}
         if(thread.queued_inputs.empty()&&(!generation||generation->retired))return;
         if(!thread.queued_inputs.empty()){controls::TextBlock label_text;label_text.Text(label(L"Queue",L"Queue"));queued_view.Children().Append(label_text);}
         for(const auto& input:thread.queued_inputs){controls::StackPanel row;row.Orientation(controls::Orientation::Horizontal);row.Spacing(6);controls::TextBlock text;text.Text(winrt::to_hstring(input.text));text.IsTextSelectionEnabled(true);text.TextWrapping(xaml::TextWrapping::Wrap);text.MaxWidth(460);identify(text,L"QueuedMessageText");row.Children().Append(text);auto remove=button(L"Remove",L"Remove",L"RemoveQueuedMessage");remove.IsEnabled(available);const auto id=selected,delivery=input.id;remove.Click([this,id,delivery](const auto&,const auto&){remove_saved_input(id,delivery);});row.Children().Append(remove);queued_view.Children().Append(row);}
         const bool paused=active==running.end()||active->second.session->queue_paused();if(!thread.queued_inputs.empty()&&paused){auto resume=button(L"Resume",L"Resume",L"ResumeQueue");resume.IsEnabled(available);const auto id=selected;resume.Click([this,id](const auto&,const auto&){resume_saved_queue(id);});queued_view.Children().Append(resume);}
-        if(generation&&!generation->retired){for(const auto& pending:generation->pending){if(pending.owner_resolution||pending.settled||pending.disposition==coincide::HostedIntentDisposition::rejected||pending.disposition==coincide::HostedIntentDisposition::not_submitted||pending.disposition==coincide::HostedIntentDisposition::cancelled||std::any_of(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,pending.delivery_id);}))continue;
+        if(generation&&!generation->retired){if(host_clients)for(const auto& input:host_clients->terminal_recovery_inputs({thread.id,thread.provider})){auto recover=button(L"Recover saved input",L"Recover saved input",L"RecoverSavedInput");recover.IsEnabled(available);const auto id=selected,delivery=input.delivery_id;recover.Click([this,id,delivery](const auto&,const auto&){recover_terminal_input(id,delivery);});queued_view.Children().Append(recover);}
+            for(const auto& pending:generation->pending){if(pending.owner_resolution||pending.settled||pending.disposition==coincide::HostedIntentDisposition::rejected||pending.disposition==coincide::HostedIntentDisposition::not_submitted||pending.disposition==coincide::HostedIntentDisposition::cancelled||std::any_of(thread.queued_inputs.begin(),thread.queued_inputs.end(),[&](const auto& value){return same_delivery(value.id,pending.delivery_id);}))continue;
                 auto review=button(L"Review stopped input",L"Review stopped input",L"ReviewStoppedInput");review.IsEnabled(available);const auto id=selected,delivery=pending.delivery_id;review.Click([this,id,delivery](const auto&,const auto&){review_stopped_input(id,delivery);});queued_view.Children().Append(review);}
             auto review=button(L"Review stopped session",L"Review stopped session",L"ReviewStoppedSession");review.IsEnabled(available&&generation->pending.empty());const auto id=selected;review.Click([this,id](const auto&,const auto&){review_stopped_session(id);});queued_view.Children().Append(review);
         }

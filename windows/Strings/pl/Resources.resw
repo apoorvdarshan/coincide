@@ -570,6 +570,9 @@
   <data name="Text_5160ee9161a47fed" xml:space="preserve">
     <value>Reported cost: </value>
   </data>
+  <data name="Text_5210f42b7f74ddd4" xml:space="preserve">
+    <value>Recover saved input</value>
+  </data>
   <data name="Text_5225bc94eed346a8" xml:space="preserve">
     <value>The selected browser metadata file could not be opened.</value>
   </data>
@@ -783,6 +786,9 @@
   <data name="Text_7405fd7d5819142e" xml:space="preserve">
     <value>Pełny dostęp</value>
   </data>
+  <data name="Text_740c1828fbc2e9b1" xml:space="preserve">
+    <value>Retain input and recover</value>
+  </data>
   <data name="Text_74133cd943448e25" xml:space="preserve">
     <value>Delivery was not confirmed. Review the conversation before resuming.</value>
   </data>
@@ -957,6 +963,9 @@ C++/WinRT + WinUI 3</value>
   </data>
   <data name="Text_924b6af1b3308707" xml:space="preserve">
     <value>Include instruction-only pushes in automatic sync</value>
+  </data>
+  <data name="Text_926b0a10a1ca1107" xml:space="preserve">
+    <value>Acknowledge missing input</value>
   </data>
   <data name="Text_92b5f7e86bacd038" xml:space="preserve">
     <value>First run date</value>

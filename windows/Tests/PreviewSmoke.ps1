@@ -327,29 +327,45 @@ try {
     $checks += 'Returning to a long conversation renders without manual scrolling'
 
     function Invoke-Control([string]$id) {
+        function Find-Invokable($parent,[string]$wanted) {
+            if(!$parent){return $null}
+            $filter=New-Object Windows.Automation.AndCondition(
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,$wanted)),
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))
+            foreach($candidate in $parent.FindAll([Windows.Automation.TreeScope]::Descendants,$filter)){
+                try{
+                    $pattern=$null
+                    if($candidate.Current.IsEnabled -and !$candidate.Current.IsOffscreen -and
+                        $candidate.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){
+                        return @{control=$candidate;pattern=$pattern}
+                    }
+                }catch [Windows.Automation.ElementNotAvailableException]{}catch [InvalidOperationException]{}
+            }
+            return $null
+        }
         $observed=@{control=$null;more=$null}
         $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests')
         Wait-Until {
-            $observed.control=Find-Control $script:window $id
+            $observed.control=Find-Invokable $script:window $id
+            $observed.more=$null
             if($toolbarCommand -and !$observed.control){
                 $toolbar=Find-Control $script:window 'ConversationToolbar'
                 if(!$toolbar){$toolbar=$script:window}
-                $observed.more=Find-Control $toolbar 'MoreButton'
+                $observed.more=Find-Invokable $toolbar 'MoreButton'
             }
             $null -ne $observed.control -or $null -ne $observed.more
-        } "Cannot observe current control or toolbar overflow for $id"
-        $control=$observed.control
-        if (!$control -and $observed.more) {
-            # Observe fresh peers after long-thread/tool-pane layout, then invoke once.
-            $observed.more.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-            $filter=New-Object Windows.Automation.AndCondition(
-                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,$id)),
-                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))
-            Wait-Until {$null -ne [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$filter)} "Cannot find overflow command $id"
-            $control=[Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$filter)
+        } "Cannot observe an enabled invokable control or toolbar overflow for $id"
+        if(!$observed.control -and $observed.more){
+            # Readiness observations do not invoke. Open overflow once, then wait for the
+            # actual visible command peer and its supported pattern before one invocation.
+            $observed.more.pattern.Invoke()
+            Wait-Until {
+                $observed.control=Find-Invokable ([Windows.Automation.AutomationElement]::RootElement) $id
+                $null -ne $observed.control
+            } "Cannot observe the invokable overflow command $id"
         }
-        if (!$control) { throw "Cannot find $id" }
-        $control.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        if(!$observed.control){throw "Cannot find invokable $id"}
+        $observed.control.pattern.Invoke()
     }
     function Set-ControlValue([string]$id,[string]$text) {
         # Native XAML may recreate an automation peer while a prompt row changes size.
