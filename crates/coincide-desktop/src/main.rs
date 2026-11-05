@@ -3,6 +3,7 @@ mod usage_history_view;
 mod worker_owner;
 use anyhow::Result;
 mod app_menu;
+mod app_menu_mount;
 mod assets;
 mod bot_settings;
 mod browser;
@@ -1925,21 +1926,7 @@ impl Coincide {
                 window,
                 cx,
             ),
-            C::OpenSettings => {
-                self.computer_use_open = false;
-                self.media.opened = false;
-                self.browser_settings_open = false;
-                self.bots_open = false;
-                self.notifications_open = false;
-                self.transcription_open = false;
-                self.credentials_open = false;
-                self.provider_settings.open = false;
-                self.settings_open = true;
-                self.schedules_open = false;
-                self.workspace_open = false;
-                self.session_import_open = false;
-                self.refresh_settings(window, cx);
-            }
+            C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
                 self.settings_open = false;
                 self.workspace_open = false;
@@ -2219,6 +2206,7 @@ impl Coincide {
             }
             return;
         }
+        self.poll_app_menu(window, cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);

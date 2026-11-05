@@ -23,3 +23,8 @@ tempfile = "3"
 
 [profile.dev]
 debug = 1
+
+# Preview trust checks hash complete signed bundles repeatedly. Keep the same
+# SHA-256 implementation while avoiding its unoptimized ARM software hot loop.
+[profile.dev.package.sha2]
+opt-level = 3
