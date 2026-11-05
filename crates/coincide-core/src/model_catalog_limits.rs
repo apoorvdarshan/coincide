@@ -349,6 +349,188 @@ impl Observations {
     }
 }
 
+/// A separate owner: limits results never enter catalog jobs or mint model proof.
+pub(super) struct Owner {
+    observations: Observations,
+    current_id: Option<String>,
+    context: Option<PathBuf>,
+    workers: Vec<LimitsWorker>,
+    closed: bool,
+    totals: super::ShutdownStatus,
+    tx: std::sync::mpsc::SyncSender<Completion>,
+    rx: std::sync::mpsc::Receiver<Completion>,
+}
+struct LimitsWorker {
+    ticket: Ticket,
+    cancelled: std::sync::Arc<AtomicBool>,
+    completion: crate::agent::WorkerCompletion,
+}
+type Completion = (Ticket, u64, Result<Snapshot, Failure>);
+impl Default for Owner {
+    fn default() -> Self {
+        let (tx, rx) = std::sync::mpsc::sync_channel(2);
+        Self {
+            observations: Observations::default(),
+            current_id: None,
+            context: None,
+            workers: Vec::new(),
+            closed: false,
+            totals: super::ShutdownStatus::default(),
+            tx,
+            rx,
+        }
+    }
+}
+impl Drop for Owner {
+    fn drop(&mut self) {
+        self.request_shutdown();
+    }
+}
+impl Owner {
+    pub(super) fn context(&mut self, executable: Option<PathBuf>) {
+        if self.context != executable {
+            self.context = executable;
+            self.observations.invalidate();
+            self.current_id = None;
+            for worker in &self.workers {
+                worker
+                    .cancelled
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+    pub(super) fn refresh(&mut self, executable: Option<PathBuf>) -> anyhow::Result<Value> {
+        self.refresh_with(executable, read)
+    }
+    fn refresh_with(
+        &mut self,
+        executable: Option<PathBuf>,
+        work: impl FnOnce(Option<PathBuf>, &AtomicBool) -> Result<Snapshot, Failure> + Send + 'static,
+    ) -> anyhow::Result<Value> {
+        anyhow::ensure!(!self.closed, "Codex limits reader is shutting down");
+        self.poll();
+        anyhow::ensure!(
+            self.workers.len() < 2,
+            "Codex limits workers are still draining"
+        );
+        self.context(executable.clone());
+        for worker in &self.workers {
+            worker
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let ticket = self
+            .observations
+            .begin()
+            .ok_or_else(|| anyhow::anyhow!("Limits generation exhausted"))?;
+        let id = uuid::Uuid::new_v4().to_string();
+        self.current_id = Some(id.clone());
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let cancel = cancelled.clone();
+        let tx = self.tx.clone();
+        match std::thread::Builder::new()
+            .name("coincide-codex-limits".into())
+            .spawn(move || {
+                let result = work(executable, &cancel);
+                let result = if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                    Err(Failure::Cancelled)
+                } else {
+                    result
+                };
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .and_then(|v| u64::try_from(v.as_millis()).ok())
+                    .unwrap_or(0);
+                let _ = tx.send((ticket, now, result));
+            }) {
+            Ok(worker) => self.workers.push(LimitsWorker {
+                ticket,
+                cancelled,
+                completion: crate::agent::WorkerCompletion::observe(worker),
+            }),
+            Err(_) => {
+                self.observations
+                    .complete(ticket, 0, Err(Failure::ReadFailed));
+            }
+        }
+        self.status(&id)
+    }
+    fn receive(&mut self) -> bool {
+        let mut changed = false;
+        for (ticket, at, result) in self.rx.try_iter() {
+            changed |= self.observations.complete(ticket, at, result);
+        }
+        changed
+    }
+    pub(super) fn poll(&mut self) -> bool {
+        let mut changed = self.receive();
+        let mut exited = Vec::new();
+        self.workers.retain(|worker| {
+            use crate::agent::WorkerThreadStatus;
+            let counter = match worker.completion.status() {
+                WorkerThreadStatus::Running | WorkerThreadStatus::Unclassified => return true,
+                WorkerThreadStatus::Returned => &mut self.totals.returned,
+                WorkerThreadStatus::Panicked => &mut self.totals.panicked,
+            };
+            *counter = counter.saturating_add(1);
+            exited.push(worker.ticket);
+            false
+        });
+        changed |= self.receive();
+        for ticket in exited {
+            changed |= self
+                .observations
+                .complete(ticket, 0, Err(Failure::ReadFailed));
+        }
+        changed
+    }
+    pub(super) fn status(&self, id: &str) -> anyhow::Result<Value> {
+        anyhow::ensure!(
+            self.current_id.as_deref() == Some(id),
+            "Codex limits request not found or superseded"
+        );
+        let observation = self.observations.current();
+        Ok(
+            json!({"requestId":id,"provider":"codex","accountScope":"default_runtime_account_identity_unknown","accountIdentityVerified":false,
+            "state":match observation {None=>"loading",Some(v) if v.snapshot.is_some()=>"ready",_=>"failed"},
+            "generation":self.observations.generation,"observedAtEpochMs":observation.map(|v|v.observed_at_epoch_ms).filter(|v|*v>0),
+            "snapshot":observation.and_then(|v|v.snapshot.as_ref()),"error":observation.and_then(|v|v.failure)}),
+        )
+    }
+    pub(super) fn request_shutdown(&mut self) {
+        self.closed = true;
+        for worker in &self.workers {
+            worker
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        self.observations.invalidate();
+        self.current_id = None;
+    }
+    pub(super) fn shutdown_status(&mut self) -> super::ShutdownStatus {
+        self.poll();
+        super::ShutdownStatus {
+            closed: self.closed,
+            running: self.workers.len(),
+            unclassified: self
+                .workers
+                .iter()
+                .filter(|w| w.completion.status() == crate::agent::WorkerThreadStatus::Unclassified)
+                .count() as u64,
+            ..self.totals
+        }
+    }
+}
+/// Deliberately no provider/account/path/trust arguments are accepted.
+pub(crate) fn validate_refresh(params: &Value) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        params.as_object().is_some_and(|p| p.is_empty()),
+        "Codex limits refresh requires an empty object"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +667,159 @@ mod tests {
             value = json!([value]);
         }
         assert_eq!(parse(&value), Err(Failure::ResponseTooLarge));
+    }
+    fn joined(observer: &crate::agent::WorkerCompletion) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while observer.status() == crate::agent::WorkerThreadStatus::Running {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake limits worker failed to join"
+            );
+            std::thread::yield_now();
+        }
+    }
+    #[test]
+    fn strict_refresh_rejects_caller_account_executable_and_trust() {
+        assert!(validate_refresh(&json!({})).is_ok());
+        for value in [
+            json!({"accountId":"default"}),
+            json!({"executable":"/fake"}),
+            json!({"trusted":true}),
+            Value::Null,
+        ] {
+            assert!(validate_refresh(&value).is_err());
+        }
+    }
+    #[test]
+    fn latest_worker_wins_out_of_order_and_cancels_old_without_losing_join() {
+        let mut owner = Owner::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let first = owner
+            .refresh_with(None, move |_, cancel| {
+                rx.recv().unwrap();
+                assert!(cancel.load(std::sync::atomic::Ordering::Acquire));
+                parse(&sample())
+            })
+            .unwrap();
+        let old = owner.workers[0].completion.clone();
+        let second = owner
+            .refresh_with(None, |_, _| Err(Failure::NoReportedLimits))
+            .unwrap();
+        let current = owner.workers[1].completion.clone();
+        joined(&current);
+        owner.poll();
+        assert_eq!(
+            owner.status(second["requestId"].as_str().unwrap()).unwrap()["error"],
+            "no_reported_limits"
+        );
+        assert!(owner.status(first["requestId"].as_str().unwrap()).is_err());
+        assert_eq!(owner.shutdown_status().running, 1);
+        tx.send(()).unwrap();
+        joined(&old);
+        owner.poll();
+        assert_eq!(
+            owner.status(second["requestId"].as_str().unwrap()).unwrap()["error"],
+            "no_reported_limits"
+        );
+        assert_eq!(owner.shutdown_status().returned, 2);
+    }
+    struct ExitGate {
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+    impl Drop for ExitGate {
+        fn drop(&mut self) {
+            self.entered.send(()).unwrap();
+            self.release.recv().unwrap();
+        }
+    }
+    thread_local! {static EXIT_GATE:std::cell::RefCell<Option<ExitGate>>=const {std::cell::RefCell::new(None)};}
+    #[test]
+    fn aggregate_waits_actual_limits_tls_join_and_never_mints_catalog_job() {
+        let mut catalog = super::super::ModelCatalog::default();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let response = catalog
+            .limits
+            .refresh_with(None, move |_, _| {
+                EXIT_GATE.with(|slot| {
+                    *slot.borrow_mut() = Some(ExitGate {
+                        entered: entered_tx,
+                        release: release_rx,
+                    })
+                });
+                parse(&sample())
+            })
+            .unwrap();
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        catalog.poll();
+        assert_eq!(
+            catalog
+                .limits_status(response["requestId"].as_str().unwrap())
+                .unwrap()["state"],
+            "ready"
+        );
+        assert!(catalog.jobs.is_empty());
+        assert_eq!(catalog.shutdown_status().running, 1);
+        let observer = catalog.limits.workers[0].completion.clone();
+        catalog.request_shutdown();
+        assert!(catalog.refresh_limits(None).is_err());
+        assert_eq!(catalog.shutdown_status().running, 1);
+        release_tx.send(()).unwrap();
+        joined(&observer);
+        let status = catalog.shutdown_status();
+        assert_eq!(status.running, 0);
+        assert_eq!(status.returned, 1);
+        assert!(status.closed);
+        assert_eq!(catalog.shutdown_status(), status);
+    }
+    #[test]
+    fn panicked_worker_remains_failure_and_actual_join_is_accounted() {
+        let mut owner = Owner::default();
+        let response = owner
+            .refresh_with(None, |_, _| panic!("synthetic limits failure"))
+            .unwrap();
+        let observer = owner.workers[0].completion.clone();
+        joined(&observer);
+        owner.poll();
+        let status = owner
+            .status(response["requestId"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(status["error"], "read_failed");
+        assert!(status["snapshot"].is_null());
+        assert_eq!(owner.shutdown_status().panicked, 1);
+        assert_eq!(owner.shutdown_status().running, 0);
+    }
+    #[test]
+    fn context_loss_revokes_worker_result_and_shutdown_rejects_without_spawning() {
+        let mut owner = Owner::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let response = owner
+            .refresh_with(Some(PathBuf::from("/synthetic-a")), move |_, _| {
+                rx.recv().unwrap();
+                parse(&sample())
+            })
+            .unwrap();
+        let observer = owner.workers[0].completion.clone();
+        owner.context(Some(PathBuf::from("/synthetic-b")));
+        tx.send(()).unwrap();
+        joined(&observer);
+        owner.poll();
+        assert!(
+            owner
+                .status(response["requestId"].as_str().unwrap())
+                .is_err()
+        );
+        owner.request_shutdown();
+        owner.request_shutdown();
+        assert!(
+            owner
+                .refresh_with(None, |_, _| panic!("must not start"))
+                .is_err()
+        );
+        assert_eq!(owner.shutdown_status().running, 0);
     }
     #[test]
     fn provider_error_is_static_and_contains_no_raw_payload() {

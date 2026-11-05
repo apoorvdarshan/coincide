@@ -499,7 +499,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status"
+                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
                 ];
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
@@ -575,6 +575,20 @@ impl Engine {
                 self.store.save(&branch)?;
                 self.revision+=1;
                 Ok(branch)
+            }
+            "usage.codexLimits.refresh" => {
+                crate::model_catalog::limits::validate_refresh(p)?;
+                let executable = self.codex_limits_executable();
+                let result = self.model_catalog.refresh_limits(executable)?;
+                self.revision += 1;
+                Ok(result)
+            }
+            "usage.codexLimits.status" => {
+                let id = crate::model_catalog::status_id(p)?;
+                let executable = self.codex_limits_executable();
+                self.model_catalog.limits_context(executable);
+                if self.model_catalog.poll() { self.revision += 1; }
+                self.model_catalog.limits_status(id)
             }
             "agent.models.refresh" => {
                 let provider = crate::model_catalog::refresh_provider(p)?;
@@ -1434,10 +1448,18 @@ impl Engine {
             }
         }
     }
+    fn codex_limits_executable(&self) -> Option<PathBuf> {
+        std::env::var_os("COINCIDE_CODEX_EXECUTABLE").map(PathBuf::from).or_else(|| {
+            self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
+                .find(|entry| entry["provider"] == "codex")?["executable"].as_str().map(PathBuf::from)
+        })
+    }
     pub fn poll(&mut self) {
         self.poll_steering();
         self.provider_workers_status();
         self.computer_use_expire();
+        let limits_executable = self.codex_limits_executable();
+        self.model_catalog.limits_context(limits_executable);
         if self.model_catalog.poll() {
             self.revision += 1;
         }

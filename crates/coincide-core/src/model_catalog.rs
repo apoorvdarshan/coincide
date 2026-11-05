@@ -19,6 +19,9 @@ mod effort;
 use effort::EffortExecutable;
 pub(crate) use effort::{CodexEffortProof, astra_default_needed};
 
+#[path = "model_catalog_limits.rs"]
+pub(crate) mod limits;
+
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;
 const MAX_MODELS: usize = 1000;
@@ -55,6 +58,7 @@ struct Job {
 }
 /// Construction does not discover executables, read credentials, or start work.
 pub struct ModelCatalog {
+    limits: limits::Owner,
     jobs: HashMap<String, Job>,
     order: VecDeque<String>,
     workers: HashMap<String, Worker>,
@@ -66,6 +70,7 @@ impl Default for ModelCatalog {
     fn default() -> Self {
         let (tx, rx) = mpsc::sync_channel(MAX_JOBS);
         Self {
+            limits: limits::Owner::default(),
             jobs: HashMap::new(),
             order: VecDeque::new(),
             workers: HashMap::new(),
@@ -101,7 +106,8 @@ impl ModelCatalog {
         changed
     }
     pub fn poll(&mut self) -> bool {
-        let mut changed = self.receive_completions();
+        let mut changed = self.limits.poll();
+        changed |= self.receive_completions();
         let mut exited = Vec::new();
         let totals = &mut self.shutdown;
         self.workers.retain(|id, worker| {
@@ -133,6 +139,7 @@ impl ModelCatalog {
     /// Irreversible admission closure and cancellation request, never a wait.
     pub fn request_shutdown(&mut self) {
         self.shutdown.closed = true;
+        self.limits.request_shutdown();
         for job in self.jobs.values() {
             job.cancelled.store(true, Ordering::Release);
         }
@@ -144,9 +151,13 @@ impl ModelCatalog {
     /// Poll existing responses and actual join acknowledgements only.
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
         self.poll();
+        let limits = self.limits.shutdown_status();
         ShutdownStatus {
-            running: self.workers.len(),
+            running: self.workers.len() + limits.running,
+            returned: self.shutdown.returned.saturating_add(limits.returned),
+            panicked: self.shutdown.panicked.saturating_add(limits.panicked),
             unclassified: self.shutdown.unclassified
+                + limits.unclassified
                 + self
                     .workers
                     .values()
@@ -196,7 +207,7 @@ impl ModelCatalog {
         }
         let supported = supported(provider);
         ensure!(
-            !supported || self.workers.len() < MAX_ACTIVE,
+            !supported || self.workers.len() + self.limits.shutdown_status().running < MAX_ACTIVE,
             "Too many model catalog reads; wait for the current refresh"
         );
         while self.order.len() >= MAX_JOBS {
@@ -256,6 +267,21 @@ impl ModelCatalog {
             );
         }
         Ok(response)
+    }
+    pub(crate) fn limits_context(&mut self, executable: Option<PathBuf>) {
+        self.limits.context(executable);
+    }
+    pub(crate) fn refresh_limits(&mut self, executable: Option<PathBuf>) -> Result<Value> {
+        ensure!(!self.shutdown.closed, "Model catalog is shutting down");
+        self.poll();
+        ensure!(
+            self.workers.len() + self.limits.shutdown_status().running < MAX_ACTIVE,
+            "Read-only provider workers are still draining"
+        );
+        self.limits.refresh(executable)
+    }
+    pub(crate) fn limits_status(&self, id: &str) -> Result<Value> {
+        self.limits.status(id)
     }
     pub fn status(&self, id: &str) -> Result<Value> {
         self.jobs
