@@ -324,10 +324,8 @@ impl Terminal {
                     } else {
                         cell.c.to_string()
                     };
-                    if !continuation {
-                        if let Some(marks) = cell.zerowidth() {
-                            text.extend(marks.iter().take(MAX_COMBINING_CHARS).copied());
-                        }
+                    if !continuation && let Some(marks) = cell.zerowidth() {
+                        text.extend(marks.iter().take(MAX_COMBINING_CHARS).copied());
                     }
                     Ok(CopyCell {
                         text,

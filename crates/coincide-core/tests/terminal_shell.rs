@@ -172,7 +172,34 @@ fn isolated_shell_fixture_child() {
         thread::sleep(Duration::from_millis(10));
     }
     let cd = "cd \"$HOME/sub dir #?% 界\"";
-    terminal.write(&format!("{cd}\r")).unwrap();
+    // Capture the exact emitter bytes as well as the parsed PTY metadata. This
+    // distinguishes bash 3.2 octet encoding from readline's wide-cell padding.
+    terminal
+        .write(&format!("{cd} && _coincide_cwd > \"$HOME/cwd-report\"\r"))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let report = home.join("cwd-report");
+    loop {
+        if let Ok(bytes) = fs::read(&report) {
+            if bytes.ends_with(&[7]) {
+                let mut observer = coincide_core::terminal::shell::ShellObserver::default();
+                observer.advance(&bytes);
+                assert_eq!(
+                    observer.state.cwd.as_ref().map(|cwd| cwd.path.as_str()),
+                    home.join("sub dir #?% 界").to_str(),
+                    "raw synthetic cwd OSC: {}",
+                    String::from_utf8_lossy(&bytes)
+                );
+                break;
+            }
+        }
+        let frame = terminal.snapshot().unwrap();
+        assert!(
+            Instant::now() < deadline,
+            "synthetic cwd emitter did not finish: {frame}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     let changed = wait(&mut terminal, |frame| {
         frame["shell"]["cwd"]["path"] == home.join("sub dir #?% 界").to_str().unwrap()
     });
