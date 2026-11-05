@@ -99,12 +99,11 @@ impl ShellState {
                 if let Some(value) = payload.strip_prefix("CoincidePrompt=") {
                     self.prompt_lines = value.parse::<i64>().ok()?.clamp(1, 50) as usize;
                     Mark::PromptLines(self.prompt_lines)
-                } else if let Some(value) = payload.strip_prefix("CoincideCommand=") {
+                } else {
+                    let value = payload.strip_prefix("CoincideCommand=")?;
                     let command = value.trim().chars().take(MAX_COMMAND).collect::<String>();
                     self.command = (!command.is_empty()).then_some(command);
                     Mark::Command(self.command.clone())
-                } else {
-                    return None;
                 }
             }
             "7" => {
@@ -535,13 +534,18 @@ unset _coincide_file
 _coincide_last_history=
 _coincide_started=
 _coincide_cwd() {
-  local LC_ALL=C value=$PWD char index
+  local LC_ALL=C value=$PWD char index byte
   builtin printf '\e]7;file://localhost'
   for ((index=0;index<${#value};index++)); do
     char=${value:index:1}
     case $char in
       [a-zA-Z0-9/_.~-]) builtin printf '%s' "$char" ;;
-      *) builtin printf '%%%02X' "'$char" ;;
+      *)
+        # bash 3.2 sign-extends high-bit character arguments; URI octets must
+        # be exactly two hex digits rather than FFFFFFFFFFFFFFE7.
+        builtin printf -v byte '%d' "'$char"
+        builtin printf '%%%02X' "$(( byte & 255 ))"
+        ;;
     esac
   done
   builtin printf '\a'
