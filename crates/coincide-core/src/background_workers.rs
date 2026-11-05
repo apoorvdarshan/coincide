@@ -47,7 +47,7 @@ impl State {
                 agent::WorkerThreadStatus::Running => return true,
                 agent::WorkerThreadStatus::Returned => &mut totals.returned,
                 agent::WorkerThreadStatus::Panicked => &mut totals.panicked,
-                agent::WorkerThreadStatus::Unclassified => &mut totals.unclassified,
+                agent::WorkerThreadStatus::Unclassified => return true,
             };
             *counter = counter.saturating_add(1);
             false
@@ -57,6 +57,12 @@ impl State {
         self.poll();
         BackgroundShutdownStatus {
             running: self.workers.len(),
+            unclassified: self.totals.unclassified
+                + self
+                    .workers
+                    .iter()
+                    .filter(|w| w.status() == agent::WorkerThreadStatus::Unclassified)
+                    .count() as u64,
             ..self.totals
         }
     }

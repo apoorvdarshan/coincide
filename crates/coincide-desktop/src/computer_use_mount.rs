@@ -244,7 +244,7 @@ impl Handoff {
         debug_assert!(self.flights.len() <= LIMIT && self.completions.len() <= LIMIT);
     }
     fn stop(&mut self) {
-        self.handle.shutdown();
+        self.runtime.request_shutdown();
         self.closing = true;
     }
 }
@@ -254,6 +254,28 @@ pub struct Mount {
     handoff: Handoff,
     panel: Entity<ComputerUseSettingsPanel>,
     engine: Option<Weak<Mutex<Engine>>>,
+}
+pub struct MountShutdownStatus {
+    pub engine_accounted: bool,
+    pub retained_flights: usize,
+    pub retained_completions: usize,
+    pub runtime: crate::computer_use::ShutdownStatus,
+}
+impl MountShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.engine_accounted
+            && self.retained_flights == 0
+            && self.retained_completions == 0
+            && self.runtime.requested
+            && self.runtime.worker == coincide_core::agent::WorkerThreadStatus::Returned
+            && self.runtime.observer_error.is_none()
+            && self.runtime.pending_reservations == Some(0)
+            && self
+                .runtime
+                .backend
+                .as_ref()
+                .is_some_and(|s| s.stopped && !s.busy && s.error.is_none())
+    }
 }
 impl Mount {
     /// Inert: creates worker/panel only, no Engine lock or native queries/prompts.
@@ -275,6 +297,15 @@ impl Mount {
     }
     pub fn shutdown_accounted(&self) -> bool {
         self.handoff.accounted
+    }
+    /// Engine request revocation and actual native worker cleanup are distinct.
+    pub fn shutdown_status(&mut self) -> MountShutdownStatus {
+        MountShutdownStatus {
+            engine_accounted: self.handoff.accounted,
+            retained_flights: self.handoff.flights.len(),
+            retained_completions: self.handoff.completions.len(),
+            runtime: self.handoff.runtime.shutdown_status(),
+        }
     }
     /// Must be called outside parent's existing Engine lock. All lock acquisition
     /// is try_lock; no queue wait, native operation, or worker join blocks GPUI.

@@ -47,6 +47,9 @@ mod organization_api;
 mod provider_worker_tests;
 #[path = "session_import_api.rs"]
 mod session_import_api;
+#[path = "shutdown_owner.rs"]
+mod shutdown_owner;
+pub use shutdown_owner::CoreOwnerShutdownStatus;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
 #[path = "thread_resolution.rs"]
@@ -894,13 +897,19 @@ impl Engine {
                 agent::WorkerThreadStatus::Running => return true,
                 agent::WorkerThreadStatus::Returned => &mut totals.returned,
                 agent::WorkerThreadStatus::Panicked => &mut totals.panicked,
-                agent::WorkerThreadStatus::Unclassified => &mut totals.unclassified,
+                agent::WorkerThreadStatus::Unclassified => return true,
             };
             *counter = counter.saturating_add(1);
             false
         });
         ProviderWorkersStatus {
             running: self.provider_workers.len(),
+            unclassified: totals.unclassified
+                + self
+                    .provider_workers
+                    .iter()
+                    .filter(|w| w.status() == agent::WorkerThreadStatus::Unclassified)
+                    .count() as u64,
             ..*totals
         }
     }

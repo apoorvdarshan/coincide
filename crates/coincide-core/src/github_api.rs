@@ -300,13 +300,19 @@ impl ReadWorkers {
                 WorkerThreadStatus::Running => return true,
                 WorkerThreadStatus::Returned => &mut self.totals.returned,
                 WorkerThreadStatus::Panicked => &mut self.totals.panicked,
-                WorkerThreadStatus::Unclassified => &mut self.totals.unclassified,
+                WorkerThreadStatus::Unclassified => return true,
             };
             *counter = counter.saturating_add(1);
             false
         });
         ReadShutdownStatus {
             running: self.workers.len(),
+            unclassified: self.totals.unclassified
+                + self
+                    .workers
+                    .iter()
+                    .filter(|(_, w)| w.status() == crate::agent::WorkerThreadStatus::Unclassified)
+                    .count() as u64,
             ..self.totals
         }
     }

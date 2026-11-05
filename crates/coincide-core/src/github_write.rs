@@ -278,11 +278,17 @@ impl WriteWorkers {
                 WorkerThreadStatus::Running => state.workers.push(completion),
                 WorkerThreadStatus::Returned => state.totals.returned += 1,
                 WorkerThreadStatus::Panicked => state.totals.panicked += 1,
-                WorkerThreadStatus::Unclassified => state.totals.unclassified += 1,
+                WorkerThreadStatus::Unclassified => state.workers.push(completion),
             }
         }
         WriteShutdownStatus {
             running: state.workers.len(),
+            unclassified: state.totals.unclassified
+                + state
+                    .workers
+                    .iter()
+                    .filter(|w| w.status() == crate::agent::WorkerThreadStatus::Unclassified)
+                    .count() as u64,
             ..state.totals
         }
     }

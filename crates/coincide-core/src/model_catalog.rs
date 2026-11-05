@@ -103,7 +103,7 @@ impl ModelCatalog {
                 WorkerThreadStatus::Running => return true,
                 WorkerThreadStatus::Returned => &mut totals.returned,
                 WorkerThreadStatus::Panicked => &mut totals.panicked,
-                WorkerThreadStatus::Unclassified => &mut totals.unclassified,
+                WorkerThreadStatus::Unclassified => return true,
             };
             *counter = counter.saturating_add(1);
             exited.push(id.clone());
@@ -139,6 +139,14 @@ impl ModelCatalog {
         self.poll();
         ShutdownStatus {
             running: self.workers.len(),
+            unclassified: self.shutdown.unclassified
+                + self
+                    .workers
+                    .values()
+                    .filter(|w| {
+                        w.completion.status() == crate::agent::WorkerThreadStatus::Unclassified
+                    })
+                    .count() as u64,
             ..self.shutdown
         }
     }

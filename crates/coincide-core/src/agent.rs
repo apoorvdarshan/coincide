@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU8, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -128,18 +128,41 @@ pub enum WorkerThreadStatus {
 #[derive(Clone)]
 pub struct WorkerCompletion {
     outcome: Arc<AtomicU8>,
+    _worker: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
 }
 impl WorkerCompletion {
-    /// Observe an owned Rust thread without joining on the calling thread.
-    pub(crate) fn observe(worker: thread::JoinHandle<()>) -> Self {
+    /// Trusted Rust owners transfer a real thread handle here. This observes
+    /// thread exit only, never process cleanup or whole-app quiescence.
+    /// Observer startup failure retains the handle and reports Unclassified;
+    /// status and Drop never join on the calling thread.
+    pub fn observe(worker: thread::JoinHandle<()>) -> Self {
+        Self::observe_with(worker, |observe| {
+            thread::Builder::new()
+                .name("coincide-worker-join".into())
+                .spawn(observe)
+        })
+    }
+    fn observe_with(
+        worker: thread::JoinHandle<()>,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>,
+    ) -> Self {
         let outcome = Arc::new(AtomicU8::new(0));
         let joined_outcome = outcome.clone();
+        let retained = Arc::new(Mutex::new(Some(worker)));
+        let owned = retained.clone();
         // is_finished may precede TLS destruction; publish only after join.
-        thread::spawn(move || {
-            let status = if worker.join().is_ok() { 1 } else { 2 };
+        let observer = spawn(Box::new(move || {
+            let worker = owned.lock().unwrap_or_else(|e| e.into_inner()).take();
+            let status = worker.map_or(3, |worker| if worker.join().is_ok() { 1 } else { 2 });
             joined_outcome.store(status, Ordering::Release);
-        });
-        Self { outcome }
+        }));
+        if observer.is_err() {
+            outcome.store(3, Ordering::Release);
+        }
+        Self {
+            outcome,
+            _worker: retained,
+        }
     }
     pub fn status(&self) -> WorkerThreadStatus {
         match self.outcome.load(Ordering::Acquire) {
@@ -154,6 +177,25 @@ pub struct Session {
     pub events: Receiver<Event>,
     control: Sender<Control>,
     completion: WorkerCompletion,
+}
+#[cfg(test)]
+mod completion_owner_tests {
+    use super::*;
+    #[test]
+    fn observer_start_failure_retains_real_worker_without_publishing_exit() {
+        let (release, wait) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = wait.recv();
+        });
+        let observation = WorkerCompletion::observe_with(worker, |_| {
+            Err(std::io::Error::other("synthetic observer failure"))
+        });
+        assert_eq!(observation.status(), WorkerThreadStatus::Unclassified);
+        assert!(observation._worker.lock().unwrap().is_some());
+        release.send(()).unwrap();
+        // Even when the body is allowed to return, no join ACK was observed.
+        assert_eq!(observation.status(), WorkerThreadStatus::Unclassified);
+    }
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
