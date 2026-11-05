@@ -9,13 +9,27 @@ use std::{
 };
 
 const SERVER: &str = r#"
-import base64,json,os,queue,sys,threading,time
+import base64,json,os,queue,socket,sys,threading,time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from socketserver import TCPServer
 from urllib.parse import urlparse,unquote
 assert sys.argv[1:]==['serve','--hostname=127.0.0.1','--port=0']
 assert 'OPENCODE_SERVER_PASSWORD' not in os.environ
 password=os.environ['OPENCODE_PASSWORD'];assert len(password)>=40
 auth='Basic '+base64.b64encode(('opencode:'+password).encode()).decode()
+def mark(stage):
+ with open('fixture-stage','w') as f: f.write(stage)
+mark('imports-ready')
+def forbidden_dns(*args):
+ raise AssertionError('The numeric loopback fixture must not perform reverse DNS')
+socket.getfqdn=forbidden_dns
+class LoopbackServer(ThreadingHTTPServer):
+ def server_bind(self):
+  # HTTPServer.server_bind otherwise calls getfqdn, which can block on hosted
+  # macOS DNS even though the socket itself only needs a numeric loopback host.
+  TCPServer.server_bind(self)
+  self.server_name='127.0.0.1'
+  self.server_port=self.server_address[1]
 frames=queue.Queue();connected=False;prompt=None
 sid='native/id' if RESUME else 'new-session'
 def emit(kind,data): frames.put({'type':kind,'data':dict({'sessionID':sid},**data)})
@@ -34,7 +48,9 @@ class Handler(BaseHTTPRequestHandler):
  def check(self):
   assert self.headers['Authorization']==auth
   assert '?' not in self.path
-  return unquote(urlparse(self.path).path)
+  path=unquote(urlparse(self.path).path)
+  mark(self.command+' '+path)
+  return path
  def do_GET(self):
   global connected
   path=self.check()
@@ -114,7 +130,9 @@ class Handler(BaseHTTPRequestHandler):
    with open('interrupted','w') as f:f.write('yes')
    return self.send({'interrupted':True})
   self.send({},404)
-server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+mark('binding-loopback')
+server=LoopbackServer(('127.0.0.1',0),Handler)
+mark('listening-loopback')
 open('pid','w').write(str(os.getpid()))
 print('opencode server listening on http://127.0.0.1:'+str(server.server_port),flush=True)
 server.serve_forever()
@@ -151,11 +169,20 @@ fn fixture(mode: &str, resume: bool, image: bool) -> (tempfile::TempDir, Session
     );
     (dir, session)
 }
-fn receive(session: &Session) -> Event {
+fn receive(session: &Session, directory: &std::path::Path) -> Event {
     session
         .events
         .recv_timeout(Duration::from_secs(8))
-        .expect("OpenCode fixture timed out")
+        .unwrap_or_else(|error| {
+            panic!(
+                "OpenCode fixture timed out ({error}); last stage: {}",
+                fixture_stage(directory)
+            );
+        })
+}
+fn fixture_stage(directory: &std::path::Path) -> String {
+    fs::read_to_string(directory.join("fixture-stage"))
+        .unwrap_or_else(|_| "before imports completed".into())
 }
 fn reap(dir: &std::path::Path) {
     let pid = fs::read_to_string(dir.join("pid"))
@@ -175,7 +202,7 @@ fn opencode_new_and_resumed_turns_stream_approve_ask_and_preserve_images() {
         let mut frames = Vec::new();
         let mut native = None;
         loop {
-            match receive(&session) {
+            match receive(&session, dir.path()) {
                 Event::Session(id) => native = Some(id),
                 Event::Frame(frame) => {
                     match frame["method"].as_str(){
@@ -215,7 +242,7 @@ fn opencode_lost_stream_or_provider_failure_never_reports_finished() {
     for mode in ["disconnect", "failed"] {
         let (dir, session) = fixture(mode, false, false);
         loop {
-            match receive(&session) {
+            match receive(&session, dir.path()) {
                 Event::Finished => panic!("Incomplete turn reported success"),
                 Event::Failed(error) => {
                     assert!(
@@ -242,13 +269,17 @@ fn opencode_stop_withdraws_prompt_interrupts_and_reaps_owned_server() {
         let (dir, session) = fixture(mode, false, false);
         let deadline = Instant::now() + Duration::from_secs(8);
         while !dir.path().join("prompt-ready").exists() {
-            assert!(Instant::now() < deadline);
+            assert!(
+                Instant::now() < deadline,
+                "OpenCode prompt was not admitted; last stage: {}",
+                fixture_stage(dir.path())
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         let stopped = Instant::now();
         session.stop();
         loop {
-            match receive(&session) {
+            match receive(&session, dir.path()) {
                 Event::Finished => break,
                 Event::Failed(error) => panic!("{error}"),
                 _ => {}
@@ -268,7 +299,7 @@ fn opencode_missing_or_active_native_sessions_never_fork_or_run() {
     for mode in ["missing", "active"] {
         let (dir, session) = fixture(mode, true, false);
         loop {
-            match receive(&session) {
+            match receive(&session, dir.path()) {
                 Event::Failed(_) => break,
                 Event::Finished => panic!("Refused resume reported success"),
                 Event::Session(_) => panic!("Refused resume replaced session"),
