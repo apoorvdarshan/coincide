@@ -56,6 +56,37 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- 5a5962b passed all six Rust CI jobs (42124866672), packaging validation
+  (42124866812) and general CI (42124866470). The subsequent outcome-diagnostic
+  and cookie-notification changes passed 511 core unit tests and every core
+  integration target, strict feature core Clippy, 351 desktop unit tests and all
+  four desktop integration targets (19, 10, 14, 11). Their remote CI is pending.
+- Native cookie acceptance on immutable dfdcc88 passed choosing the synthetic
+  closed SQLite source, host/count review, explicit four-cookie import, exact
+  asynchronous native readback and a new unselected profile with no automatic
+  navigation. After explicit profile selection, actual owned HTTP requests and
+  page JavaScript proved HttpOnly visibility, path restrictions, expired-cookie
+  exclusion and cross-host isolation (127.0.0.1 versus localhost). Normal native
+  Quit exited zero; exact thread/context/image bytes, unknown data and source
+  bytes were preserved, with zero provider attempts. The owned server exited
+  normally and Computer Use was released. WebKit delivered the Secure cookie
+  over loopback HTTP; this is an observed platform behavior, not a successful
+  HTTPS delivery check. Trusted HTTPS, domain/subdomain scope, restart persistence
+  and full browser migration remain unverified. An event-driven notification fix
+  now publishes parsed cookie review/cleanup changes without periodic repaint;
+  its two regressions pass, but native retesting of that small fix is pending.
+- Separate signed/notarized/stapled V6 helper fixtures passed actual native
+  eligibility. The positive fixture reached Armed, then native menu Quit flushed
+  and closed its actual isolated Store/control workers, observed their joins,
+  received clean-consent acknowledgement and exited normally with status zero.
+  Installation did not complete: the helper disappeared with an Armed journal
+  and consent retained, while the original target fingerprint stayed unchanged.
+  A subsequent actual stopped-target probe refused live processes whose native
+  executable paths were unavailable; those user processes were preserved. The
+  exact historical helper rejection was not recorded. New bounded diagnostic
+  outcome/stage receipts address that observability gap without changing guards,
+  recovery authority or exchange behavior. Positive installation and rollback
+  remain blocked; the product helper stays unavailable by default.
 - f8d1103 passed all six Rust CI jobs (42117508742) and packaging validation
   (42117508764), plus general CI (42117508739). The earlier 50f1aa1 Linux desktop job stalled installing system
   packages before compilation and was superseded by this fully passing run.
