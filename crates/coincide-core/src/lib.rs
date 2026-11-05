@@ -45,6 +45,9 @@ pub mod github_threads;
 
 pub mod updater_install;
 
+#[cfg(feature = "preview-updater-helper")]
+pub mod updater_helper;
+
 pub mod computer_use;
 
 pub mod legacy_media_recovery;
