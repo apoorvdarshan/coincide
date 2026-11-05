@@ -25,6 +25,8 @@ mod github_threads_engine;
 pub mod computer_use_engine;
 #[path = "thread_resolution.rs"]
 mod thread_resolution;
+#[path = "active_thread.rs"]
+mod active_thread;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]
@@ -64,7 +66,7 @@ pub struct Engine {
     pub requested_open: Option<String>,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
     pub shutdown: bool,
-    pub active_thread: Option<String>,
+    active_thread: Option<String>,
     pub ui_available: bool,
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
@@ -425,8 +427,8 @@ impl Engine {
             },
             "threads.open" => {
                 let id = required(p, "threadId")?;
-                self.store.thread(id)?;
-                self.requested_open = Some(id.into());
+                self.set_active_thread(Some(id.into()))?;
+                self.requested_open = self.active_thread.clone();
                 self.revision += 1;
                 Ok(json!({"requested":true}))
             }
