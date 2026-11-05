@@ -61,7 +61,8 @@ ${shared([
     "DEV",
     "https://dev.to/apoorvdarshan/swift-appkit-no-electron-coding-agents-in-a-native-mac-app-52l9",
     "the companion article"
-  ]
+  ],
+  ["daily.dev", "https://daily.dev/posts/swift-appkit-no-electron-switch-agents-stay-native--mgzsqutbd", "the motion preview, shared"]
 ])}
 <p><a href="/download">Download Coincide</a> or read the <a href="https://github.com/apoorvdarshan/coincide">MIT-licensed source on GitHub</a>.</p>
 `,
