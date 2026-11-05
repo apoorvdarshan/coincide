@@ -14,6 +14,16 @@ fn main() -> Result<()> {
     let mut args = invocation.args.clone();
     let cmd = args[0].clone();
     let cmd = cmd.as_str();
+    let raw_request = if cmd == "api" {
+        Some(
+            read_api_request(&mut std::io::stdin()).unwrap_or_else(|error| {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }),
+        )
+    } else {
+        None
+    };
     let data = control::data_directory()?;
     if cmd == "serve" {
         let engine = Arc::new(Mutex::new(Engine::new(Store::open(
@@ -181,12 +191,7 @@ fn main() -> Result<()> {
                 }
                 _ => {
                     params["path"] = json!(argument(2)?);
-                    params["lineOffset"] = json!(
-                        args.get(3)
-                            .map(|s| s.parse::<u64>())
-                            .transpose()?
-                            .unwrap_or(0)
-                    );
+                    params["lineOffset"] = json!(invocation.file_offset.unwrap_or(0));
                     "files.read"
                 }
             };
@@ -213,19 +218,24 @@ fn main() -> Result<()> {
             json!({"threadId":argument(1)?,"text":argument(2)?}),
         ),
         "stop" => ("agent.stop", json!({"threadId":argument(1)?})),
-        "provider" => (
-            "agent.select",
-            json!({"threadId":argument(1)?,"provider":argument(2)?,"model":args.get(3)}),
-        ),
+        "provider" => {
+            let mut params = json!({"threadId":argument(1)?,"provider":argument(2)?});
+            if let Some(model) = args.get(3) {
+                params["model"] = json!(model);
+            }
+            ("agent.select", params)
+        }
         "pending" => ("agent.pending", json!({"threadId":argument(1)?})),
         "answer" => (
             "agent.answer",
-            json!({"threadId":argument(1)?,"requestId":argument(2)?,"answers":serde_json::from_str::<Value>(&argument(3)?)?}),
+            json!({"threadId":argument(1)?,"requestId":argument(2)?,"answers":invocation.payload.clone().context("Missing prepared answers")?}),
         ),
         "browser" => {
             let thread = argument(1)?;
-            let mut params: Value = serde_json::from_str(&argument(2)?)?;
-            anyhow::ensure!(params.is_object(), "Browser action must be a JSON object");
+            let mut params = invocation
+                .payload
+                .clone()
+                .context("Missing prepared browser action")?;
             params["threadId"] = json!(thread);
             let socket = data.join("control.sock");
             let response = control::request(
@@ -278,16 +288,16 @@ fn main() -> Result<()> {
             json!({"threadId":argument(1)?,"requestId":argument(2)?,"decision":if cmd=="approve"{"accept"}else{"decline"}}),
         ),
         "api" => {
-            let mut body = String::new();
-            std::io::stdin()
-                .take(4 * 1024 * 1024 + 1)
-                .read_to_string(&mut body)?;
-            let request: Value = serde_json::from_str(&body)?;
-            return output(control::request(&data.join("control.sock"), &request)?);
+            return output(control::request(
+                &data.join("control.sock"),
+                raw_request
+                    .as_ref()
+                    .context("Missing prepared API request")?,
+            )?);
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/done, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }
@@ -360,6 +370,8 @@ struct Invocation {
     offset: Option<u64>,
     wait: bool,
     timeout: std::time::Duration,
+    payload: Option<Value>,
+    file_offset: Option<u64>,
 }
 impl Invocation {
     fn parse(raw: Vec<String>) -> Result<Self> {
@@ -386,6 +398,8 @@ impl Invocation {
             offset: None,
             wait: false,
             timeout: std::time::Duration::from_secs(1800),
+            payload: None,
+            file_offset: None,
         };
         let mut args = raw.iter().skip(1);
         let mut literal = false;
@@ -457,8 +471,35 @@ impl Invocation {
             !(command == "send" && seen.contains("--timeout") && !parsed.wait),
             "--timeout needs --wait on send"
         );
+        if command == "file" {
+            parsed.file_offset = parsed
+                .args
+                .get(3)
+                .map(|offset| {
+                    offset
+                        .parse::<u64>()
+                        .context("File offset must be an integer")
+                })
+                .transpose()?;
+        }
+        if matches!(command, "browser" | "answer") {
+            let index = if command == "browser" { 2 } else { 3 };
+            let payload: Value =
+                serde_json::from_str(&parsed.args[index]).context("Invalid command JSON")?;
+            if command == "browser" {
+                anyhow::ensure!(payload.is_object(), "Browser action must be a JSON object");
+            }
+            parsed.payload = Some(payload);
+        }
         Ok(parsed)
     }
+}
+
+fn read_api_request(input: &mut impl Read) -> Result<Value> {
+    let mut body = String::new();
+    input.take(4 * 1024 * 1024 + 1).read_to_string(&mut body)?;
+    anyhow::ensure!(body.len() <= 4 * 1024 * 1024, "API request exceeds 4 MiB");
+    serde_json::from_str(&body).context("Invalid API request JSON")
 }
 
 fn request_result(socket: &std::path::Path, method: &str, params: Value) -> Result<Value> {
@@ -550,7 +591,7 @@ fn wait_for_thread(
 ) -> Result<()> {
     let started = std::time::Instant::now();
     loop {
-        let transcript = request_result(
+        request_result(
             socket,
             "threads.read",
             json!({"threadId":thread,"itemLimit":100}),
@@ -576,6 +617,14 @@ fn wait_for_thread(
             );
             continue;
         };
+        // Each control request can advance the engine. Fetch the transcript
+        // after the terminal-state observation so the emitted reply includes
+        // completion/input that arrived during pending/status polling.
+        let transcript = request_result(
+            socket,
+            "threads.read",
+            json!({"threadId":thread,"itemLimit":100}),
+        )?;
         emit_result(
             json!({"threadID":thread,"state":state,"transcript":transcript,"pending":pending,"running":running}),
         )?;
