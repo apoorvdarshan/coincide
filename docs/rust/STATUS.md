@@ -377,3 +377,31 @@ fake mutation was sent. Detail actions are now pinned above a bounded scrolling
 metadata surface; the correction needs a new immutable native candidate and
 confirmation-flow acceptance. Read/ledger initialization passed, but those do
 not establish COMMENT or merge UI acceptance.
+
+## Continuing partial-feature closure
+
+The coordinator now keeps explicit active ownership in [PARALLEL.md](PARALLEL.md),
+including follow-through through integration, tests, native acceptance and CI.
+Workers are reassigned after completing their owned flow; status requests do not
+pause implementation.
+
+Strict composer selection/capability validation and searchable Settings are
+mounted. Fourteen focused core contract/API tests and 154 combined desktop tests
+passed; unsupported stored options are displayed and rejected rather than silently
+dropped, and immutable bot choices cannot be edited. Runtime-backed catalog work
+is separate and uses explicit refresh only.
+
+The historical-media service's eight initial opener/CAS/receipt groups and strict
+core Clippy passed. It uses an existing-only DB connection and a Rust-local overlay;
+SQLite may still coordinate WAL sidecars/read marks, so no zero-sidecar-write claim
+is made. Native restoration UI and durable recovery ownership remain pending.
+
+Candidate9's synthetic GitHub COMMENT flow passed native cancel, exact summary/body
+review, one dispatch per explicit confirmation, success/history persistence,
+uncertain outcome locking and restart without resubmission. Palette opening,
+Settings routing, Escape restoring composer focus and explicit projectless creation
+also passed in a task-only app bundle. Native terminal tests verified independent
+pane input, application-cursor framing, keyboard copy/bracketed paste, and a real
+macOS dead-key preedit with zero premature PTY bytes followed by one UTF-8 commit.
+A split resize feedback loop was found and fixed by retaining the last coherent
+frame during resize; a new candidate is required to accept that correction.

@@ -36,3 +36,5 @@ pub mod updater;
 pub mod legacy_media;
 
 pub mod composer_selection;
+
+pub mod legacy_media_service;
