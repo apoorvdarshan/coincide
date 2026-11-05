@@ -69,8 +69,8 @@ impl Client {
         );
         let view = self
             .view
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Steering state unavailable"))?
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Steering state is busy or unavailable"))?
             .clone();
         ensure!(
             view.assistant.is_none(),
@@ -112,11 +112,9 @@ impl Server {
                 view.assistant = Some(p["itemId"].as_str().unwrap_or("").to_owned());
             }
             Some("item/started") => {
-                view.assistant = if p["item"]["type"] == "agentMessage" {
-                    Some(p["item"]["id"].as_str().unwrap_or("").to_owned())
-                } else {
-                    None
-                };
+                if p["item"]["type"] == "agentMessage" {
+                    view.assistant = Some(p["item"]["id"].as_str().unwrap_or("").to_owned());
+                }
             }
             Some("item/completed") => {
                 if view.assistant.as_deref() == p["item"]["id"].as_str() {

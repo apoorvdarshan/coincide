@@ -110,3 +110,20 @@ fn timeout_remains_unknown_and_late_owned_rpc_error_cannot_fail_current_turn() {
     assert!(server.next_request().is_none());
     assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Rejected);
 }
+
+#[test]
+fn interleaved_tool_items_do_not_clear_open_assistant_and_client_contention_fails_busy() {
+    let (client, mut server) = pair();
+    server.activate("thread", "turn");
+    server.observe(&json!({"method":"item/started","params":{"threadId":"thread","turnId":"turn","item":{"id":"answer","type":"agentMessage"}}}));
+    for kind in ["commandExecution", "reasoning"] {
+        server.observe(&json!({"method":"item/started","params":{"threadId":"thread","turnId":"turn","item":{"id":"other","type":kind}}}));
+        server.observe(&json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"other","type":kind}}}));
+        assert!(client.submit("must not interrupt answer").is_err());
+    }
+    server.observe(&json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"answer","type":"agentMessage"}}}));
+    let held = client.view.lock().unwrap();
+    assert!(client.submit("busy view").is_err());
+    drop(held);
+    assert!(client.submit("after answer boundary").is_ok());
+}
