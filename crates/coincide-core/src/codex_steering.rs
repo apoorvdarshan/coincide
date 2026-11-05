@@ -43,6 +43,7 @@ pub(crate) struct Server {
     view: Arc<Mutex<View>>,
     commands: Receiver<Command>,
     pending: Option<Pending>,
+    retired: Vec<String>,
 }
 pub(crate) fn pair() -> (Client, Server) {
     let view = Arc::new(Mutex::new(View::default()));
@@ -56,6 +57,7 @@ pub(crate) fn pair() -> (Client, Server) {
             view,
             commands: receiver,
             pending: None,
+            retired: Vec::new(),
         },
     )
 }
@@ -131,6 +133,7 @@ impl Server {
             .is_some_and(|p| p.started.elapsed() >= Duration::from_secs(30))
         {
             let pending = self.pending.take().unwrap();
+            self.retired.push(pending.id);
             let _ = pending.reply.try_send(Outcome::Unknown);
         }
         let command = match self.commands.try_recv() {
@@ -140,7 +143,7 @@ impl Server {
         let valid = self.view.lock().is_ok_and(|view| {
             view.identity.as_ref() == Some(&command.identity) && view.assistant.is_none()
         });
-        if !valid || self.pending.is_some() {
+        if !valid || self.pending.is_some() || self.retired.len() >= 32 {
             let _ = command.reply.try_send(Outcome::Rejected);
             return None;
         }
@@ -155,6 +158,12 @@ impl Server {
         Some(request)
     }
     pub(crate) fn response(&mut self, frame: &Value) -> bool {
+        if frame["id"]
+            .as_str()
+            .is_some_and(|id| self.retired.iter().any(|old| old == id))
+        {
+            return true;
+        }
         if !self
             .pending
             .as_ref()
@@ -163,6 +172,7 @@ impl Server {
             return false;
         }
         let pending = self.pending.take().unwrap();
+        self.retired.push(pending.id);
         let outcome = if frame.get("error").is_some() {
             Outcome::Rejected
         } else if frame["result"]["turnId"] == pending.identity.1 {

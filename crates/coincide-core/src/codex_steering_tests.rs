@@ -88,3 +88,25 @@ sys.stdin.readline()
     }
     assert!(session.steer("after completion").is_err());
 }
+
+#[test]
+fn timeout_remains_unknown_and_late_owned_rpc_error_cannot_fail_current_turn() {
+    let (client, mut server) = pair();
+    server.activate("native-thread", "native-turn");
+    let ticket = client.submit("uncertain text").unwrap();
+    let request = server.next_request().unwrap();
+    server.pending.as_mut().unwrap().started = Instant::now() - Duration::from_secs(31);
+    assert!(server.next_request().is_none());
+    assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Unknown);
+    assert!(server.response(&json!({"id":request["id"],"error":{"message":"late rejection"}})));
+    assert!(server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}})));
+    for _ in 0..31 {
+        let ticket = client.submit("bounded").unwrap();
+        let request = server.next_request().unwrap();
+        server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+        assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Accepted);
+    }
+    let ticket = client.submit("over per-turn bound").unwrap();
+    assert!(server.next_request().is_none());
+    assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Rejected);
+}
