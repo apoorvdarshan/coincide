@@ -8,6 +8,8 @@ struct SelectionDraft {
     original: Value,
     access: Value,
     interaction: Value,
+    proposed_access: Value,
+    proposed_interaction: Value,
     provider: String,
     account: Value,
     custom: String,
@@ -21,6 +23,8 @@ impl SelectionDraft {
             original: selection.clone(),
             access: thread["accessMode"].clone(),
             interaction: thread["interactionMode"].clone(),
+            proposed_access: mode_or_default(&thread["accessMode"], "approval"),
+            proposed_interaction: mode_or_default(&thread["interactionMode"], "build"),
             provider: text(selection, "provider"),
             account: selection["accountID"].clone(),
             custom: if model == "default" {
@@ -56,13 +60,66 @@ impl SelectionDraft {
                 && !model.chars().any(char::is_control),
             "Custom model ID must be nonempty, at most 512 bytes, contain no control characters and not start with a hyphen"
         );
+        anyhow::ensure!(
+            self.proposed_interaction != "plan" || model != "default",
+            "Plan needs an explicit model ID; choose a custom or provider-reported model first"
+        );
         Ok(
             json!({"threadId":thread["id"],"provider":self.provider,"model":model,"accountId":self.account,
             "effort":self.original["effort"],"speed":self.original["speed"],
-            "accessMode":if self.access.is_null(){json!("approval")}else{self.access.clone()},
-            "interactionMode":if self.interaction.is_null(){json!("build")}else{self.interaction.clone()}}),
+            "accessMode":self.proposed_access,
+            "interactionMode":self.proposed_interaction}),
         )
     }
+}
+fn mode_or_default(raw: &Value, default: &str) -> Value {
+    if raw.is_null() {
+        json!(default)
+    } else {
+        raw.clone()
+    }
+}
+fn advertised_mode(provider: &Value, key: &str, mode: &str) -> bool {
+    let known = match key {
+        "accessModes" => matches!(mode, "approval" | "fullAccess"),
+        "interactionModes" => matches!(mode, "build" | "plan"),
+        _ => false,
+    };
+    known
+        && provider[key]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row == mode))
+}
+fn mode_problem(draft: &SelectionDraft, provider: Option<&Value>) -> Option<String> {
+    let Some(provider) = provider else {
+        return Some("Mode capabilities are unavailable. Proposed choices are retained.".into());
+    };
+    for (key, value, label) in [
+        ("accessModes", &draft.proposed_access, "access"),
+        (
+            "interactionModes",
+            &draft.proposed_interaction,
+            "interaction",
+        ),
+    ] {
+        if !value
+            .as_str()
+            .is_some_and(|mode| advertised_mode(provider, key, mode))
+        {
+            return Some(format!(
+                "Proposed {label} mode {value} is unsupported by this provider. It has been retained; choose a supported mode explicitly."
+            ));
+        }
+    }
+    if draft.proposed_interaction == "plan"
+        && (!draft.use_custom || draft.custom.trim() == "default" || draft.custom.trim().is_empty())
+    {
+        return Some(
+            "Plan needs an explicit model ID; choose a custom or provider-reported model first."
+                .into(),
+        );
+    }
+    None
 }
 #[derive(Default)]
 pub(super) struct ComposerSelection {
@@ -262,6 +319,12 @@ impl Coincide {
                 .drafts
                 .get(&text(thread, "id"))
                 .ok_or_else(|| anyhow::anyhow!("Selection draft unavailable"))?;
+            let provider = self.selection_ui.capabilities["providers"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
+            if let Some(reason) = mode_problem(draft, provider) {
+                anyhow::bail!(reason);
+            }
             let params = draft.params(thread)?;
             call(&self.engine, "agent.select", params)
         })();
@@ -446,7 +509,9 @@ impl Coincide {
         } else {
             text(saved, "modelID")
         };
-        let pending = draft.provider != text(&draft.original, "provider")
+        let pending = draft.proposed_access != mode_or_default(&draft.access, "approval")
+            || draft.proposed_interaction != mode_or_default(&draft.interaction, "build")
+            || draft.provider != text(&draft.original, "provider")
             || draft.account != draft.original["accountID"]
             || (if draft.use_custom {
                 draft.custom.trim()
@@ -459,16 +524,28 @@ impl Coincide {
         } else {
             account_label(&saved["accountID"])
         };
+        let access = mode_or_default(&thread["accessMode"], "approval");
+        let interaction = mode_or_default(&thread["interactionMode"], "build");
+        let access_label = match access.as_str() {
+            Some("approval") => "Approval required".to_owned(),
+            Some("fullAccess") => "Full access (no app approvals)".to_owned(),
+            _ => format!("Unsupported access {access}"),
+        };
+        let interaction_label = match interaction.as_str() {
+            Some("build") => "Build".to_owned(),
+            Some("plan") => "Plan".to_owned(),
+            _ => format!("Unsupported interaction {interaction}"),
+        };
         let summary = format!(
-            "{} · {model} · {account}",
+            "{} · {interaction_label} · {access_label} · {model} · {account}",
             presentation::provider_name(&saved_provider)
         );
         let label = if self.selection_ui.expanded {
-            "Hide model & account"
+            "Hide selection options"
         } else if pending {
-            "Model & account · edits pending"
+            "Selection · edits pending"
         } else {
-            "Model & account"
+            "Selection options"
         };
         let header = div()
             .mb_2()
@@ -483,7 +560,7 @@ impl Coincide {
                     .compact()
                     .tooltip(
                         lock.clone()
-                            .unwrap_or_else(|| "Edit provider, model and account".into()),
+                            .unwrap_or_else(|| "Edit provider, model, account and modes".into()),
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selection_ui.expanded = !this.selection_ui.expanded;
@@ -515,6 +592,65 @@ impl Coincide {
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
         let known_provider = provider.is_some();
+        let draft_mode_problem = mode_problem(draft, provider);
+        let mut modes = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().text_sm().child(format!(
+                "Proposed access: {} · interaction: {}",
+                draft.proposed_access, draft.proposed_interaction
+            )));
+        for (key, choices) in [
+            (
+                "accessModes",
+                vec![
+                    ("approval", "Approval required"),
+                    ("fullAccess", "Full access (no app approvals)"),
+                ],
+            ),
+            (
+                "interactionModes",
+                vec![("build", "Build"), ("plan", "Plan")],
+            ),
+        ] {
+            let mut row = div().flex().flex_wrap().gap_2();
+            for (mode, label) in choices {
+                if !provider.is_some_and(|provider| advertised_mode(provider, key, mode)) {
+                    continue;
+                }
+                let selected = if key == "accessModes" {
+                    draft.proposed_access == mode
+                } else {
+                    draft.proposed_interaction == mode
+                };
+                row = row.child(
+                    Button::new(SharedString::from(format!("selection-mode-{key}-{mode}")))
+                        .label(label)
+                        .when(selected, |button| button.primary())
+                        .disabled(disabled)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.edit_selection(
+                                |draft| {
+                                    if key == "accessModes" {
+                                        draft.proposed_access = json!(mode);
+                                    } else {
+                                        draft.proposed_interaction = json!(mode);
+                                    }
+                                },
+                                cx,
+                            )
+                        })),
+                );
+            }
+            modes = modes.child(row);
+        }
+        if draft.proposed_access == "fullAccess" {
+            modes = modes.child(div().text_xs().child("Full access lets Codex run without app approval prompts. Choose it only for a conversation you trust."));
+        }
+        if draft.proposed_interaction == "plan" {
+            modes = modes.child(div().text_xs().child("Plan needs an explicit model ID and is available for ordinary Codex conversations. It does not send a message when selected."));
+        }
         let draft_account_problem = provider.and_then(|provider| {
             account_problem(provider, &draft.account, &self.selection_ui.accounts)
         });
@@ -566,6 +702,7 @@ impl Coincide {
         let mut pane = div().flex().flex_col().gap_2().mb_2().child(providers)
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
             .child(accounts)
+            .child(modes)
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
@@ -576,7 +713,7 @@ impl Coincide {
             .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some())
+                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -585,7 +722,10 @@ impl Coincide {
                         this.bots_open=false;this.notifications_open=false;this.transcription_open=false;this.credentials_open=false;
                         this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
                     }))))
-            .child(div().text_xs().child("This runtime supports approval access and build interaction only. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
+            .child(div().text_xs().child("Changing a provider keeps the draft model, account and modes until you explicitly choose replacements."));
+        if let Some(reason) = draft_mode_problem {
+            pane = pane.child(div().text_sm().child(reason));
+        }
         if let Some(reason) = draft_account_problem {
             pane = pane.child(div().text_sm().child(reason));
         }
@@ -710,6 +850,123 @@ mod tests {
     use super::*;
     fn thread(selection: Value) -> Value {
         json!({"id":"t","selection":selection,"draft":"untouched"})
+    }
+    fn modes(provider: &str, expanded: bool) -> Value {
+        json!({"provider":provider,"accessModes":if expanded{json!(["approval","fullAccess"])}else{json!(["approval"])},"interactionModes":if expanded{json!(["build","plan"])}else{json!(["build"])}})
+    }
+    #[::core::prelude::v1::test]
+    fn proposed_mode_targets_do_not_replace_saved_stale_baselines() {
+        let mut thread = thread(json!({"provider":"codex","modelID":"explicit-model"}));
+        thread["accessMode"] = json!("approval");
+        thread["interactionMode"] = json!("build");
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_access = json!("fullAccess");
+        draft.proposed_interaction = json!("plan");
+        assert_eq!(draft.access, "approval");
+        assert_eq!(draft.interaction, "build");
+        let params = draft.params(&thread).unwrap();
+        assert_eq!(params["accessMode"], "fullAccess");
+        assert_eq!(params["interactionMode"], "plan");
+        assert!(mode_problem(&draft, Some(&modes("codex", true))).is_none());
+        assert_eq!(thread["draft"], "untouched");
+    }
+    #[::core::prelude::v1::test]
+    fn changed_saved_mode_rejects_even_when_it_matches_proposed_target() {
+        let mut thread = thread(json!({"provider":"codex","modelID":"specific"}));
+        thread["accessMode"] = json!("approval");
+        thread["interactionMode"] = json!("build");
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_access = json!("fullAccess");
+        draft.proposed_interaction = json!("plan");
+        thread["accessMode"] = json!("fullAccess");
+        assert!(draft.params(&thread).is_err());
+        thread["accessMode"] = json!("approval");
+        thread["interactionMode"] = json!("plan");
+        assert!(draft.params(&thread).is_err());
+        assert_eq!(draft.proposed_interaction, "plan");
+    }
+    #[::core::prelude::v1::test]
+    fn expanded_modes_remain_unavailable_until_actual_capabilities_advertise_them() {
+        let thread = thread(json!({"provider":"codex","modelID":"specific"}));
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_access = json!("fullAccess");
+        for provider in [
+            Value::Null,
+            json!({"provider":"codex"}),
+            modes("codex", false),
+        ] {
+            assert!(!advertised_mode(&provider, "accessModes", "fullAccess"));
+            assert!(mode_problem(&draft, Some(&provider)).is_some());
+            assert_eq!(draft.proposed_access, "fullAccess");
+        }
+        assert!(mode_problem(&draft, None).is_some());
+        assert!(!advertised_mode(
+            &json!({"accessModes":["future"]}),
+            "accessModes",
+            "future"
+        ));
+        assert!(mode_problem(&draft, Some(&modes("codex", true))).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn provider_switch_retains_modes_and_account_until_explicit_replacement() {
+        let thread =
+            thread(json!({"provider":"codex","modelID":"specific","accountID":"raw-account"}));
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_access = json!("fullAccess");
+        draft.proposed_interaction = json!("plan");
+        draft.provider = "claude".into();
+        assert!(mode_problem(&draft, Some(&modes("claude", false))).is_some());
+        assert_eq!(draft.proposed_access, "fullAccess");
+        assert_eq!(draft.proposed_interaction, "plan");
+        assert_eq!(draft.custom, "specific");
+        assert_eq!(draft.account, "raw-account");
+        draft.proposed_access = json!("approval");
+        draft.proposed_interaction = json!("build");
+        assert!(mode_problem(&draft, Some(&modes("claude", false))).is_none());
+        assert_eq!(draft.params(&thread).unwrap()["accountId"], "raw-account");
+    }
+    #[::core::prelude::v1::test]
+    fn plan_requires_explicit_model_and_never_substitutes_a_default() {
+        let thread = thread(json!({"provider":"codex","modelID":"default"}));
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_interaction = json!("plan");
+        let provider = modes("codex", true);
+        assert!(draft.params(&thread).is_err());
+        assert!(mode_problem(&draft, Some(&provider)).is_some());
+        draft.use_custom = true;
+        for model in ["", "default", " default "] {
+            draft.custom = model.into();
+            assert!(draft.params(&thread).is_err());
+            assert!(mode_problem(&draft, Some(&provider)).is_some());
+        }
+        draft.custom = "explicit-model".into();
+        assert_eq!(draft.params(&thread).unwrap()["model"], "explicit-model");
+        assert!(mode_problem(&draft, Some(&provider)).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn unknown_saved_modes_and_locks_are_preserved_without_downgrade() {
+        let mut thread = thread(json!({"provider":"codex","modelID":"specific"}));
+        thread["accessMode"] = json!({"future":"mode"});
+        thread["interactionMode"] = json!("future");
+        let before = thread.clone();
+        let draft = SelectionDraft::from_thread(&thread);
+        assert_eq!(draft.proposed_access, thread["accessMode"]);
+        assert_eq!(draft.proposed_interaction, "future");
+        assert!(mode_problem(&draft, Some(&modes("codex", true))).is_some());
+        assert_eq!(thread, before);
+        let caps = json!({"provenance":"static_runtime_contract","locked":true,"lockReason":"Bot/import lock","providers":[modes("codex",true)]});
+        assert_eq!(
+            capability_lock(&caps, false).as_deref(),
+            Some("Bot/import lock")
+        );
+        assert!(capability_lock(&caps, true).is_some());
+        let baseline = SelectionDraft::from_thread(
+            &json!({"selection":{"provider":"codex","modelID":"default"}}),
+        );
+        assert!(baseline.access.is_null());
+        assert!(baseline.interaction.is_null());
+        assert_eq!(baseline.proposed_access, "approval");
+        assert_eq!(baseline.proposed_interaction, "build");
     }
     #[::core::prelude::v1::test]
     fn custom_model_and_raw_account_survive_provider_choice_and_default_toggle() {
