@@ -7,8 +7,9 @@ use super::updater_lifecycle::{
 use anyhow::{Result, bail, ensure};
 use coincide_core::updater::{Operation, SignatureStatus, State, Updater};
 use gpui_kit::{
-    component::{Disableable, button::*},
-    *,
+    Context, IntoElement, ParentElement, Render, Styled, Window,
+    component::{Disableable, button::Button},
+    div,
 };
 
 #[derive(Default)]
