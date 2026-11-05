@@ -4,6 +4,9 @@
 mod credential_bridge;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
+#[cfg(any(target_os = "macos", test))]
+#[path = "browser_cookie_import.rs"]
+mod cookie_import;
 pub use shutdown::BrowserShutdownStatus;
 use shutdown::TrackedEvaluation;
 
