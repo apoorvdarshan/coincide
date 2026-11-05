@@ -7,6 +7,7 @@ mod command_palette;
 mod composer_attachments;
 mod composer_selection;
 mod computer_use;
+mod computer_use_mount;
 mod computer_use_settings;
 mod credential_settings;
 mod credentials;
@@ -295,6 +296,9 @@ struct Coincide {
     settings_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
+    computer_use_mount: Option<computer_use_mount::Mount>,
+    computer_use_open: bool,
+    computer_use_status: String,
     media: legacy_media_mount::ParentMedia,
     bots_open: bool,
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
@@ -589,11 +593,19 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (computer_use_mount, computer_use_status) =
+            match computer_use_mount::Mount::new(window, cx) {
+                Ok(mount) => (Some(mount), String::new()),
+                Err(error) => (None, format!("Computer Use unavailable: {error}")),
+            };
         let media = legacy_media_mount::ParentMedia::new(media_config, window, cx);
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
-            weak.update(cx, |this, cx| this.request_media_close(window, cx))
-                .unwrap_or(false)
+            weak.update(cx, |this, cx| {
+                this.shutdown_computer_use(cx);
+                this.request_media_close(window, cx) && this.computer_use_shutdown_ready()
+            })
+            .unwrap_or(false)
         });
         let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
         let composer = cx.new(|cx| {
@@ -894,6 +906,9 @@ impl Coincide {
             settings_open: false,
             settings_search,
             settings_section: Default::default(),
+            computer_use_mount,
+            computer_use_open: false,
+            computer_use_status,
             media,
             bots_open: false,
             bot_panel,
@@ -979,7 +994,100 @@ impl Coincide {
         if let Some(id) = this.threads.first().map(|t| t.id.clone()) {
             this.select(&id, window, cx);
         }
+        this.poll_computer_use(cx);
         this
+    }
+    fn poll_computer_use(&mut self, cx: &mut Context<Self>) {
+        let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let ready = if let Ok(mut engine) = self.engine.try_lock() {
+            // An explicit pending open is processed by the native view before
+            // any old selected-thread request can enter the runtime.
+            if engine
+                .requested_open
+                .as_ref()
+                .is_some_and(|requested| Some(requested.as_str()) != selected.as_deref())
+            {
+                false
+            } else if engine.active_thread() == selected.as_deref() {
+                true
+            } else {
+                match engine.set_active_thread(selected) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        let _ = engine.set_active_thread(None);
+                        self.computer_use_status =
+                            format!("Computer Use selection unavailable: {error}");
+                        false
+                    }
+                }
+            }
+        } else {
+            false
+        }; // guard released before Mount/panel/runtime submission
+        if ready && let Some(mount) = &mut self.computer_use_mount {
+            mount.poll(&self.engine, cx);
+            if let Some(error) = mount.last_error() {
+                self.computer_use_status = format!("Computer Use request unavailable: {error:?}");
+            }
+        }
+    }
+    fn shutdown_computer_use(&mut self, cx: &mut Context<Self>) {
+        if let Some(mount) = &mut self.computer_use_mount {
+            mount.shutdown(&self.engine);
+            mount.poll(&self.engine, cx);
+        }
+    }
+    fn computer_use_shutdown_ready(&self) -> bool {
+        self.computer_use_mount
+            .as_ref()
+            .is_none_or(|mount| mount.shutdown_accounted())
+    }
+    fn computer_use_settings_visible(&self) -> bool {
+        self.settings_open
+            && self.computer_use_open
+            && !self.bots_open
+            && !self.transcription_open
+            && !self.notifications_open
+            && !self.credentials_open
+            && !self.browser_settings_open
+            && !self.media.opened
+            && !self.provider_settings.open
+            && !self.session_import_open
+    }
+    fn computer_use_settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut pane = div()
+            .id("computer-use-settings-surface")
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(
+                Button::new("computer-use-settings-back")
+                    .label("Back to Settings")
+                    .disabled(self.media.close_requested || self.media.shutdown_requested)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.computer_use_open = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .p_2()
+                    .text_sm()
+                    .child(self.computer_use_status.clone()),
+            );
+        if let Some(mount) = &self.computer_use_mount {
+            pane = pane.child(
+                div()
+                    .id("computer-use-settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(mount.panel()),
+            );
+        }
+        pane.into_any_element()
     }
     fn browser_action(
         &mut self,
@@ -1322,7 +1430,13 @@ impl Coincide {
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
                 let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
-                    engine.active_thread = Some(id.into());
+                    if engine.active_thread() != Some(id) {
+                        if let Err(error) = engine.set_active_thread(Some(id.into())) {
+                            let _ = engine.set_active_thread(None);
+                            self.status =
+                                format!("Selected conversation authority unavailable: {error}");
+                        }
+                    }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
                     false
@@ -1740,6 +1854,7 @@ impl Coincide {
                 cx,
             ),
             C::OpenSettings => {
+                self.computer_use_open = false;
                 self.media.opened = false;
                 self.browser_settings_open = false;
                 self.bots_open = false;
@@ -1979,18 +2094,34 @@ impl Coincide {
             self.media.shutdown_requested = true;
         }
         if self.media.close_requested || self.media.shutdown_requested {
+            self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
-            if self.media_shutdown_ready(cx) {
+            if self.media_shutdown_ready(cx) && self.computer_use_shutdown_ready() {
                 if self.media.shutdown_requested {
                     cx.quit();
                 } else {
                     window.remove_window();
                 }
-            } else {
+            } else if !self.media_shutdown_ready(cx) {
+                self.computer_use_open = false;
                 self.show_media_shutdown(window, cx);
+            } else {
+                self.settings_open = true;
+                self.computer_use_open = true;
+                self.media.opened = false;
+                self.browser_settings_open = false;
+                self.credentials_open = false;
+                self.bots_open = false;
+                self.notifications_open = false;
+                self.transcription_open = false;
+                self.provider_settings.open = false;
+                self.session_import_open = false;
+                self.computer_use_status="Closing is waiting for Computer Use shutdown accounting. No native actions are retried.".into();
+                cx.notify();
             }
             return;
         }
+        self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
@@ -2014,7 +2145,13 @@ impl Coincide {
                 return;
             }
             engine.ui_available = self.browser.is_some();
-            engine.active_thread = self.selected.as_ref().map(|v| text(v, "id"));
+            let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
+            if engine.active_thread() != selected.as_deref()
+                && let Err(error) = engine.set_active_thread(selected)
+            {
+                let _ = engine.set_active_thread(None);
+                self.status = format!("Selected conversation authority unavailable: {error}");
+            }
             if self.attachment_root.is_none() {
                 self.attachment_root = engine.store.data_directory().ok();
             }
@@ -3147,6 +3284,8 @@ impl Render for Coincide {
                             .into_any_element()
                     })
                     .into_any_element()
+            } else if self.computer_use_settings_visible() {
+                self.computer_use_settings_pane(cx)
             } else if self.media_settings_visible() {
                 self.media_settings_pane(cx)
             } else if self.browser_settings_visible() {
