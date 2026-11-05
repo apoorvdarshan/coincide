@@ -19,10 +19,7 @@ use std::{
     },
     path::{Path, PathBuf},
     ptr::{null, null_mut},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -453,9 +450,7 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
     })
     .context("Cannot reserve private control pipe; another instance or name collision may exist")?;
     verify_owner(pipe.as_raw_handle(), &endpoint.sid)?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopping = stop.clone();
-    let worker = thread::spawn(move || {
+    Ok(Server::spawn(move |stopping| {
         let _endpoint = endpoint;
         while !stopping.load(Ordering::Relaxed) {
             match accept(&pipe, &stopping, &engine) {
@@ -511,11 +506,7 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
                 DisconnectNamedPipe(pipe.as_raw_handle());
             }
         }
-    });
-    Ok(Server {
-        stop,
-        worker: Some(worker),
-    })
+    }))
 }
 
 fn connect(endpoint: &Endpoint, deadline: Instant) -> Result<OwnedHandle> {
