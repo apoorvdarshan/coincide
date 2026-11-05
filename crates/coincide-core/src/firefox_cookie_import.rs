@@ -237,11 +237,11 @@ impl CleanupCustody {
         self.cleanup_with(|path| fs::remove_dir_all(path))
     }
     fn cleanup_with(&mut self, mut remove: impl FnMut(&Path) -> std::io::Result<()>) -> bool {
-        if let Some(connection) = self.connection.take() {
-            if let Err((connection, _)) = connection.close() {
-                self.connection = Some(connection);
-                return false;
-            }
+        if let Some(connection) = self.connection.take()
+            && let Err((connection, _)) = connection.close()
+        {
+            self.connection = Some(connection);
+            return false;
         }
         match fs::symlink_metadata(&self.directory) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
