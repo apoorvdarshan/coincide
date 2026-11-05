@@ -42,3 +42,5 @@ pub mod legacy_media_service;
 pub mod model_catalog;
 
 pub mod github_threads;
+
+pub mod updater_install;

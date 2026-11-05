@@ -405,3 +405,37 @@ pane input, application-cursor framing, keyboard copy/bracketed paste, and a rea
 macOS dead-key preedit with zero premature PTY bytes followed by one UTF-8 commit.
 A split resize feedback loop was found and fixed by retaining the last coherent
 frame during resize; a new candidate is required to accept that correction.
+
+## Integrated follow-through batch (2026-11-05)
+
+The prior native acceptance remains valid for its recorded candidates. Full
+feature parity is still approximately one-third verified; source delivery alone
+never checks a broad row. Current paired source integrates transcript Find and
+stable row reveal, browser profiles/password revocation and inspection shielding,
+explicit bounded model discovery, inline review threads and historical-media UI.
+The combined desktop suite passed 196 tests (171 unit, 10 private-browser integration, nine credential integration and six inline-review integration); native acceptance for these newest flows remains open.
+
+Verified focused Mac checks: historical-media service 10/10, shell parser 8/8,
+terminal rendering 20/20, terminal selection 8/8, and GitHub threads Engine routing
+4/4. Zsh launch fixture passed; Bash synthetic cwd fixture failed and is assigned
+to its owner. Model catalog initially passed 7/8, exposing quadratic partial-frame
+scanning; the production fix and an additional work-bound regression are integrated
+and passed all nine catalog tests on rerun. Strict core Clippy then found two shell-style issues, assigned to the terminal owner. Newer mounts still require their own combined rerun.
+
+CI at 5a8a806 passed desktop compilation and packaging but stopped all core jobs
+at formatting. The two initializer layouts are formatted in the next batch. Last
+all-five-Rust-jobs-green remains 4c43fe4. New Linux review-thread validation passed
+six fake-process groups plus strict core Clippy on the exact recorded parent453
+plus feature overlay, not the newest entire parent.
+
+Candidate10 built from 5a8a806 with the terminal resize fix. Native resize retest
+remains unverified: the synthetic app window did not become key, so the existing
+visibility guard correctly suppressed the workspace. Foreground retries stopped,
+synthetic app quit, and original Swift/Rust apps were preserved. Workflow setup,
+transport operations and persisted state checks now prioritize CLI/API/headless
+fixtures; physical focus/IME/selection/layout still need brief native checks.
+
+Two additional isolated workers own cross-platform/headless integration and
+durable media recovery. Recovery work must preserve every copied identity and
+uncertain outcome, verify durable ownership before acknowledging receipts, and
+never delete media automatically. Work not yet persisted remains unprotected.

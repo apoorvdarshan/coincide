@@ -16,6 +16,8 @@ pause implementation. All current workers use `gpt-6.1-sol`.
 | Credentials thread | Browser profiles and password approval/settings | browser.rs, credentials/credential_settings, new browser_settings | Synthetic profiles/vault/pages, Allow/Deny/revocation, no secret leakage |
 | Host thread | Computer Use adapter, broker and permission UI | new core/desktop computer_use modules and native shim | Default-off/inert startup, strict grants/tokens, injected tests and compile |
 | Packaging thread | Installer/helper transaction and rollback | updater_install.rs, staged updater handoff, optional settings module | Temporary-filesystem/process recovery tests; real trust adapter code |
+| CI integration thread | Cross-platform triage and headless control workflow coverage | new core tests/headless_workflows.rs; source audit reports | Unix socket/Windows pipe workflows, restart isolation and CI |
+| Media recovery thread | Durable receipt ownership and shutdown handoff | new core/desktop legacy_media_recovery modules and synthetic tests | Exact batch/identity persistence, no acknowledgement on uncertain sync, no automatic deletion |
 | Organization thread | Historical image workflow and overlay | legacy_media_service.rs and named Store opener/CAS helpers | Existing-only DB open, source/overlay conflicts, partial receipts and renderer verification |
 
 ## Shared resources and integration
@@ -35,9 +37,19 @@ pause implementation. All current workers use `gpt-6.1-sol`.
 
 ## Current lane queue
 
-1. Composer contract/API tests: passed 7 + 7 on Mac.
-2. Paired desktop compile: fix stale provider-settings model binding, then rerun.
-3. Historical-media service/opener/CAS fixtures after reviewed checkpoint.
-4. Native terminal resize regression on next immutable integrated candidate.
-5. Register and validate subsequent worker deliveries as they arrive; keep
-   independent work running while builds and CI execute.
+1. Combined desktop source integrated: Find + main mount, browser profile and
+   password settings, catalog UI and inline review reader. Compilation exposed
+   owned source errors; fixes are integrated and the next combined run is active.
+2. Mac core: media service 10/10, shell parser 8/8, terminal rendering 20/20,
+   terminal selection 8/8 and GitHub threads Engine routes 4/4 passed. Bash shim
+   integration has one failing synthetic cwd case; terminal owner is fixing it.
+3. Model catalog 7/8 initially passed. Production incremental frame scan fixes
+   quadratic work; rerun now covers nine tests. Strict Clippy rerun queued.
+4. Linux inline threads: six fake-process groups and strict core Clippy passed
+   on the recorded parent453 snapshot plus feature overlay. Full current parent
+   validation remains separate.
+5. Native candidate10 built; resize acceptance remains unverified because the
+   synthetic window failed to become key. Preserve native guards. Use CLI/API
+   for workflow setup and state checks; reserve brief CUA for physical UI evidence.
+6. Next independent mounts: GitHub threads, media panel with durable ownership,
+   Computer Use and updater lifecycle. Keep owners responsible through acceptance.
