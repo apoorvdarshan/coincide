@@ -1314,7 +1314,7 @@ mod tests {
         });
         (result, stored, calls)
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn standalone_mode_uses_saved_tuple_and_clears_only_after_selector_ack() {
         let original = command_thread("  /plan\n");
         let (result, stored, calls) = fake_command(
@@ -1339,7 +1339,7 @@ mod tests {
             ]
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn model_command_opens_controls_without_selecting_a_model_or_provider() {
         let original = command_thread("/model");
         let (result, stored, calls) = fake_command(
@@ -1354,7 +1354,7 @@ mod tests {
         assert_eq!(stored["draft"], "");
         assert!(!calls.iter().any(|method| method == "agent.select"));
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn locks_unsupported_provider_and_default_plan_never_select_clear_send_or_queue() {
         for case in ["locked", "provider", "default"] {
             let mut original = command_thread("/plan");
@@ -1386,7 +1386,7 @@ mod tests {
             .is_err()
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn selection_failure_or_clear_failure_retains_exact_command_draft() {
         for fault in ["select", "clear"] {
             let original = command_thread(" \t/plan\n");
@@ -1400,7 +1400,7 @@ mod tests {
             assert_eq!(stored["draft"], original["draft"]);
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn late_draft_or_reference_change_is_not_cleared_after_selection_ack() {
         for fault in ["late-draft", "late-content"] {
             let original = command_thread("/plan");
@@ -1422,7 +1422,7 @@ mod tests {
             );
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn model_opens_picker_without_revalidating_mode_but_keeps_authoritative_locks() {
         let mut original = command_thread("/model");
         original["interactionMode"] = json!("unsupported-current-mode");

@@ -602,7 +602,7 @@ impl Engine {
                     }
                     // A repair capability is separate from the locked/proof state.
                     // It permits only removing effort, never sending unproved work.
-                    result["repairClearAvailable"] = json!(thread["rustBotContext"].is_null()
+                    result["repairClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
                         && thread["botID"].is_null() && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
                         && crate::composer_selection::repair_clear_effort(&json!({"threadId":id,"effort":null}),&thread).is_ok());
