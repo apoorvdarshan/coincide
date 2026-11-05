@@ -123,32 +123,22 @@ pub enum WorkerThreadStatus {
 }
 
 /// Independent observer; dropping a Session cannot discard this ownership.
-/// The handle is never joined here, including when the observer is dropped.
+/// A dedicated background observer joins the provider thread, including its TLS
+/// destructors, before publishing an outcome. Status and Drop never join/wait.
 #[derive(Clone)]
 pub struct WorkerCompletion {
-    worker: Arc<thread::JoinHandle<()>>,
     outcome: Arc<AtomicU8>,
 }
 impl WorkerCompletion {
     pub fn status(&self) -> WorkerThreadStatus {
-        if !self.worker.is_finished() {
-            return WorkerThreadStatus::Running;
-        }
         match self.outcome.load(Ordering::Acquire) {
+            0 => WorkerThreadStatus::Running,
             1 => WorkerThreadStatus::Returned,
             2 => WorkerThreadStatus::Panicked,
             _ => WorkerThreadStatus::Unclassified,
         }
     }
 }
-struct WorkerExit(Arc<AtomicU8>);
-impl Drop for WorkerExit {
-    fn drop(&mut self) {
-        self.0
-            .store(if thread::panicking() { 2 } else { 1 }, Ordering::Release);
-    }
-}
-
 pub struct Session {
     pub events: Receiver<Event>,
     control: Sender<Control>,
@@ -218,18 +208,22 @@ impl Session {
         let (events_tx, events) = mpsc::channel();
         let (control, commands) = mpsc::channel();
         let outcome = Arc::new(AtomicU8::new(0));
-        let worker_outcome = outcome.clone();
         let worker = thread::spawn(move || {
-            let _exit = WorkerExit(worker_outcome);
             work(commands, &events_tx);
+        });
+        let joined_outcome = outcome.clone();
+        // is_finished may become true before TLS destructors have completed.
+        // Only join's return acknowledges the provider thread's exit. Joining
+        // lives exclusively on this independent observer, never the Engine/UI
+        // caller or a Session/WorkerCompletion destructor.
+        thread::spawn(move || {
+            let status = if worker.join().is_ok() { 1 } else { 2 };
+            joined_outcome.store(status, Ordering::Release);
         });
         Self {
             events,
             control,
-            completion: WorkerCompletion {
-                worker: Arc::new(worker),
-                outcome,
-            },
+            completion: WorkerCompletion { outcome },
         }
     }
     #[cfg(test)]
