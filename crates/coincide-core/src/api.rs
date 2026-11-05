@@ -336,6 +336,14 @@ impl Engine {
                     terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
                 } else {terminal.snapshot()}
             },
+            "terminal.prompt_marks"=>{
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all="camelCase",deny_unknown_fields)]
+                struct Request { terminal_id:String, revision:u64 }
+                let request:Request=serde_json::from_value(p.clone())?;
+                let terminal=&mut self.terminals.get_mut(&request.terminal_id).context("Terminal not found")?.1;
+                terminal.prompt_marks(request.revision)
+            }
             "terminal.scroll"=>{
                 // Reject misspelled fields and invalid deltas before changing the
                 // viewport. Revision is required even for absolute/no-op moves.
@@ -383,7 +391,7 @@ impl Engine {
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
@@ -1717,3 +1725,51 @@ mod tests {
 #[cfg(test)]
 #[path = "composer_selection_tests.rs"]
 mod composer_selection_tests;
+
+#[cfg(all(test,unix))]
+mod terminal_prompt_api_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn prompt_marks_route_is_strict_revision_checked_and_read_only() {
+        let dir=tempfile::tempdir().unwrap();
+        let shell=dir.path().join("prompt-api-fixture");
+        // A fixed synthetic executable, never a user's shell/profile. Octal
+        // bytes emit one prompt marker, then an exact readiness title.
+        std::fs::write(&shell,"#!/bin/sh\nstty -echo\nprintf '\\033]133;A\\007$ fixture\\033]2;prompt-api-ready\\007'\nIFS= read -r finish\n").unwrap();
+        std::fs::set_permissions(&shell,std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut terminal=crate::terminal::Terminal::spawn(dir.path(),shell.to_str().unwrap(),4,20).unwrap();
+        let deadline=Instant::now()+Duration::from_secs(3);
+        let frame=loop {
+            let frame=terminal.snapshot().unwrap();
+            if frame["title"]=="prompt-api-ready" {break frame;}
+            assert!(Instant::now()<deadline,"synthetic prompt fixture did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let mut engine=Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let owner=text(&engine.execute("threads.create",&json!({})).unwrap(),"id");
+        let terminal_id=Uuid::new_v4().to_string();
+        engine.terminals.insert(terminal_id.clone(),(owner.clone(),terminal));
+        let revision=frame["revision"].as_u64().unwrap();
+        let engine_revision=engine.revision;
+        let scope=json!({"terminalId":terminal_id,"revision":revision});
+        let marks=engine.execute("terminal.prompt_marks",&scope).unwrap();
+        assert_eq!(marks,json!({"revision":revision,"marks":[{"line":0,"col":0,"displayOffset":0}]}));
+        assert_eq!(engine.revision,engine_revision);
+        assert!(engine.execute("app.capabilities",&json!({})).unwrap().as_array().unwrap().contains(&json!("terminal.prompt_marks")));
+        for (key,value) in [("revision",Value::Null),("revision",json!(-1)),("revision",json!("0")),("revision",json!(revision+1)),("terminalId",json!("unknown")),("unexpected",json!(true))] {
+            let mut invalid=scope.clone();invalid[key]=value;
+            assert!(engine.execute("terminal.prompt_marks",&invalid).is_err(),"accepted {invalid}");
+        }
+        let unchanged=engine.execute("terminal.read",&json!({"terminalId":terminal_id})).unwrap();
+        assert_eq!(unchanged["revision"],revision);
+        assert_eq!(unchanged["rows"],frame["rows"]);
+        engine.execute("terminal.resize",&json!({"terminalId":terminal_id,"rows":5,"cols":20})).unwrap();
+        assert!(engine.execute("terminal.prompt_marks",&scope).is_err());
+        let current=engine.execute("terminal.read",&json!({"terminalId":terminal_id})).unwrap();
+        assert!(engine.execute("terminal.prompt_marks",&json!({"terminalId":terminal_id,"revision":current["revision"]})).is_ok());
+        engine.execute("terminal.close",&json!({"terminalId":terminal_id})).unwrap();
+        assert!(engine.execute("terminal.prompt_marks",&scope).is_err());
+        assert_eq!(engine.store.thread(&owner).unwrap()["id"],owner);
+    }
+}
