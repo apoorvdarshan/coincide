@@ -21,6 +21,8 @@ mod bot_engine;
 mod github_engine;
 #[path = "github_threads_engine.rs"]
 mod github_threads_engine;
+#[path = "computer_use_engine.rs"]
+pub mod computer_use_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]
@@ -50,6 +52,7 @@ struct Running {
 pub struct Engine {
     model_catalog: crate::model_catalog::ModelCatalog,
     github_threads: github_threads_engine::State,
+    computer_use: computer_use_engine::State,
     pub store: Store,
     idle_sleep: idle_sleep::IdleSleep,
     github: github_engine::GithubState,
@@ -104,6 +107,7 @@ impl Engine {
         Self {
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             github_threads: github_threads_engine::State::default(),
+            computer_use: computer_use_engine::State::default(),
             store,
             idle_sleep,
             notification_events,
@@ -157,6 +161,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if computer_use_engine::METHODS.contains(&method) {
+            return self.computer_use_command(method, p, None);
+        }
         if github_threads_engine::METHODS.contains(&method) {
             return self.github_threads_command(method, p);
         }
@@ -315,7 +322,7 @@ impl Engine {
                 }
                 Ok(json!({"ready":false}))
             }
-            "app.quit"=>{ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.quit"=>{ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
@@ -395,6 +402,7 @@ impl Engine {
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status"
                 ];
+                methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("bots.conversations.create");
@@ -1109,6 +1117,7 @@ impl Engine {
             .context("Choose a project working directory first")
     }
     pub fn poll(&mut self) {
+        self.computer_use_expire();
         if self.model_catalog.poll() {
             self.revision += 1;
         }
