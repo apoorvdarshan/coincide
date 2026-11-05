@@ -396,6 +396,66 @@ impl Store {
         Ok(())
     }
 
+    /// Create one native bot chat only if the complete source envelope still
+    /// matches. Source documents/original bytes and imported markers stay untouched.
+    pub fn create_bot_thread_if_unchanged(
+        &mut self,
+        expected_bots: Option<&Value>,
+        thread: &Value,
+    ) -> Result<()> {
+        let id = validate_thread(thread)?;
+        ensure!(
+            thread["items"].as_array().is_some_and(Vec::is_empty)
+                && thread["sessions"]
+                    .as_object()
+                    .is_some_and(serde_json::Map::is_empty)
+                && thread["draft"] == ""
+                && thread["rustBotContext"].is_object(),
+            "Bot conversation must start empty with a context snapshot"
+        );
+        let bytes = serde_json::to_vec(thread)?;
+        ensure!(
+            bytes.len() <= 512 * 1024,
+            "Bot conversation snapshot too large"
+        );
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='bots.json'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let current: Option<Value> = if let Some(local) = local {
+            Some(serde_json::from_str(&local)?)
+        } else {
+            let source: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='bots.json'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            source.as_deref().map(serde_json::from_slice).transpose()?
+        };
+        ensure!(
+            current.as_ref() == expected_bots,
+            "Bot document changed; reload before creating a conversation"
+        );
+        let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)", [id], |r| r.get(0))?;
+        ensure!(!duplicate, "Bot conversation UUID already exists");
+        tx.execute(
+            "INSERT INTO threads(id,document) VALUES (?1,?2)",
+            params![id, String::from_utf8(bytes)?],
+        )?;
+        index_thread(&tx, thread)?;
+        cache_thread(&tx, thread, true)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
         let id = Uuid::new_v4().to_string().to_uppercase();
         let now = swift_timestamp();
