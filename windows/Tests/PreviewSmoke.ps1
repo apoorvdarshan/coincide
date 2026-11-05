@@ -369,7 +369,23 @@ try {
             }
             return $null
         }
-        $observed=@{control=$null;more=$null}
+        function Find-ScrollableItem($parent,[string]$wanted) {
+            if(!$parent){return $null}
+            $filter=New-Object Windows.Automation.AndCondition(
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,$wanted)),
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))
+            foreach($candidate in $parent.FindAll([Windows.Automation.TreeScope]::Descendants,$filter)){
+                try{
+                    $pattern=$null
+                    if($candidate.Current.IsEnabled -and $candidate.Current.IsOffscreen -and
+                        $candidate.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern,[ref]$pattern)){
+                        return @{control=$candidate;pattern=$pattern}
+                    }
+                }catch [Windows.Automation.ElementNotAvailableException]{}catch [InvalidOperationException]{}
+            }
+            return $null
+        }
+        $observed=@{control=$null;more=$null;scrollIssued=$false}
         $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests')
         Wait-Until {
             $observed.control=Find-Invokable $script:window $id
@@ -387,6 +403,15 @@ try {
             $observed.more.pattern.Invoke()
             Wait-Until {
                 $observed.control=Find-Invokable ([Windows.Automation.AutomationElement]::RootElement) $id
+                if(!$observed.control -and !$observed.scrollIssued){
+                    $item=Find-ScrollableItem ([Windows.Automation.AutomationElement]::RootElement) $id
+                    if($item){
+                        # Reveal at most once inside this same deadline. Record before dispatch:
+                        # an uncertain/stale scroll must not become a repeated UI action.
+                        $observed.scrollIssued=$true
+                        $item.pattern.ScrollIntoView()
+                    }
+                }
                 $null -ne $observed.control
             } "Cannot observe the invokable overflow command $id"
         }

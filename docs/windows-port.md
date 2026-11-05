@@ -18,8 +18,9 @@ with real recognition and remaining voice parity still unverified. These decisio
 - [x] Instruction Git-root correction: **80 native checks** pass with both normal and real 8.3 TEMP paths; nested/junction/forged-root refusal remains covered.
 - [x] Prepared-host helper portability: **63 actual filesystem/ACL checks pass in each** of Windows PowerShell 5.1 and PowerShell 7 in CI.
 - [x] Native runtime shutdown acceptance: **45 RPC, 102 Codex, 50 Claude and 28 ConPTY checks passed and the processes exited** after the synchronized predicate fixes; success reports now follow owned-session teardown.
-- [ ] Exact-revision Windows CI: the latest app compiled/linked, then the new IPC fixture failed after 18 checks because it preconnected a disconnected listener before rearming it. The fixture setup correction requires a fresh run; native UI acceptance did not run.
-- [ ] Completed-connect deadline race: the scoped IPC correction and deterministic owned-pipe regressions require Windows CI. This is not yet a verified fix for the original queued-message failure.
+- [x] C++ build/core/runtime CI at `3cc5a43`: **3,507 assertions across 66 suites** passed. Host entry/bootstrap use the restrictive-job guard cases (3 and 8); this does not establish unrestricted hosted readiness. PowerShell guard counts remain separate.
+- [ ] Full Windows CI/native UI: **17 app flows** completed before the Passwords command remained below the open toolbar overflow viewport. The single supported-scroll driver correction requires a fresh run; the 20 native panel suites were not reached.
+- [x] Completed-connect deadline correction: **67 IPC checks** passed, retaining all 45 original checks plus 22 actual-pipe boundary cases. This does not establish the original physical queued-message failure fixed.
 - [ ] Find in the current conversation: native message search, visible excerpts and next/previous navigation are implemented, with **32 scanner checks passing on both portable Clang and Windows**, and the app compiles; native UI acceptance is pending.
 - [ ] Further physical validation: the ASUS Windows peer is offline. The last baseline comparison result has not been retrieved.
 - [ ] Initial-marker/missing-host-generation owner recovery and the remaining feature/platform acceptance listed below.
