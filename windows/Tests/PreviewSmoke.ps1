@@ -551,13 +551,20 @@ try {
     if ($box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'next draft') { throw 'Stopping lost the draft typed during the turn.' }
     $checks += 'Stop interrupts the active turn and preserves the next draft'
 
+    $beforeUntitledIDs = @((Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json).threads.id)
     Invoke-Control 'NewChat'
     Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The second untitled conversation did not open.'
-    $list = Find-Control $script:window 'Threads'
     $sameTitle = New-Object Windows.Automation.AndCondition(
         (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem)),
         (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $codex[0].title)))
-    if ($list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -ne 2) { throw 'Identical conversation titles do not have separate accessible rows.' }
+    # The previous conversation already has a Codex status. Observe the new saved
+    # identity and realized UIA rows before accepting the queued New Chat action.
+    Wait-Until {
+        $current = Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $created = @($current.threads | Where-Object {$_.provider -eq 'codex' -and $_.id -notin $beforeUntitledIDs})
+        $list = Find-Control $script:window 'Threads'
+        $created.Count -eq 1 -and $list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -eq 2
+    } 'Identical conversation titles do not have separate accessible rows.'
     $checks += 'Identical conversation titles retain separate accessible sidebar rows'
 
     $scheduledFile = Join-Path $data "threads\$scheduledThread.json"
