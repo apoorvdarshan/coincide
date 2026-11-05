@@ -43,6 +43,11 @@ pub struct NativeDecision {
     id: Uuid,
     allow: bool,
 }
+impl NativeDecision {
+    pub(crate) fn is_allowed(&self) -> bool {
+        self.allow
+    }
+}
 pub struct ApprovalView {
     prompt: ApprovalPrompt,
     decisions: SyncSender<NativeDecision>,

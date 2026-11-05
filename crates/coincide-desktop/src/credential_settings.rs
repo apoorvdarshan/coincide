@@ -15,6 +15,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     time::{Duration, Instant},
@@ -106,9 +107,14 @@ fn accounts(source: &CredentialSource) -> Result<Vec<Account>, Failure> {
 struct AccountCommand {
     source: CredentialSource,
     account: String,
+    epoch: Arc<AtomicU64>,
+    expected_epoch: u64,
 }
 impl VaultCommand for AccountCommand {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
+        if self.epoch.load(Ordering::Acquire) != self.expected_epoch {
+            return Err(Failure::StalePage);
+        }
         if self.source.manager == Manager::OnePassword {
             let mut scoped = args.to_vec();
             scoped.extend(["--account", self.account.as_str()]);
@@ -141,6 +147,8 @@ pub struct CredentialSettings {
     page: Option<PageBinding>,
     fill_available: bool,
     revision: u64,
+    epoch: Arc<AtomicU64>,
+    thread: Option<String>,
     busy: bool,
     client: Option<Client>,
     logins: Vec<Login>,
@@ -164,6 +172,8 @@ impl CredentialSettings {
                 page: None,
                 fill_available: false,
                 revision: 0,
+                epoch: Arc::new(AtomicU64::new(0)),
+                thread: None,
                 busy: false,
                 client: None,
                 logins: vec![],
@@ -179,6 +189,7 @@ impl CredentialSettings {
     }
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+        self.epoch.store(self.revision, Ordering::Release);
         self.approval = None;
         self.client = None;
         self.logins.clear();
@@ -196,9 +207,33 @@ impl CredentialSettings {
             self.invalidate();
             self.page = page;
             self.fill_available = fill_available;
-            self.status = "Page changed. Refresh matching logins for the current page.".into();
+            self.status = "Page or browser capability changed. Previous login requests were revoked; refresh matching logins for this page.".into();
             cx.notify();
         }
+    }
+    /// Parent supplies the actual selected thread before page/permit polling.
+    pub fn set_context(
+        &mut self,
+        thread: Option<String>,
+        page: Option<PageBinding>,
+        fill_available: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread != thread {
+            self.invalidate();
+            self.thread = thread;
+            self.status = "Thread changed. Previous login requests were revoked.".into();
+            cx.notify();
+        }
+        self.set_page(page, fill_available, cx);
+    }
+    fn revoke_request(&mut self, reason: &str) {
+        self.invalidate();
+        self.status = reason.into();
+    }
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.revoke_request("Login request cancelled. Any uncommitted fill was revoked; a previously committed renderer action cannot be undone. An active CLI read may finish in the background.");
+        cx.notify();
     }
     fn connect(&mut self, source: usize, cx: &mut Context<Self>) {
         if self.busy {
@@ -249,6 +284,8 @@ impl CredentialSettings {
             AccountCommand {
                 source,
                 account: selected.id,
+                epoch: self.epoch.clone(),
+                expected_epoch: self.revision,
             },
         ));
         let sender = self.sender.clone();
@@ -337,6 +374,12 @@ impl CredentialSettings {
             let Some(pending) = self.approval.take() else {
                 return;
             };
+            if !decision.is_allowed() {
+                self.status =
+                    "Login request denied. No individual password or code was requested.".into();
+                cx.notify();
+                return;
+            }
             if !self.fill_available {
                 self.status =
                     "Private credential filling is unavailable on this browser backend.".into();
@@ -371,6 +414,7 @@ impl CredentialSettings {
 }
 impl Drop for CredentialSettings {
     fn drop(&mut self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
         if let Some(scope) = self.active_scope.take() {
             scope.revoke();
         }
@@ -439,6 +483,12 @@ impl Render for CredentialSettings {
                     .on_click(cx.listener(move |this, _, _, cx| this.load_account(index, cx))),
             );
         }
+        panel = panel.child(
+            Button::new("credential-cancel-request")
+                .label("Cancel login request")
+                .disabled(!self.busy && self.approval.is_none() && self.active_scope.is_none())
+                .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+        );
         panel = panel
             .child(SharedString::from(
                 self.page
@@ -500,6 +550,8 @@ mod tests {
         let scoped = AccountCommand {
             source,
             account: list[0].id.clone(),
+            epoch: Arc::new(AtomicU64::new(0)),
+            expected_epoch: 0,
         };
         assert_eq!(scoped.run(&["item", "list"]), Ok(b"[]".to_vec()));
         assert_eq!(runner.calls.lock().unwrap().len(), 2);
@@ -517,5 +569,86 @@ mod tests {
         assert!(settings.approval.is_none());
         assert!(runner.calls.lock().unwrap().is_empty());
         assert_eq!(settings.sources[0].label(), "1Password");
+    }
+}
+
+#[cfg(test)]
+mod revocation_tests {
+    use super::*;
+    use std::sync::Mutex;
+    struct NeverGet(Mutex<Vec<Vec<String>>>);
+    impl VaultCommand for NeverGet {
+        fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(args.iter().map(|s| s.to_string()).collect());
+            Err(Failure::Unavailable)
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn revoked_epoch_never_dispatches_individual_secret_or_totp_commands() {
+        let runner = Arc::new(NeverGet(Mutex::new(vec![])));
+        let epoch = Arc::new(AtomicU64::new(4));
+        let scoped = AccountCommand {
+            source: CredentialSource {
+                manager: Manager::Bitwarden,
+                command: runner.clone(),
+            },
+            account: "current".into(),
+            epoch: epoch.clone(),
+            expected_epoch: 4,
+        };
+        epoch.store(5, Ordering::Release);
+        assert_eq!(
+            scoped.run(&["get", "item", "synthetic-id"]),
+            Err(Failure::StalePage)
+        );
+        assert_eq!(
+            scoped.run(&["get", "totp", "synthetic-id"]),
+            Err(Failure::StalePage)
+        );
+        assert!(runner.0.lock().unwrap().is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn cancel_clears_metadata_and_revokes_workers_without_starting_another() {
+        let (mut settings, _jobs) = CredentialSettings::new(vec![]);
+        settings.busy = true;
+        settings.logins.push(Login {
+            id: "synthetic".into(),
+            title: "Fixture".into(),
+            username: "synthetic-user".into(),
+        });
+        let prior = settings.epoch.load(Ordering::Acquire);
+        settings.revoke_request("synthetic cancellation");
+        assert!(settings.logins.is_empty());
+        assert!(settings.client.is_none());
+        assert!(settings.approval.is_none());
+        assert!(
+            settings.busy,
+            "wait for existing command to exit rather than run concurrent vault CLI commands"
+        );
+        assert_ne!(settings.epoch.load(Ordering::Acquire), prior);
+        assert_eq!(settings.status, "synthetic cancellation");
+    }
+    #[::core::prelude::v1::test]
+    fn dropping_panel_revokes_remaining_vault_command_epoch() {
+        let (settings, _jobs) = CredentialSettings::new(vec![]);
+        let runner = Arc::new(NeverGet(Mutex::new(vec![])));
+        let scoped = AccountCommand {
+            source: CredentialSource {
+                manager: Manager::Bitwarden,
+                command: runner.clone(),
+            },
+            account: "current".into(),
+            epoch: settings.epoch.clone(),
+            expected_epoch: settings.revision,
+        };
+        drop(settings);
+        assert_eq!(
+            scoped.run(&["get", "item", "synthetic-id"]),
+            Err(Failure::StalePage)
+        );
+        assert!(runner.0.lock().unwrap().is_empty());
     }
 }
