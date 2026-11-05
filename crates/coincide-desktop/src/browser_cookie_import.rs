@@ -99,7 +99,6 @@ mod native {
         NSDate, NSDictionary, NSHTTPCookie, NSHTTPCookiePropertyKey, NSMutableDictionary, NSString,
     };
     use objc2_web_kit::{WKHTTPCookieStore, WKWebsiteDataStore};
-    use wry::WebViewExtMacOS;
     pub(in super::super) struct PreparedCookie {
         native: Retained<NSHTTPCookie>,
         input: Cookie,
@@ -126,6 +125,7 @@ mod native {
     }
     pub(in super::super) struct Target {
         store: Retained<WKHTTPCookieStore>,
+        _data_store: Retained<WKWebsiteDataStore>,
         binding: Binding,
         callbacks: Callbacks,
         // Store is released before its counted native-target lease.
@@ -224,12 +224,13 @@ mod native {
                 return Err(Failure::Unavailable);
             }
             let identifier = objc2_foundation::NSUUID::from_bytes(*binding.profile.as_bytes());
-            let store = unsafe {
-                WKWebsiteDataStore::dataStoreForIdentifier(&identifier, mtm).httpCookieStore()
-            };
+            let data_store =
+                unsafe { WKWebsiteDataStore::dataStoreForIdentifier(&identifier, mtm) };
+            let store = unsafe { data_store.httpCookieStore() };
             let lease = callbacks.lifetimes().target();
             Ok(Self {
                 store,
+                _data_store: data_store,
                 binding,
                 callbacks,
                 _lease: lease,
@@ -245,47 +246,8 @@ mod native {
                 input,
             })
         }
-        pub fn new(
-            view: &wry::WebView,
-            binding: Binding,
-            callbacks: Callbacks,
-        ) -> Result<Self, Failure> {
-            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
-            if callbacks.closed() {
-                return Err(Failure::ClosedOrStale);
-            }
-            // Same typed public Wry→WKWebView seam as private credential fill.
-            let view = view.webview().into_super();
-            let store = unsafe { view.configuration().websiteDataStore().httpCookieStore() };
-            let lease = callbacks.lifetimes().target();
-            Ok(Self {
-                store,
-                binding,
-                callbacks,
-                _lease: lease,
-            })
-        }
-        /// Call only after parent validates fresh destination/profile/UI admission.
-        /// A stale context does not dispatch. Once sent, WebKit owns the operation;
-        /// callback silence remains Unknown even if caller closes or times out.
-        pub fn dispatch(&self, input: Cookie, current: &Binding) -> Result<Receipt, Failure> {
-            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
-            if self.callbacks.closed() || *current != self.binding {
-                return Err(Failure::ClosedOrStale);
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| Failure::Unavailable)?
-                .as_secs();
-            if input
-                .expires()
-                .is_some_and(|expiry| expiry < 0 || expiry as u64 <= now)
-            {
-                return Err(Failure::InvalidCookie);
-            }
-            let prepared = self.prepare(input, current)?;
-            self.dispatch_prepared(&prepared, current)
-        }
+        /// Dispatch is irreversible; callback silence remains Unknown. No timeout
+        /// cancels/retries the mutation, and no store is captured by its block.
         pub fn dispatch_prepared(
             &self,
             prepared: &PreparedCookie,
