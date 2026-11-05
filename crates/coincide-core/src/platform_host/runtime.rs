@@ -120,6 +120,43 @@ pub struct HostRuntime {
     handle: Handle,
     worker: Option<JoinHandle<()>>,
 }
+/// Owns the worker join without making the polling thread wait for backend work.
+pub struct PendingShutdown {
+    handle: Handle,
+    // Retained if starting the join thread fails. Dropping a JoinHandle never joins.
+    _worker: Arc<Mutex<Option<JoinHandle<()>>>>,
+    completion: Arc<Mutex<Option<std::result::Result<(), String>>>>,
+    start_error: Option<String>,
+}
+#[derive(Debug, Clone)]
+pub struct ShutdownStatus {
+    pub joined: bool,
+    pub status: Status,
+}
+impl ShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.joined
+            && self.status.phase == Phase::Stopped
+            && self.status.lease == LeaseState::Released
+            && self.status.error.is_none()
+    }
+}
+impl PendingShutdown {
+    pub fn poll(&self) -> ShutdownStatus {
+        let completion = self.completion.lock().unwrap_or_else(|e| e.into_inner());
+        let mut status = self.handle.status();
+        let joined = matches!(&*completion, Some(Ok(())));
+        let error = self.start_error.clone().or_else(|| match &*completion {
+            Some(Err(error)) => Some(error.clone()),
+            _ => None,
+        });
+        if let Some(error) = error {
+            status.lease = LeaseState::Unknown;
+            status.error = Some(error);
+        }
+        ShutdownStatus { joined, status }
+    }
+}
 impl HostRuntime {
     /// Only creates the worker. Its initial policy is disabled. This does not
     /// register a login item, persist settings or enable native inhibition.
@@ -176,6 +213,38 @@ impl HostRuntime {
     }
     pub fn handle(&self) -> Handle {
         self.handle.clone()
+    }
+    /// Stop immediately and transfer the actual join to a separate thread.
+    /// Polling and dropping this owner never join on the caller's thread.
+    pub fn into_pending_shutdown(mut self) -> PendingShutdown {
+        self.handle.request_shutdown();
+        let worker = Arc::new(Mutex::new(self.worker.take()));
+        let completion = Arc::new(Mutex::new(None));
+        let thread_worker = worker.clone();
+        let thread_completion = completion.clone();
+        let started = thread::Builder::new()
+            .name("coincide-idle-host-join".into())
+            .spawn(move || {
+                let worker = thread_worker
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                let result = worker.map_or(Ok(()), |worker| {
+                    worker
+                        .join()
+                        .map_err(|_| "host worker join failed".to_owned())
+                });
+                // Join returns only after worker-local destructors have completed.
+                *thread_completion.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            });
+        PendingShutdown {
+            handle: self.handle.clone(),
+            _worker: worker,
+            completion,
+            start_error: started
+                .err()
+                .map(|_| "start host join worker failed".into()),
+        }
     }
     /// May wait for an in-progress backend call (native startup up to two seconds).
     /// Call off the render thread. Stop status reports cleanup acknowledgement.
@@ -349,6 +418,118 @@ mod tests {
             allow_inhibition: true,
             tick_interval: Duration::from_millis(10),
         }
+    }
+    #[test]
+    fn pending_shutdown_requires_actual_join_after_worker_tls_exit() {
+        struct ExitGate {
+            entered: Arc<AtomicBool>,
+            gate: Arc<(Mutex<bool>, Condvar)>,
+        }
+        impl Drop for ExitGate {
+            fn drop(&mut self) {
+                self.entered.store(true, Ordering::SeqCst);
+                let guard = self.gate.0.lock().unwrap();
+                drop(self.gate.1.wait_while(guard, |blocked| *blocked).unwrap());
+            }
+        }
+        thread_local! { static EXIT: std::cell::RefCell<Option<ExitGate>> = const { std::cell::RefCell::new(None) }; }
+        struct Gated {
+            acquire: Arc<(Mutex<bool>, Condvar)>,
+            exit: Arc<(Mutex<bool>, Condvar)>,
+            entered: Arc<AtomicBool>,
+            calls: Arc<AtomicUsize>,
+            releases: Arc<AtomicUsize>,
+        }
+        impl SleepInhibitor for Gated {
+            fn acquire(&mut self) -> Result<()> {
+                EXIT.with(|slot| {
+                    *slot.borrow_mut() = Some(ExitGate {
+                        entered: self.entered.clone(),
+                        gate: self.exit.clone(),
+                    })
+                });
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let guard = self.acquire.0.lock().unwrap();
+                drop(
+                    self.acquire
+                        .1
+                        .wait_while(guard, |blocked| *blocked)
+                        .unwrap(),
+                );
+                Ok(())
+            }
+            fn release(&mut self) -> Result<()> {
+                self.releases.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+        let acquire = Arc::new((Mutex::new(true), Condvar::new()));
+        let exit = Arc::new((Mutex::new(true), Condvar::new()));
+        let _unblock_acquire = UnlockOnDrop(acquire.clone());
+        let _unblock_exit = UnlockOnDrop(exit.clone());
+        let entered = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let releases = Arc::new(AtomicUsize::new(0));
+        let runtime = HostRuntime::spawn(
+            Gated {
+                acquire: acquire.clone(),
+                exit: exit.clone(),
+                entered: entered.clone(),
+                calls: calls.clone(),
+                releases: releases.clone(),
+            },
+            settings(),
+        )
+        .unwrap();
+        runtime.handle().submit(policy()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while calls.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        let before = releases.load(Ordering::SeqCst);
+        let pending = runtime.into_pending_shutdown();
+        assert!(!pending.poll().ready());
+        assert_eq!(releases.load(Ordering::SeqCst), before);
+        *acquire.0.lock().unwrap() = false;
+        acquire.1.notify_all();
+        while !entered.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        let state = pending.poll();
+        assert_eq!(state.status.phase, Phase::Stopped);
+        assert_eq!(state.status.lease, LeaseState::Released);
+        assert!(
+            !state.joined,
+            "Stopped/release precedes TLS teardown and actual join"
+        );
+        assert!(!state.ready());
+        *exit.0.lock().unwrap() = false;
+        exit.1.notify_all();
+        while !pending.poll().joined {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(pending.poll().ready());
+    }
+    #[test]
+    fn pending_shutdown_release_error_remains_unknown_after_join() {
+        let backend = fake();
+        backend.fail_release.store(true, Ordering::SeqCst);
+        let pending = HostRuntime::spawn(backend, settings())
+            .unwrap()
+            .into_pending_shutdown();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !pending.poll().joined {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        let state = pending.poll();
+        assert_eq!(state.status.phase, Phase::Stopped);
+        assert_eq!(state.status.lease, LeaseState::Unknown);
+        assert!(state.status.error.is_some());
+        assert!(!state.ready());
     }
     #[test]
     fn default_gate_prevents_acquisition_and_drop_stops_cloned_handles() {

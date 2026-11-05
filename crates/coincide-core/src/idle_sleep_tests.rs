@@ -183,3 +183,18 @@ fn acquire_failure_is_visible_unacknowledged_and_timer_retries_without_new_comma
         "Engine drop must release its worker lease"
     );
 }
+
+#[test]
+fn shutdown_without_runtime_is_inert_and_update_cannot_restart() {
+    let fixture = tempfile::tempdir().unwrap();
+    let mut engine = Engine::new(Store::open(&fixture.path().join("state.sqlite")).unwrap());
+    let probe = injected(&mut engine);
+    engine.idle_sleep.request_shutdown();
+    assert!(engine.idle_sleep.poll_shutdown().ready());
+    engine.idle_sleep.enabled = true;
+    engine.idle_sleep.update(1, false);
+    engine.idle_sleep.request_shutdown();
+    assert!(engine.idle_sleep.poll_shutdown().ready());
+    assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
+    assert_eq!(probe.acquires.load(Ordering::SeqCst), 0);
+}
