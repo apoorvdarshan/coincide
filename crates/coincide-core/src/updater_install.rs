@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -1463,6 +1463,7 @@ mod tests {
         SignatureStatus, State, Transport, TrustReport, TrustVerifier,
     };
     use serde_json::{Value, json};
+    use std::io::Write;
     use std::{
         collections::BTreeSet,
         io::Cursor,
