@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+#[path = "browser_upload.rs"]
+mod upload;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserRequest {
@@ -42,6 +45,10 @@ pub enum BrowserAction {
         text: String,
         #[serde(default)]
         clear: bool,
+    },
+    Upload {
+        selector: String,
+        files: Vec<String>,
     },
     Scroll {
         #[serde(default)]
@@ -119,6 +126,7 @@ impl BrowserRequest {
                         | BrowserAction::Click { .. }
                         | BrowserAction::Input { .. }
                         | BrowserAction::Type { .. }
+                        | BrowserAction::Upload { .. }
                         | BrowserAction::Scroll { .. }
                         | BrowserAction::WaitFor { .. }
                 ),
@@ -136,6 +144,10 @@ impl BrowserRequest {
                 }
             }
             BrowserAction::Click { selector } => validate_selector(selector)?,
+            BrowserAction::Upload { selector, files } => {
+                validate_selector(selector)?;
+                upload::validate_paths(files)?;
+            }
             BrowserAction::WaitFor {
                 selector,
                 text,
@@ -622,6 +634,10 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
         BrowserAction::Scroll { selector, to, by } => {
             serde_json::json!({"kind":"scroll","selector":selector,"to":to,"by":by})
         }
+        BrowserAction::Upload { selector, files } => {
+            validate_selector(selector)?;
+            serde_json::json!({"kind":"upload","selector":selector,"files":upload::prepare(files)?})
+        }
         BrowserAction::Frames => serde_json::json!({"kind":"frames"}),
         BrowserAction::WaitFor { selector, text, .. } => {
             serde_json::json!({"kind":"wait-for","selector":selector,"text":text})
@@ -742,6 +758,27 @@ try {
       atBottom:win.scrollY+win.innerHeight>=root.scrollHeight-2,frame:frameId};
   }
   const target=choose(request.selector);
+  if (request.kind==='upload') {
+    // Hidden file inputs are intentional. Never click a button or open a native
+    // picker as a fallback: that could attach files to an unrelated input.
+    if (!(target instanceof win.HTMLInputElement) || target.type!=='file')
+      throw new Error('Upload selector must name a file input directly; button-triggered pickers are not supported');
+    if (target.disabled || target.getAttribute('aria-disabled')==='true') throw new Error('File input is disabled');
+    if (target.hasAttribute('webkitdirectory') || target.hasAttribute('directory')) throw new Error('Directory uploads are not supported');
+    if (!target.multiple && request.files.length!==1) throw new Error('File input does not allow multiple files');
+    const transfer=new win.DataTransfer();
+    for (const file of request.files) {
+      const binary=win.atob(file.data);
+      const bytes=new Uint8Array(binary.length);
+      for (let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+      transfer.items.add(new win.File([bytes],file.name,{type:file.mime}));
+    }
+    target.files=transfer.files;
+    if (target.files.length!==request.files.length) throw new Error('Browser refused file attachment');
+    target.dispatchEvent(new win.Event('input',{bubbles:true}));
+    target.dispatchEvent(new win.Event('change',{bubbles:true}));
+    return {attached:true,count:request.files.length,frame:frameId,method:'file-input',submissionRequested:false};
+  }
   if (!visible(target)) throw new Error('Element is not visible');
   if (target.disabled || target.getAttribute('aria-disabled')==='true') throw new Error('Element is disabled');
   if (sensitive(target)) throw new Error('Password and one-time-code fields require the password manager or user handoff');
