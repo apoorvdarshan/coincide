@@ -235,15 +235,12 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
             }
             __weak CCMicrophone *weakCapture = capture;
             AVAudioNodeTapBlock tap = ^(AVAudioPCMBuffer *buffer, AVAudioTime *time) { (void)time; CCMicrophone *strong = weakCapture; if (strong) CCTap(strong, buffer); };
-            NSError *tapError = nil;
-            if (@available(macOS 27.0, *)) {
-                if (![input installTapOnBus:0 bufferSize:2048 format:capture->inputFormat error:&tapError block:tap]) @throw [NSException exceptionWithName:@"CaptureTap" reason:nil userInfo:nil];
-            } else {
+            // Runtime availability checks cannot declare selectors absent from
+            // the build SDK. Use the standard API under the outer @try/@catch.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                [input installTapOnBus:0 bufferSize:2048 format:capture->inputFormat block:tap];
+            [input installTapOnBus:0 bufferSize:2048 format:capture->inputFormat block:tap];
 #pragma clang diagnostic pop
-            }
             capture->tapInstalled = YES;
             capture->configurationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioEngineConfigurationChangeNotification object:capture->engine queue:nil usingBlock:^(NSNotification *note) { (void)note; CCMicrophone *strong = weakCapture; if (strong && atomic_load_explicit(&strong->accepting, memory_order_acquire)) atomic_store(&strong->fault, -6); }];
             capture->deadline = CCNow() + (double)maximum_samples / CC_RATE;
