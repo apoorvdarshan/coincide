@@ -399,7 +399,7 @@ impl BrowserSettings {
             prompt: Some("Choose closed Firefox cookie snapshot".into()),
         });
         cx.spawn(async move |this, cx| {
-            let result = picker.await;
+            let result: Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| {
                 let allowed = this.cookie_flow.workers.finish_picker();
                 if allowed && this.cookie_flow.current(generation) {
@@ -577,7 +577,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 1);
-        let mut own_snapshot = original.snapshot;
+        let mut own_snapshot = original.snapshot.clone();
         own_snapshot.revision = 1;
         flow.set_snapshot(Some(own_snapshot));
         assert!(original.valid());
