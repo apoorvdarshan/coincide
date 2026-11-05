@@ -180,18 +180,18 @@ fn isolated_shell_fixture_child() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let report = home.join("cwd-report");
     loop {
-        if let Ok(bytes) = fs::read(&report) {
-            if bytes.ends_with(&[7]) {
-                let mut observer = coincide_core::terminal::shell::ShellObserver::default();
-                observer.advance(&bytes);
-                assert_eq!(
-                    observer.state.cwd.as_ref().map(|cwd| cwd.path.as_str()),
-                    home.join("sub dir #?% 界").to_str(),
-                    "raw synthetic cwd OSC: {}",
-                    String::from_utf8_lossy(&bytes)
-                );
-                break;
-            }
+        if let Ok(bytes) = fs::read(&report)
+            && bytes.ends_with(&[7])
+        {
+            let mut observer = coincide_core::terminal::shell::ShellObserver::default();
+            observer.advance(&bytes);
+            assert_eq!(
+                observer.state.cwd.as_ref().map(|cwd| cwd.path.as_str()),
+                home.join("sub dir #?% 界").to_str(),
+                "raw synthetic cwd OSC: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            break;
         }
         let frame = terminal.snapshot().unwrap();
         assert!(
