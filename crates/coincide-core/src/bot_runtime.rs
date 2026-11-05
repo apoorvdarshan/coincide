@@ -15,6 +15,16 @@ use uuid::Uuid;
 
 pub const BOTS_PROJECT_ID: &str = "B0B5B0B5-C01C-4D1E-B075-000000000001";
 pub const INSTRUCTIONS_LIMIT: usize = 25_000;
+/// Key for a Rust-owned immutable authorization record, never an imported file.
+pub fn context_document_name(context: &Value) -> Result<String> {
+    let bytes = serde_json::to_vec(context)?;
+    ensure!(
+        context.is_object() && bytes.len() <= 512 * 1024,
+        "Invalid bot context record"
+    );
+    Ok(format!("rust-bot-context-{:x}.json", Sha256::digest(bytes)))
+}
+
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key]
         .as_str()

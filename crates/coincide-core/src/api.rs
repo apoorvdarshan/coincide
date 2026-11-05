@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[path = "bot_engine.rs"]
+mod bot_engine;
 #[path = "github_engine.rs"]
 mod github_engine;
 #[path = "idle_sleep.rs"]
@@ -138,6 +140,9 @@ impl Engine {
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         if github_engine::METHODS.contains(&method) {
             return self.github_command(method, p);
+        }
+        if method == "bots.conversations.create" {
+            return self.create_bot_conversation(p);
         }
         if organization_api::METHODS.contains(&method) {
             return self.organization_command(method, p);
@@ -359,6 +364,7 @@ impl Engine {
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
+                methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
                 #[cfg(unix)]
@@ -440,6 +446,7 @@ impl Engine {
                 branch["interactionMode"]=json!("build");
                 // Imported sessions/accounts cannot attach to the live legacy app.
                 branch["selection"]=json!({"provider":source["selection"]["provider"].as_str().filter(|name|Provider::from_name(name).is_ok()).unwrap_or("codex"),"modelID":source["selection"]["modelID"].as_str().unwrap_or("default")});
+                self.preserve_bot_branch(&source,&mut branch)?;
                 self.store.save(&branch)?;
                 self.revision+=1;
                 Ok(branch)
@@ -582,17 +589,22 @@ impl Engine {
                     .is_none_or(|mode| mode == "build"),
             "This preview supports approval/build mode only; fork this conversation to use supported defaults"
         );
-        let provider = text(&v["selection"], "provider");
-        let mut adapter = Provider::from_name(&provider)?;
-        ensure!(
-            provider == "antigravity" || v["selection"]["accountID"].is_null(),
-            "Alternate provider accounts are not connected yet"
-        );
         // Imported native sessions may still be owned by the running Swift app.
         // A fork starts a separate provider session and cannot steal that session.
         ensure!(
             !self.store.is_imported(&id)?,
             "Imported conversations are read-only for agent execution until cutover; fork first"
+        );
+        let cwd = self.working_directory(&v)?;
+        ensure!(cwd.is_dir(), "Working directory does not exist");
+        let bot_instructions = self.bot_instructions(&v, &cwd)?;
+        let provider = text(&v["selection"], "provider");
+        let mut adapter = Provider::from_name(&provider)?;
+        ensure!(
+            provider == "antigravity"
+                || v["selection"]["accountID"].is_null()
+                || bot_instructions.is_some(),
+            "Alternate provider accounts are not connected yet"
         );
         let data = self.store.data_directory()?;
         let antigravity_executable = if provider == "antigravity" {
@@ -612,22 +624,6 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
-        let cwd = if let Some(path) = v["worktreePath"].as_str() {
-            PathBuf::from(path)
-        } else {
-            self.store
-                .projects()?
-                .as_array()
-                .and_then(|projects| {
-                    projects
-                        .iter()
-                        .find(|project| project["id"] == v["projectID"])
-                        .and_then(|project| project["path"].as_str())
-                        .map(PathBuf::from)
-                })
-                .context("Choose a project working directory first")?
-        };
-        ensure!(cwd.is_dir(), "Working directory does not exist");
         let session = agent::provider_session(&v, &provider);
         let seen = if session.is_some() {
             agent::provider_seen_count(&v, &provider)
@@ -725,7 +721,7 @@ impl Engine {
         self.runs.insert(
             id,
             Running {
-                session: Session::start_with_images(
+                session: Session::start_with_images_and_instructions(
                     adapter,
                     Launch {
                         executable,
@@ -735,6 +731,7 @@ impl Engine {
                         model,
                     },
                     images,
+                    bot_instructions,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1155,14 +1152,29 @@ impl Engine {
                         finished = true;
                         append(&mut v, "notice", "Turn ended", None);
                         if completion_alert.is_none() {
-                            completion_alert = v["items"].as_array().and_then(|items|items.last()).cloned().map(|item|(crate::platform_host::notifications::AlertKind::Completed,item));
+                            completion_alert = v["items"]
+                                .as_array()
+                                .and_then(|items| items.last())
+                                .cloned()
+                                .map(|item| {
+                                    (
+                                        crate::platform_host::notifications::AlertKind::Completed,
+                                        item,
+                                    )
+                                });
                         }
                     }
                     Event::Failed(error) => {
                         finished = true;
                         failure = Some(error.clone());
                         append(&mut v, "error", &error, None);
-                        completion_alert = v["items"].as_array().and_then(|items|items.last()).cloned().map(|item|(crate::platform_host::notifications::AlertKind::Failed,item));
+                        completion_alert = v["items"]
+                            .as_array()
+                            .and_then(|items| items.last())
+                            .cloned()
+                            .map(|item| {
+                                (crate::platform_host::notifications::AlertKind::Failed, item)
+                            });
                     }
                     Event::Frame(frame) => {
                         let method = frame["method"].as_str().unwrap_or("");
@@ -1203,19 +1215,40 @@ impl Engine {
                             | "item/fileChange/requestApproval"
                             | "item/tool/requestUserInput" => {
                                 let key = frame["id"].to_string();
-                                let kind = if method == "item/tool/requestUserInput" {"question"} else {"approval"};
-                                let previous = v["items"].as_array().unwrap().iter().skip(transcript_start).find(|item| item["externalID"] == key && item["kind"] == kind).cloned();
-                                let item = if let Some(item) = previous { item } else {
-                                    append(&mut v,kind,&p.to_string(),Some(&key));
+                                let kind = if method == "item/tool/requestUserInput" {
+                                    "question"
+                                } else {
+                                    "approval"
+                                };
+                                let previous = v["items"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .skip(transcript_start)
+                                    .find(|item| item["externalID"] == key && item["kind"] == kind)
+                                    .cloned();
+                                let item = if let Some(item) = previous {
+                                    item
+                                } else {
+                                    append(&mut v, kind, &p.to_string(), Some(&key));
                                     v["items"].as_array().unwrap().last().unwrap().clone()
                                 };
-                                self.notification_events.stage(&v,&item,if kind == "question" {crate::platform_host::notifications::AlertKind::Question} else {crate::platform_host::notifications::AlertKind::Approval},Some(key.clone()));
+                                self.notification_events.stage(
+                                    &v,
+                                    &item,
+                                    if kind == "question" {
+                                        crate::platform_host::notifications::AlertKind::Question
+                                    } else {
+                                        crate::platform_host::notifications::AlertKind::Approval
+                                    },
+                                    Some(key.clone()),
+                                );
                                 self.runs.get_mut(&id).unwrap().pending.insert(key, frame);
                             }
                             "provider/requestCancelled" => {
                                 let key = p["id"].to_string();
                                 self.runs.get_mut(&id).unwrap().pending.remove(&key);
-                                self.notification_events.cancel_request(&id,&key);
+                                self.notification_events.cancel_request(&id, &key);
                                 for item in v["items"]
                                     .as_array_mut()
                                     .unwrap()
@@ -1336,10 +1369,12 @@ impl Engine {
             }
             if finished {
                 self.notification_events.cancel_requests(&id);
-                if !self.runs[&id].cancelled && self.runs[&id].persistence_error.is_none()
-                    && let Some((kind,item)) = completion_alert {
-                        self.notification_events.stage(&v,&item,kind,None);
-                    }
+                if !self.runs[&id].cancelled
+                    && self.runs[&id].persistence_error.is_none()
+                    && let Some((kind, item)) = completion_alert
+                {
+                    self.notification_events.stage(&v, &item, kind, None);
+                }
             }
             if let Err(error) = self.store.save(&v) {
                 let message = format!("Transcript could not be saved: {error}");
@@ -1374,7 +1409,9 @@ impl Engine {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);
             self.schedule_last_poll = Instant::now();
             self.unsaved_threads.retain(|_, thread| {
-                if self.store.save(thread).is_err() { true } else {
+                if self.store.save(thread).is_err() {
+                    true
+                } else {
                     self.notification_events.persisted(thread);
                     false
                 }

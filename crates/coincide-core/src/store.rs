@@ -452,6 +452,26 @@ impl Store {
         )?;
         index_thread(&tx, thread)?;
         cache_thread(&tx, thread, true)?;
+        let context = &thread["rustBotContext"];
+        let name = crate::bot_runtime::context_document_name(context)?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name=?1",
+                [&name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure!(
+                serde_json::from_str::<Value>(&existing)? == *context,
+                "Bot context authorization record differs"
+            );
+        } else {
+            tx.execute(
+                "INSERT INTO documents(name,document) VALUES (?1,?2)",
+                params![name, context.to_string()],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
