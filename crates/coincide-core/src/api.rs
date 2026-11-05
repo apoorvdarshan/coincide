@@ -221,7 +221,7 @@ impl Engine {
                 let activity = self.idle_sleep.background_job();
                 std::thread::spawn(move || {
                     let _activity = activity;
-                    import_attachment(root, source, tx, operation);
+                    import_attachment(root, source, tx, operation, || {});
                 });
                 Ok(json!({"operationId":id}))
             }
@@ -1533,11 +1533,21 @@ fn import_attachment(
     source: PathBuf,
     tx: std::sync::mpsc::SyncSender<(String, Value)>,
     operation: String,
+    on_backpressure: impl FnOnce(),
 ) {
     let result = crate::attachments::ingest_image(&root, &source)
         .and_then(|image| Ok(json!({"attachment":serde_json::to_value(image)?})))
         .unwrap_or_else(|error| json!({"error":error.to_string()}));
-    workspace_api::publish_completion(tx, operation, result);
+    match tx.try_send((operation, result)) {
+        Ok(()) | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {}
+        Err(std::sync::mpsc::TrySendError::Full((operation, result))) => {
+            // Private synchronization point for the saturation fixture: the
+            // channel has actually refused this completion, not merely been
+            // filled before an asynchronously scheduled ingestion started.
+            on_backpressure();
+            workspace_api::publish_completion(tx, operation, result);
+        }
+    }
 }
 
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
