@@ -468,8 +468,14 @@ try {
             if(!$list){return $false}
             $items=$list.FindAll([Windows.Automation.TreeScope]::Children,
                 (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ListItem)))
-            return $items.Count -eq 1 -and $items[0].Current.Name -like "Smoke $target*" -and (Find-Control $script:window 'CommandPaletteOpen').Current.IsEnabled
+            # Separate words match across title/provider metadata: the letter A
+            # also matches claude on Smoke B. Require the exact intended title,
+            # rather than treating other valid search results as an app failure.
+            $prefix="Smoke $target "+[char]0xb7+' '
+            $script:paletteTargets=@($items | Where-Object {$_.Current.Name.StartsWith($prefix,[StringComparison]::Ordinal)})
+            return $script:paletteTargets.Count -eq 1 -and (Find-Control $script:window 'CommandPaletteOpen').Current.IsEnabled
         } 'The command palette did not publish the exact conversation result.'
+        $script:paletteTargets[0].GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
         Invoke-Control 'CommandPaletteOpen'
         Wait-Until { (Latest-IsVisible "END-$target") -and (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq "Draft Smoke $target" } 'Command palette navigation did not preserve the selected conversation draft.'
     }
