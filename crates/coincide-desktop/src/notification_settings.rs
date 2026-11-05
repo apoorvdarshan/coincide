@@ -826,8 +826,13 @@ mod tests {
         let h = bridge.handle();
         let mut latest = activity();
         latest.idle_seconds = 999;
-        assert!(h.update_activity(latest));
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        for snapshot in [activity(), latest] {
+            while !h.update_activity(snapshot) {
+                assert!(std::time::Instant::now() < deadline);
+                thread::yield_now();
+            }
+        }
         while !h.try_status().is_some_and(|s| !s.busy) {
             assert!(std::time::Instant::now() < deadline);
             thread::yield_now();
