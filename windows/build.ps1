@@ -28,6 +28,8 @@ if ($LASTEXITCODE) { throw 'Core test build failed.' }
 if ($LASTEXITCODE) { throw 'Core tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideTranscriptFindTests.exe")
 if ($LASTEXITCODE) { throw 'Current-thread find tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideConversationSearchTests.exe")
+if ($LASTEXITCODE) { throw 'Cross-conversation search tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideMarkdownTests.exe")
 if ($LASTEXITCODE) { throw 'Markdown tests failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideHandoffTests.exe")
@@ -50,7 +52,7 @@ if (!$CoreOnly) {
     Copy-Item (Join-Path $root 'Notices\T3-Code-LICENSE.txt') $notices
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence', 'background-host', 'browser-tool', 'credentials-controller', 'hosted-conversation-reducer', 'native-host-factory', 'code-hosting', 'git-repository-identity', 'repository-lease', 'browser-library', 'browser-history-sqlite', 'hosted-client-state', 'native-background-host', 'opencode-account-scope', 'instruction-git-sync', 'native-host-entrypoint', 'hosted-app-bootstrap', 'hosted-input-recovery')) {
+        foreach ($suite in @('store', 'conversation-search-store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence', 'background-host', 'browser-tool', 'credentials-controller', 'hosted-conversation-reducer', 'native-host-factory', 'code-hosting', 'git-repository-identity', 'repository-lease', 'browser-library', 'browser-history-sqlite', 'hosted-client-state', 'native-background-host', 'opencode-account-scope', 'instruction-git-sync', 'native-host-entrypoint', 'hosted-app-bootstrap', 'hosted-input-recovery')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru

@@ -66,10 +66,10 @@ int run_workspace_tests() {
         auto& messages = w.thread("a").messages;
         messages.push_back({"1", "user", "First question", ""});
         messages.push_back({"2", "assistant", "Claude answer", "claude"});
-        w.remember_session("a", {"claude", "claude-session", 2});
+        w.remember_session("a", {"claude", "claude-session", 2, "default", ""});
         messages.push_back({"3", "user", "Switch to Codex", ""});
         messages.push_back({"4", "assistant", "Codex answer", "codex"});
-        w.remember_session("a", {"codex", "codex-session", 4});
+        w.remember_session("a", {"codex", "codex-session", 4, "default", ""});
         const auto missed = w.missed_messages("a", "claude");
         check(missed.size() == 2 && missed.front().id == "3", "a resumed provider needs exactly the messages it missed");
         check(missed.back().provider == "codex", "handoffs must preserve provider attribution");
@@ -77,7 +77,7 @@ int run_workspace_tests() {
         check(w.missed_messages("a", "grok").size() == 4, "a new provider needs the complete conversation");
         check(w.missed_messages("b", "claude").empty(), "sessions must never leak across threads");
         check(w.thread("a").sessions.size() == 2, "switching agents must preserve both native sessions");
-        rejects([&] { w.remember_session("a", {"claude", "invalid", 5}); }, "out-of-range acknowledgements must fail");
+        rejects([&] { w.remember_session("a", {"claude", "invalid", 5, "default", ""}); }, "out-of-range acknowledgements must fail");
         check(w.thread("a").sessions.front().id == "claude-session", "invalid updates must preserve the prior session");
 
         // Lifecycle actions share one bounded undo history, but never snapshot live transcript content.
@@ -86,7 +86,7 @@ int run_workspace_tests() {
         lifecycle.add_project({"q", "Other Project", "C:\\Projects\\Other"});
         auto first = thread("first"); first.project_id = "p"; first.updated_at = 200;
         first.messages.push_back({"original", "assistant", "A retained reply", "codex"});
-        first.sessions.push_back({"codex", "retained-native-session", 1}); first.draft = "Retained unsent draft";
+        first.sessions.push_back({"codex", "retained-native-session", 1, "default", ""}); first.draft = "Retained unsent draft";
         first.draft_attachments.push_back({"C:\\images\\猫.png", "猫.png", "image/png"});
         lifecycle.add_thread(first);
         auto second = thread("second"); second.project_id = "p"; second.updated_at = 100; lifecycle.add_thread(second);
@@ -196,7 +196,7 @@ int run_workspace_tests() {
         preferred.service_tier = "priority"; preferred.plan = true; preferred.full_access = true;
         preferred.draft = "An unsent draft"; preferred.draft_attachments = {{"C:\\draft.png", "draft.png", "image/png"}};
         preferred.messages.push_back({"history", "user", "Existing context", ""});
-        preferred.sessions = {{"claude", "claude-native", 1}, {"codex", "codex-native", 0}};
+        preferred.sessions = {{"claude", "claude-native", 1, "default", ""}, {"codex", "codex-native", 0, "default", ""}};
         models.add_thread(preferred); models.add_thread(thread("unrelated"));
         models.select_provider("preferences", "codex");
         check(models.thread("preferences").provider == "codex" && models.thread("preferences").model.empty()
@@ -226,7 +226,7 @@ int run_workspace_tests() {
 
         // Exercise realistic long histories without constructing UI controls for every message.
         for (int i = 0; i < 10000; ++i) messages.push_back({std::to_string(i + 5), "assistant", "A streamed reply", "codex"});
-        w.remember_session("a", {"claude", "claude-session", messages.size() - 1});
+        w.remember_session("a", {"claude", "claude-session", messages.size() - 1, "default", ""});
         check(w.missed_messages("a", "claude").size() == 1, "long histories must not replay acknowledged messages");
         const std::string stream = "one\r\nनमस्ते\nlast";
         for (std::size_t split = 0; split <= stream.size(); ++split) {

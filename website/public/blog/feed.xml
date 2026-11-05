@@ -7,6 +7,20 @@
   <description>Feature videos, launch notes and deep dives on Coincide, the native Mac app for coding agents.</description>
   <language>en</language>
   <item>
+    <title>Swift. AppKit. No Electron.</title>
+    <link>https://coincide.dev/blog/native-swift-coding-agents</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/native-swift-coding-agents</guid>
+    <pubDate>Thu, 05 Nov 2026 05:38:37 GMT</pubDate>
+    <description>A 10-second preview of Coincide’s native Swift and AppKit interface: Claude Code, Codex and Cursor, with a conversation that stays together.</description>
+  </item>
+  <item>
+    <title>One picker for your coding agents</title>
+    <link>https://coincide.dev/blog/one-picker-every-agent</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/one-picker-every-agent</guid>
+    <pubDate>Wed, 04 Nov 2026 02:57:11 GMT</pubDate>
+    <description>A 12-second preview of Coincide’s agent and model picker: choose Claude Code, Codex or Cursor without leaving your conversation.</description>
+  </item>
+  <item>
     <title>Coding agents with a face: meet the Coincide bots</title>
     <link>https://coincide.dev/blog/coding-agents-with-a-face</link>
     <guid isPermaLink="true">https://coincide.dev/blog/coding-agents-with-a-face</guid>
