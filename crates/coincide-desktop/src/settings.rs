@@ -585,6 +585,15 @@ impl Coincide {
         if !command || key.modifiers.alt || key.modifiers.shift || event.is_held {
             return;
         }
+        if key.key == "k" {
+            self.toggle_palette(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if self.command_palette.read(cx).is_open() {
+            cx.stop_propagation();
+            return;
+        }
         // Keep terminal control sequences (Ctrl+N/F etc.) in the PTY.
         if self.terminal_focus.is_focused(window) {
             return;
