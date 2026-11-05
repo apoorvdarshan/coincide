@@ -56,7 +56,8 @@ public static class PreparedHostAclFixture {
 }
 '@
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-    $privateAcl = 'O:' + $sid.Value + 'D:P(A;OICI;FA;;;' + $sid.Value + ')'
+    $privateDacl = 'D:P(A;OICI;FA;;;' + $sid.Value + ')'
+    $privateAcl = 'O:' + $sid.Value + $privateDacl
     foreach ($spec in @(@('PreviewSmoke.ps1', 'CoincideSmokeWindow'), @('HostedRecoverySmoke.ps1', 'HostedRecoveryNative'))) {
         $scriptPath = Join-Path $PSScriptRoot $spec[0]
         $tokens = $null; $errors = $null
@@ -126,7 +127,7 @@ public static class PreparedHostAclFixture {
             [PreparedHostAclFixture]::Set($ledger, $case[1])
             if ($case[0] -ceq 'inherited Allow ACE') { Check ([PreparedHostAclFixture]::HasSingleInheritedAllow($ledger)) 'The negative fixture must actually contain one native inherited Allow ACE.' }
             Reject { $native::PinPreparedHostedData($fixture) } ('Prepared host must refuse ' + $case[0] + '.')
-            [PreparedHostAclFixture]::Set($ledger, $privateAcl)
+            [PreparedHostAclFixture]::Set($ledger, $privateDacl)
         }
         $invalid = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]::Zero, $false)
         $method = $native.GetMethod('RequirePrivatePreparedAcl', ([Reflection.BindingFlags]::NonPublic -bor [Reflection.BindingFlags]::Static))
@@ -148,7 +149,7 @@ finally {
     try {
         if ($pins) { foreach ($pin in $pins) { $pin.Dispose() } }
         if ($fixtureOwned -and $fixture -and [IO.Directory]::Exists($fixture)) {
-            if ($ledger -and [IO.Directory]::Exists($ledger)) { [PreparedHostAclFixture]::Set($ledger, $privateAcl) }
+            if ($ledger -and [IO.Directory]::Exists($ledger)) { [PreparedHostAclFixture]::Set($ledger, $privateDacl) }
             Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop
         }
     } catch { $failure = $failure + '; owned fixture cleanup failed: ' + $_.Exception.Message }
