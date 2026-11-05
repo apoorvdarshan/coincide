@@ -56,6 +56,10 @@ fn validate(request: &Request, page: &Page) -> Result<()> {
         "Inline review page belongs to another scope/cursor"
     );
     ensure!(
+        page.has_next_page == page.next_cursor.is_some(),
+        "Inconsistent pagination state"
+    );
+    ensure!(
         !page.has_next_page
             || (page.next_cursor.is_some() && page.next_cursor.as_deref() != request.cursor()),
         "Pagination cursor failed to advance"
@@ -452,8 +456,11 @@ fn comment_label(comment: &InlineComment) -> String {
             .map(|a| a.login.as_str())
             .unwrap_or("Deleted/unknown author"),
         comment.updated_at,
-        &comment.commit.as_deref().unwrap_or("unknown")
-            [..comment.commit.as_deref().unwrap_or("unknown").len().min(12)]
+        comment
+            .commit
+            .as_deref()
+            .map(|value| value.chars().take(12).collect::<String>())
+            .unwrap_or_else(|| "unknown".into())
     )
 }
 impl Render for GitHubThreadsPanel {
@@ -970,22 +977,12 @@ mod tests {
         let _cleanup = Cleanup(root.clone());
         let root = root.canonicalize().unwrap();
         let exe = root.join("fake-gh");
-        fs::write(&exe,r#"#!/usr/bin/env python3
-import sys,json
-args=sys.argv[1:]
-assert args[:2]==['api','graphql'] and '--hostname' in args
-fields={args[i+1].split('=',1)[0]:args[i+1].split('=',1)[1] for i,a in enumerate(args) if a in ['--raw-field','--field']}
-assert fields['query'].startswith('query CoincideReviewThreads') and 'mutation ' not in fields['query']
-assert fields['owner']=='owner' and fields['name']=='project' and fields['number']=='7'
-print(open('response.json').read(),flush=True)
-"#).unwrap();
-        fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
-        let response = json!({"data":{"repository":{"pullRequest":{"number":7,"url":"https://github.com/owner/project/pull/7","headRefOid":"a".repeat(40),"repository":{"nameWithOwner":"owner/project"},"reviewThreads":{"nodes":[{"id":"thread-a","path":"src/file.rs","line":7,"startLine":null,"originalLine":6,"diffSide":"RIGHT","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"fixture"},"comments":{"nodes":[{"id":"root","databaseId":11,"body":"Hello @octocat","diffHunk":"@@ -1 +1 @@","author":null,"url":"https://github.com/owner/project/pull/7#discussion_r11","createdAt":"now","updatedAt":"now","commit":{"oid":"a".repeat(40)},"replyTo":null}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
         fs::write(
-            root.join("response.json"),
-            serde_json::to_vec(&response).unwrap(),
+            &exe,
+            include_str!("../../coincide-core/tests/fixtures/github_threads_gh.py"),
         )
         .unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
         let service = Arc::new(std::sync::Mutex::new(GithubThreadsService::new(
             GhRunner::new(exe).unwrap(),
         )));
@@ -1015,7 +1012,32 @@ print(open('response.json').read(),flush=True)
         };
         state.apply(&request, page).unwrap();
         assert_eq!(state.threads[0].comments[0].mentions[0].text, "@octocat");
-        assert!(state.threads[0].is_resolved);
-        assert_eq!(state.selected.as_deref(), Some("thread-a"));
+        assert!(!state.threads[0].is_resolved);
+        assert_eq!(state.selected.as_deref(), Some("fixture-thread-1"));
+        let mut next = request.clone();
+        next.read = Read::Threads {
+            cursor: state.next.clone(),
+        };
+        let page = fetch(&transport, &next, &AtomicBool::new(false)).unwrap();
+        state.apply(&next, page).unwrap();
+        assert!(state.threads[1].is_resolved && state.threads[1].is_outdated);
+        let reply = Request {
+            scope: request.scope.clone(),
+            read: Read::Comments {
+                id: "fixture-thread-1".into(),
+                cursor: state.threads[0].next_cursor.clone(),
+            },
+        };
+        let page = fetch(&transport, &reply, &AtomicBool::new(false)).unwrap();
+        state.apply(&reply, page).unwrap();
+        assert!(visible(&state.threads[0], "unresolved", "@org/team"));
+        assert_eq!(
+            state.threads[0].comments[1]
+                .reply_to
+                .as_ref()
+                .unwrap()
+                .database_id,
+            Some(101)
+        );
     }
 }
