@@ -515,6 +515,13 @@ impl Render for WorkspacePanel {
                 body = body.child(div().text_sm().child(format!("{}\n{} · {}\nPopulation state is not reported by Git list; a reservation from this panel starts unpopulated.",tree["worktree"].as_str().unwrap_or(""),tree["branch"].as_str().unwrap_or("detached"),tree["HEAD"].as_str().unwrap_or(""))));
             }
         }
+        if self.snapshot.as_ref().is_some_and(|s| {
+            s.worktrees["worktrees"]
+                .as_array()
+                .is_some_and(|v| v.len() > 100)
+        }) {
+            body = body.child("Showing first 100 worktrees.");
+        }
         if let Some(action) = &self.confirmation {
             let message = match action {
                 Action::Create(b, label) => format!(
@@ -527,12 +534,18 @@ impl Render for WorkspacePanel {
                 ),
                 _ => String::new(),
             };
-            body = body.child(
+            pane = pane.child(
                 div()
                     .id("git-confirmation")
                     .p_2()
                     .border_1()
-                    .child(message)
+                    .child(
+                        div()
+                            .id("git-confirmation-details")
+                            .max_h(px(140.))
+                            .overflow_y_scroll()
+                            .child(message),
+                    )
                     .child(
                         Button::new("git-confirm")
                             .label("Confirm")
