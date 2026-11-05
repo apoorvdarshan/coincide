@@ -254,3 +254,30 @@ caller paths. Tests run through the existing packaging test entry point (22 test
 the DMG test is explicitly skipped on non-Mac hosts). Real Windows/Linux desktop
 archive acceptance still requires their allocated native artifacts. Existing real
 CI continues to build only the store tool, with synthetic desktop archive coverage.
+
+## Candidate-1 observed bundle signature status
+
+Read-only inspection of the 2026-11-05 candidate-1 rehearsal found linker-created
+ad hoc signatures on all three arm64 executables (`adhoc,linker-signed`, no team,
+no printed entitlements). Strict verification passed for the standalone immutable
+main binary and for staged CLI/store binaries. Strict verification of the staged
+`.app` (and its main executable in bundle context) failed with:
+
+```text
+code has no resources but signature indicates they must be present
+```
+
+The main binary's bytes were unchanged. Signature display reported `Info.plist=not
+bound` and `Sealed Resources=none`: the existing linker signature does not seal the
+newly generated bundle plist/resources. This is a concrete signature failure,
+separate from the archive's successful byte-integrity verification. Adding shader
+files or manually creating a resource seal is not an established repair. No signing
+was performed and existing rehearsal artifacts/archives remain unchanged. Signing
+and verifying a completed bundle require a separately authorized distribution step.
+
+GPUI's UI SVG icons are separate from the Finder ICNS icon. The desktop source now
+provides `assets::CoincideAssets` using gpui-kit-assets 0.9.0's official `icon_assets!`
+macro with its complete 106-icon default component set. This embeds static SVG bytes
+in debug and release builds; no SVG copies in `Contents/Resources` are needed.
+Application registration is required before running the app. The module alone does
+not establish successful rendering or change existing candidate-1 binaries.
