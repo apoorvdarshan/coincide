@@ -865,8 +865,8 @@ impl Engine {
         self.provider_workers.push(run.session.worker_completion());
         self.runs.insert(id, run);
     }
-    /// Nonblocking observer for trusted native owners. Completed handles are
-    /// dropped without join; their classification remains in sticky counters.
+    /// Nonblocking observer for trusted native owners. Background observers join
+    /// provider threads; completed observations fold into sticky counters here.
     pub fn provider_workers_status(&mut self) -> ProviderWorkersStatus {
         let totals = &mut self.provider_worker_outcomes;
         self.provider_workers.retain(|worker| {

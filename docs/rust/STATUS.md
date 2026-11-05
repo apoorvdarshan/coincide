@@ -496,11 +496,12 @@ The pinned GPUI accessibility rollback fix passes three focused headless tests,
 including nested transaction rollback and retry, and all 242 desktop tests.
 Its standalone test prerequisites and licenses are pinned with the patch.
 
-Current execution constraints: no ASUS/SSH and no Computer Use, foreground
-activation, mouse/keyboard input, screenshots or GUI launches. All known task
-fixture apps are stopped, Computer Use control is released, and original apps
-remain running. Continue source, CLI/API, fake-platform tests and GitHub Actions.
-Desktop-only acceptance stays pending until explicitly authorized later.
+The earlier headless-only restriction was lifted explicitly for the overnight
+completion run. Needed native UI testing is now authorized in isolated fixture
+apps. No ASUS/SSH; built-in subagents only. Preserve original apps/data and keep
+one Computer Use owner. Historical native evidence remains separate from new
+acceptance. The Swift app is running; the former ordinary Rust PID was already
+absent during a read-only check, and was not stopped or relaunched by this batch.
 
 Pending draft persistence now precedes window removal and API-requested quit.
 Any remaining draft blocks those paths, including a previous uncertain save;
@@ -557,3 +558,20 @@ A private FIFO gate deterministically exercises the old readiness window; exact
 transcript, profile order, cwd and exit assertions remain unchanged. The focused
 Mac Bash 3.2 and zsh tests both pass (the existing child entry marker stays
 ignored). Production terminal code is unchanged; Linux verification awaits CI.
+
+The next CI run at `e7b3a66` passed Linux's default core suite, verifying the
+shell fixture fix. Its helper-feature suite exposed a separate portability
+defect: Linux anonymous pipes retain a link count of one. Validation now checks
+actual Linux pipefs identity, preserves FIFO/owner checks, and rejects named
+FIFOs even after unlink. All 31 Mac helper fixtures pass; Linux's expanded suite
+awaits the next exact-commit CI run.
+
+Overnight owner foundations pass six admission-freeze tests, four control-worker
+tests and five provider-worker tests, plus strict feature-on core Clippy. An
+initial control regression correctly exposed that `JoinHandle::is_finished`
+can precede TLS cleanup on Mac; background join acknowledgements now gate both
+control and provider exit status. No join or wait runs in Engine/status/UI-lock
+paths. The desktop draft adapter selects the narrow trusted flush under one
+try-lock after admissions freeze. All 260 desktop tests pass with notification,
+microphone, Computer Use and helper features enabled, using synthetic adapters.
+These are prerequisites for actual owner wiring, not full quiescence acceptance.
