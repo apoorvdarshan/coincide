@@ -101,8 +101,8 @@ impl Action {
         Ok(match self {
             Self::Comment(body) => {
                 ensure!(
-                    !body.trim().is_empty() && body.len() <= 32768,
-                    "Comment must be nonblank and at most 32768 UTF-8 bytes"
+                    !body.trim().is_empty() && body.len() <= 32768 && !body.contains('\0'),
+                    "Comment must be nonblank, contain no NUL bytes, and be at most 32768 UTF-8 bytes"
                 );
                 json!({"kind":"review","event":"COMMENT","body":body})
             }
@@ -934,6 +934,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn comment_utf8_byte_limit_and_merge_method_allowlist() {
         assert!(Action::Comment(" \n".into()).value().is_err());
+        assert!(Action::Comment("text\0text".into()).value().is_err());
         assert!(Action::Comment("中".repeat(10923)).value().is_err());
         assert!(Action::Comment("x".repeat(32768)).value().is_ok());
         assert!(Action::Merge("admin".into()).value().is_err());
