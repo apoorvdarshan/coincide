@@ -58,6 +58,7 @@
 #include "../Runtime/HostedAgentSession.h"
 #include "HostedInputRecovery.h"
 #include "ThreadFindBar.h"
+#include "ConversationSearchPanel.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -176,6 +177,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::TextBox composer{nullptr};
     controls::TextBox search{nullptr};
     std::shared_ptr<coincide::ThreadFindBar> thread_find;
+    std::shared_ptr<coincide::ConversationSearchPanel> conversation_search;
     controls::TextBlock title{nullptr};
     controls::TextBlock state{nullptr};
     controls::ComboBox providers{nullptr};
@@ -304,6 +306,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         identify(search, L"ThreadSearch");
         search.TextChanged([this](const auto&, const auto&) { refresh_sidebar(); });
         sidebar_top.Children().Append(search);
+        auto search_messages=button(L"SearchMessages",L"Search messages",L"SearchMessages");search_messages.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);search_messages.Click([this](const auto&,const auto&){show_conversation_search();});sidebar_top.Children().Append(search_messages);
         thread_filter = controls::ComboBox{}; identify(thread_filter, L"ThreadFilter");
         for (const auto& key : {std::pair{L"Threads",L"Threads"}, {L"ArchivedThreads",L"Archived threads"}, {L"Snooze",L"Snooze"}, {L"Settled",L"Settled"}, {L"DeletedThreads",L"Deleted Threads"}, {L"AllThreads",L"All Threads"}}) {
             add_choice(thread_filter,label(key.first,key.second));
@@ -620,6 +623,28 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void open_thread_find(){
         if(closing||quitting||dialog_open||selected.empty()||!thread_find)return;
         latest_scroll_pending=false;++latest_scroll_generation;thread_find->open();
+    }
+    void show_conversation_search(){
+        if(closing||quitting||dialog_open||!store||!writable)return;
+        try{
+            if(!conversation_search){const auto weak=get_weak();
+                conversation_search=coincide::ConversationSearchPanel::create([weak]{
+                    const auto self=weak.get();if(!self||self->closing||!self->store)throw std::runtime_error("Saved conversations are unavailable");
+                    coincide::ConversationSearchPanel::Snapshot snapshot;
+                    for(const auto& id:self->workspace.listed_threads(coincide::ThreadView::all)){const auto& thread=self->workspace.thread(id);snapshot.threads.push_back({thread.id,thread.title,thread.project_id.value_or(""),thread.deleted_at!=0});}
+                    if(!snapshot.threads.empty())snapshot.read=self->store->message_search_reader();return snapshot;
+                },[weak](const auto& hit,const std::string& query){
+                    const auto self=weak.get();if(!self||self->closing||self->quitting||self->dialog_open)return false;
+                    const auto& target=self->workspace.thread(hit.thread_id);if(target.deleted_at)return false;
+                    self->open_thread(hit.thread_id);if(self->selected!=hit.thread_id)return false;
+                    const auto& messages=self->workspace.thread(hit.thread_id).messages;
+                    const auto at=std::find_if(messages.begin(),messages.end(),[&](const auto& message){return message.id==hit.message.message_id;});
+                    if(at==messages.end()||self->transcript.Items().Size()!=messages.size())return false;
+                    self->hide_tools();self->latest_scroll_pending=false;++self->latest_scroll_generation;self->thread_find->open_match(query,at->id);return true;
+                });tool_views.Children().Append(conversation_search->view());
+            }
+            select_tool("message-search",conversation_search->view(),coincide::ui_text(L"Search messages"));conversation_search->show();
+        }catch(...){report_exception();}
     }
     void navigate_thread_find(const coincide::TranscriptFindMatch& match){
         if(closing||selected.empty()||!thread_find||!thread_find->visible())return;
@@ -1596,6 +1621,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
 
     void hide_tools(){
+        if(conversation_search)conversation_search->hide();
         if(browser_panel)browser_panel->set_visible(false);
         if(terminal_panel)terminal_panel->set_visible(false);
         if(preview_panel)preview_panel->set_visible(false);

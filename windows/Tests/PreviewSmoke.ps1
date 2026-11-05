@@ -6,7 +6,7 @@ param(
     [string]$PreparedHostedData,
     [switch]$NativePanelsOnly,
     [switch]$SkipNativePanels,
-    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel')][string]$NativeSuite
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -439,6 +439,27 @@ try {
             (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq ''
         } 'Send did not accept and clear the submitted draft.'
     }
+    Invoke-Control 'SearchMessages'
+    Set-ControlValue 'ConversationSearchQuery' 'Reply 20 '
+    Invoke-Control 'ConversationSearchStart'
+    Wait-Until {
+        $list=Find-Control $script:window 'ConversationSearchResults'
+        if(!$list){return $false}
+        $script:searchItems=$list.FindAll([Windows.Automation.TreeScope]::Children,
+            (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ListItem)))
+        return $script:searchItems.Count -eq 2
+    } 'Saved-message search did not find the two long-conversation matches.'
+    $searchTarget=$null
+    foreach($item in $script:searchItems){if($item.Current.Name -like '*Smoke B*'){$searchTarget=$item}}
+    if(!$searchTarget){throw 'Saved-message results omitted their conversation title.'}
+    $searchTarget.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Invoke-Control 'ConversationSearchOpen'
+    Wait-Until { (Latest-IsVisible 'Reply 20 ') -and (Find-Control $script:window 'ThreadFindStatus').Current.Name -like '1 / 1*' } 'Opening a saved search result did not reveal its original virtualized message.'
+    if((Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft Smoke B'){throw 'Opening a saved message changed the conversation draft.'}
+    $searched=Get-Content (Join-Path $data "threads\$second.json") -Raw -Encoding UTF8|ConvertFrom-Json
+    if($searched.messages.Count -ne 1500 -or @($searched.sessions).Count){throw 'Saved-message search mutated history or started a provider.'}
+    $checks += 'Search across saved conversations opens the exact virtualized message without starting a provider or changing its draft'
+    Invoke-Control 'ThreadFindClose'
     Invoke-Control 'NewChat'
     Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The new Codex conversation did not become available.'
     Send-Message 'hello'
@@ -600,7 +621,7 @@ try {
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel')}
+    $nativeSuites=if($SkipNativePanels){@()}elseif($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel','browser-tool-panel','credentials-controller-panel','native-user-prompt','code-hosting-panel','browser-library-panel','instruction-git-panel','thread-find-panel','conversation-search-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue
