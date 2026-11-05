@@ -256,7 +256,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto result=coincide::tests::run_ui_test(native_ui_suite,question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
                 window.Close();xaml::Application::Current().Exit();
             });});
-            if(native_ui_suite=="browser-tool-panel")window.AppWindow().Resize({1100,1150});window.Activate();if(native_ui_suite!="browser-tool-panel")window.AppWindow().Hide();return;
+            if(native_ui_suite=="browser-tool-panel")window.AppWindow().Resize({1100,1150});window.Activate();if(native_ui_suite!="browser-tool-panel"&&native_ui_suite!="terminal-panel")window.AppWindow().Hide();return;
         }
         try{
             preferences_store=std::make_unique<coincide::PreferencesStore>(data_directory());preferences=preferences_store->open();preferences_writable=true;
