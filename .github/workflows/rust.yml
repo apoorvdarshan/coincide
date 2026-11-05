@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,7 @@ jobs:
           # Cone mode includes root manifests; omit unrelated native/store media.
           sparse-checkout: |
             crates
+            vendor
             .cargo
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
@@ -42,7 +43,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
           # A lockfile change rebuilds changed dependencies, not the entire graph.
           # The last prefix also migrates existing caches; Cargo checks fingerprints.
           restore-keys: |
@@ -71,6 +72,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             crates
+            vendor
             .cargo
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
@@ -80,11 +82,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo build -p coincide-desktop --locked
+      - name: Test GPUI prepaint accessibility rollback without a native window
+        run: cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support prepaint_transaction --locked -- --nocapture
       - name: Test synthetic desktop fixtures with notification, microphone and computer-use adapters
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use
   desktop-windows:
@@ -97,6 +101,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             crates
+            vendor
             .cargo
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
@@ -106,7 +111,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          key: rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/gpui-pre/Cargo.lock', '.cargo/**') }}
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-

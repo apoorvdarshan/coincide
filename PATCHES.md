@@ -50,7 +50,7 @@ Added three tests with the `prepaint_transaction` name prefix:
 After root workspace patch/lock registration, run:
 
 ```sh
-cargo test -p gpui-pre --features test-support --lib prepaint_transaction -- --nocapture
+cargo test --manifest-path vendor/gpui-pre/Cargo.toml --features test-support --lib prepaint_transaction --locked -- --nocapture
 ```
 
 At this checkpoint only rustfmt parsing/checks, package byte comparisons,

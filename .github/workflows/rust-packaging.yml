@@ -2,10 +2,10 @@ name: Rust packaging validation
 
 on:
   pull_request:
-    paths: ['crates/coincide-core/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
+    paths: ['crates/coincide-core/**', 'vendor/gpui-pre/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
   push:
     branches: [main, rust-parallel-packaging-52f19]
-    paths: ['crates/coincide-core/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
+    paths: ['crates/coincide-core/**', 'vendor/gpui-pre/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             crates
+            vendor/gpui-pre
             .cargo
             scripts
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
