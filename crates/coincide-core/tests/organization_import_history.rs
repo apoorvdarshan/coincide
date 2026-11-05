@@ -1,0 +1,131 @@
+use coincide_core::{cli_session_import::*, organization::*, usage_history::*};
+use serde_json::{json, Value};
+use uuid::Uuid;
+const ID: &str = "00000000-0000-4000-8000-000000000001";
+fn rollout(records: Vec<Value>) -> Vec<u8> {
+    records
+        .into_iter()
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+fn meta() -> Value {
+    json!({"type":"session_meta","payload":{"id":ID,"cwd":"/synthetic","future":true}})
+}
+fn msg(role: &str, text: &str) -> Value {
+    json!({"type":"response_item","payload":{"type":"message","role":role,"content":[{"type":"output_text","text":text}]}})
+}
+#[test]
+fn organization_rename_preserves_original_and_future_fields() {
+    let bytes = format!(
+        r#"[ {{"id":"{ID}","name":"Old","future":{{"nested":7}},"selection":{{"new":true}}}} ]"#
+    )
+    .into_bytes();
+    let mut records = Records::parse(&bytes).unwrap();
+    records
+        .rename_bot(Uuid::parse_str(ID).unwrap(), " New ")
+        .unwrap();
+    assert_eq!(records.original(), bytes);
+    let working: Value = serde_json::from_slice(&records.working_bytes().unwrap()).unwrap();
+    assert_eq!(working[0]["name"], "New");
+    assert_eq!(working[0]["future"]["nested"], 7);
+    assert_eq!(working[0]["selection"]["new"], true);
+    assert!(records.rename_bot(Uuid::nil(), "Missing").is_err());
+}
+#[test]
+fn invalid_organization_and_instruction_sources_are_rejected() {
+    assert!(Records::parse(b"{}").is_err());
+    assert!(Records::parse(b"[{\"id\":\"bad\"}]").is_err());
+    assert!(Records::parse(&serde_json::to_vec(&json!([{"id":ID},{"id":ID}])).unwrap()).is_err());
+    assert!(InstructionSnapshot::parse(&[255]).is_err());
+    let bytes = b"# Instructions\r\nUnknown content\n";
+    assert_eq!(InstructionSnapshot::parse(bytes).unwrap().original(), bytes);
+    assert!(InstructionSnapshot::parse(&vec![b'a'; 1_048_577]).is_err());
+}
+#[test]
+fn codex_rollbacks_and_source_changes_are_visible() {
+    let bytes = rollout(vec![
+        meta(),
+        msg("user", "first"),
+        msg("assistant", "answer"),
+        msg("user", "second"),
+        json!({"type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}),
+        json!({"type":"unknown","secretFutureField":"synthetic"}),
+    ]);
+    let preview = preview_codex(&bytes).unwrap();
+    assert_eq!(preview.messages.len(), 2);
+    assert_eq!(preview.omitted_records, 1);
+    assert!(preview.matches_source(&bytes));
+    assert!(!preview.matches_source(b"changed"));
+    assert_eq!(preview.original(), bytes);
+}
+#[test]
+fn codex_rejects_mixed_identity_and_oversize_records() {
+    let mut other = meta();
+    other["payload"]["id"] = json!(Uuid::nil().to_string());
+    assert!(preview_codex(&rollout(vec![meta(), other, msg("user", "hello")])).is_err());
+    assert!(preview_codex(&vec![b'a'; MAX_RECORD_BYTES + 1]).is_err());
+    assert!(preview_codex(&rollout(vec![
+        meta(),
+        json!({"sessionId": ID}),
+        msg("user", "hello")
+    ]))
+    .is_err());
+    assert!(preview_codex(&rollout(vec![meta()])).is_err());
+}
+#[test]
+fn codex_prefers_response_messages_and_bounds_unicode_text() {
+    let text = "🦀".repeat(MAX_TEXT + 1);
+    let bytes = rollout(vec![
+        meta(),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"duplicate"}}),
+        msg("user", &text),
+    ]);
+    let preview = preview_codex(&bytes).unwrap();
+    assert_eq!(preview.messages.len(), 1);
+    assert!(preview.shortened_text);
+    assert_eq!(preview.messages[0].text.chars().count(), MAX_TEXT + 2);
+}
+#[test]
+fn history_sums_only_turn_totals_and_retains_snapshots() {
+    let bytes = serde_json::to_vec(&json!([
+        {"id":ID,"provider":"codex","finishedAt":"2026-11-05T10:00:00Z","usage":{"inputTokens":99999,"costUSD":99}},
+        {"id":Uuid::nil(),"provider":"claude","finishedAt":"2026-11-05T10:00:00Z","usage":{"turnTotals":{"input":4,"cacheRead":3,"cacheWrite":2,"cacheWriteLong":2,"output":5,"reasoning":3},"future":true}}
+    ])).unwrap();
+    let history = UsageHistory::parse(&bytes).unwrap();
+    assert_eq!(history.original(), bytes);
+    assert_eq!(history.turn_totals(&HistoryFilter::default()).total(), 14);
+    assert_eq!(
+        history
+            .turn_totals(&HistoryFilter {
+                provider: Some("codex"),
+                ..Default::default()
+            })
+            .total(),
+        0
+    );
+    assert!(history
+        .filtered(&HistoryFilter {
+            since: Some("2027-01-01T00:00:00Z".parse().unwrap()),
+            ..Default::default()
+        })
+        .is_empty());
+}
+#[test]
+fn limits_update_keeps_unknown_fields_and_omitted_reset() {
+    let old = vec![
+        json!({"id":"weekly","usedPercent":10,"resetsAt":"later","future":7}),
+        json!({"id":"session","usedPercent":3}),
+    ];
+    let result = merge_limit_windows(
+        &old,
+        &[json!({"id":"weekly","usedPercent":20,"resetsAt":null})],
+    )
+    .unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0]["resetsAt"], "later");
+    assert_eq!(result[0]["future"], 7);
+    assert_eq!(result[0]["usedPercent"], 20);
+    assert!(merge_limit_windows(&old, &[json!({"usedPercent":20})]).is_err());
+}
