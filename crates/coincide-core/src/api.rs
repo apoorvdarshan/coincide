@@ -600,6 +600,12 @@ impl Engine {
                             provider["effort"] = self.composer_effort_capability(&thread["selection"]);
                         }
                     }
+                    // A repair capability is separate from the locked/proof state.
+                    // It permits only removing effort, never sending unproved work.
+                    result["repairClearAvailable"] = json!(thread["rustBotContext"].is_null()
+                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
+                        && crate::composer_selection::repair_clear_effort(&json!({"threadId":id,"effort":null}),&thread).is_ok());
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -611,6 +617,14 @@ impl Engine {
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
+                if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
+                    && let Ok(selection) = crate::composer_selection::repair_clear_effort(p,&v)
+                {
+                    // This exact one-field repair needs no provider/catalog IO.
+                    v["selection"] = selection;
+                    self.store.save(&v)?; self.revision += 1;
+                    return Ok(v);
+                }
                 let current_proof = self.composer_effort_proof(&v["selection"])?;
                 let target_proof = self.composer_target_effort_proof(p)?;
                 let selection = crate::composer_selection::select_with_proofs(p, &v,current_proof.as_ref(),target_proof.as_ref())?;
