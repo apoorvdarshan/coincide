@@ -94,7 +94,10 @@ impl Fixture {
         run(command, body)
     }
 }
-fn run(mut command: Command, body: Option<Value>) -> (i32, Value) {
+fn run(command: Command, body: Option<Value>) -> (i32, Value) {
+    run_bytes(command, body.map(|body| serde_json::to_vec(&body).unwrap()))
+}
+fn run_bytes(mut command: Command, body: Option<Vec<u8>>) -> (i32, Value) {
     let mut child = command
         .stdin(if body.is_some() {
             Stdio::piped()
@@ -106,12 +109,7 @@ fn run(mut command: Command, body: Option<Value>) -> (i32, Value) {
         .spawn()
         .unwrap();
     if let Some(body) = body {
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&serde_json::to_vec(&body).unwrap())
-            .unwrap();
+        child.stdin.take().unwrap().write_all(&body).unwrap();
     }
     let output = child.wait_with_output().unwrap();
     let text = String::from_utf8(output.stdout).unwrap();
@@ -188,6 +186,34 @@ fn cli_resolver_pagination_filters_and_raw_api_remain_scoped() {
 }
 
 #[test]
+fn cli_provider_omits_absent_model_and_preserves_explicit_model() {
+    let fixture = Fixture::new();
+    let (code, selected) = fixture.cli(&["provider", FIRST, "codex"], None, None);
+    assert_eq!(code, 0, "{selected}");
+    assert_eq!(selected["result"]["selection"]["provider"], "codex");
+    assert_eq!(selected["result"]["selection"]["modelID"], "default");
+    let (code, selected) = fixture.cli(
+        &["provider", FIRST, "claude", "synthetic-model"],
+        None,
+        None,
+    );
+    assert_eq!(code, 0, "{selected}");
+    assert_eq!(
+        selected["result"]["selection"]["modelID"],
+        "synthetic-model"
+    );
+    assert!(
+        fixture.engine.lock().unwrap().store.thread(FIRST).unwrap()["items"]
+            .as_array()
+            .is_some()
+    );
+    assert_eq!(
+        fixture.cli(&["status"], None, None).1["result"]["running"],
+        json!([])
+    );
+}
+
+#[test]
 fn cli_usage_rejects_unknown_duplicate_and_unsupported_options_before_transport() {
     for args in [
         vec!["threads", "--unknown"],
@@ -200,6 +226,10 @@ fn cli_usage_rejects_unknown_duplicate_and_unsupported_options_before_transport(
         vec!["threads", "--chats", "--project", "x"],
         vec!["threads", "--active", "--archived"],
         vec!["read", FIRST, "--count", "1", "--count", "2"],
+        vec!["file", FIRST, "file.txt", "not-an-integer"],
+        vec!["browser", FIRST, "{"],
+        vec!["browser", FIRST, "[]"],
+        vec!["answer", FIRST, "request", "{"],
         vec!["api", "--wait"],
         vec!["quit", "unexpected"],
         vec!["wait"],
@@ -213,6 +243,59 @@ fn cli_usage_rejects_unknown_duplicate_and_unsupported_options_before_transport(
         assert_eq!(run(command, None).0, 2, "{args:?}");
         assert!(!directory.path().join("never-created").exists());
     }
+}
+
+#[test]
+fn raw_api_json_is_validated_before_data_directory_resolution() {
+    for body in [b"{".to_vec(), Vec::new()] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(BINARY);
+        command
+            .arg("api")
+            .env_remove("COINCIDE_RUST_DATA_DIR")
+            .env_remove("HOME")
+            .env_remove("LOCALAPPDATA")
+            .current_dir(directory.path());
+        let (code, reply) = run_bytes(command, Some(body));
+        assert_eq!(
+            code, 2,
+            "Expected JSON usage error before missing data directory: {reply}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_local_syntax_never_connects_to_control() {
+    use std::{fs, os::unix::net::UnixListener};
+    let directory = tempfile::Builder::new()
+        .prefix("cs-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let data = directory.path().join("data");
+    fs::create_dir(&data).unwrap();
+    let listener = UnixListener::bind(data.join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    for args in [
+        vec!["file", FIRST, "file.txt", "bad"],
+        vec!["browser", FIRST, "{"],
+        vec!["answer", FIRST, "request", "{"],
+    ] {
+        let mut command = Command::new(BINARY);
+        command.args(&args).env("COINCIDE_RUST_DATA_DIR", &data);
+        assert_eq!(run(command, None).0, 2);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+    let mut command = Command::new(BINARY);
+    command.arg("api").env("COINCIDE_RUST_DATA_DIR", &data);
+    assert_eq!(run_bytes(command, Some(b"{".to_vec())).0, 2);
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }
 
 #[cfg(unix)]
@@ -267,7 +350,14 @@ mod scripted {
                             recorded.lock().unwrap().push(method.to_owned());
                             let result = match method {
                                 "threads.list" => json!([{"id":FIRST,"title":"Fake"}]),
-                                "threads.read" => json!({"id":FIRST,"items":[]}),
+                                "threads.read" => {
+                                    let settled = if state == "done" {
+                                        polls >= 2
+                                    } else {
+                                        polls >= 1
+                                    };
+                                    json!({"id":FIRST,"items":if settled { vec![json!({"kind":"assistant","text":"settled after status"})] } else { vec![] }})
+                                }
                                 "agent.send" => {
                                     assert_eq!(request["params"]["text"], "synthetic send");
                                     json!({"accepted":true})
@@ -316,6 +406,10 @@ mod scripted {
             let (exit, reply, calls) = wait_scenario(state, state == "done");
             assert_eq!(exit, code, "{reply}");
             assert_eq!(reply["result"]["state"], state);
+            assert_eq!(
+                reply["result"]["transcript"]["items"][0]["text"],
+                "settled after status"
+            );
             assert_eq!(
                 calls.iter().filter(|m| m.as_str() == "agent.send").count(),
                 usize::from(state == "done")
