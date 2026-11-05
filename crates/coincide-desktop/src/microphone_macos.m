@@ -206,7 +206,7 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
         // Never request permission, or create an engine before authorization.
         if (CCPermission() != 1) { if (error) *error = -2; return NULL; }
         bool expected = false;
-        if (!atomic_compare_exchange_strong(&cc_capture_owned, &expected, true)) return NULL;
+        if (!atomic_compare_exchange_strong(&cc_capture_owned, &expected, true)) { if (error) *error = -8; return NULL; }
         CCMicrophone *capture = [CCMicrophone new];
         if (!capture) { atomic_store(&cc_capture_owned, false); return NULL; }
         capture->ownsCapture = YES;

@@ -9,7 +9,7 @@ int cc_mic_permission_poll(void *request);
 void cc_mic_permission_destroy(void *request);
 // Capture state: 1 recording, 2 ready, 3 limit reached, negative = failure.
 // Error codes: -1 unavailable, -2 permission, -3 input/format, -4 overflow,
-// -5 conversion, -6 device/configuration change, -7 invalid arguments.
+// -5 conversion, -6 device/configuration change, -7 invalid arguments, -8 busy (another owner).
 void *cc_mic_start(size_t maximum_samples, int *error);
 void cc_mic_stop(void *capture);
 void cc_mic_cancel(void *capture);
