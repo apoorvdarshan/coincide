@@ -45,7 +45,7 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Verified so far
 
-2026-11-05 checkpoint: approximately 24% of the macOS replacement is verified.
+2026-11-05 checkpoint: approximately 27% of the macOS replacement is verified.
 This remains a planning estimate; the broad acceptance groups above stay unchecked
 until their complete behavior is accepted. Mac is the first release target; Linux
 currently supplies additional build/test capacity and portability feedback.
@@ -87,7 +87,11 @@ one additional Grok completion regression passed separately on both hosts (117
 unique tests validated). Mac focused image/Grok/download tests and GPUI compilation
 passed. Native fixture checks verified a hidden WebKit download with exact bytes
 and private permissions, styled terminal cells, and terminal creation/selection/close.
-The feature batch still needs its own CI result before increasing the estimate.
+Checkpoint `cdbeb48` passed every applicable GitHub check. The next parallel batch
+passes 142 portable tests, strict core clippy and both Mac/Linux desktop builds.
+Native WebKit checks verified nested frames, editing/select/click, sensitive-field
+refusal, scrolling, cross-origin refusal and stale ancestor handles. Native settings
+Light/Paper changes persisted and survived restart. This batch still needs its own CI.
 
 CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
 changes. Rust-only files are excluded from Swift's change classifier; changes to that
@@ -102,13 +106,15 @@ an overall pipeline speedup percentage. Continue independent work while CI runs.
 Implemented foundations are deliberately narrower than full feature groups:
 
 - Shared CLI/API supports project CRUD, settings-document patches, thread actions,
-  Codex/Claude/Grok selection, pending approvals/questions, and explicit responses.
-- Browser has a separate persistent profile and thread-scoped tabs. Frames,
+  Codex/Claude/Grok/OpenCode selection, pending approvals/questions, and explicit responses.
+- Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
   uploads, passwords, passkeys, dialogs, screenshots and native-key actions
   still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
   thread-scoped session history and private verified destinations on Mac. Linux
   downloads fail closed because upstream shared-profile callbacks misattribute tabs.
-  Progress/cancel/resume, blob downloads and persistent history remain.
+  Progress/cancel/resume, blob downloads and persistent history remain. Same-origin
+  nested frames have expiring handles; read/click/input/type/scroll reject stale
+  ancestors. Native srcdoc navigation works while public navigation stays HTTP(S).
 - Terminal has real PTYs, native create/select/close tabs and a styled desktop grid. API clients can request
   paged RGB/style/cursor snapshots (at most ten rows); plain polling stays lightweight.
   The desktop assembles coherent revision-matched pages, capped at 40 visible rows.
@@ -134,11 +140,25 @@ Implemented foundations are deliberately narrower than full feature groups:
   Claude/Codex and generic ACP image transport have fixture coverage; HEIC/TIFF,
   PDFs, image editing, clipboard/paste/drop and broader media parity remain.
 - Six legacy providers have a filesystem-only discovery catalog. Discovery does not
-  verify authentication, versions, models or runtime support; Codex/Claude/Grok are
+  verify authentication, versions, models or runtime support; Codex/Claude/Grok/OpenCode are
   connected in the preview. Grok authentication, resume, explicit models, images,
   questions/approvals, plan capture and cancellation have synthetic fixture coverage;
-  real accounts, usage/effort and background-task UI remain unverified. Successful native sessions record transcript progress;
+  real accounts, usage/effort and background-task UI remain unverified. OpenCode
+  owns an authenticated loopback HTTP/SSE server, verifies its PID, strictly resumes
+  sessions, streams, asks approvals/questions, sends images and cleans up on Stop.
+  Reconnection/backfill, pooling, dynamic models/accounts and plan controls remain. Successful native sessions record transcript progress;
   subsequent provider handoffs include missed messages/images within bounded limits.
+- Text follow-ups persist in a bounded queue and execute in order after successful
+  turns. Stop/failure/save failure pause the queue; restarts require explicit Resume.
+  Uncertain dispatches become interrupted, never automatically replayed. Provider
+  selection changes block queued delivery. Native queue controls preserve drafts
+  until enqueue succeeds. Queued images, steering and interrupt-and-send remain.
+- Forking can select a settled turn; editing a user message creates a separate
+  branch with its draft/images restored. IDs are regenerated, runtime references
+  cleared, and original history preserved. This does not rewind files or providers.
+- Native settings wire system/light/dark appearance, 19 legacy theme choices,
+  conversation font/size/alignment/reasoning and Return behavior. Unknown settings
+  remain preserved. Full settings, localization and accessibility parity remain.
 - Transcripts use a virtualized list with validated image previews, but selectable
   text and full media behavior remain unfinished.
 

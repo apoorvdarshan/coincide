@@ -59,11 +59,14 @@ fn finished(session: &Session) -> Vec<Value> {
 
 #[test]
 fn named_providers_never_silently_route_unsupported_transports() {
-    assert_eq!(Provider::supported_names(), &["codex", "claude", "grok"]);
+    assert_eq!(
+        Provider::supported_names(),
+        &["codex", "claude", "grok", "opencode"]
+    );
     for name in Provider::supported_names() {
         assert_eq!(Provider::from_name(name).unwrap().id(), *name);
     }
-    for name in ["cursor", "opencode", "antigravity", "unknown"] {
+    for name in ["cursor", "antigravity", "unknown"] {
         assert!(Provider::from_name(name).is_err());
     }
 }

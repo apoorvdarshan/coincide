@@ -2,7 +2,8 @@
 //! callbacks return bounded payloads without holding an engine mutex.
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
-    BrowserAction, BrowserReply, BrowserRequest, DownloadRegistry, script, validate_url,
+    BrowserAction, BrowserReply, BrowserRequest, DownloadRegistry, allow_native_navigation,
+    script_for_request, validate_url,
 };
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
@@ -219,8 +220,8 @@ impl BrowserController {
                 tab.loading = true;
                 Ok(Some(json!({"tab":target,"url":url,"loading":true})))
             }
-            action => {
-                let source = script(action)?.context("Unsupported browser action")?;
+            _ => {
+                let source = script_for_request(&request)?.context("Unsupported browser action")?;
                 let sender = self.sender.clone();
                 let id = request.id.clone();
                 let thread_id = request.thread_id.clone();
@@ -284,7 +285,7 @@ impl BrowserController {
             .with_devtools(false)
             .with_autoplay(false)
             .with_clipboard(false)
-            .with_navigation_handler(|url| url == "about:blank" || validate_url(&url).is_ok())
+            .with_navigation_handler(|url| allow_native_navigation(&url))
             .with_download_started_handler(move |url, destination| {
                 // Wry 0.53 registers GTK callbacks on the shared context without
                 // matching the source webview. Fail closed until that is fixed.
@@ -428,6 +429,6 @@ impl BrowserController {
     }
     pub fn tab_list(&self, thread: &str) -> Value {
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":tab.title,"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
-            "visible":self.visible.as_deref()==Some(thread),"unsupported":["download-progress","download-cancel","download-resume","blob-downloads","upload","frames","password-manager","dialogs","native-key-events","screenshots"]})
+            "visible":self.visible.as_deref()==Some(thread),"unsupported":["download-progress","download-cancel","download-resume","blob-downloads","upload","cross-origin-frame-actions","password-manager","dialogs","native-key-events","screenshots"]})
     }
 }

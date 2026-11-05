@@ -12,6 +12,8 @@ pub struct BrowserRequest {
     pub thread_id: String,
     #[serde(default)]
     pub tab: Option<String>,
+    #[serde(default)]
+    pub frame: Option<String>,
     #[serde(flatten)]
     pub action: BrowserAction,
 }
@@ -35,6 +37,21 @@ pub enum BrowserAction {
         selector: String,
         text: String,
     },
+    Type {
+        selector: String,
+        text: String,
+        #[serde(default)]
+        clear: bool,
+    },
+    Scroll {
+        #[serde(default)]
+        selector: Option<String>,
+        #[serde(default)]
+        to: Option<ScrollEdge>,
+        #[serde(default)]
+        by: Option<i32>,
+    },
+    Frames,
     Back,
     Forward,
     Reload,
@@ -48,6 +65,13 @@ pub enum BrowserAction {
     CloseTab,
     Show,
     Hide,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollEdge {
+    Top,
+    Bottom,
 }
 fn first_page() -> usize {
     1
@@ -71,6 +95,20 @@ impl BrowserRequest {
         if let Some(tab) = &self.tab {
             ensure!(!tab.is_empty() && tab.len() <= 128, "Invalid tab ID");
         }
+        if let Some(frame) = &self.frame {
+            ensure!(!frame.is_empty() && frame.len() <= 128, "Invalid frame ID");
+            ensure!(
+                matches!(
+                    self.action,
+                    BrowserAction::Read { .. }
+                        | BrowserAction::Click { .. }
+                        | BrowserAction::Input { .. }
+                        | BrowserAction::Type { .. }
+                        | BrowserAction::Scroll { .. }
+                ),
+                "This action cannot target a frame"
+            );
+        }
         match &self.action {
             BrowserAction::Navigate { url } | BrowserAction::NewTab { url: Some(url) } => {
                 validate_url(url)?;
@@ -82,9 +120,28 @@ impl BrowserRequest {
                 }
             }
             BrowserAction::Click { selector } => validate_selector(selector)?,
-            BrowserAction::Input { selector, text } => {
+            BrowserAction::Input { selector, text }
+            | BrowserAction::Type { selector, text, .. } => {
                 validate_selector(selector)?;
                 ensure!(text.len() <= 65536, "Input exceeds 64 KiB");
+            }
+            BrowserAction::Scroll { selector, to, by } => {
+                ensure!(
+                    usize::from(selector.is_some())
+                        + usize::from(to.is_some())
+                        + usize::from(by.is_some())
+                        <= 1,
+                    "Use only one of selector, to, or by for scrolling"
+                );
+                if let Some(selector) = selector {
+                    validate_selector(selector)?;
+                }
+                if let Some(by) = by {
+                    ensure!(
+                        (-1_000_000..=1_000_000).contains(by),
+                        "Scroll distance exceeds one million pixels"
+                    );
+                }
             }
             BrowserAction::SelectTab | BrowserAction::CloseTab => {
                 ensure!(self.tab.is_some(), "A tab ID is required");
@@ -106,6 +163,12 @@ pub fn validate_url(address: &str) -> Result<Url> {
         "Use an HTTP or HTTPS address without a username or password"
     );
     Ok(url)
+}
+
+/// Browser-created empty/srcdoc frames are internal documents, not arbitrary
+/// user navigation targets. Keep the public navigate/new-tab API HTTP(S)-only.
+pub fn allow_native_navigation(address: &str) -> bool {
+    matches!(address, "about:blank" | "about:srcdoc") || validate_url(address).is_ok()
 }
 fn validate_selector(selector: &str) -> Result<()> {
     ensure!(
@@ -411,9 +474,18 @@ fn finish_download(root: &std::path::Path, destination: &std::path::Path) -> Res
 }
 
 /// Build one of the fixed browser operations. Caller input is JSON encoded,
-/// never concatenated into executable source. These operations target the main
-/// frame only; cross-origin frame support needs a separate native implementation.
+/// never concatenated into executable source. Cross-origin frames require a
+/// separate native implementation; page scripts cannot bypass origin boundaries.
 pub fn script(action: &BrowserAction) -> Result<Option<String>> {
+    script_in_frame(action, None)
+}
+
+pub fn script_for_request(request: &BrowserRequest) -> Result<Option<String>> {
+    request.validate()?;
+    script_in_frame(&request.action, request.frame.as_deref())
+}
+
+fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option<String>> {
     let payload = match action {
         BrowserAction::Read { selector, page } => {
             serde_json::json!({"kind":"read","selector":selector,"page":page})
@@ -424,40 +496,99 @@ pub fn script(action: &BrowserAction) -> Result<Option<String>> {
         BrowserAction::Input { selector, text } => {
             serde_json::json!({"kind":"input","selector":selector,"text":text})
         }
+        BrowserAction::Type {
+            selector,
+            text,
+            clear,
+        } => {
+            serde_json::json!({"kind":"type","selector":selector,"text":text,"clear":clear})
+        }
+        BrowserAction::Scroll { selector, to, by } => {
+            serde_json::json!({"kind":"scroll","selector":selector,"to":to,"by":by})
+        }
+        BrowserAction::Frames => serde_json::json!({"kind":"frames"}),
         BrowserAction::Back => return Ok(Some("history.back(); ({dispatched:true})".into())),
         BrowserAction::Forward => return Ok(Some("history.forward(); ({dispatched:true})".into())),
         BrowserAction::Reload => return Ok(Some("location.reload(); ({dispatched:true})".into())),
         _ => return Ok(None),
     };
     Ok(Some(format!(
-        "(() => {{ const request = {}; {} }})()",
+        "(() => {{ const request = {}; const frameId = {}; {} }})()",
         serde_json::to_string(&payload)?,
+        serde_json::to_string(&frame)?,
         SCRIPT
     )))
 }
 
 const SCRIPT: &str = r#"
 try {
-  const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+  const safeUrl = value => {
+    try {
+      const url=new URL(value);
+      url.username=''; url.password='';
+      return ['http:','https:','about:'].includes(url.protocol) ? url.href.slice(0,8192) : url.protocol+'[omitted]';
+    } catch (_) {return '';}
+  };
+  // Registry lifetime is the top document. Each enumeration expires previous
+  // handles; child navigation is detected by checking document identity through
+  // every ancestor. These are page data, never authority for native operations.
+  const registryKey = '__coincideSameOriginFramesV1';
+  if (request.kind === 'frames') {
+    const entries = new Map(), frames = [];
+    let truncated = false;
+    const visit = (doc, chain, depth) => {
+      if (depth >= 8) {truncated=true; return;}
+      for (const element of doc.querySelectorAll('iframe,frame')) {
+        if (frames.length >= 64) {truncated=true; return;}
+        let child = null;
+        try {child=element.contentDocument;} catch (_) {}
+        const id = 'frame-'+crypto.randomUUID();
+        const next = chain.concat([{element,doc:child}]);
+        entries.set(id,{chain:next,doc:child});
+        frames.push({id,title:(child?.title || element.title || '').slice(0,300),
+          url:safeUrl(child?.location.href || element.src || ''),accessible:!!child,
+          ...(!child ? {reason:'Cross-origin or sandboxed frame requires native frame support'} : {})});
+        if (child) visit(child,next,depth+1);
+      }
+    };
+    visit(document,[],0);
+    window[registryKey]=entries;
+    return {frames,truncated,handlesExpire:'On the next frames listing or navigation',crossOriginActionsSupported:false};
+  }
+  let doc = document;
+  if (frameId) {
+    const entry = window[registryKey]?.get(frameId);
+    if (!entry) throw new Error('Frame handle expired or belongs to another tab; list frames again');
+    if (!entry.doc) throw new Error('Cross-origin or sandboxed frame actions are not supported');
+    let parent = document;
+    for (const item of entry.chain) {
+      if (!item.element.isConnected || item.element.ownerDocument!==parent || item.element.contentDocument!==item.doc)
+        throw new Error('Frame navigated or was detached; list frames again');
+      parent=item.doc;
+    }
+    doc=entry.doc;
+  }
+  const win=doc.defaultView;
+  const visible = e => !!e.getClientRects().length && win.getComputedStyle(e).visibility !== 'hidden';
   const sensitive = e => e.matches('input[type=password],input[autocomplete=one-time-code]');
   const choose = selector => {
-    const all = document.querySelectorAll(selector);
+    const all = doc.querySelectorAll(selector);
     if (all.length !== 1) throw new Error(all.length ? 'Selector matches multiple elements' : 'Element not found');
     return all[0];
   };
   if (request.kind === 'read') {
-    const scope = request.selector ? choose(request.selector) : document.body;
-    if (!scope) return {url:location.href,title:document.title,loading:document.readyState !== 'complete',text:'',elements:[]};
+    const scope = request.selector ? choose(request.selector) : doc.body;
+    if (!scope) return {url:safeUrl(doc.location.href),title:doc.title,loading:doc.readyState !== 'complete',text:'',elements:[]};
     const pageSize=20000;
     // innerText does not expose input values. Never read .value, cookies or storage.
     const full=(scope.innerText || '').slice(0,2000000);
     const selectorFor = element => {
-      if (element.id && document.querySelectorAll('#'+CSS.escape(element.id)).length === 1) return '#'+CSS.escape(element.id);
+      if (element.id && doc.querySelectorAll('#'+CSS.escape(element.id)).length === 1) return '#'+CSS.escape(element.id);
       const parts=[];
       for (let node=element;node && node.nodeType===1;node=node.parentElement) {
         const siblings=node.parentElement ? Array.from(node.parentElement.children).filter(e=>e.tagName===node.tagName) : [node];
         parts.unshift(node.tagName.toLowerCase()+':nth-of-type('+(siblings.indexOf(node)+1)+')');
-        if (node===document.documentElement) break;
+        if (node===doc.documentElement) break;
       }
       return parts.join(' > ');
     };
@@ -465,9 +596,18 @@ try {
       .filter(visible).slice(0,200).map(e=>({selector:selectorFor(e),tag:e.tagName.toLowerCase(),
         label:(e.getAttribute('aria-label') || e.getAttribute('placeholder') || (e.tagName==='INPUT' ? '' : e.innerText) || '').slice(0,300),
         type:e.getAttribute('type') || '',disabled:!!e.disabled,sensitive:sensitive(e)}));
-    return {url:location.href,title:document.title,loading:document.readyState!=='complete',
+    return {url:safeUrl(doc.location.href),title:doc.title,loading:doc.readyState!=='complete',frame:frameId,
       page:request.page,pages:Math.max(1,Math.ceil(full.length/pageSize)),
       text:full.slice((request.page-1)*pageSize,request.page*pageSize),elements};
+  }
+  if (request.kind==='scroll') {
+    const root=doc.scrollingElement || doc.documentElement;
+    if (request.selector) choose(request.selector).scrollIntoView({block:'center',behavior:'instant'});
+    else if (request.to==='top') win.scrollTo({top:0,behavior:'instant'});
+    else if (request.to==='bottom') win.scrollTo({top:root.scrollHeight,behavior:'instant'});
+    else win.scrollBy({top:request.by ?? Math.round(win.innerHeight*0.9),behavior:'instant'});
+    return {scrollY:Math.round(win.scrollY),scrollHeight:root.scrollHeight,viewportHeight:win.innerHeight,
+      atBottom:win.scrollY+win.innerHeight>=root.scrollHeight-2,frame:frameId};
   }
   const target=choose(request.selector);
   if (!visible(target)) throw new Error('Element is not visible');
@@ -479,14 +619,41 @@ try {
     return {dispatched:true};
   }
   target.focus();
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+  if (target.readOnly) throw new Error('Element is read-only');
+  if (request.kind==='type') {
+    const textField=target instanceof win.HTMLTextAreaElement ||
+      (target instanceof win.HTMLInputElement && ['text','search','url','tel','email'].includes(target.type));
+    if (!textField && !target.isContentEditable) throw new Error('Element is not an editable text field or editor');
+    if (target.isContentEditable) {
+      const range=doc.createRange();
+      range.selectNodeContents(target);
+      if (!request.clear) range.collapse(false);
+      const selection=win.getSelection();
+      selection.removeAllRanges(); selection.addRange(range);
+    } else if (request.clear) {target.select();}
+    else {try {target.setSelectionRange(target.value.length,target.value.length);} catch (_) {}}
+    // Preserve rich editor undo/input behavior. Do not replace the editor DOM if
+    // the engine refuses insertion; report the actual failure instead.
+    if (target.isContentEditable) {
+      const inserted=request.text ? doc.execCommand('insertText',false,request.text) : (!request.clear || doc.execCommand('delete'));
+      if (!inserted) throw new Error('Browser refused text insertion into this editor');
+    } else {
+      const next=(request.clear ? '' : target.value)+request.text;
+      const proto=target instanceof win.HTMLTextAreaElement ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto,'value').set.call(target,next);
+      target.dispatchEvent(new win.Event('input',{bubbles:true}));
+      target.dispatchEvent(new win.Event('change',{bubbles:true}));
+    }
+    return {typed:true,method:'text-insertion',nativeKeys:false};
+  }
+  if (target instanceof win.HTMLInputElement || target instanceof win.HTMLTextAreaElement || target instanceof win.HTMLSelectElement) {
     if (target.type==='file') throw new Error('File upload requires the native upload API');
-    const proto=target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const proto=target instanceof win.HTMLTextAreaElement ? win.HTMLTextAreaElement.prototype : target instanceof win.HTMLSelectElement ? win.HTMLSelectElement.prototype : win.HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto,'value').set.call(target,request.text);
   } else if (target.isContentEditable) {target.textContent=request.text;}
   else {throw new Error('Element is not an editable text field');}
-  target.dispatchEvent(new Event('input',{bubbles:true}));
-  target.dispatchEvent(new Event('change',{bubbles:true}));
+  target.dispatchEvent(new win.Event('input',{bubbles:true}));
+  target.dispatchEvent(new win.Event('change',{bubbles:true}));
   return {dispatched:true};
 } catch(error) {return {error:String(error.message || error).slice(0,1000)};}
 "#;
@@ -494,6 +661,24 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_srcdoc_frames_are_allowed_without_opening_arbitrary_url_schemes() {
+        for address in ["about:blank", "about:srcdoc", "https://example.test/frame"] {
+            assert!(allow_native_navigation(address));
+        }
+        for address in [
+            "about:config",
+            "about:srcdoc?file=secret",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<h1>test</h1>",
+            "https://user:password@example.test",
+        ] {
+            assert!(!allow_native_navigation(address));
+        }
+        assert!(validate_url("about:srcdoc").is_err());
+        assert!(validate_url("about:blank").is_err());
+    }
     #[test]
     fn validates_urls_and_rejects_local_or_credential_urls() {
         for value in [
@@ -534,6 +719,7 @@ mod tests {
             id: "one".into(),
             thread_id: uuid::Uuid::new_v4().to_string(),
             tab: None,
+            frame: None,
             action: BrowserAction::Input {
                 selector: "#input".into(),
                 text: "x".repeat(65537),
@@ -542,5 +728,105 @@ mod tests {
         assert!(r.validate().is_err());
         r.action = BrowserAction::CloseTab;
         assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn frame_commands_reject_unsupported_actions_and_unbounded_handles() {
+        let thread = uuid::Uuid::new_v4().to_string();
+        for action in [
+            "navigate",
+            "new-tab",
+            "downloads",
+            "frames",
+            "close-tab",
+            "hide",
+        ] {
+            let value = serde_json::json!({"id":"frame-test","threadId":thread,"frame":"frame-one","tab":"tab-one","action":action,"url":"https://example.test"});
+            let request: BrowserRequest = serde_json::from_value(value).unwrap();
+            assert!(
+                request.validate().is_err(),
+                "{action} must not silently target the top frame"
+            );
+        }
+        let mut value = serde_json::json!({"id":"frame-test","threadId":thread,"frame":"frame-one","action":"read"});
+        let request: BrowserRequest = serde_json::from_value(value.clone()).unwrap();
+        assert!(request.validate().is_ok());
+        value["frame"] = serde_json::json!("x".repeat(129));
+        assert!(
+            serde_json::from_value::<BrowserRequest>(value)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn scroll_commands_validate_exclusive_targets_edges_and_distances() {
+        let thread = uuid::Uuid::new_v4().to_string();
+        for arguments in [
+            serde_json::json!({}),
+            serde_json::json!({"by":-400}),
+            serde_json::json!({"to":"bottom"}),
+            serde_json::json!({"selector":"#pane"}),
+        ] {
+            let mut value =
+                serde_json::json!({"id":"scroll-test","threadId":thread,"action":"scroll"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(arguments.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<BrowserRequest>(value)
+                    .unwrap()
+                    .validate()
+                    .is_ok()
+            );
+        }
+        for arguments in [
+            serde_json::json!({"by":1000001}),
+            serde_json::json!({"by":-1000001}),
+            serde_json::json!({"to":"top","selector":"#pane"}),
+            serde_json::json!({"to":"bottom","by":50}),
+            serde_json::json!({"selector":""}),
+        ] {
+            let mut value =
+                serde_json::json!({"id":"scroll-test","threadId":thread,"action":"scroll"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(arguments.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<BrowserRequest>(value)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<BrowserRequest>(
+                serde_json::json!({"id":"x","threadId":thread,"action":"scroll","to":"anywhere"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn frame_and_type_arguments_are_encoded_and_text_is_bounded() {
+        let payload = "\";globalThis.injected=true;//\n";
+        let mut request: BrowserRequest = serde_json::from_value(serde_json::json!({
+            "id":"type-test","threadId":uuid::Uuid::new_v4().to_string(),"action":"type",
+            "frame":payload,"selector":"#editor","text":payload,"clear":true,
+        }))
+        .unwrap();
+        let source = script_for_request(&request).unwrap().unwrap();
+        assert!(source.contains(&format!(
+            "const frameId = {};",
+            serde_json::to_string(payload).unwrap()
+        )));
+        assert!(source.contains(&serde_json::to_string(payload).unwrap()));
+        if let BrowserAction::Type { text, .. } = &mut request.action {
+            *text = "x".repeat(65537);
+        }
+        assert!(script_for_request(&request).is_err());
     }
 }

@@ -1,5 +1,7 @@
 use anyhow::Result;
 mod browser;
+mod queue;
+mod settings;
 use browser::BrowserController;
 use coincide_core::{
     api::{Engine, SharedEngine, call},
@@ -116,6 +118,14 @@ struct Coincide {
     pending_requests: Vec<Value>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
+    queued_messages: Vec<Value>,
+    queue_enabled: bool,
+    queue_error: String,
+    settings_open: bool,
+    settings: Value,
+    settings_status: String,
+    appearance_dark: bool,
+    applied_theme: Option<(bool, String)>,
     schedules_open: bool,
     schedule_create_open: bool,
     schedule_interval: bool,
@@ -173,7 +183,12 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let composer = cx.new(|cx| TextareaState::new(window, cx).placeholder("Write a message…"));
+        let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
+        let composer = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Write a message…")
+                .submit_on_enter(settings["sendOnReturn"].as_bool().unwrap_or(true))
+        });
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_name = cx.new(|cx| InputState::new(window, cx).placeholder("Schedule name"));
         let schedule_prompt = cx.new(|cx| {
@@ -193,6 +208,14 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let subscriptions = vec![
+            cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { shift: false, .. })
+                    && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
+                    && !this.settings_open && !this.schedules_open
+                {
+                    this.send(window, cx);
+                }
+            }),
             cx.subscribe(&browser_address, |this, _, event, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.browser_go(cx);
@@ -247,6 +270,14 @@ impl Coincide {
             pending_requests: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
+            queued_messages: Vec::new(),
+            queue_enabled: false,
+            queue_error: String::new(),
+            settings_open: false,
+            settings,
+            settings_status: String::new(),
+            appearance_dark: true,
+            applied_theme: None,
             schedules_open: false,
             schedule_create_open: false,
             schedule_interval: false,
@@ -296,6 +327,7 @@ impl Coincide {
             browser_ui_operations: Default::default(),
             _subscriptions: subscriptions,
         };
+        this.apply_appearance(window, cx);
         if let Some(id) = this.threads.first().map(|t| t.id.clone()) {
             this.select(&id, window, cx);
         }
@@ -467,7 +499,7 @@ impl Coincide {
                 .flex_shrink_0()
                 .h_full()
                 .border_l_1()
-                .border_color(rgb(0x29303d))
+                .border_color(self.color(0x29303d))
                 .child(
                     div()
                         .flex()
@@ -565,6 +597,7 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
         }
@@ -598,6 +631,7 @@ impl Coincide {
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
                 self.selected = Some(v);
+                self.settings_open = false;
                 self.pending_requests.clear();
                 let visible = self.browser_panels.contains(id).then_some(id);
                 if let Some(browser) = &mut self.browser {
@@ -624,6 +658,7 @@ impl Coincide {
             }
             Err(e) => self.status = format!("Unable to open conversation: {e}"),
         }
+        self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
         }
@@ -717,7 +752,7 @@ impl Coincide {
                     .gap_2()
                     .p_3()
                     .rounded_md()
-                    .bg(rgb(0x202a3b))
+                    .bg(self.color(0x202a3b))
                     .child(Input::new(&self.schedule_name))
                     .child(Textarea::new(&self.schedule_prompt).h(px(90.)))
                     .child(
@@ -781,7 +816,7 @@ impl Coincide {
                 .gap_2()
                 .p_3()
                 .rounded_md()
-                .bg(rgb(0x202a3b))
+                .bg(self.color(0x202a3b))
                 .child(div().font_semibold().child(text(proposed, "name")))
                 .child(div().child(text(proposed, "prompt")))
                 .child(div().text_sm().child(format!(
@@ -923,6 +958,7 @@ impl Coincide {
             cx.quit();
             return;
         }
+        self.apply_appearance(window, cx);
         self.poll_browser(window, cx);
         self.poll_terminal(cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
@@ -938,6 +974,14 @@ impl Coincide {
                         .collect()
                 })
                 .unwrap_or_default();
+            let is_running = selected_thread
+                .as_ref()
+                .is_some_and(|id| self.running.contains(id));
+            if was_running != is_running {
+                self.transcript_list
+                    .splice(0..self.transcript_count, self.transcript_count);
+                cx.notify();
+            }
             if was_running
                 && selected_thread
                     .as_ref()
@@ -950,6 +994,7 @@ impl Coincide {
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
                 self.revision = revision;
+                self.refresh_settings(window, cx);
                 if let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) {
                     if let Ok(v) = call(&self.engine, "threads.read", json!({"threadId":id})) {
                         let count = v["items"].as_array().map_or(0, Vec::len);
@@ -1108,7 +1153,7 @@ impl Coincide {
                 .gap_2()
                 .p_3()
                 .rounded_md()
-                .bg(rgb(0x253046));
+                .bg(self.color(0x253046));
             let mut body = div()
                 .id(SharedString::from(format!("pending-body-{request_id}")))
                 .flex()
@@ -1332,6 +1377,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let placeholder_background = self.color(0x111722);
         let placeholder = |label: &'static str| {
             div()
                 .w(px(width))
@@ -1340,7 +1386,7 @@ impl Coincide {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(rgb(0x111722))
+                .bg(placeholder_background)
                 .rounded_md()
                 .text_xs()
                 .child(label)
@@ -1524,6 +1570,14 @@ impl Coincide {
         )
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|v| self.running.contains(&text(v, "id")))
+        {
+            self.queue_message(window, cx);
+            return;
+        }
         if let Some(v) = self.selected.as_ref() {
             if self.attachment_import_threads.contains(&text(v, "id")) {
                 self.status = "Wait for image imports to finish before sending.".into();
@@ -1539,6 +1593,8 @@ impl Coincide {
                     let id = text(v, "id");
                     if !self.running.contains(&id) {
                         self.running.push(id);
+                        self.transcript_list
+                            .splice(0..self.transcript_count, self.transcript_count);
                     }
                     self.status = "Agent running · approval required for changes".into();
                     self.composer
@@ -1622,6 +1678,26 @@ impl Coincide {
             return div().into_any_element();
         };
         let kind = text(item, "kind");
+        let item_id = text(item, "id");
+        let source_id = self
+            .selected
+            .as_ref()
+            .map(|v| text(v, "id"))
+            .unwrap_or_default();
+        let source_running = self.running.contains(&source_id);
+        let running_start = self
+            .selected
+            .as_ref()
+            .and_then(|v| v["items"].as_array())
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rposition(|item| item["kind"] == "user" && item["steered"] != true)
+            });
+        let settled = !source_running || running_start.is_some_and(|start| index < start);
+        if kind == "reasoning" && !self.settings["showReasoning"].as_bool().unwrap_or(true) {
+            return div().into_any_element();
+        }
         let body = text(item, "text");
         let collapsible = kind != "user" && kind != "assistant";
         let expanded = self.expanded.contains(&index);
@@ -1647,16 +1723,18 @@ impl Coincide {
                     .child(div().max_w(px(240.)).truncate().text_xs().child(name))
             })
             .collect::<Vec<_>>();
-        div()
-            .mx_6()
+        let card = div()
+            .min_w_0()
+            .flex_1()
+            .max_w(relative(0.92))
             .my_2()
             .p_4()
             .rounded_lg()
-            .bg(rgb(if kind == "user" { 0x222c3d } else { 0x181d28 }))
+            .bg(self.color(if kind == "user" { 0x222c3d } else { 0x181d28 }))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x98b1d4))
+                    .text_color(self.color(0x98b1d4))
                     .mb_2()
                     .child(label),
             )
@@ -1673,10 +1751,47 @@ impl Coincide {
                         })),
                 )
             })
-            .child(TextView::markdown(("message", index), shown))
+            .child(
+                TextView::markdown(("message", index), shown)
+                    .text_size(px(self.conversation_font_size()))
+                    .when(
+                        kind == "assistant"
+                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                == "newYork",
+                        |view| view.font_family(settings::reply_font()),
+                    ),
+            )
             .when(!previews.is_empty(), |view| {
                 view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
             })
+            .when(kind == "user", |view| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                view.child(div().mt_2().child(
+                    Button::new(("edit-message-branch", index))
+                        .label("Edit in new branch")
+                        .disabled(source_running)
+                        .tooltip(if source_running { "Stop the current turn before editing an earlier message" } else { "Create a separate conversation with this message restored as a draft" })
+                        .on_click(cx.listener(move |this, _, window, cx| this.branch_from_item(&source, &item, true, window, cx)))
+                ))
+            })
+            .when(kind == "assistant" && settled, |view| {
+                view.child(div().mt_2().child(
+                    Button::new(("fork-message-turn", index))
+                        .label("Fork through this turn")
+                        .tooltip("Copy settled conversation through this turn into a separate branch")
+                        .on_click(cx.listener(move |this, _, window, cx| this.branch_from_item(&source_id, &item_id, false, window, cx)))
+                ))
+            });
+        div()
+            .flex()
+            .mx_6()
+            .when(
+                kind == "user"
+                    && self.settings["userMessageSide"].as_str().unwrap_or("right") != "left",
+                |row| row.justify_end(),
+            )
+            .child(card)
             .into_any_element()
     }
     fn refresh_terminal_tabs(&mut self) {
@@ -2072,7 +2187,7 @@ impl Coincide {
             .min_h_0()
             .flex_shrink_0()
             .border_t_1()
-            .border_color(rgb(0x29303d))
+            .border_color(self.color(0x29303d))
             .child(div().p_2().child(tabs))
             .child(body)
             .child(div().p_2().child(footer))
@@ -2124,6 +2239,39 @@ impl Coincide {
         cx.notify();
         cx.stop_propagation();
     }
+    fn branch_from_item(
+        &mut self,
+        source: &str,
+        item: &str,
+        edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let method = if edit {
+            "threads.edit-branch"
+        } else {
+            "threads.fork"
+        };
+        match call(
+            &self.engine,
+            method,
+            json!({"threadId":source,"itemId":item}),
+        ) {
+            Ok(thread) => {
+                self.schedules_open = false;
+                self.select(&text(&thread, "id"), window, cx);
+                self.refresh(cx);
+                self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                self.status = if edit {
+                    "Opened a separate branch with the message restored as a draft. Original conversation and files are unchanged.".into()
+                } else {
+                    "Opened a separate branch through the settled turn. Original conversation and files are unchanged.".into()
+                };
+            }
+            Err(error) => self.status = format!("Could not create branch: {error}"),
+        }
+        cx.notify();
+    }
     fn fork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {
             match call(&self.engine, "threads.fork", json!({"threadId":v["id"]})) {
@@ -2170,12 +2318,20 @@ impl Render for Coincide {
             .flex_col()
             .w(px(280.))
             .h_full()
-            .bg(rgb(0x151922))
+            .bg(self.color(0x151922))
             .border_r_1()
-            .border_color(rgb(0x29303d))
+            .border_color(self.color(0x29303d))
             .p_3()
             .gap_3()
             .child(div().text_xl().child("Coincide"))
+            .child(
+                Button::new("settings")
+                    .label("Settings")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_open = !this.settings_open;
+                        cx.notify();
+                    })),
+            )
             .child(
                 Button::new("new")
                     .label("New conversation")
@@ -2256,9 +2412,12 @@ impl Render for Coincide {
                                 .rounded_md()
                                 .cursor_pointer()
                                 .bg(if id == selected_id {
-                                    rgb(0x2b3549)
+                                    self.color(0x2b3549)
                                 } else {
-                                    rgb(0x151922)
+                                    self.color(0x151922)
+                                })
+                                .when(id == selected_id, |row| {
+                                    row.border_l_2().border_color(self.color(0x98b1d4))
                                 })
                                 .child(format!(
                                     "{}{}",
@@ -2282,24 +2441,30 @@ impl Render for Coincide {
         })
         .flex_1()
         .min_h_0();
-        let conversation_content = if self.schedules_open {
+        let conversation_content = if self.settings_open {
+            self.settings_pane(cx)
+        } else if self.schedules_open {
             self.schedules_pane(cx)
         } else {
             transcript.into_any_element()
         };
         let browser_pane = self.browser_pane(cx);
         let pending_pane = self.pending_pane(cx);
-        let draft_images = if self.schedules_open {
+        let draft_images = if self.schedules_open || self.settings_open {
             None
         } else {
             self.draft_images(window, cx)
         };
         let importing_images = self.attachment_import_threads.contains(&selected_id);
+        let queue_pane = self.queue_pane(cx);
         div()
+            .capture_key_down(
+                cx.listener(|this, event, window, cx| this.app_shortcut(event, window, cx)),
+            )
             .flex()
             .size_full()
-            .bg(rgb(0x10141c))
-            .text_color(rgb(0xe4e9f2))
+            .bg(self.color(0x10141c))
+            .text_color(self.color(0xe4e9f2))
             .child(sidebar)
             .child(
                 div()
@@ -2319,7 +2484,7 @@ impl Render for Coincide {
                             .gap_3()
                             .p_4()
                             .border_b_1()
-                            .border_color(rgb(0x29303d))
+                            .border_color(self.color(0x29303d))
                             .child(div().w_full().min_w_0().truncate().text_lg().child(title))
                             .child(Button::new("terminal").label("Terminal").on_click(
                                 cx.listener(|this, _, window, cx| this.terminal(window, cx)),
@@ -2337,6 +2502,7 @@ impl Render for Coincide {
                                         "Schedules"
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings_open = false;
                                         this.schedules_open = !this.schedules_open;
                                         if this.schedules_open {
                                             this.refresh_schedules(cx);
@@ -2361,12 +2527,12 @@ impl Render for Coincide {
                     .when(self.terminal_id.is_some(), |view| {
                         view.child(self.terminal_pane(window, cx))
                     })
-                    .when(!self.schedules_open, |view| {
+                    .when(!self.schedules_open && !self.settings_open, |view| {
                         view.child(
                             div()
                                 .p_4()
                                 .border_t_1()
-                                .border_color(rgb(0x29303d))
+                                .border_color(self.color(0x29303d))
                                 .child(
                                     div()
                                         .flex()
@@ -2391,6 +2557,13 @@ impl Render for Coincide {
                                                 this.select_provider("grok", cx)
                                             }),
                                         ))
+                                        .child(
+                                            Button::new("provider-opencode")
+                                                .label("OpenCode")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.select_provider("opencode", cx)
+                                                })),
+                                        )
                                         .child(
                                             div().text_sm().child(
                                                 self.selected
@@ -2426,6 +2599,7 @@ impl Render for Coincide {
                                                 })),
                                         ),
                                 )
+                                .when_some(queue_pane, |view, queue| view.child(queue))
                                 .when_some(draft_images, |view, images| view.child(images))
                                 .child(Textarea::new(&self.composer).h(px(110.)))
                                 .child(
@@ -2449,7 +2623,11 @@ impl Render for Coincide {
                                             Button::new("send")
                                                 .primary()
                                                 .disabled(importing_images)
-                                                .label("Send")
+                                                .label(if self.running.contains(&selected_id) {
+                                                    "Queue message"
+                                                } else {
+                                                    "Send"
+                                                })
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.send(window, cx)
                                                 })),
@@ -2473,7 +2651,7 @@ impl Render for Coincide {
                                     div()
                                         .mt_2()
                                         .text_sm()
-                                        .text_color(rgb(0x98a6ba))
+                                        .text_color(self.color(0x98a6ba))
                                         .child(self.status.clone()),
                                 ),
                         )

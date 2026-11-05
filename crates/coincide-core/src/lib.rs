@@ -11,3 +11,6 @@ pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
 pub mod workspace;
+
+pub mod message_queue;
+pub mod thread_history;

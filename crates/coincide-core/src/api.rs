@@ -20,6 +20,7 @@ struct Running {
     transcript_start: usize,
     pending: HashMap<String, Value>,
     schedule_claim: Option<String>,
+    queue_claim: Option<String>,
     cancelled: bool,
     events: VecDeque<Event>,
     persistence_error: Option<String>,
@@ -48,6 +49,7 @@ pub struct Engine {
     schedule_completions: Vec<(String, crate::schedule_service::Outcome, Option<String>)>,
     pub schedule_error: Option<String>,
     unsaved_threads: HashMap<String, Value>,
+    enabled_queues: HashSet<String>,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -81,12 +83,20 @@ impl Engine {
             schedule_completions: Vec::new(),
             schedule_error: None,
             unsaved_threads: HashMap::new(),
+            enabled_queues: HashSet::new(),
         }
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
-        self.poll();
-        match self.execute(request["method"].as_str().unwrap_or(""), &request["params"]) {
+        let method = request["method"].as_str().unwrap_or("");
+        // Apply cancellation intent before polling can dispatch the next message.
+        if !matches!(
+            method,
+            "agent.queue.pause" | "agent.queue.remove" | "agent.stop"
+        ) {
+            self.poll();
+        }
+        match self.execute(method, &request["params"]) {
             Ok(result) => json!({"id":id,"result":result}),
             Err(e) => json!({"id":id,"error":{"message":e.to_string()}}),
         }
@@ -255,8 +265,8 @@ impl Engine {
                 "threads.open",
                 "threads.create",
                 "threads.patch",
-                "threads.fork",
-                "agent.send",
+                "threads.fork", "threads.edit-branch",
+                "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send",
                 "agent.stop",
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select"
@@ -314,23 +324,31 @@ impl Engine {
                 let v=self.store.patch_thread(required(p,"threadId")?,&p["patch"])?;
                 self.revision+=1;Ok(v)
             }
-            "threads.fork" => {
-                ensure!(!self.unsaved_threads.contains_key(required(p,"threadId")?),"Transcript persistence is recovering; retry after recovery");
-                let mut v = self.store.thread(required(p, "threadId")?)?;
-                v["id"] = json!(Uuid::new_v4().to_string().to_uppercase());
-                v["title"] = json!(format!("{} (fork)", text(&v, "title")));
-                v["sessions"] = json!({});
-                v["accountSessions"] = json!({});
-                v["selection"] = json!({"provider":"codex","modelID":"default"});
-                v["isArchived"] = json!(false);
-                v["accessMode"] = json!("approval");
-                v["interactionMode"] = json!("build");
-                append(&mut v,"notice","Preview fork starts a separate provider session in approval/build mode; plan and full-access modes are not connected yet.",None);
-                v["createdAt"] = json!(swift_timestamp());
-                v["updatedAt"] = json!(swift_timestamp());
-                self.store.save(&v)?;
-                self.revision += 1;
-                Ok(v)
+            "threads.fork" | "threads.edit-branch" => {
+                let id=required(p,"threadId")?;
+                ensure!(!self.unsaved_threads.contains_key(id), "Transcript persistence is recovering; retry after recovery");
+                let source=self.store.thread(id)?;
+                let new_id=Uuid::new_v4().to_string().to_uppercase();
+                let running_turn = self.runs.get(id).map(|run| {
+                    source["items"].as_array().and_then(|items|items.get(run.transcript_start.saturating_sub(1)))
+                        .and_then(|item|item["id"].as_str()).context("Running turn boundary is unavailable")
+                }).transpose()?;
+                let options=crate::thread_history::HistoryOptions {
+                    new_thread_id:&new_id, now:swift_timestamp(), running_turn_id:running_turn, turn_openers:&[],
+                };
+                let plan=if method == "threads.edit-branch" {
+                    crate::thread_history::edit_from_user(&source,required(p,"itemId")?,options)?
+                } else {
+                    crate::thread_history::fork_through_turn(&source,p["itemId"].as_str(),options)?
+                };
+                let mut branch=plan.thread;
+                branch["accessMode"]=json!("approval");
+                branch["interactionMode"]=json!("build");
+                // Imported sessions/accounts cannot attach to the live legacy app.
+                branch["selection"]=json!({"provider":source["selection"]["provider"].as_str().filter(|name|Provider::from_name(name).is_ok()).unwrap_or("codex"),"modelID":source["selection"]["modelID"].as_str().unwrap_or("default")});
+                self.store.save(&branch)?;
+                self.revision+=1;
+                Ok(branch)
             }
             "agent.select" => {
                 let id = required(p, "threadId")?;
@@ -366,10 +384,12 @@ impl Engine {
                 run.pending.remove(key); self.revision += 1;
                 Ok(json!({"answered":true}))
             }
+            "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
                 let run=self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
                 run.cancelled=true;run.session.stop();
+                self.enabled_queues.remove(required(p,"threadId")?);
                 Ok(json!({"requested":true}))
             }
             "agent.respond" => {
@@ -556,6 +576,7 @@ impl Engine {
             "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
             "grok" => "COINCIDE_GROK_EXECUTABLE",
+            "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
             _ => bail!("Provider executable is not configured"),
         };
         let executable = std::env::var_os(executable_variable)
@@ -597,6 +618,7 @@ impl Engine {
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
                 pending: HashMap::new(),
                 schedule_claim: None,
+                queue_claim: None,
                 cancelled: false,
                 events: VecDeque::new(),
                 persistence_error: None,
@@ -605,6 +627,156 @@ impl Engine {
         self.revision += 1;
         Ok(json!({"accepted":true}))
     }
+    fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
+        use crate::message_queue::{self as queue, State};
+        let id = required(p, "threadId")?;
+        ensure!(
+            !self.unsaved_threads.contains_key(id),
+            "Transcript persistence is recovering; retry after recovery"
+        );
+        let mut thread = self.store.thread(id)?;
+        if method == "agent.queue.list" {
+            return Ok(
+                json!({"messages":queue::read(&thread)?, "error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
+            );
+        }
+        ensure!(
+            !self.store.is_imported(id)?,
+            "Fork an imported thread before queueing messages"
+        );
+        match method {
+            "agent.queue.add" => {
+                ensure!(
+                    p.get("images").is_none() && p.get("attachments").is_none(),
+                    "Queueing supports text only"
+                );
+                ensure!(
+                    thread["isArchived"] != true,
+                    "Restore this thread before queueing messages"
+                );
+                Provider::from_name(&text(&thread["selection"], "provider"))?;
+                // A resumed queue needs an explicit resume. Adding an entry must
+                // not turn an uncertain previous dispatch into automatic execution.
+                let existing = queue::read(&thread)?;
+                let can_enable = existing.iter().all(|m| m.state != State::Dispatching)
+                    && (self.enabled_queues.contains(id)
+                        || existing.iter().all(|m| m.state != State::Pending));
+                let message = queue::add(&mut thread, required(p, "text")?)?;
+                thread["rustQueueError"] = Value::Null;
+                self.store.save(&thread)?;
+                if can_enable {
+                    self.enabled_queues.insert(id.into());
+                }
+                self.revision += 1;
+                return Ok(
+                    json!({"message":message,"error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
+                );
+            }
+            "agent.queue.pause" => {
+                self.enabled_queues.remove(id);
+            }
+            "agent.queue.resume" => {
+                ensure!(
+                    thread["isArchived"] != true,
+                    "Restore this thread before resuming messages"
+                );
+                let mut messages = queue::read(&thread)?;
+                let active = self.runs.get(id).and_then(|run| run.queue_claim.as_deref());
+                for message in &mut messages {
+                    if message.state == State::Dispatching && active != Some(message.id.as_str()) {
+                        message.state = State::Interrupted;
+                        message.error = Some("Previous dispatch was interrupted or unconfirmed; it will not be replayed automatically".into());
+                    }
+                }
+                queue::write(&mut thread, &messages)?;
+                thread["rustQueueError"] = Value::Null;
+                self.store.save(&thread)?;
+                self.enabled_queues.insert(id.into());
+            }
+            "agent.queue.remove" => {
+                let message_id = required(p, "messageId")?;
+                let mut messages = queue::read(&thread)?;
+                let index = messages
+                    .iter()
+                    .position(|m| m.id == message_id)
+                    .context("Queued message not found")?;
+                ensure!(
+                    messages[index].state != State::Dispatching,
+                    "Stop this turn before removing its message"
+                );
+                messages.remove(index);
+                queue::write(&mut thread, &messages)?;
+                self.store.save(&thread)?;
+            }
+            _ => bail!("Unsupported queue command"),
+        }
+        self.revision += 1;
+        Ok(
+            json!({"messages":queue::read(&thread)?,"error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
+        )
+    }
+    fn poll_message_queues(&mut self) {
+        use crate::message_queue::{self as queue, State};
+        let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
+        for id in ids {
+            if self.runs.contains_key(&id) || self.unsaved_threads.contains_key(&id) {
+                continue;
+            }
+            let launched = (|| -> Result<bool> {
+                let mut thread = self.store.thread(&id)?;
+                ensure!(
+                    !self.store.is_imported(&id)? && thread["isArchived"] != true,
+                    "Queued thread is unavailable"
+                );
+                let mut messages = queue::read(&thread)?;
+                let Some(index) = messages.iter().position(|m| m.state == State::Pending) else {
+                    return Ok(false);
+                };
+                ensure!(
+                    !messages.iter().any(|m| m.state == State::Dispatching),
+                    "Queue has an unconfirmed dispatch; resume it explicitly"
+                );
+                // Model/account changes must not silently redirect already queued work.
+                ensure!(
+                    messages[index].selection == thread["selection"],
+                    "Provider selection changed; remove and requeue this message"
+                );
+                messages[index].state = State::Dispatching;
+                let message = messages[index].clone();
+                queue::write(&mut thread, &messages)?;
+                self.store.save(&thread)?;
+                self.revision += 1;
+                match self.send_turn(&json!({"threadId":id,"text":message.text}), true) {
+                    Ok(_) => {
+                        self.runs.get_mut(&id).unwrap().queue_claim = Some(message.id);
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        queue::finish(
+                            &mut thread,
+                            &message.id,
+                            State::Failed,
+                            Some(&error.to_string()),
+                        )?;
+                        self.store.save(&thread)?;
+                        Err(error)
+                    }
+                }
+            })();
+            if !matches!(launched, Ok(true)) {
+                self.enabled_queues.remove(&id);
+                self.revision += 1;
+                // The queued text remains persisted even when preflight fails.
+                if let Err(error) = launched
+                    && let Ok(mut thread) = self.store.thread(&id)
+                {
+                    thread["rustQueueError"] = json!(error.to_string());
+                    let _ = self.store.save(&thread);
+                }
+            }
+        }
+    }
+
     pub fn approve_schedule(&mut self, id: &str) -> Result<Value> {
         ensure!(
             self.schedule_initialized,
@@ -1010,8 +1182,31 @@ impl Engine {
             {
                 agent::mark_provider_seen(&mut v, &self.runs[&id].provider);
             }
+            if finished {
+                let run = &self.runs[&id];
+                let failed = failure.is_some() || run.cancelled || run.persistence_error.is_some();
+                if failed {
+                    self.enabled_queues.remove(&id);
+                }
+                if let Some(claim) = &run.queue_claim {
+                    let state = if run.cancelled {
+                        crate::message_queue::State::Interrupted
+                    } else if failed {
+                        crate::message_queue::State::Failed
+                    } else {
+                        crate::message_queue::State::Completed
+                    };
+                    if let Err(error) =
+                        crate::message_queue::finish(&mut v, claim, state, failure.as_deref())
+                    {
+                        self.enabled_queues.remove(&id);
+                        failure = Some(error.to_string());
+                    }
+                }
+            }
             if let Err(error) = self.store.save(&v) {
                 let message = format!("Transcript could not be saved: {error}");
+                self.enabled_queues.remove(&id);
                 self.unsaved_threads.insert(id.clone(), v);
                 let run = self.runs.get_mut(&id).unwrap();
                 run.persistence_error = Some(message.clone());
@@ -1036,6 +1231,7 @@ impl Engine {
                 self.schedule_completions.push((claim, outcome, failure));
             }
         }
+        self.poll_message_queues();
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);
             self.schedule_last_poll = Instant::now();
@@ -1177,7 +1373,7 @@ mod tests {
             assert_eq!(selected["selection"]["modelID"], "fixture-model");
         }
         let before = engine.store.thread(id.as_str().unwrap()).unwrap();
-        for provider in ["cursor", "opencode", "antigravity", "unknown"] {
+        for provider in ["cursor", "antigravity", "unknown"] {
             assert!(
                 engine
                     .execute("agent.select", &json!({"threadId":id,"provider":provider}))
@@ -1195,5 +1391,69 @@ mod tests {
             );
         }
         assert_eq!(engine.store.thread(id.as_str().unwrap()).unwrap(), before);
+    }
+    #[test]
+    fn queue_pause_and_remove_take_priority_over_idle_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("queue.sqlite")).unwrap());
+        let mut thread = engine
+            .execute("threads.create", &json!({"cwd":dir.path()}))
+            .unwrap();
+        let id = text(&thread, "id");
+        let message = crate::message_queue::add(&mut thread, "must not launch").unwrap();
+        engine.store.save(&thread).unwrap();
+        engine.enabled_queues.insert(id.clone());
+        let paused =
+            engine.dispatch(json!({"method":"agent.queue.pause","params":{"threadId":id}}));
+        assert!(paused.get("error").is_none());
+        assert!(engine.runs.is_empty());
+        assert_eq!(
+            crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].state,
+            crate::message_queue::State::Pending
+        );
+        engine.enabled_queues.insert(id.clone());
+        let removed = engine.dispatch(
+            json!({"method":"agent.queue.remove","params":{"threadId":id,"messageId":message.id}}),
+        );
+        assert!(removed.get("error").is_none());
+        assert!(engine.runs.is_empty());
+        assert!(
+            crate::message_queue::read(&engine.store.thread(&id).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn history_api_creates_isolated_draft_and_settled_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("history.sqlite")).unwrap());
+        let mut source = engine
+            .execute("threads.create", &json!({"cwd":dir.path()}))
+            .unwrap();
+        append(&mut source, "user", "first", None);
+        append(&mut source, "assistant", "answer", None);
+        append(&mut source, "user", "edit me", None);
+        source["sessions"] = json!({"codex":{"sessionID":"never-resume-parent"}});
+        source["draft"] = json!("original draft");
+        engine.store.save(&source).unwrap();
+        let id = source["id"].clone();
+        let fork = engine
+            .execute(
+                "threads.fork",
+                &json!({"threadId":id,"itemId":source["items"][0]["id"]}),
+            )
+            .unwrap();
+        assert_eq!(fork["items"].as_array().unwrap().len(), 2);
+        assert_eq!(fork["sessions"], json!({}));
+        let edit = engine
+            .execute(
+                "threads.edit-branch",
+                &json!({"threadId":id,"itemId":source["items"][2]["id"]}),
+            )
+            .unwrap();
+        assert_eq!(edit["draft"], "edit me");
+        assert_eq!(edit["items"].as_array().unwrap().len(), 2);
+        assert_ne!(edit["id"], source["id"]);
+        assert_eq!(engine.store.thread(id.as_str().unwrap()).unwrap(), source);
     }
 }
