@@ -10,18 +10,22 @@ pub(super) struct Authentication {
     // Intentionally no Debug/Serialize/Clone; this value is never a transcript,
     // profile document, public selection or durable credential cache.
     token: Option<OsString>,
+    reused_stored_login: bool,
 }
 impl Authentication {
     pub fn inherited() -> Self {
-        Self { token: None }
+        Self {
+            token: None,
+            reused_stored_login: false,
+        }
     }
-    pub fn resolve() -> Result<Self> {
+    pub fn resolve(selected_team: Option<u64>) -> Result<Self> {
         let token = std::env::var_os("CURSOR_AUTH_TOKEN");
         let key = std::env::var_os("CURSOR_API_KEY");
         let explicit_token = credential_present(token.as_deref())?;
         let explicit_key = !explicit_token && credential_present(key.as_deref())?;
         if explicit_token || explicit_key {
-            return Ok(Self::inherited());
+            return Self::explicit(selected_team);
         }
         let store = std::env::var_os("AGENT_CLI_CREDENTIAL_STORE");
         let endpoint = std::env::var_os("CURSOR_API_ENDPOINT");
@@ -34,15 +38,16 @@ impl Authentication {
             base_url: text(base.as_deref())?,
             macos: cfg!(target_os = "macos"),
         };
-        Self::resolve_with(inputs, native_access_token)
+        Self::resolve_with(inputs, selected_team, native_access_token)
     }
     fn resolve_with(
         inputs: Inputs<'_>,
+        selected_team: Option<u64>,
         reader: impl FnOnce() -> Result<Option<Vec<u8>>>,
     ) -> Result<Self> {
         // Never substitute stored login for an explicit token/key identity.
         if inputs.explicit_token || inputs.explicit_key {
-            return Ok(Self::inherited());
+            return Self::explicit(selected_team);
         }
         match inputs.store {
             None | Some("") | Some("default") => {}
@@ -68,12 +73,26 @@ impl Authentication {
         let bytes = reader().map_err(|_| anyhow::anyhow!("Cursor existing login is unavailable (missing, denied or timed out); no sign-in was started"))?
             .ok_or_else(|| anyhow::anyhow!("Cursor existing login is unavailable; run cursor-agent login separately or configure an explicit credential"))?;
         let token = validate_token(bytes)?;
-        Ok(Self { token: Some(token) })
+        Ok(Self {
+            token: Some(token),
+            reused_stored_login: true,
+        })
+    }
+    fn explicit(selected_team: Option<u64>) -> Result<Self> {
+        ensure!(
+            selected_team.is_none(),
+            "Cursor selected team belongs to an unproven explicit credential identity; no stored team was inherited"
+        );
+        Ok(Self::inherited())
+    }
+    pub(super) fn reused_stored_login(&self) -> bool {
+        self.reused_stored_login
     }
     #[cfg(test)]
     pub(super) fn synthetic(bytes: Vec<u8>) -> Result<Self> {
         Ok(Self {
             token: Some(validate_token(bytes)?),
+            reused_stored_login: true,
         })
     }
     pub fn append_environment(&self, environment: &mut Vec<(OsString, OsString)>) {
@@ -303,7 +322,7 @@ mod tests {
     fn assert_blocked(inputs: Inputs<'_>) {
         let reads = Cell::new(0);
         assert!(
-            Authentication::resolve_with(inputs, || {
+            Authentication::resolve_with(inputs, None, || {
                 reads.set(reads.get() + 1);
                 Ok(Some(b"synthetic-token".to_vec()))
             })
@@ -321,7 +340,7 @@ mod tests {
             inputs.endpoint = Some("https://custom.invalid");
             inputs.macos = false;
             let resolved =
-                Authentication::resolve_with(inputs, || panic!("explicit identity must win"))
+                Authentication::resolve_with(inputs, None, || panic!("explicit identity must win"))
                     .unwrap();
             let mut environment = Vec::new();
             resolved.append_environment(&mut environment);
@@ -364,7 +383,7 @@ mod tests {
         inputs.endpoint = Some(OFFICIAL_ENDPOINT);
         inputs.base_url = Some("https://api2.cursor.sh/");
         let before = std::env::var_os("CURSOR_AUTH_TOKEN");
-        let resolved = Authentication::resolve_with(inputs, || {
+        let resolved = Authentication::resolve_with(inputs, None, || {
             Ok(Some(b"synthetic-private-token\n".to_vec()))
         })
         .unwrap();
@@ -393,14 +412,14 @@ mod tests {
     }
     #[test]
     fn denied_missing_invalid_or_oversized_login_never_exposes_reader_data() {
-        let denied = Authentication::resolve_with(defaults(), || {
+        let denied = Authentication::resolve_with(defaults(), None, || {
             bail!("synthetic-secret-and-path-must-not-escape")
         })
         .err()
         .unwrap()
         .to_string();
         assert!(!denied.contains("synthetic-secret"));
-        assert!(Authentication::resolve_with(defaults(), || Ok(None)).is_err());
+        assert!(Authentication::resolve_with(defaults(), None, || Ok(None)).is_err());
         for bytes in [
             Vec::new(),
             vec![0xff],
@@ -409,12 +428,42 @@ mod tests {
             b"synthetic token".to_vec(),
             vec![b'a'; TOKEN_LIMIT + 1],
         ] {
-            let error = Authentication::resolve_with(defaults(), || Ok(Some(bytes)))
+            let error = Authentication::resolve_with(defaults(), None, || Ok(Some(bytes)))
                 .err()
                 .unwrap()
                 .to_string();
             assert!(!error.contains("synthetic"));
         }
+    }
+    #[test]
+    fn explicit_credential_cannot_inherit_selected_team_or_read_other_identity() {
+        for token in [false, true] {
+            let mut inputs = defaults();
+            inputs.explicit_token = token;
+            inputs.explicit_key = !token;
+            let error = Authentication::resolve_with(inputs, Some(42), || {
+                panic!("must not read another account")
+            })
+            .err()
+            .unwrap()
+            .to_string();
+            assert!(error.contains("unproven explicit credential identity"));
+        }
+    }
+    #[test]
+    fn only_successful_stored_login_resolution_proves_selection_provenance() {
+        let stored = Authentication::resolve_with(defaults(), Some(42), || {
+            Ok(Some(b"synthetic-stored-login".to_vec()))
+        })
+        .unwrap();
+        assert!(stored.reused_stored_login());
+        let mut inputs = defaults();
+        inputs.explicit_token = true;
+        let explicit =
+            Authentication::resolve_with(inputs, None, || panic!("no reader for explicit token"))
+                .unwrap();
+        assert!(!explicit.reused_stored_login());
+        assert!(!Authentication::inherited().reused_stored_login());
     }
     #[cfg(target_os = "macos")]
     fn fake_command(script: &str) -> std::process::Command {
