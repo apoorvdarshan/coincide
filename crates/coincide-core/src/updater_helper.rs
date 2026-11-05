@@ -272,8 +272,7 @@ impl Session {
             proposal_sha256: proposal_digest(proposal)?,
         })
     }
-    fn cancel(&mut self, transaction: Option<Uuid>) -> Result<()> {
-        self.cancelled = true;
+    fn acknowledge_disarm(&mut self, transaction: Option<Uuid>) -> Result<()> {
         self.send(HelperMessage::Disarmed { transaction })
     }
 }
@@ -302,7 +301,7 @@ impl NativeApproval for ApprovalProxy {
             }
             ParentMessage::Decline { binding: received } => {
                 ensure!(received == binding, "Native decline binding differs");
-                session.cancel(Some(proposal.transaction))?;
+                session.acknowledge_disarm(Some(proposal.transaction))?;
                 Ok(NativeDecision::Decline)
             }
             ParentMessage::Cancel { transaction } => {
@@ -310,7 +309,8 @@ impl NativeApproval for ApprovalProxy {
                     transaction.is_none() || transaction == Some(proposal.transaction),
                     "Cancellation transaction differs"
                 );
-                session.cancel(Some(proposal.transaction))?;
+                session.cancelled = true;
+                session.acknowledge_disarm(transaction)?;
                 Ok(NativeDecision::Decline)
             }
             _ => bail!("Native proposal decision required"),
@@ -412,7 +412,11 @@ pub fn serve(
     });
     let installer = Installer::configured(config.install, installation)?;
     let Some(authorization) = installer.request_native_authorization(&updater)? else {
-        return Ok(HelperOutcome::Declined);
+        return Ok(if locked(&session)?.cancelled {
+            HelperOutcome::Cancelled
+        } else {
+            HelperOutcome::Declined
+        });
     };
     let proposal = authorization.proposal().clone();
     let armed = installer.arm(authorization)?;
@@ -1219,6 +1223,7 @@ mod tests {
     enum Mode {
         Success,
         Decline,
+        CancelBeforeProposalObserved,
         WrongApproval,
         ReplaySequence,
         WrongSession,
@@ -1257,6 +1262,8 @@ mod tests {
                     }
                     if self.mode == Mode::Decline {
                         ParentMessage::Decline { binding }
+                    } else if self.mode == Mode::CancelBeforeProposalObserved {
+                        ParentMessage::Cancel { transaction: None }
                     } else {
                         ParentMessage::Approve { binding }
                     }
@@ -1714,6 +1721,19 @@ mod tests {
             }
             f.no_install();
         }
+    }
+    #[test]
+    fn cancellation_before_parent_observes_proposal_echoes_unbound_transaction() {
+        let f = Fixture::new();
+        assert_eq!(
+            f.run(Mode::CancelBeforeProposalObserved).unwrap(),
+            HelperOutcome::Cancelled
+        );
+        assert!(matches!(
+            f.sent.lock().unwrap().last().unwrap().body,
+            HelperMessage::Disarmed { transaction: None }
+        ));
+        f.no_install();
     }
     #[test]
     fn changed_parent_start_instance_cannot_report_ready() {
