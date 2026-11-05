@@ -20,7 +20,7 @@ pub fn capabilities() -> Value {
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();
     json!({"provenance":"static_runtime_contract","authenticationChecked":false,"modelsDiscovered":false,
-        "providers":providers,"locked":false,"lockReason":null})
+        "providers":providers,"locked":false,"lockReason":null,"repairClearAvailable":false})
 }
 
 pub fn default_account(value: &Value) -> bool {
@@ -242,4 +242,63 @@ pub fn launch_selection(selection: &Value) -> Result<Value> {
         selection.remove("accountID");
     }
     Ok(Value::Object(selection))
+}
+
+/// Explicit ordinary-thread repair: remove only saved effort, preserving every
+/// other field and mode. This never authorizes a new effort or provider change.
+pub(crate) fn repair_clear_effort(params: &Value, current: &Value) -> Result<Value> {
+    ensure!(
+        current["rustBotContext"].is_null() && current["botID"].is_null(),
+        "Bot selection is fixed; effort cannot be repaired"
+    );
+    ensure!(
+        !current["selection"]["effort"].is_null()
+            && params.get("effort").is_some_and(Value::is_null),
+        "Explicit effort: null is required to clear saved effort"
+    );
+    let fields = params
+        .as_object()
+        .context("Selection request must be an object")?;
+    ensure!(
+        fields.keys().all(|key| matches!(
+            key.as_str(),
+            "threadId"
+                | "provider"
+                | "model"
+                | "accountId"
+                | "effort"
+                | "speed"
+                | "accessMode"
+                | "interactionMode"
+        )),
+        "Selection request contains unsupported options"
+    );
+    for (parameter, field) in [
+        ("provider", "provider"),
+        ("model", "modelID"),
+        ("accountId", "accountID"),
+        ("speed", "speed"),
+    ] {
+        if let Some(value) = fields.get(parameter) {
+            ensure!(
+                value == &current["selection"][field],
+                "Effort repair cannot change other selection fields"
+            );
+        }
+    }
+    for mode in ["accessMode", "interactionMode"] {
+        if let Some(value) = fields.get(mode) {
+            ensure!(
+                value == &current[mode],
+                "Effort repair cannot change access or interaction mode"
+            );
+        }
+    }
+    let mut repaired = current.clone();
+    repaired["selection"]
+        .as_object_mut()
+        .context("Invalid saved selection")?
+        .remove("effort");
+    validate_thread(&repaired)?;
+    Ok(repaired["selection"].clone())
 }
