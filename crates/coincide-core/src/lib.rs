@@ -22,3 +22,5 @@ pub mod credentials;
 pub mod dictation;
 pub mod platform_host;
 pub mod remote;
+pub mod workspace_git;
+pub mod workspace_github;
