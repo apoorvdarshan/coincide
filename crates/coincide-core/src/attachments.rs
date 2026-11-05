@@ -105,53 +105,91 @@ impl StoredImage {
 /// Decode first, then create private UUID files. Failures never modify the source
 /// and clean only the new files created by this call.
 pub fn ingest_image(data_directory: &Path, source: &Path) -> Result<StoredImage> {
-    let root = canonical_data_directory(data_directory)?;
     let source_bytes = read_bounded(source, MAX_SOURCE_BYTES)?;
-    let original_format = supported_format(&source_bytes)?;
+    let name = source
+        .file_name()
+        .context("Image source has no filename")?
+        .to_string_lossy();
+    ingest_bytes(
+        data_directory,
+        &source_bytes,
+        &name,
+        false,
+        |_| Ok(()),
+        |_| Ok(()),
+    )
+}
+/// Trusted historical-media seam. Ownership must be durably recorded before
+/// this callback returns. Once owned, partial managed files are never auto-deleted.
+pub(crate) fn ingest_image_bytes_owned(
+    data_directory: &Path,
+    source_bytes: &[u8],
+    name: &str,
+    before_write: impl FnOnce(&StoredImage) -> Result<()>,
+) -> Result<StoredImage> {
+    ingest_bytes(
+        data_directory,
+        source_bytes,
+        name,
+        true,
+        before_write,
+        |_| Ok(()),
+    )
+}
+fn ingest_bytes(
+    data_directory: &Path,
+    source_bytes: &[u8],
+    name: &str,
+    retain_partial: bool,
+    before_write: impl FnOnce(&StoredImage) -> Result<()>,
+    after_original: impl FnOnce(&StoredImage) -> Result<()>,
+) -> Result<StoredImage> {
+    let root = canonical_data_directory(data_directory)?;
+    ensure!(
+        source_bytes.len() as u64 <= MAX_SOURCE_BYTES,
+        "Image exceeds source byte limit"
+    );
+    let original_format = supported_format(source_bytes)?;
     let original_mime_type = mime_for_format(original_format)?;
-    let decoded = decode(&source_bytes, true)?;
+    let decoded = decode(source_bytes, true)?;
     let (bytes, mime_type, width, height) = normalize(decoded)?;
     let attachments = root.join("attachments");
+    let id = Uuid::new_v4().to_string();
+    let directory = attachments.join(&id);
+    let image = StoredImage {
+        original_path: directory.join(format!(
+            "{id}-original.{}",
+            extension_for_mime(original_mime_type)?
+        )),
+        path: directory.join(format!("{id}.{}", extension_for_mime(mime_type)?)),
+        id,
+        original_name: name.into(),
+        original_mime_type: original_mime_type.into(),
+        mime_type: mime_type.into(),
+        width,
+        height,
+        byte_len: bytes.len() as u64,
+        original_byte_len: source_bytes.len() as u64,
+    };
+    // No managed directory/file for this identity exists before durable ownership.
+    before_write(&image)?;
     match create_private_directory(&attachments) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error).context("Unable to create private image directory"),
     }
     require_directory(&attachments)?;
-    let id = Uuid::new_v4().to_string();
-    let directory = attachments.join(&id);
     create_private_directory(&directory)?;
     let mut created = CreatedFiles {
         directory,
         files: Vec::new(),
-        keep: false,
+        keep: retain_partial,
     };
-    let original_path = created.directory.join(format!(
-        "{id}-original.{}",
-        extension_for_mime(original_mime_type)?
-    ));
-    let path = created
-        .directory
-        .join(format!("{id}.{}", extension_for_mime(mime_type)?));
-    created.write(&original_path, &source_bytes)?;
-    created.write(&path, &bytes)?;
+    created.write(&image.original_path, source_bytes)?;
+    after_original(&image)?;
+    created.write(&image.path, &bytes)?;
     created.keep = true;
-    Ok(StoredImage {
-        id,
-        original_name: source
-            .file_name()
-            .context("Image source has no filename")?
-            .to_string_lossy()
-            .into_owned(),
-        original_path,
-        original_mime_type: original_mime_type.into(),
-        path,
-        mime_type: mime_type.into(),
-        width,
-        height,
-        byte_len: bytes.len() as u64,
-        original_byte_len: source_bytes.len() as u64,
-    })
+    Ok(image)
 }
 
 /// A clipboard-only source owned by one import. Dropping it removes only the
@@ -434,4 +472,15 @@ impl Drop for CreatedFiles {
             let _ = fs::remove_dir(&self.directory);
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn ingest_owned_copy_fault(
+    data: &Path,
+    bytes: &[u8],
+    own: impl FnOnce(&StoredImage) -> Result<()>,
+) -> Result<StoredImage> {
+    ingest_bytes(data, bytes, "fixture.png", true, own, |_| {
+        anyhow::bail!("injected after original copy")
+    })
 }
