@@ -248,6 +248,68 @@ pub enum InstallOutcome {
         reason: String,
     },
 }
+// Diagnostic only: never deserialized or consulted by install/recovery paths.
+#[derive(Serialize)]
+struct OutcomeDiagnostic {
+    format: u8,
+    transaction: Uuid,
+    outcome: &'static str,
+    reason: &'static str,
+}
+impl InstallOutcome {
+    fn diagnostic(&self) -> OutcomeDiagnostic {
+        let (transaction, outcome, reason) = match self {
+            Self::Installed { transaction, .. } => (
+                *transaction,
+                "Installed",
+                "Verified replacement installed; previous bundle retained",
+            ),
+            Self::RolledBack { transaction, .. } => (
+                *transaction,
+                "RolledBack",
+                "Replacement rejected; previous target restored",
+            ),
+            Self::NotInstalled { transaction, .. } => (
+                *transaction,
+                "NotInstalled",
+                "Replacement was not installed; inspect retained transaction state",
+            ),
+            Self::RecoveryRequired { transaction, .. } => (
+                *transaction,
+                "RecoveryRequired",
+                "Exchange state requires inspection; retained bundles must not be retried automatically",
+            ),
+        };
+        OutcomeDiagnostic {
+            format: 1,
+            transaction,
+            outcome,
+            reason,
+        }
+    }
+    fn warn_diagnostic_unavailable(&mut self) {
+        const WARNING: &str =
+            "Outcome diagnostic could not be persisted; actual outcome is unchanged";
+        match self {
+            Self::Installed {
+                receipt_warning, ..
+            } => match receipt_warning {
+                Some(previous) => {
+                    previous.push_str("; ");
+                    previous.push_str(WARNING);
+                }
+                None => *receipt_warning = Some(WARNING.into()),
+            },
+            Self::RolledBack { reason, .. }
+            | Self::NotInstalled { reason, .. }
+            | Self::RecoveryRequired { reason, .. } => {
+                reason.push_str("; ");
+                reason.push_str(WARNING);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecoveryAccounting {
     NotExchanged {
@@ -662,8 +724,8 @@ impl Installer {
             .active
             .lock()
             .map_err(|_| anyhow::anyhow!("Install lock failed"))? = None;
-        match result {
-            Ok(outcome) => Ok(outcome),
+        let mut outcome = match result {
+            Ok(outcome) => outcome,
             Err(error) => {
                 let backup = self.backup(id);
                 let exchanged = matches!(
@@ -675,19 +737,26 @@ impl Installer {
                         | Phase::Committed
                 );
                 if exchanged {
-                    Ok(InstallOutcome::RecoveryRequired {
+                    InstallOutcome::RecoveryRequired {
                         transaction: id,
                         backup,
                         reason: format!("Transaction interrupted: {error}"),
-                    })
+                    }
                 } else {
-                    Ok(InstallOutcome::NotInstalled {
+                    InstallOutcome::NotInstalled {
                         transaction: id,
                         reason: error.to_string(),
-                    })
+                    }
                 }
             }
+        };
+        // This record cannot authorize exchange, rollback, consent or recovery.
+        // A write failure must preserve the actual filesystem outcome and never
+        // cause callers to retry a completed exchange as an installation failure.
+        if persist_outcome(&armed.directory, &outcome.diagnostic()).is_err() {
+            outcome.warn_diagnostic_unavailable();
         }
+        Ok(outcome)
     }
     /// Read-only crash accounting. UUID is the sole selector; target and backup
     /// paths are derived from native configuration. No journal path is executed.
@@ -911,6 +980,96 @@ fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
     serde_json::to_writer(&mut file, value)?;
     file.sync_all()?;
     sync_directory(path.parent().context("Missing transaction parent")?)
+}
+fn persist_outcome(directory: &Path, diagnostic: &OutcomeDiagnostic) -> Result<()> {
+    // Fixed UUID-derived transaction path, independently checked even after a
+    // successful swap. No caller-provided filename or native error text is used.
+    ensure!(
+        directory.file_name().and_then(|name| name.to_str())
+            == Some(diagnostic.transaction.to_string().as_str()),
+        "Diagnostic transaction directory differs"
+    );
+    private_directory(directory)?;
+    let bytes = serde_json::to_vec(diagnostic)?;
+    ensure!(bytes.len() <= 4096, "Outcome diagnostic exceeds its bound");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+        };
+        // Pin the checked parent, so all child operations use one actual owned
+        // directory rather than resolving its pathname again during publication.
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(directory)?;
+        let metadata = directory.metadata()?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.permissions().mode() & 0o077 == 0,
+            "Owned private diagnostic directory required"
+        );
+        let temporary = std::ffi::CString::new(format!(".outcome-{}", Uuid::new_v4()))?;
+        // SAFETY: live directory descriptor, NUL-terminated owned basename and
+        // flags require a fresh no-follow 0600 regular file in that directory.
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                temporary.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        ensure!(fd >= 0, "Cannot create outcome diagnostic");
+        // SAFETY: successful openat transferred a new descriptor to this File.
+        let mut file = unsafe { File::from_raw_fd(fd) };
+        let result = (|| -> Result<()> {
+            let metadata = file.metadata()?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.nlink() == 1
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.permissions().mode() & 0o777 == 0o600,
+                "Private diagnostic file required"
+            );
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            // linkat is atomic and refuses an existing outcome.json, including a
+            // symlink. It cannot replace an earlier diagnostic or touch its target.
+            ensure!(
+                unsafe {
+                    libc::linkat(
+                        directory.as_raw_fd(),
+                        temporary.as_ptr(),
+                        directory.as_raw_fd(),
+                        c"outcome.json".as_ptr(),
+                        0,
+                    )
+                } == 0,
+                "Cannot publish outcome diagnostic"
+            );
+            ensure!(
+                unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) } == 0,
+                "Cannot finish outcome publication"
+            );
+            directory.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            // Only our fresh random temporary name is eligible for cleanup;
+            // failure never removes/replaces the fixed published diagnostic.
+            unsafe {
+                libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0);
+            }
+            let _ = directory.sync_all();
+        }
+        result
+    }
+    #[cfg(not(unix))]
+    bail!("Private outcome diagnostic adapter unavailable")
 }
 fn persist(directory: &Path, journal: &Journal) -> Result<()> {
     let temporary = directory.join(format!(".journal-{}", Uuid::new_v4()));
@@ -2177,6 +2336,149 @@ mod tests {
                 ..
             }
         ));
+    }
+    #[test]
+    fn outcome_diagnostic_records_pre_exchange_rejection_without_changing_target_or_journal() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mut f = Fixture::new();
+        let exchange = Arc::new(FailureExchange {
+            calls: AtomicUsize::new(0),
+            fail_on: usize::MAX,
+        });
+        f.installer.dependencies.exchange = exchange.clone();
+        let armed = f.armed();
+        let id = armed.transaction();
+        let directory = armed.directory.clone();
+        f.consent(&armed);
+        let before = fingerprint(&f.installer.target()).unwrap();
+        f.processes.stopped.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            f.installer.run_helper(armed).unwrap(),
+            InstallOutcome::NotInstalled { .. }
+        ));
+        assert_eq!(exchange.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fingerprint(&f.installer.target()).unwrap(), before);
+        let path = directory.join("outcome.json");
+        let record: Value = read_json(&path).unwrap();
+        assert_eq!(
+            record,
+            serde_json::json!({"format":1,"transaction":id,"outcome":"NotInstalled","reason":"Replacement was not installed; inspect retained transaction state"})
+        );
+        let metadata = fs::symlink_metadata(path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(metadata.nlink(), 1);
+        assert!(metadata.len() <= 4096);
+        assert_eq!(
+            read_json::<Journal>(&directory.join("journal.json"))
+                .unwrap()
+                .phase,
+            Phase::Armed
+        );
+        assert!(matches!(
+            f.installer.account_recovery(id).unwrap(),
+            RecoveryAccounting::NotExchanged {
+                phase: Phase::Armed,
+                ..
+            }
+        ));
+        assert!(!fs::read_dir(directory).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".outcome-")
+        }));
+    }
+    #[test]
+    fn outcome_diagnostic_write_failure_preserves_installed_result_without_reexchange_or_following_symlink()
+     {
+        let mut f = Fixture::new();
+        let exchange = Arc::new(FailureExchange {
+            calls: AtomicUsize::new(0),
+            fail_on: usize::MAX,
+        });
+        f.installer.dependencies.exchange = exchange.clone();
+        let armed = f.armed();
+        let id = armed.transaction();
+        let directory = armed.directory.clone();
+        f.consent(&armed);
+        let outside = f.root.path().join("synthetic-untouched-diagnostic-target");
+        fs::write(&outside, b"synthetic sentinel").unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join("outcome.json")).unwrap();
+        let InstallOutcome::Installed {
+            receipt_warning, ..
+        } = f.installer.run_helper(armed).unwrap()
+        else {
+            panic!("Diagnostic failure cannot turn a verified exchange into failure")
+        };
+        assert!(
+            receipt_warning
+                .unwrap()
+                .contains("Outcome diagnostic could not be persisted")
+        );
+        assert_eq!(f.version(), "0.2.0");
+        assert_eq!(exchange.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read(outside).unwrap(), b"synthetic sentinel");
+        assert!(
+            fs::symlink_metadata(directory.join("outcome.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(matches!(
+            f.installer.account_recovery(id).unwrap(),
+            RecoveryAccounting::InstalledWithBackup {
+                phase: Phase::Committed,
+                ..
+            }
+        ));
+        assert_eq!(exchange.calls.load(Ordering::SeqCst), 1);
+        assert!(!fs::read_dir(directory).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".outcome-")
+        }));
+    }
+    #[test]
+    fn outcome_diagnostic_is_write_once_and_never_recovery_authority() {
+        let f = Fixture::new();
+        let armed = f.armed();
+        let id = armed.transaction();
+        let directory = armed.directory.clone();
+        f.consent(&armed);
+        let false_record = InstallOutcome::Installed {
+            transaction: id,
+            backup: f.installer.backup(id),
+            receipt_warning: None,
+        }
+        .diagnostic();
+        persist_outcome(&directory, &false_record).unwrap();
+        let bytes = fs::read(directory.join("outcome.json")).unwrap();
+        assert!(
+            persist_outcome(
+                &directory,
+                &InstallOutcome::NotInstalled {
+                    transaction: id,
+                    reason: "synthetic".into()
+                }
+                .diagnostic()
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(directory.join("outcome.json")).unwrap(), bytes);
+        // Even a syntactically valid diagnostic claiming Installed cannot
+        // authorize exchange or change read-only recovery's actual Armed phase.
+        assert!(matches!(
+            f.installer.account_recovery(id).unwrap(),
+            RecoveryAccounting::NotExchanged {
+                phase: Phase::Armed,
+                ..
+            }
+        ));
+        assert_eq!(f.version(), "0.1.0");
+        f.installer.cancel(armed).unwrap();
     }
     #[test]
     fn low_destination_disk_and_cancel_preserve_original_target() {
