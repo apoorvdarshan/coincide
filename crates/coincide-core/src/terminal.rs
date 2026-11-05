@@ -1,9 +1,9 @@
 //! Real PTY process with Alacritty's terminal state, shared by API and renderer.
 use alacritty_terminal::{
     event::{Event, EventListener},
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     index::{Column, Line},
-    term::{Config, Term, cell::Flags, color::Colors},
+    term::{Config, Term, TermMode, cell::Flags, color::Colors},
     vte::ansi::{Color, CursorShape, Processor},
 };
 use anyhow::{Result, ensure};
@@ -156,6 +156,44 @@ impl Terminal {
         self.revision += 1;
         Ok(())
     }
+    /// Move the viewport without sending escape sequences or keys to the PTY.
+    /// Positive lines move toward older history. Requests clamp at both ends;
+    /// the alternate screen has no scrollback and never scrolls the main grid.
+    /// A changed viewport invalidates existing selection and paged frame revisions.
+    pub fn scroll(&mut self, request: TerminalScroll) -> Result<bool> {
+        self.poll()?;
+        let before = self.term.grid().display_offset();
+        let scroll = match request {
+            // Alacritty adds an i32 offset to this value; clamp first to prevent
+            // overflow from untrusted API values, including i32::MAX.
+            TerminalScroll::Lines(lines) => {
+                let bound = self.term.grid().history_size().min(i32::MAX as usize / 2) as i32;
+                Scroll::Delta(lines.clamp(-bound, bound))
+            }
+            TerminalScroll::PageUp => Scroll::PageUp,
+            TerminalScroll::PageDown => Scroll::PageDown,
+            TerminalScroll::Top => Scroll::Top,
+            TerminalScroll::Bottom => Scroll::Bottom,
+        };
+        self.term.scroll_display(scroll);
+        let changed = before != self.term.grid().display_offset();
+        if changed {
+            self.revision += 1;
+        }
+        Ok(changed)
+    }
+
+    /// Metadata shared by plain and styled reads. `rowOffset` remains a page
+    /// within this viewport; `displayOffset` is the number of rows above live.
+    fn viewport(&self) -> Value {
+        json!({
+            "displayOffset": self.term.grid().display_offset(),
+            "historySize": self.term.grid().history_size(),
+            "atBottom": self.term.grid().display_offset() == 0,
+            "alternateScreen": self.term.mode().contains(TermMode::ALT_SCREEN),
+        })
+    }
+
     pub fn snapshot(&mut self) -> Result<Value> {
         self.poll()?;
         let mut lines = vec![String::new(); self.term.screen_lines()];
@@ -170,7 +208,7 @@ impl Terminal {
         }
         let exited = self.child.try_wait()?.map(|s| s.exit_code());
         Ok(
-            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited}),
+            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport()}),
         )
     }
     /// At most ten styled viewport rows per response. Cursor coordinates remain
@@ -260,12 +298,13 @@ impl Terminal {
             "revision": self.revision, "exitCode": exited,
             "grid": grid, "cursor": cursor, "truncated": truncated,
             "rowOffset": row_offset, "rowCount": row_count,
+            "viewport": self.viewport(),
             "nextRowOffset": (row_offset + row_count < rows).then_some(row_offset + row_count),
         }))
     }
 
-    /// Copy from a known viewport revision, never from scrollback or another
-    /// screen revision after output/resize changed the selected coordinates.
+    /// Copy from a known viewport revision, including visible scrollback.
+    /// Output, resize and scroll changes invalidate the selected coordinates.
     pub fn copy_selection(
         &mut self,
         revision: u64,
@@ -308,6 +347,24 @@ impl Terminal {
             })
         })
     }
+}
+
+/// Serializable integration hook for wheel/page/history controls. Scroll events
+/// must be routed here rather than written to the shell. Typing may explicitly
+/// request Bottom first; raw `write` intentionally preserves the viewing position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "lines",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum TerminalScroll {
+    Lines(i32),
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
 }
 
 /// Inclusive, zero-based viewport cell coordinates (not UTF-8 byte offsets).
