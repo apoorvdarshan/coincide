@@ -88,6 +88,8 @@ jobs:
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo build -p coincide-desktop --locked
       - name: Test GPUI prepaint accessibility rollback without a native window
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support prepaint_transaction --locked -- --nocapture
       - name: Test synthetic desktop fixtures with notification, microphone and computer-use adapters
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use

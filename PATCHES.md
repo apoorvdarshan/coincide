@@ -2,9 +2,10 @@
 
 ## gpui-pre 0.3.11: accessibility rollback on prepaint retry
 
-`vendor/gpui-pre` contains the exact published crates.io `gpui-pre` 0.3.11
-package (164 files, 8,521,599 uncompressed bytes), except the two source files
-listed below. The source archive SHA-256 is
+`vendor/gpui-pre` starts from the exact published crates.io `gpui-pre` 0.3.11
+package (164 files, 8,521,599 uncompressed bytes). The runtime patch changes the
+two source files listed below; test-only prerequisites are documented separately.
+The source archive SHA-256 is
 `9303c771abf2acff2a96d706f69d9a82088c4770173a07cce88f0002431d887d`, matching
 Coincide's pre-patch Cargo.lock checksum. The cached registry source was also
 verified byte-for-byte against that archive before copying.
@@ -13,9 +14,10 @@ Upstream package: [gpui-pre 0.3.11](https://crates.io/crates/gpui-pre/0.3.11).
 Its published manifest identifies [zed-industries/zed](https://github.com/zed-industries/zed)
 and describes the snapshot as `zed@f816e1f`. The GitHub commits API resolves that
 abbreviation to `f816e1f9263e3a8ef63c4baaa02e1441ce1c6038`.
-The package's Apache-2.0 license, copyright notices, original normalized and
-original Cargo manifests, resources, examples, tests, and bundled Cargo.lock are
-preserved unchanged. This does not change Coincide's license.
+The package's Apache-2.0 license, copyright notices, original Cargo.toml.orig,
+resources and examples are preserved. The normalized manifest and standalone
+lock add only the test prerequisites described below. This does not change
+Coincide's license.
 
 ### Change
 
@@ -53,12 +55,12 @@ After root workspace patch/lock registration, run:
 cargo test --manifest-path vendor/gpui-pre/Cargo.toml --features test-support --lib prepaint_transaction --locked -- --nocapture
 ```
 
-At this checkpoint only rustfmt parsing/checks, package byte comparisons,
-whitespace checks, and source review have run. Tests, compilation, dependency
-registration, CI sparse-checkout/native-archive updates, and native far-row Find
-acceptance are owned by the coordinating thread and remain pending. No registry
-cache was edited. No unrelated upstream formatting, manifest, lockfile, dependency
-version, accessibility-disable, or application ID workaround is included.
+All three focused headless regressions pass, including the actual failed/nested
+Window::transact retry. The patched desktop suite passes 242 tests. Workspace
+patch/lock registration and CI sparse-checkout coverage are included. No registry
+source cache was edited. Native far-row Find acceptance remains pending: the
+user has stopped desktop interaction, and no UI launch or input is authorized.
+No accessibility-disable or application ID workaround is included.
 
 ### Upstream test font fixtures
 

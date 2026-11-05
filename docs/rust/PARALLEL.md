@@ -22,6 +22,11 @@ pause implementation. All current workers use `gpt-6.1-sol`.
 
 ## Shared resources and integration
 
+Active user constraint: HEADLESS ONLY. No Computer Use, foreground activation,
+mouse/keyboard/AX input, screenshots or GUI launches. No ASUS or SSH. Mac CLI/API,
+source checks, fake-platform tests and GitHub Actions remain available. Prior
+native/remote allocations are superseded; desktop acceptance remains pending.
+
 - Coordinator owns root merges, manifests/build registration, cross-module
   registration, immutable candidate builds, checklist updates and CI monitoring.
 - One Cargo writer per shared target. Mac target:

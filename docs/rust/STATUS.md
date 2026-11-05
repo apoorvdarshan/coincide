@@ -488,3 +488,16 @@ is still pending. Review identified a remaining running-process identity check
 to add alongside existing static bundle verification before native acceptance.
 All helper checks are now included in core CI without enabling the feature by
 default or adding it to packaging inventories.
+
+The dynamic running-code trust adapter now compiles and links on Mac; 26 helper
+fixtures, feature-on strict Clippy and the explicit bin check pass. These fixtures
+inject independent disk/running identities; no real identity API was invoked.
+The pinned GPUI accessibility rollback fix passes three focused headless tests,
+including nested transaction rollback and retry, and all 242 desktop tests.
+Its standalone test prerequisites and licenses are pinned with the patch.
+
+Current execution constraints: no ASUS/SSH and no Computer Use, foreground
+activation, mouse/keyboard input, screenshots or GUI launches. All known task
+fixture apps are stopped, Computer Use control is released, and original apps
+remain running. Continue source, CLI/API, fake-platform tests and GitHub Actions.
+Desktop-only acceptance stays pending until explicitly authorized later.
