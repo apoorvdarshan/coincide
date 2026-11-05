@@ -105,14 +105,14 @@ impl Handle {
         self.control(Message::Permission(kind))
     }
     fn control(&self, message: Message) -> Result<(), Failure> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(Failure::Revoked);
+        }
         if !self.compiled {
             return Err(Failure::Unsupported);
         }
         if !self.authority.enabled() {
             return Err(Failure::Off);
-        }
-        if self.stop.load(Ordering::Acquire) {
-            return Err(Failure::Revoked);
         }
         self.tx.try_send(message).map_err(|e| match e {
             TrySendError::Full(_) => Failure::Busy,
@@ -136,7 +136,18 @@ impl Handle {
         if deadline <= Instant::now() {
             return Err(Failure::TimedOut);
         }
-        let grant = self.authority.grant(thread)?;
+        // Shutdown revokes Authority as well; inspect stopped state before a
+        // disabled grant can incorrectly mask it as Off.
+        if self.stop.load(Ordering::Acquire) {
+            return Err(Failure::Revoked);
+        }
+        let grant = self.authority.grant(thread).map_err(|error| {
+            if self.stop.load(Ordering::Acquire) {
+                Failure::Revoked
+            } else {
+                error
+            }
+        })?;
         self.try_request_bound(thread, request, deadline, grant)
     }
     /// Native Engine handoff only. Pin the admission stamp into Job; never
@@ -836,6 +847,48 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(permissions.load(Ordering::SeqCst), 0);
         h.shutdown();
+    }
+    #[test]
+    fn stopped_disabled_authority_has_deterministic_admission_precedence() {
+        let (runtime, calls, permissions) = fake();
+        let h = runtime.handle();
+        let thread = Uuid::new_v4();
+        h.native_enable(true).unwrap();
+        h.native_grant(thread).unwrap();
+        let grant = h.authority_for_engine().grant(thread).unwrap();
+        h.shutdown();
+        assert!(h.stop.load(Ordering::Acquire));
+        assert_eq!(h.authority_for_engine().grant(thread), Err(Failure::Off));
+        let future = Instant::now() + Duration::from_secs(1);
+        assert_eq!(
+            h.try_request(thread, Request::Status),
+            Err(Failure::Revoked)
+        );
+        assert_eq!(
+            h.try_request_until(thread, Request::Status, future),
+            Err(Failure::Revoked)
+        );
+        assert_eq!(
+            h.try_request_bound(thread, Request::Status, future, grant),
+            Err(Failure::Revoked)
+        );
+        assert_eq!(h.native_refresh(), Err(Failure::Revoked));
+        assert_eq!(
+            h.native_request_permission(PermissionKind::Accessibility),
+            Err(Failure::Revoked)
+        );
+        let expired = Instant::now() - Duration::from_secs(1);
+        assert_eq!(
+            h.try_request_until(thread, Request::Status, expired),
+            Err(Failure::TimedOut)
+        );
+        assert_eq!(
+            h.try_request_bound(thread, Request::Status, expired, grant),
+            Err(Failure::TimedOut)
+        );
+        assert!(h.in_flight.lock().unwrap().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(permissions.load(Ordering::SeqCst), 0);
     }
     #[test]
     fn inactive_build_refuses_authority_without_any_backend_query() {
