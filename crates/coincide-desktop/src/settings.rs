@@ -51,6 +51,16 @@ fn settings_match(
         .all(|term| text.contains(term))
 }
 
+fn find_escape_routes(
+    key: &str,
+    plain: bool,
+    find_open: bool,
+    terminal_owns: bool,
+    browser_visible: bool,
+) -> bool {
+    key == "escape" && plain && find_open && !terminal_owns && !browser_visible
+}
+
 // IDs and surface colors match the original macOS AppTheme catalog. Unknown
 // imported theme IDs fall back for display without rewriting the stored value.
 struct Palette {
@@ -797,6 +807,32 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         let key = &event.keystroke;
+        let terminal_owns = self
+            .terminal_visible_thread
+            .as_ref()
+            .and_then(|id| self.terminal_workspaces.get(id))
+            .is_some_and(|workspace| workspace.read(cx).is_focused(window));
+        let browser_visible = self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")));
+        let plain = !key.modifiers.platform
+            && !key.modifiers.control
+            && !key.modifiers.alt
+            && !key.modifiers.shift
+            && !event.is_held
+            && window.is_window_active();
+        if find_escape_routes(
+            &key.key,
+            plain,
+            self.transcript_find.read(cx).is_open(),
+            terminal_owns,
+            browser_visible,
+        ) {
+            self.dismiss_find(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         #[cfg(target_os = "macos")]
         let command = key.modifiers.platform;
         #[cfg(not(target_os = "macos"))]
@@ -814,12 +850,7 @@ impl Coincide {
             return;
         }
         // Keep terminal control sequences (Ctrl+N/F etc.) in the PTY.
-        if self
-            .terminal_visible_thread
-            .as_ref()
-            .and_then(|id| self.terminal_workspaces.get(id))
-            .is_some_and(|workspace| workspace.read(cx).is_focused(window))
-        {
+        if terminal_owns {
             return;
         }
         match key.key.as_str() {
@@ -896,5 +927,14 @@ mod navigation_tests {
             "password",
             "password managers"
         ));
+    }
+    #[::core::prelude::v1::test]
+    fn sibling_find_escape_closes_only_plain_owned_conversation_context() {
+        assert!(find_escape_routes("escape", true, true, false, false));
+        assert!(!find_escape_routes("escape", false, true, false, false));
+        assert!(!find_escape_routes("escape", true, false, false, false));
+        assert!(!find_escape_routes("escape", true, true, true, false));
+        assert!(!find_escape_routes("escape", true, true, false, true));
+        assert!(!find_escape_routes("enter", true, true, false, false));
     }
 }
