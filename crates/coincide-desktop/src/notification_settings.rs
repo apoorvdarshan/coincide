@@ -74,6 +74,7 @@ pub struct BridgeHandle {
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
     join: BridgeJoin,
+    retained_acks: Arc<Mutex<Vec<PendingAck>>>,
 }
 #[derive(Clone, Default)]
 struct BridgeJoin {
@@ -153,6 +154,54 @@ impl BridgeHandle {
             native_callbacks_unconfirmed: status.native_callbacks_unconfirmed,
         })
     }
+    /// Trusted ACK-only reconciliation after actual bridge exit. This never
+    /// dispatches native work, requeues delivery, or changes the recorded outcome.
+    pub fn try_reconcile_claims(&self, engine: &SharedEngine) -> bool {
+        if self.join.outcome.load(Ordering::Acquire) != 1 {
+            return false;
+        }
+        let Ok(mut engine) = engine.try_lock() else {
+            return false;
+        };
+        self.reconcile_with(|id, key, ack| engine.ack_notification_event(id, key, ack))
+    }
+    fn reconcile_with(
+        &self,
+        mut acknowledge: impl FnMut(Uuid, EventKey, NotificationAck) -> Result<()>,
+    ) -> bool {
+        if self.join.outcome.load(Ordering::Acquire) != 1 {
+            return false;
+        }
+        let Ok(mut retained) = self.retained_acks.try_lock() else {
+            return false;
+        };
+        let Ok(mut status) = self.status.try_lock() else {
+            return false;
+        };
+        let had_records = !retained.is_empty();
+        retained.retain(|pending| {
+            match acknowledge(pending.id.claim, pending.id.key, pending.ack) {
+                Ok(()) => false,
+                Err(error) => {
+                    status.reconciliation_error = Some(short(error));
+                    true
+                }
+            }
+        });
+        status.outstanding = retained.len();
+        if had_records && retained.is_empty() {
+            status.reconciliation_error = None;
+        }
+        retained.is_empty() && status.reconciliation_error.is_none()
+    }
+    pub fn try_retained_claims(&self) -> Option<Vec<(Uuid, EventKey, NotificationAck)>> {
+        self.retained_acks.try_lock().ok().map(|records| {
+            records
+                .iter()
+                .map(|pending| (pending.id.claim, pending.id.key, pending.ack))
+                .collect()
+        })
+    }
     pub fn request_shutdown(&self) {
         self.stop.store(true, Ordering::Release);
     }
@@ -183,6 +232,7 @@ impl Bridge {
             })),
             stop: Arc::new(AtomicBool::new(false)),
             join: BridgeJoin::default(),
+            retained_acks: Arc::new(Mutex::new(Vec::new())),
         };
         let h = handle.clone();
         // Bridge owns native worker joins; a separate observer joins this bridge.
@@ -195,6 +245,7 @@ impl Bridge {
                         let runtime = factory()?;
                         let enabled = engine.enabled()?;
                         let mut pump = Pump::new(runtime, compiled, enabled);
+                        pump.retained_acks = h.retained_acks.clone();
                         while !h.stop.load(Ordering::Acquire) && !pump.closed {
                             for _ in 0..CONTROLS {
                                 let Ok(action) = actions.try_recv() else {
@@ -308,6 +359,7 @@ enum Flight {
     Control,
     Event(Identity),
 }
+#[derive(Clone, Copy)]
 struct PendingAck {
     id: Identity,
     ack: NotificationAck,
@@ -320,6 +372,7 @@ struct Pump {
     pending: VecDeque<Command>,
     flights: BTreeMap<Uuid, Flight>,
     failed_acks: Vec<PendingAck>,
+    retained_acks: Arc<Mutex<Vec<PendingAck>>>,
     last_seen: Option<Uuid>,
     closed: bool,
 }
@@ -337,6 +390,7 @@ impl Pump {
             pending: VecDeque::new(),
             flights: BTreeMap::new(),
             failed_acks: vec![],
+            retained_acks: Arc::new(Mutex::new(Vec::new())),
             last_seen: None,
             closed: false,
         }
@@ -346,7 +400,20 @@ impl Pump {
             let error = short(e);
             self.status.reconciliation_error = Some(error.clone());
             self.status.error = Some(error);
-            self.failed_acks.push(PendingAck { id, ack });
+            let pending = PendingAck { id, ack };
+            self.failed_acks.push(pending);
+            let mut retained = self.retained_acks.lock().unwrap_or_else(|e| e.into_inner());
+            if !retained
+                .iter()
+                .any(|old| old.id.claim == id.claim && old.id.key == id.key)
+            {
+                retained.push(pending);
+            }
+        } else {
+            self.retained_acks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|old| old.id.claim != id.claim || old.id.key != id.key);
         }
     }
     fn cancel_pending(&mut self, engine: &mut impl Outbox, thread: Option<Uuid>) {
@@ -863,6 +930,86 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             thread::yield_now();
         }
+    }
+    #[::core::prelude::v1::test]
+    fn bridge_retains_exact_failed_ack_after_pump_drop_and_reconciles_ack_only() {
+        let event = claim();
+        let claim_id = event.claim_id;
+        let key = event.alert.key;
+        let state = Arc::new(Mutex::new(EngineState {
+            enabled: true,
+            fail_ack: true,
+            claims: VecDeque::from([event]),
+            ..Default::default()
+        }));
+        let calls = Arc::new(Mutex::new(vec![]));
+        let backend_calls = calls.clone();
+        let bridge = Bridge::start_with(
+            FakeEngine(state.clone()),
+            move || {
+                NotificationRuntime::spawn(
+                    FakeBackend {
+                        calls: backend_calls,
+                        result: Delivery::Accepted,
+                    },
+                    WINDOW,
+                )
+            },
+            true,
+        )
+        .unwrap();
+        let handle = bridge.handle();
+        assert!(handle.update_activity(activity()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !handle
+            .try_retained_claims()
+            .is_some_and(|records| !records.is_empty())
+        {
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        handle.request_shutdown();
+        while !handle
+            .try_shutdown_status()
+            .is_some_and(|status| status.bridge_joined)
+        {
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        // Pump and its local failed_acks have been destroyed by actual bridge join.
+        let retained = handle.try_retained_claims().unwrap();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].0, claim_id);
+        assert_eq!(retained[0].1, key);
+        assert!(matches!(
+            retained[0].2,
+            NotificationAck::Delivered(Delivery::Accepted)
+        ));
+        assert_eq!(handle.try_shutdown_status().unwrap().claims_outstanding, 1);
+        assert!(!handle.try_shutdown_status().unwrap().ready());
+        assert!(!handle.reconcile_with(|_, _, _| anyhow::bail!("still blocked")));
+        assert_eq!(handle.try_retained_claims().unwrap()[0].0, claim_id);
+        let posts_before = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "post")
+            .count();
+        state.lock().unwrap().fail_ack = false;
+        let mut outbox = FakeEngine(state.clone());
+        assert!(handle.reconcile_with(|id, key, ack| outbox.ack(id, key, ack)));
+        assert!(handle.try_retained_claims().unwrap().is_empty());
+        assert!(handle.try_shutdown_status().unwrap().ready());
+        assert_eq!(state.lock().unwrap().acks.len(), 1);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| **call == "post")
+                .count(),
+            posts_before
+        );
     }
     #[::core::prelude::v1::test]
     fn bridge_shutdown_requires_actual_join_after_stopped_and_tls_exit() {
