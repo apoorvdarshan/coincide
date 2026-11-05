@@ -84,6 +84,24 @@ fn resolve(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Result<PathBuf> 
 }
 
 impl Engine {
+    /// Native transport preparation: derive the root from stored thread/project
+    /// state while briefly locked, then perform GitHub work outside that lock.
+    pub fn github_write_root(&self, thread_id: &str) -> Result<PathBuf> {
+        ensure!(!self.shutdown, "Application is shutting down");
+        Uuid::parse_str(thread_id).context("Invalid thread ID")?;
+        self.working_directory(&self.store.thread(thread_id)?)
+    }
+    /// Reuse the exact executable captured by read-service configuration. Never
+    /// rediscover PATH or accept an executable path from a mutation request.
+    pub fn github_cli_path(&self) -> Result<PathBuf> {
+        Ok(self
+            .github
+            .service
+            .as_ref()
+            .context(self.github.error.clone())?
+            .executable()
+            .to_owned())
+    }
     pub(super) fn github_command(&mut self, method: &str, params: &Value) -> Result<Value> {
         ensure!(
             cfg!(unix),

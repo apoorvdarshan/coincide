@@ -213,11 +213,30 @@ struct Inner {
     db: Mutex<Connection>,
     baselines: Mutex<HashMap<String, Baseline>>,
     slots: Arc<AtomicUsize>,
-    _lease: File,
+    _lease: LedgerLease,
 }
 #[derive(Clone)]
 pub struct GithubWriteService(Arc<Inner>);
 struct Slot(Arc<AtomicUsize>);
+// Explicitly unlock before closing. A concurrently forked subprocess can
+// temporarily inherit this open-file description until its CLOEXEC takes effect;
+// close alone would leave the lease held until that child closes its copy.
+struct LedgerLease {
+    _file: File,
+}
+impl Drop for LedgerLease {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            while unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) } != 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
 impl Drop for Slot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
@@ -273,12 +292,14 @@ impl GithubWriteService {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
-        let lease = options.open(lease_path)?;
+        let lease = LedgerLease {
+            _file: options.open(lease_path)?,
+        };
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
             ensure!(
-                unsafe { libc::flock(lease.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+                unsafe { libc::flock(lease._file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
                 "GitHub ledger already in use"
             );
         }
@@ -356,10 +377,9 @@ impl GithubWriteService {
         // pending records are conservatively uncertain until explicit reconciliation.
         let old: Vec<(String, String, String)> = {
             let mut query = db.prepare("SELECT id,scope,record FROM mutations LIMIT 4097")?;
-            let values = query
+            query
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<rusqlite::Result<_>>()?;
-            values
+                .collect::<rusqlite::Result<_>>()?
         };
         for (id, binding, text) in old {
             let mut record: Record = serde_json::from_str(&text)?;
@@ -395,6 +415,8 @@ impl GithubWriteService {
             gh: Gh {
                 executable: gh.canonicalize()?,
                 timeout: Duration::from_secs(15),
+                #[cfg(test)]
+                _expire_after_dispatch_marker: false,
             },
             db: Mutex::new(db),
             baselines: Mutex::new(HashMap::new()),
@@ -899,6 +921,8 @@ fn permitted(action: &Action, snapshot: &Value) -> Result<bool> {
 struct Gh {
     executable: PathBuf,
     timeout: Duration,
+    #[cfg(test)]
+    _expire_after_dispatch_marker: bool,
 }
 impl Gh {
     #[cfg(not(unix))]
@@ -960,7 +984,15 @@ impl Gh {
         let mut eof = false;
         let started = Instant::now();
         loop {
-            ensure!(started.elapsed() < self.timeout, "gh operation timed out");
+            let expired = started.elapsed() >= self.timeout;
+            // Exercise the real deadline cleanup only after the synthetic child
+            // confirms dispatch. Read/preflight startup keeps its normal budget.
+            #[cfg(test)]
+            let expired = expired
+                || (self._expire_after_dispatch_marker
+                    && input.is_some()
+                    && bytes.starts_with(b"fixture-dispatch-complete\n"));
+            ensure!(!expired, "gh operation timed out");
             if offset == body.len() {
                 stdin.take();
             } else if let Some(pipe) = &mut stdin {
@@ -1045,7 +1077,7 @@ mod tests {
         json!({"number":7,"title":"Synthetic PR","url":"https://github.com/owner/project/pull/7","state":"OPEN","isDraft":false,"headRefOid":"a".repeat(40),"headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","reviews":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"fixture","status":"COMPLETED","conclusion":"SUCCESS"}],"mergeCommit":null})
     }
     const FAKE: &str = r#"#!/usr/bin/env python3
-import json,sys,os,time
+import json,sys,os,time,signal
 args=sys.argv[1:]
 body=json.load(sys.stdin) if '--input' in args else None
 with open('calls.jsonl','a') as f: f.write(json.dumps({'args':args,'body':body})+'\n')
@@ -1062,6 +1094,11 @@ else:
   assert set(body)=={'commit_id','event','body'} and body['event']=='COMMENT' and body['commit_id']=='a'*40
   value={'id':19,'state':'COMMENTED','body':body['body'],'commit_id':body['commit_id'],'html_url':'https://github.com/owner/project/pull/7#pullrequestreview-19'}
   json.dump(value,open('review.json','w'))
+  if os.path.exists('timeout-response'):
+   with open('timeout-pid','w') as f:f.write(str(os.getpid()))
+   print('fixture-dispatch-complete',flush=True)
+   signal.pause()
+   raise AssertionError('Timeout child must be killed and reaped')
   if os.path.exists('lost-response'):sys.exit(3)
   if os.path.exists('slow-response'):time.sleep(3)
   print(json.dumps(value),flush=True)
@@ -1170,6 +1207,29 @@ else:
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[test]
+    fn dropping_service_releases_lease_even_with_inherited_open_description() {
+        let (dir, service, _) = fixture();
+        // dup and fork share the same open-file description and flock lifetime.
+        // Hold the duplicate across destruction to make the race deterministic.
+        let inherited = service.0._lease._file.try_clone().unwrap();
+        assert!(
+            GithubWriteService::open(dir.path().join("fake-gh"), dir.path().join("ledger"),)
+                .is_err()
+        );
+        drop(service);
+        let reopened =
+            GithubWriteService::open(dir.path().join("fake-gh"), dir.path().join("ledger"))
+                .unwrap();
+        assert!(inherited.metadata().is_ok());
+        // Closing the old duplicate must not release the new service's lease.
+        drop(inherited);
+        assert!(
+            GithubWriteService::open(dir.path().join("fake-gh"), dir.path().join("ledger"),)
+                .is_err()
+        );
+        drop(reopened);
     }
     #[test]
     fn comment_verified_fixed_rest_payload_is_durable_nonconsuming_and_never_reposted() {
@@ -1355,12 +1415,36 @@ else:
     #[test]
     fn write_timeout_is_terminal_uncertain_and_never_replayed() {
         let (dir, mut service, p) = fixture();
-        Arc::get_mut(&mut service.0).unwrap().gh.timeout = Duration::from_millis(150);
+        Arc::get_mut(&mut service.0)
+            .unwrap()
+            .gh
+            ._expire_after_dispatch_marker = true;
         let request = request(&service, &p, comment());
-        fs::write(dir.path().join("slow-response"), []).unwrap();
+        fs::write(dir.path().join("timeout-response"), []).unwrap();
         submit(&service, &request).unwrap();
         assert_eq!(wait(&service, &request)["status"], "uncertain");
         assert_eq!(writes(dir.path()), 1);
+        let dispatched: bool = service
+            .0
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT dispatched FROM mutations WHERE id=?1",
+                [request["mutationId"].as_str().unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(dispatched);
+        let pid: i32 = fs::read_to_string(dir.path().join("timeout-pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
         assert_eq!(submit(&service, &request).unwrap()["status"], "uncertain");
         assert_eq!(writes(dir.path()), 1);
         assert_eq!(history(&service, &p)["blocked"], true);

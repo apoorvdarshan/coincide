@@ -1,4 +1,4 @@
-//! Native, read-only GitHub PR metadata panel. Parent mounts this entity and calls
+//! Native GitHub PR metadata panel with a separate explicit action surface. Parent mounts this entity and calls
 //! set_context on every thread/root change. Repository is explicitly entered by
 //! the user. All Engine calls run in one background worker, never GPUI render.
 use anyhow::{Context as _, Result, ensure};
@@ -7,7 +7,7 @@ use gpui_kit::{
     base::Disableable,
     component::{
         button::*,
-        input::{Input, InputState},
+        input::{Input, InputEvent, InputState},
     },
     *,
 };
@@ -219,6 +219,11 @@ pub struct GitHubReviewPanel {
     tx: mpsc::Sender<(u64, Request, Result<Value>)>,
     rx: mpsc::Receiver<(u64, Request, Result<Value>)>,
     _poll: Task<()>,
+    _repository_changes: Subscription,
+    actions: Option<Entity<crate::github_actions::GitHubActions>>,
+    writes: Option<crate::github_write_transport::NativeWrites>,
+    write_status: Option<crate::github_write_transport::Status>,
+    actions_open: bool,
 }
 impl GitHubReviewPanel {
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -233,12 +238,26 @@ impl GitHubReviewPanel {
                 }
             }
         });
+        let repository = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Explicit GitHub repository: owner/name")
+        });
+        let repository_changes = cx.subscribe(&repository, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.generation = this.generation.wrapping_add(1);
+                this.active = None;
+                this.detail = None;
+                this.selected = None;
+                this.list.clear();
+                this.truncated = false;
+                this.invalidate_actions(cx);
+                this.notice = "Repository changed. Load its pull requests to continue.".into();
+                cx.notify();
+            }
+        });
         Self {
             engine,
             scope: None,
-            repository: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Explicit GitHub repository: owner/name")
-            }),
+            repository,
             state: "open".into(),
             generation: 0,
             active: None,
@@ -251,6 +270,59 @@ impl GitHubReviewPanel {
             tx,
             rx,
             _poll: poll,
+            _repository_changes: repository_changes,
+            actions: None,
+            writes: None,
+            write_status: None,
+            actions_open: false,
+        }
+    }
+    pub fn attach_actions(
+        &mut self,
+        actions: Entity<crate::github_actions::GitHubActions>,
+        writes: crate::github_write_transport::NativeWrites,
+        cx: &mut Context<Self>,
+    ) {
+        self.actions = Some(actions);
+        self.writes = Some(writes);
+        self.sync_action_scope(cx);
+    }
+    fn invalidate_actions(&mut self, cx: &mut Context<Self>) {
+        self.actions_open = false;
+        if let Some(actions) = &self.actions {
+            actions.update(cx, |actions, cx| {
+                actions.set_scope(None, cx);
+                actions.invalidate(cx);
+            });
+        }
+    }
+    fn sync_action_scope(&mut self, cx: &mut Context<Self>) {
+        let scope = (|| {
+            let (_, request) = self.active.as_ref()?;
+            let pr = self.detail.as_ref()?;
+            let View::Detail { number, head } = &request.view else {
+                return None;
+            };
+            if self.busy
+                || self.scope.as_ref()
+                    != Some(&(request.binding.thread.clone(), request.binding.root.clone()))
+                || self.repository.read(cx).value().trim() != request.binding.repository
+                || pr["number"].as_u64() != Some(*number)
+                || pr["headRefOid"] != *head
+            {
+                return None;
+            }
+            crate::github_actions::ActionScope::new(
+                request.binding.thread.clone(),
+                request.binding.root.clone(),
+                request.binding.repository.clone(),
+                *number,
+                head.clone(),
+            )
+            .ok()
+        })();
+        if let Some(actions) = &self.actions {
+            actions.update(cx, |actions, cx| actions.set_scope(scope, cx));
         }
     }
     /// root must be the canonical stored-thread working directory. No calls or
@@ -260,6 +332,7 @@ impl GitHubReviewPanel {
             return;
         }
         self.scope = scope;
+        self.invalidate_actions(cx);
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
         self.list.clear();
@@ -283,6 +356,7 @@ impl GitHubReviewPanel {
         };
         let repository = self.repository.read(cx).value().trim().to_string();
         if !self::repository(&repository) {
+            self.invalidate_actions(cx);
             self.list.clear();
             self.detail = None;
             self.selected = None;
@@ -330,6 +404,9 @@ impl GitHubReviewPanel {
         if self.busy {
             return;
         }
+        // Every request invalidates prepared actions, including refreshing
+        // detail for exactly the same PR/head after checks/reviews change.
+        self.invalidate_actions(cx);
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.active = Some((generation, request.clone()));
@@ -347,6 +424,19 @@ impl GitHubReviewPanel {
         cx.notify();
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if let Some(status) = self.writes.as_ref().and_then(|writes| writes.status()) {
+            if self.write_status.as_ref() != Some(&status) {
+                let ready = status == crate::github_write_transport::Status::Ready;
+                self.write_status = Some(status);
+                if ready {
+                    self.sync_action_scope(cx);
+                    if let Some(actions) = &self.actions {
+                        actions.update(cx, |actions, cx| actions.invalidate(cx));
+                    }
+                }
+                cx.notify();
+            }
+        }
         let Ok((generation, request, result)) = self.rx.try_recv() else {
             return;
         };
@@ -379,11 +469,43 @@ impl GitHubReviewPanel {
                 self.notice = format!("{error}. Refresh the list to retry.");
             }
         }
+        self.sync_action_scope(cx);
         cx.notify();
     }
 }
 impl Render for GitHubReviewPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.actions_open {
+            if let Some(actions) = self.actions.clone() {
+                return div()
+                    .id("github-action-surface")
+                    .size_full()
+                    .min_h_0()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Button::new("github-actions-back")
+                            .label("Back to PR details")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.actions_open = false;
+                                if let Some(actions) = &this.actions {
+                                    actions.update(cx, |actions, cx| actions.invalidate(cx));
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(actions),
+                    )
+                    .into_any_element();
+            }
+        }
         let mut pane = div()
             .id("github-review-panel")
             .size_full()
@@ -393,7 +515,7 @@ impl Render for GitHubReviewPanel {
             .p_3()
             .child("GitHub pull requests")
             .child(div().text_sm().child(
-                "Read-only. My PRs / Review requested filters and mutations are unavailable.",
+                "PR metadata with explicit comment reviews and eligible exact-head merges. Approve, Request changes, checkout and involvement filters remain unavailable.",
             ))
             .child(Input::new(&self.repository))
             .child(
@@ -423,6 +545,25 @@ impl Render for GitHubReviewPanel {
                     .on_click(cx.listener(|this, _, _, cx| this.load_list(cx))),
             )
             .child(div().text_sm().child(self.notice.clone()));
+        if let Some(status) = &self.write_status {
+            let message = match status {
+                crate::github_write_transport::Status::Opening => "Opening the local GitHub action ledger…".into(),
+                crate::github_write_transport::Status::Initializing => "Initializing the local ledger. No GitHub request is made.".into(),
+                crate::github_write_transport::Status::FirstSetup => "First setup: initialize a private local action ledger before preparing writes. If this app previously sent GitHub actions, restore its original ledger instead.".into(),
+                crate::github_write_transport::Status::Ready => "Local action ledger ready. Each write needs a fresh preflight and explicit confirmation.".into(),
+                crate::github_write_transport::Status::Failed(error) => format!("GitHub actions unavailable: {error}. Restore the original ledger; it will not be recreated automatically."),
+            };
+            pane = pane.child(div().text_sm().child(message));
+            if status == &crate::github_write_transport::Status::FirstSetup {
+                pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(writes) = &this.writes {
+                            if !writes.initialize_from_user_action() { this.notice = "Ledger setup is busy or no longer available. No action was queued.".into(); }
+                        }
+                        cx.notify();
+                    })));
+            }
+        }
         if let Some((_, request)) = &self.active {
             pane = pane.child(div().text_sm().child(format!(
                 "Repository: {}\nRoot: {}",
@@ -445,6 +586,7 @@ impl Render for GitHubReviewPanel {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected = None;
                         this.detail = None;
+                        this.invalidate_actions(cx);
                         cx.notify();
                     })),
             );
@@ -452,6 +594,7 @@ impl Render for GitHubReviewPanel {
         if let Some(pr) = &self.detail {
             let number = pr["number"].as_u64().unwrap_or(0);
             let full_head = text(pr, "headRefOid");
+            let refresh_head = full_head.clone();
             body = body
                 .child(format!("#{number} {}", text(pr, "title")))
                 .child(format!(
@@ -492,8 +635,13 @@ impl Render for GitHubReviewPanel {
             let url = text(pr, "url");
             let copied = url.clone();
             body=body.child(div().text_sm().child(url)).child(Button::new("github-copy-url").label("Copy PR URL").on_click(move |_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))))
-                .child(div().flex().flex_wrap().gap_2().children(["Approve","Request changes","Comment","Merge","Check out"].into_iter().enumerate().map(|(index,label)|Button::new(SharedString::from(format!("github-unavailable-{index}"))).label(label).disabled(true))))
-                .child("Review submission, merge, checkout, My PRs and Review requested filters are unavailable in this read-only panel.")
+                .child(Button::new("github-open-actions").label("Comment review / merge…")
+                    .disabled(self.busy || self.actions.is_none() || self.write_status != Some(crate::github_write_transport::Status::Ready))
+                    .on_click(cx.listener(|this, _, _, cx| { this.sync_action_scope(cx); this.actions_open = true; cx.notify(); })))
+                .child(Button::new("github-refresh-detail").label("Refresh selected PR").disabled(self.busy)
+                    .on_click(cx.listener(move |this, _, _, cx| { this.load_detail(number, refresh_head.clone(), cx); })))
+                .child(div().flex().flex_wrap().gap_2().children(["Approve","Request changes","Check out"].into_iter().enumerate().map(|(index,label)|Button::new(SharedString::from(format!("github-unavailable-{index}"))).label(label).disabled(true))))
+                .child("Approve and Request changes are unavailable because review submission cannot atomically require the current PR head. Checkout and involvement filters are not connected.")
                 .child("Checks");
             let checks = pr["statusCheckRollup"].as_array();
             if checks.is_none_or(|checks| checks.is_empty()) {
@@ -596,7 +744,7 @@ impl Render for GitHubReviewPanel {
                 body=body.child("List may be truncated at 30 pull requests. Use a narrower state filter; pagination is unavailable.");
             }
         }
-        pane.child(body)
+        pane.child(body).into_any_element()
     }
 }
 

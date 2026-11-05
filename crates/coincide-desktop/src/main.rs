@@ -7,6 +7,7 @@ mod credential_settings;
 mod credentials;
 mod github_actions;
 mod github_review;
+mod github_write_transport;
 mod microphone;
 mod microphone_settings;
 mod navigation;
@@ -491,8 +492,14 @@ impl Coincide {
         let credential_panel = cx.new(|_| credential_settings);
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
-        let github_panel =
-            cx.new(|cx| github_review::GitHubReviewPanel::new(engine.clone(), window, cx));
+        let github_writes = github_write_transport::NativeWrites::new(engine.clone());
+        let github_actions =
+            cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
+        let github_panel = cx.new(|cx| {
+            let mut panel = github_review::GitHubReviewPanel::new(engine.clone(), window, cx);
+            panel.attach_actions(github_actions, github_writes, cx);
+            panel
+        });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));

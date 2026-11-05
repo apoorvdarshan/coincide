@@ -60,12 +60,12 @@ The broad feature groups above remain open until their complete behavior passes.
 | --- | --- | --- |
 | Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Tabs/splits source delivered; compile, mounted acceptance, shell integration and Windows GUI pending |
 | Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes | Windows uploads, broader browser parity and real-account acceptance remain |
-| Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot conversation creation and trusted every-turn activation integrated; new mounted flow pending |
+| Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot new conversation/focus, empty native state, retained editor draft and frozen instructions passed native fixtures; real provider acceptance pending |
 | Credentials | Native synthetic WAV insertion preserved Unicode selection and did not send; microphone converter/lifecycle fixtures pass | Gated microphone controls mounted; six fake workflow tests and feature-on converter/lifecycle fixtures pass; real vault/passkey/model/mic acceptance absent |
-| Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | GitHub write confirmation source delivered; durable backend integration and mutation acceptance pending |
+| Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | Durable write service and native confirmation transport mounted; 131 combined desktop tests pass; fake-process service validation and native write confirmation acceptance remain separate |
 | Host | Serialized notification runtime fake tests pass; native adapters compile | Settings bridge mounted; default-off foreground native-clear issue corrected with regression fixtures; native delivery/remote/iCloud remain |
-| Packaging | 22 archive tests per supported host and real Mac ZIP/DMG payload readback passed | Concrete HTTPS/ZIP updater adapters in progress; signatures, install, rollback and release readiness remain open |
-| Coordinator | Last pushed checkpoint 412b200 passed all five Rust CI jobs; subsequent combined desktop suite passed 125 synthetic tests and Linux core passed 347 tests plus strict clippy | Mounted bot/notification/microphone controls and registered terminal/GitHub action modules pass Mac fixtures; pushed CI checkpoint pending; full UI/UX parity remains open |
+| Packaging | 22 archive tests per supported host and real Mac ZIP/DMG payload readback passed | Concrete HTTPS/ZIP staging service passes 17 Mac fixtures and strict core Clippy; signatures, install, rollback and release readiness remain open |
+| Coordinator | Pushed checkpoint 6830a05 passed all five Rust CI jobs and archive validation; later desktop batch passes 131 tests, updater 17, terminal rendering/PTY 16; Linux GitHub batch passes 356 core tests | Full UI/UX parity remains open; newer GitHub/updater registration and native action acceptance still need a pushed checkpoint; full UI/UX parity remains open |
 
 The latest five native acceptance groups used isolated fixture data and fake
 provider/gh/Whisper processes. Import sources stayed unchanged, imported execution
@@ -77,6 +77,31 @@ in `NATIVE_ACCEPTANCE.md` and `acceptance-report.json` under the retained local
 existing Swift and ordinary Rust preview instances were preserved. These results
 do not establish full transcript virtualization, real inference or live GitHub
 write acceptance.
+
+Candidate6 (`ccb2fe0`, binary SHA256
+`28df2a05ddc8990647c2e3a72a4be04339569417f26d36b501265f6b401ad94d`)
+then passed three additional scoped native groups: creating an empty saved-bot
+conversation and focusing its composer without sending; preserving unsaved editor
+text and the frozen instructions after later edits; passive notification and
+gated microphone Settings presentation. Notification Enable/Allow/Refresh were
+not invoked. Microphone controls were visually disabled and nonactionable in the
+accessibility readback; the driver's enabled-state predicate was unavailable, so
+that predicate is not claimed as passing. The source acceptance gate remains false.
+No native capture, TCC request, notification delivery or real provider call ran.
+The synthetic app stopped and existing Swift/Rust instances stayed alive.
+Evidence: retained local `reports/native-candidate-6-acceptance.md`.
+
+The new GitHub service records durable mutation intent before dispatch and retains
+non-consuming results/history across restarts and heads. COMMENT binds a commit
+but explicitly discloses GitHub's current-head race; approval/request-changes are
+unavailable. Merge uses synchronous REST with an exact SHA condition and fresh
+preflight, avoiding CLI queue/auto-merge behavior. Unknown/uncertain results lock
+the PR and cannot be retried or cleared by this implementation; history lookup is
+not a reconciliation/unlock facility. The private ledger path comes from the
+trusted Rust data directory, never request JSON. Initialization requires a distinct
+native first-setup action; missing/corrupt prior storage never triggers recreation.
+All write validation so far uses fake processes, not real GitHub operations.
+
 
 Windows Core CI at f9e0ca0 passed the real ConPTY and private-pipe integration
 targets, then failed a long-path Git worktree test. The fix distinguishes long

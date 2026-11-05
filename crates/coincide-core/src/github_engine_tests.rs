@@ -199,6 +199,28 @@ fn background_activity_ends_when_worker_exits_even_without_collecting_result() {
 
 #[cfg(unix)]
 #[test]
+fn native_write_helpers_use_stored_root_and_the_read_services_original_executable() {
+    let (directory, engine, root, owner, _) = fixture();
+    let mut engine = engine.lock().unwrap();
+    assert_eq!(engine.github_write_root(&owner).unwrap(), root);
+    let configured = directory.path().join("gh").canonicalize().unwrap();
+    assert_eq!(engine.github_cli_path().unwrap(), configured);
+    assert!(engine.github_write_root("not-a-thread").is_err());
+    assert!(
+        engine
+            .github_write_root(&Uuid::new_v4().to_string())
+            .is_err()
+    );
+    // Discovery is captured, not silently substituted when installation changes.
+    std::fs::remove_file(configured.clone()).unwrap();
+    assert_eq!(engine.github_cli_path().unwrap(), configured);
+    assert!(!root.join("argv.txt").exists());
+    engine.shutdown = true;
+    assert!(engine.github_write_root(&owner).is_err());
+}
+
+#[cfg(unix)]
+#[test]
 fn executable_discovery_is_metadata_only_and_explicit_invalid_never_falls_back() {
     let (directory, _engine, root, _, _) = fixture();
     assert!(resolve(None, Some(directory.path().as_os_str())).is_ok());

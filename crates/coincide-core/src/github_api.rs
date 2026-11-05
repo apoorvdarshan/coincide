@@ -261,6 +261,9 @@ pub struct GithubService {
     operations: HashMap<String, Operation>,
 }
 impl GithubService {
+    pub(crate) fn executable(&self) -> &Path {
+        &self.runner.executable
+    }
     pub fn new(runner: GhRunner) -> Self {
         Self {
             runner,
