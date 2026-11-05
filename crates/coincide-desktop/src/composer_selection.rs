@@ -636,6 +636,19 @@ fn current_submission_blocked(
         && capabilities["provenance"] == "static_runtime_contract"
         && capabilities["locked"] == true
 }
+fn refreshed_selection_view(previous: &Value, current: &Value) -> Result<Value> {
+    anyhow::ensure!(
+        previous["id"].as_str().is_some() && previous["id"] == current["id"],
+        "Selection reload returned another conversation; local draft retained"
+    );
+    let mut refreshed = previous.clone();
+    // A selection reload must not replace the independently edited composer,
+    // attachment/context state or the already loaded transcript window.
+    for key in ["selection", "accessMode", "interactionMode"] {
+        refreshed[key] = current[key].clone();
+    }
+    Ok(refreshed)
+}
 fn account_label(account: &Value) -> String {
     match account {
         Value::Null => "Default account (no stored ID)".into(),
@@ -872,14 +885,34 @@ impl Coincide {
         cx.notify();
     }
     fn reload_selection_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = &self.selected {
-            let draft = SelectionDraft::from_thread(thread);
-            self.model_input.update(cx, |input, cx| {
-                input.set_value(draft.custom.clone(), window, cx)
-            });
-            self.selection_ui.drafts.insert(text(thread, "id"), draft);
+        let result = (|| -> Result<Value> {
+            let previous = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let current = call(
+                &self.engine,
+                "threads.read",
+                json!({"threadId":previous["id"],"itemLimit":0}),
+            )?;
+            refreshed_selection_view(previous, &current)
+        })();
+        match result {
+            Ok(thread) => {
+                let draft = SelectionDraft::from_thread(&thread);
+                self.model_input.update(cx, |input, cx| {
+                    input.set_value(draft.custom.clone(), window, cx)
+                });
+                self.selection_ui.drafts.insert(text(&thread, "id"), draft);
+                self.selected = Some(thread);
+                self.selection_ui.context = None;
+                self.refresh_selection_capabilities(cx);
+            }
+            Err(error) => {
+                self.status = format!("Selection was not reloaded: {error}");
+                cx.notify();
+            }
         }
-        self.refresh_selection_capabilities(cx);
     }
     fn choose_effort(
         &mut self,
@@ -1884,6 +1917,32 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn selection_reload_uses_authoritative_fields_without_replacing_local_content() {
+        let previous = json!({"id":"thread","selection":{"provider":"codex","speed":null},"accessMode":"approval","interactionMode":"build","draft":"exact unsaved café\n","draftContext":[{"quote":"keep"}],"rustDraftImages":[{"id":"keep-image"}],"items":[{"body":"loaded transcript"}],"opaque":{"keep":true}});
+        let current = json!({"id":"thread","selection":{"provider":"codex","speed":"priority","effort":"high","future":{"keep":7}},"accessMode":"approval","interactionMode":"plan","draft":"older persisted value","items":[]});
+        let refreshed = refreshed_selection_view(&previous, &current).unwrap();
+        for key in ["selection", "accessMode", "interactionMode"] {
+            assert_eq!(refreshed[key], current[key]);
+        }
+        for key in [
+            "draft",
+            "draftContext",
+            "rustDraftImages",
+            "items",
+            "opaque",
+        ] {
+            assert_eq!(refreshed[key], previous[key]);
+        }
+        let draft = SelectionDraft::from_thread(&refreshed);
+        assert_eq!(draft.original, current["selection"]);
+        assert_eq!(draft.proposed_speed, "priority");
+        assert_eq!(draft.proposed_interaction, "plan");
+        let mut other = current;
+        other["id"] = json!("another");
+        assert!(refreshed_selection_view(&previous, &other).is_err());
+        assert_eq!(previous["selection"]["speed"], Value::Null);
+    }
     #[::core::prelude::v1::test]
     fn submission_lock_uses_only_current_trusted_context_and_preserves_queue() {
         let thread = json!({"id":"current","selection":{"provider":"codex","modelID":"gpt-6-astra"},"accessMode":"approval","interactionMode":"build"});
