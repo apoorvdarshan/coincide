@@ -92,6 +92,21 @@ fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
     Ok(response["result"].clone())
 }
 
+/// Trusted draft persistence only; decide and write under the same try-lock.
+fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<()> {
+    let mut engine = try_state(engine)?;
+    if engine.admissions_frozen() {
+        return engine.persist_frozen_draft(id, text);
+    }
+    let response = engine.dispatch(json!({
+        "method":"threads.patch", "params":{"threadId":id,"patch":{"draft":text}}
+    }));
+    if let Some(error) = response.get("error") {
+        anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+    }
+    Ok(())
+}
+
 enum PreviewState {
     Checking,
     Ready(std::path::PathBuf),
@@ -563,13 +578,8 @@ impl Coincide {
     fn save_pending_draft(&mut self, id: &str) {
         let engine = self.engine.clone();
         if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
-            call(
-                &engine,
-                "threads.patch",
-                json!({"threadId":id,"patch":{"draft":text}}),
-            )
-            .map(|_| ())
-            .map_err(|error| (engine_busy(&error), error.to_string()))
+            persist_pending_draft(&engine, id, text)
+                .map_err(|error| (engine_busy(&error), error.to_string()))
         }) {
             self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
