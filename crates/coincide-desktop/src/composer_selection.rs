@@ -392,7 +392,7 @@ impl Coincide {
         };
         if capability_lock(
             &self.selection_ui.capabilities,
-            self.running.contains(thread_id),
+            self.running.iter().any(|id| id == thread_id),
         )
         .is_some()
         {
@@ -461,7 +461,7 @@ impl Coincide {
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
         let known_provider = provider.is_some();
-        let account_problem = provider.and_then(|provider| {
+        let draft_account_problem = provider.and_then(|provider| {
             account_problem(provider, &draft.account, &self.selection_ui.accounts)
         });
         let default_supported = provider.is_some_and(|p| {
@@ -522,7 +522,7 @@ impl Coincide {
             .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || account_problem.is_some())
+                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -532,7 +532,7 @@ impl Coincide {
                         this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
                     }))))
             .child(div().text_xs().child("This runtime supports approval access and build interaction only. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
-        if let Some(reason) = account_problem {
+        if let Some(reason) = draft_account_problem {
             pane = pane.child(div().text_sm().child(reason));
         }
         if let Some(reason) = lock {
