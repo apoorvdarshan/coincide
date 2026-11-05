@@ -19,6 +19,8 @@ mod antigravity_api;
 mod bot_engine;
 #[path = "github_engine.rs"]
 mod github_engine;
+#[path = "github_threads_engine.rs"]
+mod github_threads_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]
@@ -47,6 +49,7 @@ struct Running {
 }
 pub struct Engine {
     model_catalog: crate::model_catalog::ModelCatalog,
+    github_threads: github_threads_engine::State,
     pub store: Store,
     idle_sleep: idle_sleep::IdleSleep,
     github: github_engine::GithubState,
@@ -100,6 +103,7 @@ impl Engine {
         let notification_events = notification_events::Outbox::new(&store);
         Self {
             model_catalog: crate::model_catalog::ModelCatalog::default(),
+            github_threads: github_threads_engine::State::default(),
             store,
             idle_sleep,
             notification_events,
@@ -149,6 +153,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if github_threads_engine::METHODS.contains(&method) {
+            return self.github_threads_command(method, p);
+        }
         if github_engine::METHODS.contains(&method) {
             return self.github_command(method, p);
         }
@@ -389,6 +396,8 @@ impl Engine {
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
+                #[cfg(unix)]
+                methods.extend_from_slice(github_threads_engine::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))
