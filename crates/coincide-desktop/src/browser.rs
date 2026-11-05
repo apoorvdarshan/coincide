@@ -254,6 +254,11 @@ impl BrowserController {
             .get(thread)
             .and_then(|tabs| tabs.iter().position(|tab| tab.id == target))
             .context("No such tab in this thread")?;
+        ensure!(
+            !self.tabs[thread][index].credential_console_suppressed.get()
+                || private_document_action_allowed(&request.action),
+            "Page inspection is paused during a saved-login request. Navigate or reload before inspecting this document again."
+        );
         match &request.action {
             BrowserAction::Upload { .. } => {
                 ensure!(
@@ -372,12 +377,23 @@ impl BrowserController {
                 let sender = self.sender.clone();
                 let id = request.id.clone();
                 let thread_id = request.thread_id.clone();
+                let protected = self.tabs[thread][index]
+                    .credential_console_suppressed
+                    .clone();
+                let navigation = self.tabs[thread][index].navigation.clone();
+                let epoch = navigation.load(Ordering::Acquire);
+                let click = matches!(&request.action, BrowserAction::Click { .. });
                 self.tabs[thread][index]
                     .view
                     .read(cx)
                     .raw()
                     .evaluate_script_with_callback(&source, move |payload| {
-                        let result = parse_script_result(&payload);
+                        let result = public_script_reply(
+                            &payload,
+                            navigation.load(Ordering::Acquire) == epoch,
+                            protected.get(),
+                            click,
+                        );
                         let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
                             id: id.clone(),
                             thread_id: thread_id.clone(),
@@ -686,8 +702,9 @@ impl BrowserController {
             let status = upload.work.check().and_then(|_| {
                 let tab = tab.context("Upload tab closed")?;
                 ensure!(
-                    tab.navigation.load(Ordering::Acquire) == upload.epoch,
-                    "Upload cancelled because the document navigated"
+                    tab.navigation.load(Ordering::Acquire) == upload.epoch
+                        && !tab.credential_console_suppressed.get(),
+                    "Upload cancelled because document access changed"
                 );
                 Ok(())
             });
@@ -706,15 +723,23 @@ impl BrowserController {
                     let sender = self.sender.clone();
                     let id = id.clone();
                     let thread_id = upload.request.thread_id.clone();
-                    tab.expect("checked tab")
-                        .view
+                    let tab = tab.expect("checked tab");
+                    let protected = tab.credential_console_suppressed.clone();
+                    let navigation = tab.navigation.clone();
+                    let epoch = upload.epoch;
+                    tab.view
                         .read(cx)
                         .raw()
                         .evaluate_script_with_callback(&source, move |payload| {
                             let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
                                 id: id.clone(),
                                 thread_id: thread_id.clone(),
-                                result: parse_script_result(&payload),
+                                result: public_script_reply(
+                                    &payload,
+                                    navigation.load(Ordering::Acquire) == epoch,
+                                    protected.get(),
+                                    false,
+                                ),
                             }));
                         })
                         .map_err(|e| e.to_string())
@@ -780,6 +805,9 @@ impl BrowserController {
                     let id = id.clone();
                     let thread = wait.request.thread_id.clone();
                     let tab_id = wait.tab.clone();
+                    let protected = tab.credential_console_suppressed.clone();
+                    let navigation = tab.navigation.clone();
+                    let epoch = navigation.load(Ordering::Acquire);
                     tab.view
                         .read(cx)
                         .raw()
@@ -788,7 +816,12 @@ impl BrowserController {
                                 id: id.clone(),
                                 thread: thread.clone(),
                                 tab: tab_id.clone(),
-                                result: parse_script_result(&payload),
+                                result: public_script_reply(
+                                    &payload,
+                                    navigation.load(Ordering::Acquire) == epoch,
+                                    protected.get(),
+                                    false,
+                                ),
                             });
                         })
                         .map_err(Into::into)
@@ -881,6 +914,19 @@ impl BrowserController {
     ) -> bool {
         let mut changed = false;
         for job in jobs.try_iter().take(2) {
+            if let Some(active) = self.active.get(thread).cloned() {
+                let pending: Vec<_> = self
+                    .waits
+                    .iter()
+                    .filter(|(_, wait)| wait.request.thread_id == thread && wait.tab == active)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in pending {
+                    if let Some(wait) = self.waits.remove(&id) {
+                        self.finish_wait(wait, json!({"error":"Browser wait cancelled by a native saved-login request"}));
+                    }
+                }
+            }
             let target = self.active.get(thread).and_then(|id| {
                 let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
                 if tab.loading {
@@ -961,6 +1007,38 @@ impl BrowserController {
     }
 }
 
+fn private_document_action_allowed(action: &BrowserAction) -> bool {
+    matches!(
+        action,
+        BrowserAction::Console { .. }
+            | BrowserAction::Navigate { .. }
+            | BrowserAction::CloseTab
+            | BrowserAction::SelectTab
+            | BrowserAction::Click { .. }
+    )
+}
+fn public_script_reply(
+    payload: &str,
+    same_navigation: bool,
+    protected: bool,
+    click: bool,
+) -> Value {
+    if !same_navigation {
+        return json!({"error":"Document changed before the browser action completed"});
+    }
+    if protected {
+        if click {
+            let value = parse_script_result(payload);
+            if value.get("error").is_none() && value["dispatched"] == true {
+                return json!({"dispatched":true});
+            }
+            return json!({"error":"Click outcome could not be confirmed while saved-login inspection is paused"});
+        }
+        return json!({"error":"Page inspection is paused during a saved-login request; navigate or reload to resume"});
+    }
+    parse_script_result(payload)
+}
+
 fn persistent_profiles_available() -> bool {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -980,5 +1058,60 @@ fn parse_script_result(payload: &str) -> Value {
     match serde_json::from_str::<Value>(payload) {
         Ok(value) if value.is_object() => value,
         _ => json!({"error":"Browser returned invalid JSON"}),
+    }
+}
+
+#[cfg(test)]
+mod credential_inspection_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn protected_page_echoes_and_errors_are_not_public_replies() {
+        for payload in [
+            r#"{"text":"synthetic-password-only"}"#,
+            r#"{"error":"synthetic-password-only"}"#,
+            r#"{"dispatched":true,"echo":"synthetic-password-only"}"#,
+        ] {
+            for click in [false, true] {
+                let reply = public_script_reply(payload, true, true, click);
+                assert!(!reply.to_string().contains("synthetic-password-only"));
+            }
+        }
+        assert_eq!(
+            public_script_reply(
+                r#"{"dispatched":true,"echo":"synthetic-password-only"}"#,
+                true,
+                true,
+                true
+            ),
+            json!({"dispatched":true})
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn stale_callbacks_are_discarded_even_after_navigation_reopens_inspection() {
+        let result =
+            public_script_reply(r#"{"text":"synthetic-password-only"}"#, false, false, false);
+        assert!(result.get("error").is_some());
+        assert!(!result.to_string().contains("synthetic-password-only"));
+        assert_eq!(
+            public_script_reply(r#"{"text":"synthetic public text"}"#, true, false, false),
+            json!({"text":"synthetic public text"})
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn inspection_pause_allows_navigation_and_boolean_click_only() {
+        assert!(!private_document_action_allowed(&BrowserAction::Read {
+            selector: None,
+            page: 1
+        }));
+        assert!(!private_document_action_allowed(&BrowserAction::Input {
+            selector: "#login".into(),
+            text: "synthetic".into()
+        }));
+        assert!(private_document_action_allowed(&BrowserAction::Click {
+            selector: "#submit".into()
+        }));
+        assert!(private_document_action_allowed(&BrowserAction::Navigate {
+            url: "https://example.test".into()
+        }));
     }
 }
