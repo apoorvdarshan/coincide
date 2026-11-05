@@ -136,11 +136,8 @@ fn validate_receipt(v: &Value) -> RecoveryResult<()> {
         return Err(RecoveryError::InvalidRecord);
     }
     let batch = &v["batch"];
-    // Preserve Serialize output exactly; no re-keying of historical batch snapshots.
-    let hash = batch
-        .get("threadSha256")
-        .or_else(|| batch.get("thread_sha256"))
-        .and_then(Value::as_str);
+    // Accept only the authoritative MediaBatch Serialize schema.
+    let hash = batch.get("threadSha256").and_then(Value::as_str);
     if !hash.is_some_and(|h| h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit())) {
         return Err(RecoveryError::InvalidRecord);
     }
@@ -195,12 +192,13 @@ mod platform {
     ) -> RecoveryResult<File> {
         let path = name(path)?;
         // SAFETY: valid directory descriptor/C string; returned descriptor uniquely owned.
+        // C variadic promotion requires c_uint even where mode_t is u16 (macOS).
         let fd = unsafe {
             libc::openat(
                 parent.as_raw_fd(),
                 path.as_ptr(),
                 flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
-                mode as libc::mode_t,
+                mode as libc::c_uint,
             )
         };
         if fd < 0 {
@@ -526,7 +524,7 @@ mod platform {
             )
         }
         fn receipt() -> Value {
-            json!({"receiptId":uuid::Uuid::new_v4().to_string(),"operationId":uuid::Uuid::new_v4().to_string(),"threadId":uuid::Uuid::new_v4().to_string(),"generation":9,"committed":false,"error":"CommitUnknown","committedCandidateIds":[],"batch":{"thread_sha256":"a".repeat(64),"references":[]}})
+            json!({"receiptId":uuid::Uuid::new_v4().to_string(),"operationId":uuid::Uuid::new_v4().to_string(),"threadId":uuid::Uuid::new_v4().to_string(),"generation":9,"committed":false,"error":"CommitUnknown","committedCandidateIds":[],"batch":{"threadSha256":"a".repeat(64),"references":[]}})
         }
         #[test]
         fn durable_roundtrip_idempotence_conflict_and_private_modes() {
