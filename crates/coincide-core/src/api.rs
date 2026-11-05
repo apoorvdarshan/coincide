@@ -15,6 +15,11 @@ use uuid::Uuid;
 
 #[path = "active_thread.rs"]
 mod active_thread;
+#[path = "admission_freeze.rs"]
+mod admission_freeze;
+#[cfg(test)]
+#[path = "admission_freeze_tests.rs"]
+mod admission_freeze_tests;
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
 #[cfg(test)]
@@ -83,6 +88,7 @@ pub struct Engine {
     pub requested_open: Option<String>,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
     pub shutdown: bool,
+    admissions_frozen: bool,
     active_thread: Option<String>,
     pub ui_available: bool,
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
@@ -144,6 +150,7 @@ impl Engine {
             requested_open: None,
             terminals: HashMap::new(),
             shutdown: false,
+            admissions_frozen: false,
             active_thread: None,
             ui_available: false,
             browser_requests: VecDeque::new(),
@@ -168,6 +175,9 @@ impl Engine {
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
+        if let Err(error) = self.require_admissions() {
+            return json!({"id":id,"error":{"message":error.to_string()}});
+        }
         let method = request["method"].as_str().unwrap_or("");
         // Apply cancellation intent before polling can dispatch the next message.
         if !matches!(
@@ -184,6 +194,7 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        self.require_admissions()?;
         if method == "threads.resolve_id" {
             return self.resolve_thread_id_command(p);
         }
@@ -603,10 +614,7 @@ impl Engine {
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
-                let run=self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
-                run.cancelled=true;run.session.stop();
-                self.notification_events.cancel_requests(required(p,"threadId")?);
-                self.enabled_queues.remove(required(p,"threadId")?);
+                self.request_provider_stop(required(p,"threadId")?)?;
                 Ok(json!({"requested":true}))
             }
             "agent.respond" => {
@@ -644,6 +652,7 @@ impl Engine {
     }
     /// Trusted native UI entry point. Deliberately not part of the agent dispatcher.
     fn send_turn(&mut self, p: &Value, scheduled: bool) -> Result<Value> {
+        self.require_admissions()?;
         let id = required(p, "threadId")?.to_owned();
         ensure!(
             !self.unsaved_threads.contains_key(&id),
@@ -876,6 +885,7 @@ impl Engine {
         }
     }
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
+        self.require_admissions()?;
         use crate::message_queue::{self as queue, State};
         let id = required(p, "threadId")?;
         ensure!(
@@ -964,6 +974,9 @@ impl Engine {
         )
     }
     fn poll_message_queues(&mut self) {
+        if self.admissions_frozen() {
+            return;
+        }
         use crate::message_queue::{self as queue, State};
         let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
         for id in ids {
@@ -1026,6 +1039,7 @@ impl Engine {
     }
 
     pub fn approve_schedule(&mut self, id: &str) -> Result<Value> {
+        self.require_admissions()?;
         ensure!(
             self.schedule_initialized,
             "Scheduler recovery has not completed"
@@ -1067,6 +1081,9 @@ impl Engine {
                 }
             }
         }
+        if self.admissions_frozen() {
+            return Ok(());
+        }
         let jobs = ScheduleService::new(&mut self.store).plan_due(now)?;
         for job in jobs.into_iter().take(16) {
             self.launch_schedule(&job)?;
@@ -1074,6 +1091,7 @@ impl Engine {
         Ok(())
     }
     fn launch_schedule(&mut self, job: &crate::schedule_service::DueJob) -> Result<()> {
+        self.require_admissions()?;
         use crate::schedule_service::{Outcome, ScheduleService, TargetState};
         let task = ScheduleService::new(&mut self.store)
             .list()?

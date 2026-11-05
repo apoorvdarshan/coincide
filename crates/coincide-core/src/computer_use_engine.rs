@@ -97,6 +97,9 @@ impl Engine {
     /// A provider channel without a session identity cannot inherit owner-CLI
     /// privileges by supplying a thread ID in its payload.
     pub fn dispatch_provider(&mut self, request: Value, trusted_thread: Option<Uuid>) -> Value {
+        if let Err(error) = self.require_admissions() {
+            return json!({"id":request.get("id"),"error":{"message":error.to_string()}});
+        }
         match trusted_thread {
             Some(thread) => self.dispatch_scoped(request, thread),
             None => {
@@ -106,6 +109,9 @@ impl Engine {
     }
     fn dispatch_computer_use(&mut self, request: Value, trusted_thread: Option<Uuid>) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
+        if let Err(error) = self.require_admissions() {
+            return json!({"id":id,"error":{"message":error.to_string()}});
+        }
         let method = request["method"].as_str().unwrap_or("");
         let result = if METHODS.contains(&method) {
             self.computer_use_command(method, &request["params"], trusted_thread)
