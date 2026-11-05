@@ -1485,6 +1485,52 @@ mod tests {
                     .unwrap();
             info["version"].as_str().unwrap().into()
         }
+        fn trust_snapshot(&self) -> Vec<(Vec<u8>, u32)> {
+            // Exact bytes AND modes of all original fixture bundle/trust/archive
+            // inputs, excluding the helper's separately owned transaction journal.
+            let mut paths = vec![
+                self.marker.clone(),
+                self.target.join("Contents/Info.plist"),
+                self.config
+                    .updater
+                    .cache_root
+                    .join(self.job.to_string())
+                    .join("release.zip"),
+            ];
+            paths.extend(
+                ["coincide-rust", "coincide-rs", "coincide-store"]
+                    .into_iter()
+                    .map(|name| self.target.join("Contents/MacOS").join(name)),
+            );
+            paths
+                .into_iter()
+                .map(|path| {
+                    (
+                        fs::read(&path).unwrap(),
+                        fs::metadata(path).unwrap().permissions().mode(),
+                    )
+                })
+                .collect()
+        }
+        fn assert_not_installed(&self, outcome: HelperOutcome, expected_reason: &str) {
+            let HelperOutcome::Finished(InstallOutcome::NotInstalled {
+                transaction,
+                reason,
+            }) = outcome
+            else {
+                panic!("Expected strict NotInstalled rejection, got {outcome:?}");
+            };
+            assert_eq!(reason, expected_reason);
+            let sent = self.sent.lock().unwrap();
+            let HelperMessage::Proposal { binding, .. } = &sent[0].body else {
+                panic!("Missing verified proposal");
+            };
+            assert_eq!(transaction, binding.transaction);
+            assert!(!transaction.is_nil());
+            assert!(matches!(&sent.last().unwrap().body,
+                HelperMessage::Finished { transaction: reported, status }
+                    if *reported == transaction && status == "not_installed"));
+        }
         fn no_install(&self) {
             assert_eq!(self.version(), "0.1.0");
             assert_eq!(self.network.0.load(Ordering::SeqCst), 0);
@@ -1769,7 +1815,12 @@ mod tests {
             child: f.child.clone(),
             stopped: false,
         });
-        assert!(f.run(Mode::Success).is_err());
+        let before = f.trust_snapshot();
+        f.assert_not_installed(
+            f.run(Mode::Success).unwrap(),
+            "fixture target still running",
+        );
+        assert_eq!(f.trust_snapshot(), before);
         f.no_install();
     }
     #[test]
@@ -1839,6 +1890,7 @@ mod tests {
                 stopped: true,
             });
             *f.child.lock().unwrap() = Some(child);
+            let before = f.trust_snapshot();
             let result = f.run(Mode::Success);
             if success {
                 assert!(matches!(
@@ -1846,7 +1898,8 @@ mod tests {
                     HelperOutcome::Finished(InstallOutcome::Installed { .. })
                 ));
             } else {
-                assert!(result.is_err());
+                f.assert_not_installed(result.unwrap(), "fixture parent did not exit zero");
+                assert_eq!(f.trust_snapshot(), before);
                 f.no_install();
             }
         }
