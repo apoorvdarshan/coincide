@@ -541,3 +541,11 @@ observes an actual full-channel rejection before allowing Engine polling, then
 requires delivered completion, released ownership and exactly-once attachment
 persistence where applicable. This fixes lost completion under backpressure;
 provider-thread and external-owner shutdown accounting remain separate work.
+
+Provider Rust-worker ownership now survives semantic turn completion and Session
+drop. The trusted Rust observer distinguishes running, returned, panicked and
+unclassified workers without joining; Engine retains cumulative terminal
+diagnostics independently of its active runs. Three gated headless Engine tests
+pass, including Finished-before-exit, sticky panic and successive turns on one
+thread. Returned means only that the Rust thread returned: successful child
+cleanup, central admission freeze and whole-app quiescence are not established.
