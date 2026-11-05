@@ -1058,6 +1058,135 @@ fn stage(
     Ok(None)
 }
 
+/// Crate-private owned snapshot for the installer. Not constructible from IPC flags
+/// or a deserialized Stage; its original archive is rehashed and decoded afresh.
+pub(crate) struct InstallCandidate {
+    _job: Job,
+    pub(crate) bundle: PathBuf,
+    pub(crate) release: Release,
+    pub(crate) current_version: String,
+    pub(crate) anchor: String,
+}
+impl Updater {
+    pub(crate) fn fresh_install_candidate(&self) -> Result<InstallCandidate> {
+        let config = self.config.as_ref().context("Updates are disabled")?;
+        let deps = self.dependencies.as_ref().context("Updates are disabled")?;
+        ensure!(
+            config.platform == Platform::Macos,
+            "Native bundle installation is unavailable on this platform"
+        );
+        let stage = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Updater lock failed"))?;
+            ensure!(inner.active.is_none(), "Update operation still running");
+            match &inner.state {
+                State::Staged(stage) => stage.clone(),
+                _ => bail!("A completed staged preview update is required"),
+            }
+        };
+        // Derive the archive path from the service-owned cache and UUID, never a request path.
+        let name = stage
+            .job
+            .file_name()
+            .and_then(|p| p.to_str())
+            .context("Invalid stage job")?;
+        ensure!(
+            Uuid::parse_str(name).is_ok() && stage.job == config.cache_root.join(name),
+            "Stage job is outside the configured cache"
+        );
+        deps.disk.verify_private(&stage.job)?;
+        private_directory(&stage.job)?;
+        let context = OperationContext {
+            reason: Arc::new(AtomicU8::new(0)),
+            deadline: Instant::now() + config.limits.stage_timeout,
+            signal: Arc::new((Mutex::new(false), Condvar::new())),
+        };
+        let original = stage.job.join("release.zip");
+        let metadata = fs::symlink_metadata(&original)?;
+        ensure!(
+            metadata.is_file() && metadata.len() == stage.release.size,
+            "Staged archive identity/size changed"
+        );
+        space(
+            deps,
+            &config.cache_root,
+            stage
+                .release
+                .size
+                .checked_add(config.limits.expanded_bytes)
+                .and_then(|n| n.checked_add(config.limits.reserve_disk_bytes))
+                .context("Disk budget overflow")?,
+        )?;
+        let path = config.cache_root.join(Uuid::new_v4().to_string());
+        directory(&path)?;
+        let job = Job { path, keep: false };
+        let archive = job.path.join("release.zip");
+        let mut source = File::open(&original)?;
+        let mut target = new_file(&archive)?;
+        let mut hash = Sha256::new();
+        let mut count = 0u64;
+        let mut buffer = [0u8; 65536];
+        loop {
+            context.checkpoint()?;
+            let size = source.read(&mut buffer)?;
+            if size == 0 {
+                break;
+            }
+            count = count
+                .checked_add(size as u64)
+                .context("Archive byte count overflow")?;
+            ensure!(count <= stage.release.size, "Staged archive grew");
+            space(
+                deps,
+                &job.path,
+                config.limits.reserve_disk_bytes.saturating_add(size as u64),
+            )?;
+            target.write_all(&buffer[..size])?;
+            hash.update(&buffer[..size]);
+        }
+        ensure!(
+            count == stage.release.size && format!("{:x}", hash.finalize()) == stage.release.sha256,
+            "Staged archive digest changed"
+        );
+        target.sync_all()?;
+        drop(target);
+        drop(source);
+        let contents = job.path.join("contents");
+        directory(&contents)?;
+        let mut sink = ExtractionSink {
+            root: contents.clone(),
+            config,
+            deps,
+            context: &context,
+            seen: BTreeSet::new(),
+            expanded: 0,
+            entries: 0,
+        };
+        deps.extractor
+            .extract(&archive, &mut sink, &context)
+            .map_err(|_| anyhow::anyhow!("Install archive extraction rejected"))?;
+        ensure!(sink.entries > 0, "Install archive is empty");
+        context.checkpoint()?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Updater lock failed"))?;
+        ensure!(
+            inner.active.is_none() && inner.state == State::Staged(stage.clone()),
+            "Staged selection changed during install preparation"
+        );
+        Ok(InstallCandidate {
+            bundle: contents.join("Coincide Rust.app"),
+            release: stage.release,
+            current_version: config.current_version.clone(),
+            anchor: config.trust_anchor.clone(),
+            _job: job,
+        })
+    }
+}
+
 /// Concrete HTTPS transport. No requests occur until an explicit service operation.
 /// Uses rustls/webpki defaults, no ambient proxies/cookies, no automatic redirects,
 /// no content decompression and a shrinking global deadline across every hop.
