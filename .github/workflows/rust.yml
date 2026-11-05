@@ -56,6 +56,11 @@ jobs:
         run: cargo test -p coincide-core --locked --no-fail-fast --test terminal_windows --test control_windows -- --nocapture
       - run: cargo clippy -p coincide-core --all-targets --locked -- -D warnings
         if: runner.os != 'Windows'
+      - name: Test isolated preview updater helper fixtures
+        run: cargo test -p coincide-core --locked --features preview-updater-helper updater_helper
+      - name: Lint preview updater helper feature
+        if: runner.os != 'Windows'
+        run: cargo clippy -p coincide-core --all-targets --locked --features preview-updater-helper -- -D warnings
   desktop:
     name: macOS GPUI build
     runs-on: macos-latest
