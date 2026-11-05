@@ -106,7 +106,7 @@ mod native {
                 properties.insert(NSHTTPCookieSecure, &*yes);
             }
             if input.http_only() {
-                properties.insert(&NSString::from_str("HttpOnly"), &*yes);
+                properties.insert(&*NSString::from_str("HttpOnly"), &*yes);
             }
             if let Some(expiry) = input.expires() {
                 properties.insert(
