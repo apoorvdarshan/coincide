@@ -20,14 +20,76 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     thread,
 };
 const MAX_FRAME: u64 = 4 * 1024 * 1024;
+/// Observation of the retained control worker, not application quiescence or
+/// proof that every operating-system resource has been released.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerStatus {
+    Running,
+    /// The serve closure returned and the retained thread handle is finished.
+    Returned,
+    /// The serve closure unwound; its panic was recorded and resumed.
+    Panicked,
+    /// No retained handle, or a finished handle with no classified outcome.
+    Unclassified,
+}
 pub struct Server {
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
+    outcome: Arc<AtomicU8>,
+}
+impl Server {
+    /// Ask the worker to stop without joining, waiting, or interrupting an
+    /// accepted client exchange. This is a request, not an exit acknowledgement.
+    pub fn request_stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Observe worker termination without consuming or joining its handle.
+    /// Owners must observe a non-Running status before dropping this server,
+    /// and must not drop it under Engine/UI locks: Drop still joins the worker.
+    /// A recorded outcome alone is insufficient because thread-local cleanup
+    /// can continue after the serve closure returns or unwinds.
+    pub fn worker_status(&self) -> WorkerStatus {
+        let Some(worker) = self.worker.as_ref() else {
+            return WorkerStatus::Unclassified;
+        };
+        if !worker.is_finished() {
+            return WorkerStatus::Running;
+        }
+        match self.outcome.load(Ordering::Acquire) {
+            1 => WorkerStatus::Returned,
+            2 => WorkerStatus::Panicked,
+            _ => WorkerStatus::Unclassified,
+        }
+    }
+
+    fn spawn(work: impl FnOnce(Arc<AtomicBool>) + Send + 'static) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let outcome = Arc::new(AtomicU8::new(0));
+        let observed = outcome.clone();
+        let worker = thread::spawn(move || {
+            // Only observe the outcome; preserve the original panic and join
+            // semantics instead of turning a failed worker into a clean return.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(stopping))) {
+                Ok(()) => observed.store(1, Ordering::Release),
+                Err(panic) => {
+                    observed.store(2, Ordering::Release);
+                    std::panic::resume_unwind(panic);
+                }
+            }
+        });
+        Self {
+            stop,
+            worker: Some(worker),
+            outcome,
+        }
+    }
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -69,9 +131,7 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopping = stop.clone();
-    let worker = thread::spawn(move || {
+    Ok(Server::spawn(move |stopping| {
         while !stopping.load(Ordering::Relaxed) {
             if let Ok(mut engine) = engine.lock() {
                 engine.poll();
@@ -105,11 +165,7 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
             }
         }
         let _ = std::fs::remove_file(path);
-    });
-    Ok(Server {
-        stop,
-        worker: Some(worker),
-    })
+    }))
 }
 #[cfg(windows)]
 pub use windows::{request, serve};
@@ -302,5 +358,138 @@ mod tests {
         assert_eq!(reply["id"], 7);
         assert_eq!(reply["result"]["preview"], true);
         assert!(reply.get("error").is_none());
+    }
+}
+
+#[cfg(test)]
+mod worker_status_tests {
+    use super::*;
+    use std::{
+        cell::RefCell,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    // The deadline bounds a broken test; completion is established only by the
+    // retained handle, never by assuming that a sleep was long enough.
+    fn finished(server: &Server) -> WorkerStatus {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = server.worker_status();
+            if status != WorkerStatus::Running {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "gated worker did not finish");
+            thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn stop_request_does_not_wait_for_accepted_exchange_or_cleanup() {
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (request_tx, request_rx) = mpsc::channel::<Vec<u8>>();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let (ack_tx, ack_rx) = mpsc::channel();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let worker_cleaned = cleaned.clone();
+        let server = Server::spawn(move |stop| {
+            accepted_tx.send(()).unwrap();
+            // A fake accepted exchange, without Engine discovery or transport
+            // permissions changes. Stop does not truncate an accepted frame,
+            // its reply, or the completion acknowledgement/cleanup boundary.
+            let bytes = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(stop.load(Ordering::Relaxed));
+            let request = read_frame(&mut bytes.as_slice()).unwrap();
+            let mut reply = Vec::new();
+            write_frame(
+                &mut reply,
+                &serde_json::json!({"id":request["id"],"done":true}),
+            )
+            .unwrap();
+            reply_tx.send(reply).unwrap();
+            ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            worker_cleaned.store(true, Ordering::Release);
+        });
+        accepted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        server.request_stop();
+        server.request_stop();
+        assert!(server.stop.load(Ordering::Relaxed));
+        assert_eq!(server.worker_status(), WorkerStatus::Running);
+        assert!(!cleaned.load(Ordering::Acquire));
+        request_tx.send(b"{\"id\":7}\n".to_vec()).unwrap();
+        let reply = reply_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            read_frame(&mut reply.as_slice()).unwrap(),
+            serde_json::json!({"id":7,"done":true})
+        );
+        assert_eq!(server.worker_status(), WorkerStatus::Running);
+        assert!(!cleaned.load(Ordering::Acquire));
+        ack_tx.send(()).unwrap();
+        assert_eq!(finished(&server), WorkerStatus::Returned);
+        assert!(cleaned.load(Ordering::Acquire));
+        drop(server);
+    }
+
+    struct ExitGate {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl Drop for ExitGate {
+        fn drop(&mut self) {
+            // A broken assertion must not panic inside a TLS destructor or
+            // leave Server::drop joining a permanently gated fixture.
+            let _ = self.entered.send(());
+            let _ = self.release.recv_timeout(Duration::from_secs(5));
+        }
+    }
+    thread_local! { static EXIT_GATE: RefCell<Option<ExitGate>> = const { RefCell::new(None) }; }
+
+    #[test]
+    fn recorded_return_stays_running_until_thread_local_cleanup_finishes() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = Server::spawn(move |_| {
+            EXIT_GATE.with(|slot| {
+                *slot.borrow_mut() = Some(ExitGate {
+                    entered: entered_tx,
+                    release: release_rx,
+                })
+            });
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(server.outcome.load(Ordering::Acquire), 1);
+        assert!(!server.worker.as_ref().unwrap().is_finished());
+        assert_eq!(server.worker_status(), WorkerStatus::Running);
+        server.request_stop();
+        release_tx.send(()).unwrap();
+        assert_eq!(finished(&server), WorkerStatus::Returned);
+    }
+
+    #[test]
+    fn worker_panic_is_recorded_and_resumed_not_a_clean_return() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut server = Server::spawn(move |_| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            std::panic::panic_any(73_u32);
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(server.worker_status(), WorkerStatus::Running);
+        release_tx.send(()).unwrap();
+        assert_eq!(finished(&server), WorkerStatus::Panicked);
+        let panic = server.worker.take().unwrap().join().unwrap_err();
+        assert_eq!(*panic.downcast::<u32>().unwrap(), 73);
+        assert_eq!(server.worker_status(), WorkerStatus::Unclassified);
+    }
+
+    #[test]
+    fn finished_worker_without_observed_outcome_is_unclassified() {
+        let server = Server {
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: Some(thread::spawn(|| {})),
+            outcome: Arc::new(AtomicU8::new(0)),
+        };
+        assert_eq!(finished(&server), WorkerStatus::Unclassified);
     }
 }
