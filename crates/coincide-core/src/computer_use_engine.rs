@@ -275,10 +275,15 @@ impl Engine {
             self.revision += 1;
         }
     }
-    pub fn computer_use_shutdown(&mut self) {
+    /// Pair with native master disable, which revokes every Runtime grant.
+    /// Invalidate queued work and retained observation payloads for all threads.
+    pub fn computer_use_revoke_all(&mut self) {
         if self.computer_use.revoke(None) {
             self.revision += 1;
         }
+    }
+    pub fn computer_use_shutdown(&mut self) {
+        self.computer_use_revoke_all();
     }
     pub(super) fn computer_use_expire(&mut self) {
         if self.computer_use.expire() {
@@ -485,6 +490,36 @@ mod tests {
             e.execute("computer_use.result", &result(&a, stopped))
                 .unwrap()["error"],
             "revoked"
+        );
+    }
+    #[test]
+    fn native_master_disable_invalidates_all_threads_and_retained_observations() {
+        let (_dir, mut e, a, b) = fixture();
+        let first = admit(&mut e, &a);
+        e.computer_use_drain();
+        assert!(e.computer_use_reply(
+            first,
+            Uuid::parse_str(&a).unwrap(),
+            Ok(json!({"observation":"old-grant"}))
+        ));
+        e.active_thread = Some(b.clone());
+        let second = admit(&mut e, &b);
+        e.computer_use_revoke_all();
+        assert!(e.computer_use_drain().is_empty());
+        assert_eq!(
+            e.execute("computer_use.result", &result(&b, second))
+                .unwrap()["error"],
+            "revoked"
+        );
+        e.active_thread = Some(a.clone());
+        assert_eq!(
+            e.execute("computer_use.result", &result(&a, first))
+                .unwrap()["error"],
+            "revoked"
+        );
+        assert!(
+            !e.shutdown,
+            "native disable must not shut down the application"
         );
     }
     #[test]
