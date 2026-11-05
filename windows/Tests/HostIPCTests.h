@@ -3,9 +3,95 @@
 #include <fstream>
 
 namespace coincide {
+namespace host_ipc_completion_fixture {
+using namespace background_host;
+// Only an unpredictable, current-user local pipe. No process, provider or external endpoint
+// participates; the callback completes the actual pending Connect after await's first timeout.
+struct Pipe {
+    std::wstring name;Handle listener,client;std::unique_ptr<pipe_io::Operation> connection;
+    explicit Pipe(const Scope& scope):name(std::wstring(L"\\\\.\\pipe\\Coincide-Host-Completion-")+winrt::to_hstring(new_guid()).c_str()),connection(std::make_unique<pipe_io::Operation>()){
+        UserSecurity security(scope.sid());
+        listener.reset(CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,4096,4096,0,&security.attributes));
+        if(!listener)winrt::throw_last_error();verify_security(listener.value,scope.sid(),SE_FILE_OBJECT);
+        const auto done=ConnectNamedPipe(listener.value,&connection->value);const auto error=done?ERROR_SUCCESS:GetLastError();
+        if(done||error!=ERROR_IO_PENDING)throw std::runtime_error("The owned Connect fixture must begin with actual pending I/O");connection->pending=true;
+    }
+    ~Pipe(){try{(void)pipe_io::cancel(listener.value,connection);}catch(...){}if(listener)DisconnectNamedPipe(listener.value);}
+    void connect(){
+        client.reset(CreateFileW(name.c_str(),GENERIC_READ|GENERIC_WRITE|READ_CONTROL,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr));
+        if(!client)winrt::throw_last_error();
+        if(WaitForSingleObject(connection->event.value,1000)!=WAIT_OBJECT_0)throw std::runtime_error("The owned Connect fixture did not complete");
+        DWORD copied{};if(!GetOverlappedResult(listener.value,&connection->value,&copied,FALSE))throw std::runtime_error("The owned Connect fixture must complete successfully in the kernel");
+    }
+    void connected(){connect();(void)pipe_io::await(listener.value,connection,GetTickCount64()+1000,{},{});}
+};
+template<class Check,class Rejects>
+void run(const std::filesystem::path& root,const Scope& scope,Check& check,Rejects& rejects){
+    constexpr std::string_view frame=R"({"fixture":"bounded"})";
+    {
+        Pipe pipe(scope);bool completed{};
+        const auto bytes=pipe_io::await(pipe.listener.value,pipe.connection,0,{},[&]{completed=true;pipe.connect();pipe_io::send(pipe.client.value,std::string(frame),GetTickCount64()+1000);return false;});
+        check(completed&&bytes==0&&!pipe.connection->pending,"A real successful Connect between WAIT_TIMEOUT and deadline cancellation must retain its completion");
+        check(pipe_io::receive(pipe.listener.value,GetTickCount64()+1000)==frame,"A deadline-boundary Connect must preserve the original complete frame without resubmission");
+    }
+    {
+        Pipe pipe(scope);rejects([&]{(void)pipe_io::await(pipe.listener.value,pipe.connection,0,{},[] {return false;});},"An actually pending Connect must still expire when cancellation wins");
+        if(!pipe.connection)throw std::runtime_error("The pending Connect fixture was quarantined instead of settling");
+        DWORD copied{};const auto done=GetOverlappedResult(pipe.listener.value,&pipe.connection->value,&copied,FALSE);const auto error=done?ERROR_SUCCESS:GetLastError();
+        check(!done&&error==ERROR_OPERATION_ABORTED&&!pipe.connection->pending,"Canceled pending Connect must settle as aborted rather than successful");
+    }
+    {
+        Pipe pipe(scope);bool completed{};
+        rejects([&]{(void)pipe_io::await(pipe.listener.value,pipe.connection,0,{},[&]{completed=true;pipe.connect();return true;});},"Explicit owner stop must reject even an actually completed Connect");
+        if(!pipe.connection)throw std::runtime_error("The stopped Connect fixture was quarantined instead of settling");
+        DWORD copied{};check(completed&&!pipe.connection->pending&&GetOverlappedResult(pipe.listener.value,&pipe.connection->value,&copied,FALSE),"Owner stop must settle successful I/O without treating it as permission to dispatch");
+    }
+    {
+        Pipe pipe(scope);pipe.connect();
+        rejects([&]{(void)pipe_io::await(pipe.listener.value,pipe.connection,GetTickCount64()+1000,{},[]{return true;});},"An already-signaled Connect must still honor explicit owner stop");
+    }
+    {
+        Pipe pipe(scope);pipe.connected();bool wrote{};
+        rejects([&]{(void)pipe_io::receive(pipe.listener.value,0,{},[&]{if(!wrote){wrote=true;std::array<char,2> partial{8,0};pipe_io::transfer(pipe.client.value,true,partial.data(),partial.size(),GetTickCount64()+1000);}return false;});},"A successful partial header read at the deadline must not become an accepted frame");
+        check(wrote,"The partial-frame regression must deliver real bytes before the remaining header is canceled");
+    }
+    {
+        Pipe pipe(scope);pipe.connected();
+        rejects([&]{(void)pipe_io::receive(pipe.listener.value,0);},"A genuinely pending read must remain a deadline failure after cancellation");
+        pipe_io::send(pipe.client.value,std::string(frame),GetTickCount64()+1000);
+        check(pipe_io::receive(pipe.listener.value,GetTickCount64()+1000)==frame,"A settled canceled read must leave the next complete frame intact");
+        pipe.client.reset();
+        rejects([&]{(void)pipe_io::receive(pipe.listener.value,GetTickCount64()+1000);},"A broken pipe must remain a read failure");
+        rejects([&]{pipe_io::send(pipe.listener.value,std::string(frame),GetTickCount64()+1000);},"A broken pipe must remain a write failure");
+    }
+    {
+        Pipe pipe(scope);pipe.connected();auto operation=std::make_unique<pipe_io::Operation>(1024*1024);DWORD copied{};
+        const auto done=WriteFile(pipe.listener.value,operation->bytes.data(),static_cast<DWORD>(operation->bytes.size()),&copied,&operation->value);const auto error=done?ERROR_SUCCESS:GetLastError();
+        if(!done&&error==ERROR_IO_PENDING)operation->pending=true;
+        struct Settle{HANDLE pipe;std::unique_ptr<pipe_io::Operation>& operation;~Settle(){try{(void)pipe_io::cancel(pipe,operation);}catch(...){}}}settle{pipe.listener.value,operation};
+        check(!done&&error==ERROR_IO_PENDING,"The bounded write fixture must exceed the unread owned pipe quota");
+        rejects([&]{(void)pipe_io::await(pipe.listener.value,operation,0,{},{});},"A pending write whose cancellation wins must remain a failure");
+        if(!operation)throw std::runtime_error("The pending write fixture was quarantined instead of settling");
+        DWORD final_bytes{};const auto final_done=GetOverlappedResult(pipe.listener.value,&operation->value,&final_bytes,FALSE);const auto final_error=final_done?ERROR_SUCCESS:GetLastError();
+        check(!final_done&&final_error==ERROR_OPERATION_ABORTED&&!operation->pending,"Canceled writes must not accept partially transferred bytes as success");
+    }
+    {
+        const auto folder=root/L"connect-dispatch";std::filesystem::create_directories(folder);auto dispatch_scope=std::make_shared<Scope>(folder);auto state=std::make_shared<background_host_fixture::State>();
+        Core core(dispatch_scope,[&](const Key&,const Launch&){return std::make_unique<background_host_fixture::Session>(state);});Server listener(core,dispatch_scope);
+        const auto started=background_host_fixture::start(folder);Object request;put(request,L"scope",dispatch_scope->id());request.SetNamedValue(L"version",Value::CreateNumberValue(1));request.SetNamedValue(L"command",encode(started));const auto wire=winrt::to_string(request.Stringify());
+        Handle client;const auto connect_and_send=[&]{if(client)return;client=pipe_io::connect(*dispatch_scope,GetTickCount64()+1000);pipe_io::send(client.value,wire,GetTickCount64()+1000);char acknowledgement='A';pipe_io::transfer(client.value,true,&acknowledgement,1,GetTickCount64()+1000);};
+        check(!listener.serve_once(std::chrono::milliseconds(0))&&state->factories==0,"A canceled pending server Connect must refuse dispatch without creating a runtime");
+        check(!listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return true;})&&state->factories==0,"Explicit stop at the completed-Connect boundary must never dispatch its already-written Start frame");client.reset();
+        connect_and_send();check(!listener.serve_once(std::chrono::milliseconds(0),[]{return true;})&&state->factories==0,"Explicit stop must also refuse the immediate ERROR_PIPE_CONNECTED server path");client.reset();
+        check(listener.serve_once(std::chrono::milliseconds(0),[&]{connect_and_send();return false;})&&state->factories==1,"A successful deadline-boundary Connect must still authenticate and dispatch one original synthetic command");
+        check(core.perform(Command{}).GetNamedArray(L"sessions").Size()==1,"The retained boundary connection must dispatch exactly one authenticated synthetic Start");
+    }
+    check(pipe_io::quarantined==0,"Every completion/cancellation boundary fixture must settle without quarantining kernel storage");
+}
+} // namespace host_ipc_completion_fixture
 inline int host_ipc_tests(const std::filesystem::path& report,const std::filesystem::path& fixture_executable){using namespace background_host;namespace fixture=background_host_fixture;int checks{};const auto check=[&](bool value,const char* message){if(!value)throw std::runtime_error(message);++checks;};const auto rejects=[&](auto action,const char* message){bool failed{};try{action();}catch(...){failed=true;}check(failed,message);};const auto root=std::filesystem::temp_directory_path()/winrt::to_hstring("Coincide-Host-IPC-"+new_guid()).c_str();std::filesystem::create_directories(root);struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code ignored;std::filesystem::remove_all(path,ignored);}}cleanup{root};std::unique_ptr<WindowsProcess> server,ui;
     const auto wait=[&](auto condition){const auto deadline=GetTickCount64()+6000;while(!condition()){if(GetTickCount64()>=deadline)throw std::runtime_error("The owned host fixture did not reach its bounded state");Sleep(20);}};
-    try{if(!std::filesystem::is_regular_file(fixture_executable))throw std::runtime_error("The exact owned BackgroundHostFixture executable is required");std::ofstream(root/L"synthetic-host-fixture.txt")<<"COINCIDE_SYNTHETIC_HOST_FIXTURE\n";std::ofstream(root/L"workspace.json")<<"fixture workspace remains UI owned";auto scope=std::make_shared<Scope>(root);const auto expected=file_identity(fixture_executable);Client client(scope,expected);server=WindowsProcess::start_bytes(fixture_executable,{L"--host-fixture-server",root.wstring(),current_image().wstring()},root,[](std::string_view){},1024*1024);Command list;Object snapshot{nullptr};wait([&]{try{snapshot=client.call(list);return true;}catch(...){if(const auto exited=server->wait(std::chrono::milliseconds(0)))throw std::runtime_error("The synthetic host exited before IPC authentication ("+std::to_string(exited->status)+"): "+(std::filesystem::exists(root/L"fixture-error.txt")?local_file::read(root/L"fixture-error.txt",4096).bytes:"no fixture error"));return false;}});check(snapshot.GetNamedArray(L"sessions").Size()==0,"An authenticated host must start with no automatically created sessions");
+    try{if(!std::filesystem::is_regular_file(fixture_executable))throw std::runtime_error("The exact owned BackgroundHostFixture executable is required");std::ofstream(root/L"synthetic-host-fixture.txt")<<"COINCIDE_SYNTHETIC_HOST_FIXTURE\n";std::ofstream(root/L"workspace.json")<<"fixture workspace remains UI owned";auto scope=std::make_shared<Scope>(root);host_ipc_completion_fixture::run(root,*scope,check,rejects);const auto expected=file_identity(fixture_executable);Client client(scope,expected);server=WindowsProcess::start_bytes(fixture_executable,{L"--host-fixture-server",root.wstring(),current_image().wstring()},root,[](std::string_view){},1024*1024);Command list;Object snapshot{nullptr};wait([&]{try{snapshot=client.call(list);return true;}catch(...){if(const auto exited=server->wait(std::chrono::milliseconds(0)))throw std::runtime_error("The synthetic host exited before IPC authentication ("+std::to_string(exited->status)+"): "+(std::filesystem::exists(root/L"fixture-error.txt")?local_file::read(root/L"fixture-error.txt",4096).bytes:"no fixture error"));return false;}});check(snapshot.GetNamedArray(L"sessions").Size()==0,"An authenticated host must start with no automatically created sessions");
         Client alias(std::make_shared<Scope>(root/L"."),expected);check(alias.call(list).GetNamedArray(L"sessions").Size()==0,"Physical data folder aliases must reach the same authenticated endpoint");Client wrong_image(scope,file_identity(current_image()));rejects([&]{wrong_image.call(list);},"The client must refuse an unexpected server executable");
         auto started=fixture::start(root);started.launch.executable=fixture_executable;check(text(client.call(started),L"status")=="accepted","Authenticated explicit Start must reach the injected fixture factory");auto input=fixture::input(started);check(text(client.call(input),L"status")=="accepted","An authenticated fixture input should be accepted once");check(client.delivery_status(started.key,started.epoch,input.delivery_id)=="accepted","Reattached UIs can query a durable delivery ID without submitting its input again");input.id=new_guid();check(text(client.call(input),L"status")=="accepted","Lost response retries must resolve through the same delivery ID");Command poll;poll.operation=Operation::poll;poll.key=started.key;poll.epoch=started.epoch;const auto first=client.call(poll);std::vector<LoggedEvent> events;for(const auto& raw:first.GetNamedArray(L"events"))events.push_back(logged(raw.GetObject()));check(events.size()==3&&events.front().delivery_id==input.delivery_id,"Cross-process durable replay must not duplicate the native input");
         check(!client.persist_and_ack(started.key,started.epoch,events,[&](const auto& batch){return PersistReceipt{started.epoch,batch.back().sequence,true,false};}),"Transcript-only persistence must not acknowledge before the index is durable");check(info(client.call(poll).GetNamedObject(L"session")).acknowledged==0,"Incomplete UI persistence receipts must leave the host backlog intact");check(!client.persist_and_ack(started.key,started.epoch,events,[&](const auto& batch){return PersistReceipt{new_guid(),batch.back().sequence,true,true};}),"A persistence receipt from another session epoch must be refused");
