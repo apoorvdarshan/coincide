@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// A new database is always independent of the Swift app. Unknown JSON fields and
 /// original file bytes are retained, including provider/account session identity.
 pub struct Store {
-    db: Connection,
+    db: Option<Connection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +34,37 @@ pub struct ImportReport {
 }
 
 impl Store {
+    fn connection(&self) -> Result<&Connection> {
+        self.db.as_ref().context("Store is closed")
+    }
+    fn connection_mut(&mut self) -> Result<&mut Connection> {
+        self.db.as_mut().context("Store is closed")
+    }
+    pub fn is_closed(&self) -> bool {
+        self.db.is_none()
+    }
+    /// Trusted shutdown owner only. Failure retains the exact live connection;
+    /// callers may explicitly retry after resolving outstanding SQLite handles.
+    pub fn close_for_shutdown(&mut self) -> Result<()> {
+        let Some(connection) = self.db.take() else {
+            return Ok(());
+        };
+        match connection.close() {
+            Ok(()) => Ok(()),
+            Err((connection, error)) => {
+                self.db = Some(connection);
+                Err(error).context("Store close failed; connection retained")
+            }
+        }
+    }
+
     /// The directory of this isolated store, never the legacy application root.
     pub fn data_directory(&self) -> Result<std::path::PathBuf> {
-        let path = self.db.path().context("Store has no filesystem location")?;
+        self.connection()?;
+        let path = self
+            .connection()?
+            .path()
+            .context("Store has no filesystem location")?;
         let parent = Path::new(path)
             .parent()
             .context("Store has no parent directory")?;
@@ -163,7 +191,7 @@ impl Store {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
-        Ok(Self { db })
+        Ok(Self { db: Some(db) })
     }
 
     /// Import into an empty database only. Repeating this never overwrites Rust edits.
@@ -171,6 +199,7 @@ impl Store {
     /// rolls it back. The source is never opened for writing. Runtime sockets and
     /// running process directories are deliberately excluded.
     pub fn import_legacy(&mut self, source: &Path) -> Result<ImportReport> {
+        self.connection()?;
         ensure!(
             !fs::symlink_metadata(source)?.file_type().is_symlink(),
             "Migration source cannot be a symlink"
@@ -180,9 +209,9 @@ impl Store {
             "Source has no threads directory"
         );
         let count: i64 = self
-            .db
+            .connection()?
             .query_row("SELECT count(*) FROM threads", [], |r| r.get(0))?;
-        let imported: bool = self.db.query_row(
+        let imported: bool = self.connection()?.query_row(
             "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='legacy_source')",
             [],
             |r| r.get(0),
@@ -191,7 +220,7 @@ impl Store {
             count == 0 && !imported,
             "Import requires a new empty Rust database"
         );
-        let tx = self.db.transaction()?;
+        let tx = self.connection_mut()?.transaction()?;
         let mut report = ImportReport::default();
         let mut paths = Vec::new();
         for entry in fs::read_dir(source)? {
@@ -264,6 +293,7 @@ impl Store {
         source_key: &str,
         source: &[u8],
     ) -> Result<()> {
+        self.connection()?;
         validate_cli_source_key(source_key)?;
         ensure!(
             !source.is_empty() && source.len() <= CLI_IMPORT_BYTES,
@@ -278,7 +308,7 @@ impl Store {
         // Acquire the writer before duplicate checks. Two imports cannot race
         // through the case-insensitive check on the existing case-sensitive tables.
         let tx = self
-            .db
+            .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let duplicate_id: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)",
@@ -316,6 +346,7 @@ impl Store {
     /// index for queries of three or more Unicode characters, with a literal
     /// substring recheck; short queries scan cached text, never JSON transcripts.
     pub fn summaries(&self, query: &str, include_archived: bool) -> Result<Vec<ThreadSummary>> {
+        self.connection()?;
         let query = query.trim().to_lowercase();
         let indexed = query.chars().count() >= 3;
         let filter = if query.is_empty() {
@@ -328,7 +359,7 @@ impl Store {
         let sql = format!(
             "SELECT id,title,project_id,archived,pinned,snoozed_until FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
-        let mut stmt = self.db.prepare(&sql)?;
+        let mut stmt = self.connection()?.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
             Ok(ThreadSummary {
                 id: r.get(0)?,
@@ -354,11 +385,12 @@ impl Store {
     }
 
     pub fn thread(&self, id: &str) -> Result<Value> {
-        let document: String =
-            self.db
-                .query_row("SELECT document FROM threads WHERE id=?1", [id], |r| {
-                    r.get(0)
-                })?;
+        self.connection()?;
+        let document: String = self.connection()?.query_row(
+            "SELECT document FROM threads WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?;
         Ok(serde_json::from_str(&document)?)
     }
 
@@ -366,7 +398,8 @@ impl Store {
     /// transcripts/metadata. Normalized forms require a scan (no schema change),
     /// but at most two rows are retained so legacy aliases fail closed.
     pub fn resolve_thread_id(&self, id: Uuid) -> Result<Option<String>> {
-        let mut statement = self.db.prepare(
+        self.connection()?;
+        let mut statement = self.connection()?.prepare(
             "SELECT id FROM threads WHERE replace(replace(replace(replace(lower(id),'urn:uuid:',''),'-',''),'{',''),'}','')=?1 LIMIT 2"
         )?;
         let matches = statement
@@ -387,9 +420,10 @@ impl Store {
     }
 
     pub fn save(&mut self, document: &Value) -> Result<()> {
+        self.connection()?;
         let id = validate_thread(document)?;
         let existing: Option<String> = self
-            .db
+            .connection()?
             .query_row(
                 "SELECT id FROM threads WHERE id=?1 COLLATE NOCASE",
                 [id],
@@ -400,7 +434,7 @@ impl Store {
             existing.as_deref().is_none_or(|stored| stored == id),
             "Thread ID differs only by letter case from an existing thread"
         );
-        let tx = self.db.transaction()?;
+        let tx = self.connection_mut()?.transaction()?;
         tx.execute("INSERT INTO threads(id,document) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET document=excluded.document", params![id,document.to_string()])?;
         let body = search_text(document).to_lowercase();
         let indexed: Option<String> = tx
@@ -427,6 +461,7 @@ impl Store {
         expected_bots: Option<&Value>,
         thread: &Value,
     ) -> Result<()> {
+        self.connection()?;
         let id = validate_thread(thread)?;
         ensure!(
             thread["items"].as_array().is_some_and(Vec::is_empty)
@@ -443,7 +478,7 @@ impl Store {
             "Bot conversation snapshot too large"
         );
         let tx = self
-            .db
+            .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let local: Option<String> = tx
             .query_row(
@@ -554,7 +589,7 @@ impl Store {
             "Media service database must be writable"
         );
         db.busy_timeout(std::time::Duration::from_secs(5))?;
-        Ok(Self { db })
+        Ok(Self { db: Some(db) })
     }
 
     /// Atomically compare the complete current thread AND local-only overlay,
@@ -565,13 +600,14 @@ impl Store {
         expected_local_overlay: Option<&Value>,
         next_overlay: &Value,
     ) -> Result<()> {
+        self.connection()?;
         use crate::legacy_media_service::{overlay_name, validate_overlay};
         let id = validate_thread(expected_thread)?;
         validate_overlay(expected_thread, next_overlay)?;
         let name = overlay_name(id)?;
         let serialized = serde_json::to_string(next_overlay)?;
         let tx = self
-            .db
+            .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let size: i64 = tx.query_row(
             "SELECT length(CAST(document AS BLOB)) FROM threads WHERE id=?1",
@@ -612,6 +648,7 @@ impl Store {
     }
 
     pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
+        self.connection()?;
         let id = Uuid::new_v4().to_string().to_uppercase();
         let now = swift_timestamp();
         let v = json!({"id":id,"projectID":project_id,"title":"New conversation","createdAt":now,"updatedAt":now,
@@ -622,7 +659,8 @@ impl Store {
     }
 
     pub fn is_imported(&self, id: &str) -> Result<bool> {
-        Ok(self.db.query_row(
+        self.connection()?;
+        Ok(self.connection()?.query_row(
             "SELECT EXISTS(SELECT 1 FROM imported_threads WHERE id=?1)",
             [id],
             |r| r.get(0),
@@ -630,8 +668,9 @@ impl Store {
     }
 
     pub fn original(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.connection()?;
         Ok(self
-            .db
+            .connection()?
             .query_row(
                 "SELECT data FROM original_files WHERE path=?1",
                 [path],
@@ -643,6 +682,7 @@ impl Store {
     /// Patch supported fields without rebuilding transcript search indexes for
     /// drafts and flags.
     pub fn patch_thread(&mut self, id: &str, patch: &Value) -> Result<Value> {
+        self.connection()?;
         let patch = patch
             .as_object()
             .context("Thread patch must be an object")?;
@@ -652,7 +692,7 @@ impl Store {
             value[key] = next.clone();
         }
         let reindex = patch.contains_key("title");
-        let tx = self.db.transaction()?;
+        let tx = self.connection_mut()?.transaction()?;
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, value.to_string()],
@@ -669,9 +709,10 @@ impl Store {
     /// Rust-owned settings only. Imported original files never grant runtime
     /// authorization merely by containing the same document or field names.
     pub fn local_document(&self, name: &str) -> Result<Option<Value>> {
+        self.connection()?;
         validate_document_name(name)?;
         let current: Option<String> = self
-            .db
+            .connection()?
             .query_row(
                 "SELECT document FROM documents WHERE name=?1",
                 [name],
@@ -683,9 +724,10 @@ impl Store {
             .transpose()
     }
     pub fn document(&self, name: &str) -> Result<Option<Value>> {
+        self.connection()?;
         validate_document_name(name)?;
         let current: Option<String> = self
-            .db
+            .connection()?
             .query_row(
                 "SELECT document FROM documents WHERE name=?1",
                 [name],
@@ -703,10 +745,11 @@ impl Store {
             .transpose()
     }
     pub fn save_document(&mut self, name: &str, value: &Value) -> Result<()> {
+        self.connection()?;
         validate_document_name(name)?;
         // An unreadable original must never be silently discarded by a save.
         self.document(name)?;
-        self.db.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document",params![name,value.to_string()])?;
+        self.connection()?.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document",params![name,value.to_string()])?;
         Ok(())
     }
     /// Compare-and-save only the Rust bot overlay. The original captured file
@@ -717,8 +760,9 @@ impl Store {
         expected: Option<&Value>,
         value: &Value,
     ) -> Result<()> {
+        self.connection()?;
         let tx = self
-            .db
+            .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let local: Option<String> = tx
             .query_row(
@@ -752,6 +796,7 @@ impl Store {
     }
 
     pub fn patch_document(&mut self, name: &str, patch: &Value) -> Result<Value> {
+        self.connection()?;
         let patch = patch
             .as_object()
             .context("Document patch must be an object")?;
@@ -766,6 +811,7 @@ impl Store {
         Ok(value)
     }
     pub fn projects(&self) -> Result<Value> {
+        self.connection()?;
         let projects = self.document("projects.json")?.unwrap_or_else(|| json!([]));
         ensure!(
             projects.is_array(),
@@ -774,6 +820,7 @@ impl Store {
         Ok(projects)
     }
     pub fn create_project(&mut self, path: &Path, name: Option<&str>) -> Result<Value> {
+        self.connection()?;
         ensure!(path.is_dir(), "Project directory does not exist");
         let canonical = path.canonicalize()?;
         let path = canonical.to_str().context("Project path is not UTF-8")?;
@@ -808,6 +855,7 @@ impl Store {
         Ok(project)
     }
     pub fn patch_project(&mut self, id: &str, patch: &Value) -> Result<Value> {
+        self.connection()?;
         let patch = patch
             .as_object()
             .context("Project patch must be an object")?;
@@ -840,7 +888,8 @@ impl Store {
         Ok(result)
     }
     pub fn remove_project(&mut self, id: &str) -> Result<()> {
-        let count: i64 = self.db.query_row(
+        self.connection()?;
+        let count: i64 = self.connection()?.query_row(
             "SELECT count(*) FROM thread_summaries WHERE project_id=?1",
             [id],
             |r| r.get(0),
@@ -1041,7 +1090,8 @@ mod cli_import_tests {
         .iter()
         .map(|table| {
             store
-                .db
+                .connection()
+                .unwrap()
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                     row.get(0)
                 })
@@ -1121,7 +1171,7 @@ mod cli_import_tests {
         let (_dir, mut store) = fixture();
         let local = store.new_thread("").unwrap();
         let before = counts(&store);
-        store.db.execute_batch(&format!("CREATE TRIGGER reject_cli_cache BEFORE INSERT ON thread_summaries WHEN NEW.id='{ID}' BEGIN SELECT RAISE(ABORT,'synthetic cache failure'); END;")).unwrap();
+        store.connection().unwrap().execute_batch(&format!("CREATE TRIGGER reject_cli_cache BEFORE INSERT ON thread_summaries WHEN NEW.id='{ID}' BEGIN SELECT RAISE(ABORT,'synthetic cache failure'); END;")).unwrap();
         assert!(
             store
                 .import_cli_session(&document(ID), KEY, b"captured bytes")
@@ -1134,7 +1184,8 @@ mod cli_import_tests {
         assert!(store.summaries("import needle", true).unwrap().is_empty());
         assert_eq!(store.thread(local["id"].as_str().unwrap()).unwrap(), local);
         store
-            .db
+            .connection()
+            .unwrap()
             .execute_batch("DROP TRIGGER reject_cli_cache")
             .unwrap();
         store
@@ -1418,12 +1469,12 @@ mod tests {
         let (_dir, _source, mut db) = setup();
         let v = json!({"id":ID,"items":[{"kind":"future","text":"Durable searchable transcript","future":42}],"title":"Before","draftContext":[{"kind":"new-kind","opaque":true}],"sessions":["codex",{"sessionID":"native","future":3}]});
         db.save(&v).unwrap();
-        let before = db.db.total_changes();
+        let before = db.connection().unwrap().total_changes();
         let changed = db
             .patch_thread(ID, &json!({"draft":"new draft","isPinned":true}))
             .unwrap();
         // Two ordinary row updates; FTS maintenance would change additional rows.
-        assert_eq!(db.db.total_changes() - before, 2);
+        assert_eq!(db.connection().unwrap().total_changes() - before, 2);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);
@@ -1444,7 +1495,10 @@ mod tests {
         }
         assert!(db.summaries("x OR y", false).unwrap().is_empty());
         // A cache-only listing must not select/parse the transcript table.
-        db.db.execute("DROP TABLE threads", []).unwrap();
+        db.connection()
+            .unwrap()
+            .execute("DROP TABLE threads", [])
+            .unwrap();
         assert_eq!(db.summaries("", false).unwrap().len(), 1);
         assert_eq!(db.summaries("foo.bar", false).unwrap().len(), 1);
     }
@@ -1600,7 +1654,7 @@ mod tests {
         let path = dir.path().join("v2.sqlite");
         let mut store = Store::open(&path).unwrap();
         store.save(&json!({"id":ID,"title":"Snoozed","items":[],"snoozedUntil":"2026-01-01T00:00:01Z","future":42})).unwrap();
-        store.db.execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema';").unwrap();
+        store.connection().unwrap().execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema';").unwrap();
         let original = store.thread(ID).unwrap();
         drop(store);
         let mut store = Store::open(&path).unwrap();
@@ -1624,7 +1678,11 @@ mod tests {
         store
             .patch_thread(ID, &json!({"snoozedUntil":null}))
             .unwrap();
-        store.db.execute("DROP TABLE threads", []).unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute("DROP TABLE threads", [])
+            .unwrap();
         assert_eq!(store.summaries("", false).unwrap()[0].snoozed_until, None);
     }
     #[test]
@@ -1635,7 +1693,7 @@ mod tests {
         store
             .save(&json!({"id":ID,"title":"Preserve","items":[]}))
             .unwrap();
-        store.db.execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema'; UPDATE threads SET document='{}';").unwrap();
+        store.connection().unwrap().execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema'; UPDATE threads SET document='{}';").unwrap();
         drop(store);
         assert!(Store::open(&path).is_err());
         let db = Connection::open(&path).unwrap();
@@ -1647,5 +1705,116 @@ mod tests {
             "2"
         );
         assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('thread_summaries') WHERE name='snoozed_until'",[],|r|r.get::<_,u32>(0)).unwrap(),0);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    #[test]
+    fn close_retains_exact_data_and_closed_operations_never_reopen_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.sqlite");
+        let source = dir.path().join("source.bin");
+        let source_bytes = b"source bytes\0unchanged";
+        fs::write(&source, source_bytes).unwrap();
+        let mut store = Store::open(&path).unwrap();
+        let id = Uuid::new_v4().to_string();
+        let document = json!({"id":id,"title":"Exact","items":[],"draft":"  café 中文 👩🏽‍💻\n\n","future":{"unknown":[null,{"x":"y"}]}});
+        store.save(&document).unwrap();
+        store
+            .save_document("future.json", &json!({"unknown":true}))
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO original_files(path,data) VALUES (?1,?2)",
+                params!["source.bin", source_bytes.as_slice()],
+            )
+            .unwrap();
+        assert!(!store.is_closed());
+        store.close_for_shutdown().unwrap();
+        assert!(store.is_closed());
+        store.close_for_shutdown().unwrap();
+        let archived = dir.path().join("closed.sqlite");
+        fs::rename(&path, &archived).unwrap();
+        let empty = json!({});
+        let results = vec![
+            store.data_directory().map(|_| ()),
+            store.summaries("", false).map(|_| ()),
+            store.thread(&id).map(|_| ()),
+            store.resolve_thread_id(Uuid::new_v4()).map(|_| ()),
+            store.save(&empty),
+            store.import_legacy(&source).map(|_| ()),
+            store.import_cli_session(&empty, "invalid", b"").map(|_| ()),
+            store.create_bot_thread_if_unchanged(None, &empty),
+            store.commit_legacy_media_overlay_if_unchanged(&empty, None, &empty),
+            store.new_thread("missing").map(|_| ()),
+            store.is_imported(&id).map(|_| ()),
+            store.original("source.bin").map(|_| ()),
+            store.patch_thread(&id, &empty).map(|_| ()),
+            store.local_document("future.json").map(|_| ()),
+            store.document("future.json").map(|_| ()),
+            store.save_document("future.json", &empty),
+            store.save_bots_document_if_unchanged(None, &empty),
+            store.patch_document("future.json", &empty).map(|_| ()),
+            store.projects().map(|_| ()),
+            store.create_project(dir.path(), None).map(|_| ()),
+            store.patch_project("missing", &empty).map(|_| ()),
+            store.remove_project("missing"),
+        ];
+        for result in results {
+            assert_eq!(result.unwrap_err().to_string(), "Store is closed");
+        }
+        assert!(
+            !path.exists(),
+            "closed methods must not recreate the database"
+        );
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        fs::rename(&archived, &path).unwrap();
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.thread(&id).unwrap(), document);
+        assert_eq!(
+            reopened.document("future.json").unwrap(),
+            Some(json!({"unknown":true}))
+        );
+        assert_eq!(
+            reopened.original("source.bin").unwrap().unwrap(),
+            source_bytes
+        );
+    }
+    #[test]
+    fn failed_close_restores_connection_until_outstanding_statement_is_finalized() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("busy.sqlite")).unwrap();
+        let mut statement = std::ptr::null_mut();
+        // Deliberately retain a native SQLite statement without a Rust borrow,
+        // reproducing SQLITE_BUSY from close. No statement execution or raw data.
+        let code = unsafe {
+            rusqlite::ffi::sqlite3_prepare_v2(
+                store.connection().unwrap().handle(),
+                c"SELECT 1".as_ptr(),
+                -1,
+                &mut statement,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(code, rusqlite::ffi::SQLITE_OK);
+        struct Finalize(*mut rusqlite::ffi::sqlite3_stmt);
+        impl Drop for Finalize {
+            fn drop(&mut self) {
+                unsafe {
+                    rusqlite::ffi::sqlite3_finalize(self.0);
+                }
+            }
+        }
+        let held = Finalize(statement);
+        assert!(store.close_for_shutdown().is_err());
+        assert!(!store.is_closed());
+        assert!(store.projects().is_ok());
+        drop(held);
+        store.close_for_shutdown().unwrap();
+        assert!(store.is_closed());
     }
 }
