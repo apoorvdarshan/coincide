@@ -6,7 +6,10 @@ use crate::{
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
-use coincide_core::dictation::local::LocalWhisper;
+use coincide_core::{
+    agent::{WorkerCompletion, WorkerThreadStatus},
+    dictation::local::LocalWhisper,
+};
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
     component::{Disableable, button::Button},
@@ -80,6 +83,7 @@ struct Shared {
     accepted: AtomicBool,
     generation: AtomicU64,
     alive: AtomicBool,
+    controller_constructed: AtomicBool,
 }
 trait Controller {
     fn set_binding(&mut self, binding: Option<CaptureBinding>);
@@ -201,6 +205,11 @@ impl Owner {
                 let Some(factory) = self.factory.take() else {
                     return;
                 };
+                // Construction can create native callback owners. cancel/Drop
+                // exposes no callback-queue drain ACK, including on unwind.
+                self.shared
+                    .controller_constructed
+                    .store(true, Ordering::Release);
                 let (controller, inference) = factory();
                 self.controller = Some(controller);
                 self.inference = Some(inference);
@@ -409,62 +418,126 @@ impl Drop for Owner {
         self.reset();
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallbackShutdown {
+    NeverConstructed,
+    Unknown,
+}
+/// Rust owner join is distinct from native callback-queue cleanup acceptance.
+/// There is deliberately no Ready method while backend cleanup lacks an ACK.
+#[derive(Clone, Debug)]
+pub struct ShutdownStatus {
+    pub requested: bool,
+    pub worker: WorkerThreadStatus,
+    pub native_callbacks: CallbackShutdown,
+    pub spawn_error: Option<String>,
+}
 struct Connection {
     shared: Arc<Shared>,
     commands: SyncSender<Command>,
     snapshots: Receiver<Snapshot>,
+    completion: Option<WorkerCompletion>,
+    spawn_error: Option<String>,
+}
+impl Connection {
+    fn request_shutdown(&self) {
+        self.shared.accepted.store(false, Ordering::Release);
+        if self.shared.alive.swap(false, Ordering::AcqRel) {
+            self.shared.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        self.discard_snapshots();
+    }
+    fn discard_snapshots(&self) {
+        for snapshot in self.snapshots.try_iter() {
+            drop(snapshot);
+        }
+    }
+    fn shutdown_status(&self) -> ShutdownStatus {
+        let requested = !self.shared.alive.load(Ordering::Acquire);
+        if requested {
+            self.discard_snapshots();
+        }
+        let worker = self
+            .completion
+            .as_ref()
+            .map_or(WorkerThreadStatus::Unclassified, WorkerCompletion::status);
+        if requested {
+            self.discard_snapshots();
+        }
+        ShutdownStatus {
+            requested,
+            worker,
+            native_callbacks: if self.shared.controller_constructed.load(Ordering::Acquire) {
+                CallbackShutdown::Unknown
+            } else {
+                CallbackShutdown::NeverConstructed
+            },
+            spawn_error: self.spawn_error.clone(),
+        }
+    }
 }
 fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
     let shared = Arc::new(Shared {
         accepted: AtomicBool::new(false),
         generation: AtomicU64::new(0),
         alive: AtomicBool::new(true),
+        controller_constructed: AtomicBool::new(false),
     });
     let (commands, receiver) = mpsc::sync_channel(8);
     let (snapshots, updates) = mpsc::channel();
     let (text, events) = mpsc::channel();
     let state = shared.clone();
-    std::thread::spawn(move || {
-        // Factory is invoked lazily on THIS thread, only after acceptance and an
-        // explicit native action. Non-Send AVAudioEngine owner never crosses threads.
-        let mut owner = Owner {
-            factory: Some(factory),
-            controller: None,
-            inference: None,
-            shared: state,
-            snapshots,
-            text,
-            generation: 0,
-            target: None,
-            phase: Phase::Idle,
-            permission: Permission::Unavailable,
-            permission_target: None,
-            session: None,
-            audio: None,
-        };
-        while owner.shared.alive.load(Ordering::Acquire) {
-            match receiver.recv_timeout(Duration::from_millis(10)) {
-                Ok(command) => owner.command(command),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+    let worker = std::thread::Builder::new()
+        .name("coincide-microphone-owner".into())
+        .spawn(move || {
+            // Factory is invoked lazily on THIS thread, only after acceptance and an
+            // explicit native action. Non-Send AVAudioEngine owner never crosses threads.
+            let mut owner = Owner {
+                factory: Some(factory),
+                controller: None,
+                inference: None,
+                shared: state,
+                snapshots,
+                text,
+                generation: 0,
+                target: None,
+                phase: Phase::Idle,
+                permission: Permission::Unavailable,
+                permission_target: None,
+                session: None,
+                audio: None,
+            };
+            while owner.shared.alive.load(Ordering::Acquire) {
+                match receiver.recv_timeout(Duration::from_millis(10)) {
+                    Ok(command) => owner.command(command),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+                owner.tick();
             }
-            owner.tick();
+        });
+    let (completion, spawn_error) = match worker {
+        Ok(worker) => (Some(WorkerCompletion::observe(worker)), None),
+        Err(error) => {
+            shared.accepted.store(false, Ordering::Release);
+            shared.alive.store(false, Ordering::Release);
+            (None, Some(error.to_string().chars().take(1024).collect()))
         }
-    });
+    };
     (
         Connection {
             shared,
             commands,
             snapshots: updates,
+            completion,
+            spawn_error,
         },
         events,
     )
 }
 impl Drop for Connection {
     fn drop(&mut self) {
-        self.shared.accepted.store(false, Ordering::Release);
-        self.shared.generation.fetch_add(1, Ordering::AcqRel);
-        self.shared.alive.store(false, Ordering::Release);
+        self.request_shutdown();
     }
 }
 
@@ -495,6 +568,9 @@ impl MicrophoneSettings {
         native_accepted: bool,
         cx: &mut Context<Self>,
     ) {
+        if !self.connection.shared.alive.load(Ordering::Acquire) {
+            return;
+        }
         let target = Target {
             binding,
             settings_revision,
@@ -523,7 +599,22 @@ impl MicrophoneSettings {
             cx.notify();
         }
     }
+    pub fn request_shutdown(&mut self) {
+        self.connection.request_shutdown();
+        self.generation = self.connection.shared.generation.load(Ordering::Acquire);
+        self.native_accepted = false;
+        self.target.binding = None;
+        self.target.config = None;
+        self.phase = Phase::Idle;
+        self.permission = Permission::Unavailable;
+    }
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        self.connection.shutdown_status()
+    }
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        if !self.connection.shared.alive.load(Ordering::Acquire) {
+            return;
+        }
         self.generation = self
             .connection
             .shared
@@ -537,11 +628,16 @@ impl MicrophoneSettings {
     }
     pub fn accepts_text(&self, event: &TextReady, live: &ComposerBinding) -> bool {
         self.native_accepted
+            && self.connection.shared.alive.load(Ordering::Acquire)
             && event.generation == self.generation
             && event.binding == *live
             && self.target.binding.as_ref() == Some(live)
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        if !self.connection.shared.alive.load(Ordering::Acquire) {
+            self.connection.discard_snapshots();
+            return;
+        }
         while let Ok(snapshot) = self.connection.snapshots.try_recv() {
             if snapshot.generation == self.generation && self.native_accepted {
                 self.phase = snapshot.phase;
@@ -552,7 +648,7 @@ impl MicrophoneSettings {
         }
     }
     fn action(&mut self, action: Action, cx: &mut Context<Self>) {
-        if !self.native_accepted {
+        if !self.native_accepted || !self.connection.shared.alive.load(Ordering::Acquire) {
             return;
         }
         // Beginning a new explicit request invalidates any older queued text.
@@ -612,6 +708,7 @@ mod tests {
         inference: usize,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
+        drop_gate: Option<Receiver<()>>,
     }
     struct FakeController {
         trace: Arc<Mutex<Trace>>,
@@ -689,6 +786,9 @@ mod tests {
             if let Some(closed) = trace.closed.take() {
                 let _ = closed.send(());
             }
+            if let Some(release) = trace.drop_gate.take() {
+                let _ = release.recv();
+            }
         }
     }
     struct FakeInference {
@@ -751,6 +851,7 @@ mod tests {
             accepted: AtomicBool::new(accepted),
             generation: AtomicU64::new(1),
             alive: AtomicBool::new(true),
+            controller_constructed: AtomicBool::new(false),
         });
         let trace = Arc::new(Mutex::new(Trace::default()));
         let (text, events) = mpsc::channel();
@@ -895,5 +996,230 @@ mod tests {
                 .iter()
                 .all(|id| *id == threads[0])
         );
+    }
+    struct ShutdownTls {
+        entered: Sender<()>,
+        release: Receiver<()>,
+    }
+    impl Drop for ShutdownTls {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! { static SHUTDOWN_TLS:std::cell::RefCell<Option<ShutdownTls>>=const { std::cell::RefCell::new(None) }; }
+    fn wait_join(connection: &Connection) -> ShutdownStatus {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = connection.shutdown_status();
+            if status.worker != WorkerThreadStatus::Running {
+                return status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake microphone owner did not join"
+            );
+            thread::yield_now();
+        }
+    }
+    fn queued(connection: &Connection, action: Action) {
+        assert!(
+            connection
+                .commands
+                .try_send(Command {
+                    generation: 1,
+                    target: target(),
+                    action
+                })
+                .is_ok()
+        );
+    }
+    fn until_snapshot(connection: &Connection, predicate: impl Fn(&Snapshot) -> bool) {
+        loop {
+            let snapshot = connection
+                .snapshots
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            if predicate(&snapshot) {
+                return;
+            }
+        }
+    }
+    fn enable(connection: &Connection) {
+        connection.shared.generation.store(1, Ordering::Release);
+        connection.shared.accepted.store(true, Ordering::Release);
+        queued(connection, Action::Enable);
+        until_snapshot(connection, |snapshot| {
+            snapshot.permission == Permission::Authorized
+        });
+    }
+    #[::core::prelude::v1::test]
+    fn shutdown_without_native_acceptance_never_constructs_controller_and_is_irreversible() {
+        let (connection, events) = spawn_owner(Box::new(|| {
+            panic!("closed owner must not construct microphone")
+        }));
+        let mut panel = MicrophoneSettings {
+            connection,
+            target: target(),
+            generation: 0,
+            native_accepted: true,
+            phase: Phase::Idle,
+            permission: Permission::Unavailable,
+            status: String::new(),
+        };
+        let binding = panel.target.binding.clone().unwrap();
+        let stale = TextReady {
+            generation: 0,
+            binding: binding.clone(),
+            text: "previously queued private text".into(),
+        };
+        assert!(panel.accepts_text(&stale, &binding));
+        panel.request_shutdown();
+        let generation = panel.generation;
+        panel.request_shutdown();
+        assert_eq!(panel.generation, generation);
+        assert!(!panel.native_accepted);
+        assert!(!panel.accepts_text(&stale, &binding));
+        assert!(panel.target.binding.is_none());
+        assert!(panel.target.config.is_none());
+        let status = wait_join(&panel.connection);
+        assert!(status.requested);
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        assert_eq!(status.native_callbacks, CallbackShutdown::NeverConstructed);
+        assert!(events.try_recv().is_err());
+        assert!(!panel.connection.shared.accepted.load(Ordering::Acquire));
+    }
+    #[::core::prelude::v1::test]
+    fn owner_shutdown_waits_for_controller_drop_and_actual_tls_join() {
+        let trace = Arc::new(Mutex::new(Trace::default()));
+        let (drop_tx, drop_rx) = mpsc::channel();
+        let (drop_release_tx, drop_release_rx) = mpsc::channel();
+        trace.lock().unwrap().closed = Some(drop_tx);
+        trace.lock().unwrap().drop_gate = Some(drop_release_rx);
+        let (tls_tx, tls_rx) = mpsc::channel();
+        let (tls_release_tx, tls_release_rx) = mpsc::channel();
+        let make = factory(trace, None);
+        let (connection, events) = spawn_owner(Box::new(move || {
+            SHUTDOWN_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(ShutdownTls {
+                    entered: tls_tx,
+                    release: tls_release_rx,
+                })
+            });
+            make()
+        }));
+        enable(&connection);
+        connection.request_shutdown();
+        drop_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            connection.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        assert_eq!(
+            connection.shutdown_status().native_callbacks,
+            CallbackShutdown::Unknown
+        );
+        drop_release_tx.send(()).unwrap();
+        tls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            connection.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        tls_release_tx.send(()).unwrap();
+        let status = wait_join(&connection);
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        assert_eq!(
+            status.native_callbacks,
+            CallbackShutdown::Unknown,
+            "Rust join cannot invent native callback cleanup ACK"
+        );
+        assert!(events.try_recv().is_err());
+    }
+    struct ShutdownInference {
+        entered: Sender<()>,
+        release: Receiver<()>,
+        tls_entered: Sender<()>,
+        tls_release: Option<Receiver<()>>,
+    }
+    impl Inference for ShutdownInference {
+        fn transcribe(&mut self, _: &LocalRecordingConfig, _: &[u8]) -> Result<String, ()> {
+            SHUTDOWN_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(ShutdownTls {
+                    entered: self.tls_entered.clone(),
+                    release: self.tls_release.take().unwrap(),
+                })
+            });
+            self.entered.send(()).unwrap();
+            self.release.recv().unwrap();
+            Ok("synthetic private recording transcript".into())
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn shutdown_during_fake_inference_discards_private_text_and_late_commands() {
+        let trace = Arc::new(Mutex::new(Trace::default()));
+        let check = trace.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (tls_tx, tls_rx) = mpsc::channel();
+        let (tls_release_tx, tls_release_rx) = mpsc::channel();
+        let (connection, events) = spawn_owner(Box::new(move || {
+            (
+                Box::new(FakeController {
+                    trace,
+                    binding: None,
+                    session: None,
+                    events: VecDeque::new(),
+                }),
+                Box::new(ShutdownInference {
+                    entered: entered_tx,
+                    release: release_rx,
+                    tls_entered: tls_tx,
+                    tls_release: Some(tls_release_rx),
+                }),
+            )
+        }));
+        enable(&connection);
+        queued(&connection, Action::Record);
+        until_snapshot(&connection, |snapshot| snapshot.phase == Phase::Recording);
+        queued(&connection, Action::Stop);
+        until_snapshot(&connection, |snapshot| snapshot.phase == Phase::Captured);
+        queued(&connection, Action::Transcribe);
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        connection.request_shutdown();
+        // Even a queued command in the private mailbox cannot run after close.
+        let _ = connection.commands.try_send(Command {
+            generation: 1,
+            target: target(),
+            action: Action::Enable,
+        });
+        assert_eq!(
+            connection.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        release_tx.send(()).unwrap();
+        tls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(events.try_recv().is_err());
+        assert_eq!(
+            connection.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        tls_release_tx.send(()).unwrap();
+        assert_eq!(wait_join(&connection).worker, WorkerThreadStatus::Returned);
+        assert!(events.try_recv().is_err());
+        assert!(connection.snapshots.try_recv().is_err());
+        assert_eq!(check.lock().unwrap().requests, 1);
+        assert_eq!(check.lock().unwrap().starts, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn panicked_microphone_factory_is_not_successful_owner_cleanup() {
+        let (connection, events) =
+            spawn_owner(Box::new(|| panic!("synthetic microphone factory failure")));
+        connection.shared.generation.store(1, Ordering::Release);
+        connection.shared.accepted.store(true, Ordering::Release);
+        queued(&connection, Action::Enable);
+        let status = wait_join(&connection);
+        assert_eq!(status.worker, WorkerThreadStatus::Panicked);
+        assert_eq!(status.native_callbacks, CallbackShutdown::Unknown);
+        assert!(events.try_recv().is_err());
     }
 }
