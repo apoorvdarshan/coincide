@@ -2065,10 +2065,46 @@ impl Coincide {
         } else {
             None
         };
-        self.browser_settings_panel.update(cx, |panel, cx| {
+        let engine = self.engine.clone();
+        let bookmark = self.browser_settings_panel.update(cx, |panel, cx| {
+            // Idempotent injection: only the first binding initializes context.
+            panel.set_library_engine(engine);
             panel.set_snapshot(snapshot, cx);
             panel.poll(cx);
+            panel.take_bookmark_open()
         });
+        if let Some(bookmark) = bookmark
+            && visible
+            && selected_thread.as_deref() == Some(bookmark.thread.as_str())
+        {
+            // Preparation read the saved library off UI. Admission is memory-only
+            // and runs after this native visibility/selection check, before queueing.
+            let admitted = self
+                .engine
+                .try_lock()
+                .map_err(|_| "The app is busy; click Open again.".to_owned())
+                .and_then(|mut engine| {
+                    engine
+                        .admit_prepared_bookmark(bookmark.prepared)
+                        .map_err(|error| error.to_string())
+                });
+            match admitted {
+                Ok(queued) => {
+                    // Results may already be retained on the next poll_browser;
+                    // these IDs collect completion, not browser authorization.
+                    self.browser_ui_operations
+                        .insert(queued.navigate_operation, queued.thread.clone());
+                    self.browser_ui_operations
+                        .insert(queued.show_operation, queued.thread);
+                    self.browser_settings_open = false;
+                    self.settings_open = false;
+                    cx.notify();
+                }
+                Err(error) => self
+                    .browser_settings_panel
+                    .update(cx, |panel, cx| panel.set_bookmark_open_error(error, cx)),
+            }
+        }
     }
     fn sync_credentials(&mut self, cx: &mut Context<Self>) {
         // Provider setup is another native settings workflow, never a reason
@@ -3442,6 +3478,7 @@ impl Render for Coincide {
             } else if self.media_settings_visible() {
                 self.media_settings_pane(cx)
             } else if self.browser_settings_visible() {
+                let scroll = self.browser_settings_panel.read(cx).form_scroll();
                 div()
                     .id("browser-settings-surface")
                     .flex_1()
@@ -3461,15 +3498,17 @@ impl Render for Coincide {
                             })),
                     )
                     .child(
-                        div()
-                            .id("browser-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
-                            .child(self.browser_settings_panel.clone())
-                            .child(div().p_3().text_lg().child("Passwords"))
-                            .child(self.credential_panel.clone()),
+                        div().relative().flex_1().min_h_0().flex().flex_col().overflow_hidden()
+                            .child(div()
+                                .id("browser-settings-scroll")
+                                .track_scroll(&scroll).pr_4()
+                                .flex_1().min_h_0().overflow_y_scroll()
+                                .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
+                                .child(self.browser_settings_panel.clone())
+                                .child(div().p_3().text_lg().child("Passwords"))
+                                .child(self.credential_panel.clone()))
+                            .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
+                                .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
                     )
                     .into_any_element()
             } else if self.credentials_open {

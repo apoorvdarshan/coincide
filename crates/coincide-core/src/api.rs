@@ -31,6 +31,7 @@ mod background_workers;
 mod bot_engine;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
+pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
 mod browser_bookmarks_api_tests;
@@ -122,6 +123,7 @@ pub struct Engine {
     admissions_frozen: bool,
     active_thread: Option<String>,
     pub ui_available: bool,
+    bookmark_owner: Uuid,
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
@@ -194,6 +196,7 @@ impl Engine {
             admissions_frozen: false,
             active_thread: None,
             ui_available: false,
+            bookmark_owner: Uuid::new_v4(),
             browser_requests: VecDeque::new(),
             browser_pending: HashMap::new(),
             browser_results: HashMap::new(),

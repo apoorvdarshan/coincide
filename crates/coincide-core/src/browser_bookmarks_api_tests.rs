@@ -183,3 +183,112 @@ fn failed_sqlite_write_keeps_exact_prior_library_and_revision() {
     assert_eq!(engine.revision, revision);
     assert!(engine.browser_requests.is_empty());
 }
+
+#[test]
+fn preparation_never_queues_and_stale_revisions_or_thread_roundtrips_cannot_admit() {
+    let (_dir, mut engine, id) = fixture();
+    let library = engine.import_browser_bookmarks(0, &plan()).unwrap().library;
+    let bookmark = library.bookmarks[0].id;
+    engine.ui_available = true;
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, library.revision)
+        .unwrap();
+    assert!(engine.browser_requests.is_empty());
+    drop(prepared);
+    assert!(
+        engine.browser_requests.is_empty(),
+        "closed panel can discard proof without queuing"
+    );
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, library.revision)
+        .unwrap();
+    let added = browser_bookmarks::preview(
+        br#"{"bookmarks":[{"url":"https://other.example/new","title":"New"}]}"#,
+    )
+    .unwrap();
+    let updated = engine
+        .import_browser_bookmarks(library.revision, &added)
+        .unwrap()
+        .library;
+    assert!(engine.admit_prepared_bookmark(prepared).is_err());
+    assert!(engine.browser_requests.is_empty());
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, updated.revision)
+        .unwrap();
+    engine.set_active_thread(None).unwrap();
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    assert!(
+        engine.admit_prepared_bookmark(prepared).is_err(),
+        "A to B to A must not revive an old proof"
+    );
+    assert!(engine.browser_requests.is_empty());
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, updated.revision)
+        .unwrap();
+    engine.freeze_admissions();
+    assert!(engine.admit_prepared_bookmark(prepared).is_err());
+    assert!(engine.browser_requests.is_empty());
+}
+#[test]
+fn prepared_proof_cannot_cross_engines_and_closed_store_or_missing_ui_blocks_admission() {
+    let (_dir, mut engine, id) = fixture();
+    let library = engine.import_browser_bookmarks(0, &plan()).unwrap().library;
+    engine.ui_available = true;
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let bookmark = library.bookmarks[0].id;
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, library.revision)
+        .unwrap();
+    let (_other, mut other, _) = fixture();
+    other
+        .store
+        .save(&engine.store.thread(&id).unwrap())
+        .unwrap();
+    other.set_active_thread(Some(id.clone())).unwrap();
+    other.ui_available = true;
+    other.revision = engine.revision;
+    assert!(other.admit_prepared_bookmark(prepared).is_err());
+    assert!(other.browser_requests.is_empty());
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, library.revision)
+        .unwrap();
+    engine.ui_available = false;
+    assert!(engine.admit_prepared_bookmark(prepared).is_err());
+    assert!(engine.browser_requests.is_empty());
+    engine.ui_available = true;
+    let prepared = engine
+        .prepare_browser_bookmark(&id, bookmark, library.revision)
+        .unwrap();
+    engine.store.close_for_shutdown().unwrap();
+    assert!(engine.admit_prepared_bookmark(prepared).is_err());
+    assert!(engine.store.is_closed());
+    assert!(engine.browser_requests.is_empty());
+}
+#[test]
+fn completed_browser_reply_survives_until_later_parent_operation_registration() {
+    let (_dir, mut engine, id) = fixture();
+    let library = engine.import_browser_bookmarks(0, &plan()).unwrap().library;
+    engine.ui_available = true;
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let prepared = engine
+        .prepare_browser_bookmark(&id, library.bookmarks[0].id, library.revision)
+        .unwrap();
+    let queued = engine.admit_prepared_bookmark(prepared).unwrap();
+    // Native completion can arrive before the parent's next operation-map poll.
+    for operation in [queued.navigate_operation, queued.show_operation] {
+        engine.browser_reply(crate::browser_protocol::BrowserReply {
+            id: operation.clone(),
+            thread_id: id.clone(),
+            result: json!({"tab":"synthetic"}),
+        });
+        let reply = engine
+            .execute(
+                "browser.result",
+                &json!({"operationId":operation,"threadId":id}),
+            )
+            .unwrap();
+        assert_eq!(reply["ready"], true);
+        assert_eq!(reply["result"]["tab"], "synthetic");
+    }
+}

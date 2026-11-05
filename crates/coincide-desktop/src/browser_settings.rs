@@ -8,13 +8,13 @@ use coincide_core::{
 };
 use gpui_kit::{
     AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, PathPromptOptions,
-    Render, SharedString, Styled, Window,
+    Render, ScrollHandle, SharedString, Styled, Window,
     component::{
         Disableable,
         button::Button,
         input::{Input, InputState},
     },
-    div, px,
+    div,
 };
 use serde_json::{Value, json};
 use std::{
@@ -469,14 +469,13 @@ fn verify_chosen_bookmarks(chosen: &ChosenBookmarks) -> Result<()> {
 }
 pub struct BookmarkOpen {
     pub thread: String,
-    pub navigate_operation: String,
-    pub show_operation: String,
+    pub prepared: coincide_core::api::PreparedBookmarkOpen,
 }
 enum LibraryReply {
     Preview(ImportPreview, Option<ChosenBookmarks>, Option<Library>),
     Reloaded(Library),
     Saved(browser_bookmarks::ImportResult),
-    OpenAccepted(BookmarkOpen),
+    OpenPrepared(BookmarkOpen),
 }
 type LibraryCompletion = (u64, Result<LibraryReply, String>);
 fn library_context_allowed(
@@ -492,6 +491,7 @@ fn library_context_allowed(
 }
 pub struct BrowserSettings {
     workers: WorkerOwner,
+    form_scroll: ScrollHandle,
     engine: Option<SharedEngine>,
     epoch: Arc<AtomicU64>,
     chosen: Option<ChosenBookmarks>,
@@ -539,6 +539,7 @@ impl BrowserSettings {
         (
             Self {
                 workers: WorkerOwner::default(),
+                form_scroll: ScrollHandle::default(),
                 engine: None,
                 epoch: Arc::new(AtomicU64::new(0)),
                 chosen: None,
@@ -560,6 +561,9 @@ impl BrowserSettings {
             requests,
         )
     }
+    pub fn form_scroll(&self) -> ScrollHandle {
+        self.form_scroll.clone()
+    }
     /// Parent injects only its existing trusted Engine; no path or global lookup.
     pub fn set_library_engine(&mut self, engine: SharedEngine) {
         if self.workers.closed()
@@ -578,11 +582,18 @@ impl BrowserSettings {
         self.library = None;
         self.bookmark_open = None;
     }
-    /// Parent registers these existing bridge operation IDs, then closes Settings
-    /// only if the same selected thread still owns this explicit click.
+    /// Parent admits this opaque preparation only after fresh visibility/thread
+    /// checks, then registers returned operation IDs and closes Settings.
     pub fn take_bookmark_open(&mut self) -> Option<BookmarkOpen> {
         self.bookmark_open.take()
     }
+    pub fn set_bookmark_open_error(&mut self, error: String, cx: &mut Context<Self>) {
+        if !self.workers.closed() {
+            self.status = error;
+            cx.notify();
+        }
+    }
+
     fn library_work(
         &mut self,
         status: &str,
@@ -664,21 +675,14 @@ impl BrowserSettings {
             cx,
             move |engine, admission, epoch, generation, snapshot| {
                 library_context_allowed(&admission, &epoch, generation)?;
-                let mut engine = engine
+                let engine = engine
                     .try_lock()
                     .map_err(|_| anyhow::anyhow!("The app is busy; bookmark was not opened"))?;
                 library_context_allowed(&admission, &epoch, generation)?;
-                let result = engine.open_browser_bookmark(&snapshot.thread, id, revision)?;
-                Ok(LibraryReply::OpenAccepted(BookmarkOpen {
+                let prepared = engine.prepare_browser_bookmark(&snapshot.thread, id, revision)?;
+                Ok(LibraryReply::OpenPrepared(BookmarkOpen {
                     thread: snapshot.thread,
-                    navigate_operation: result["navigateOperationId"]
-                        .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("Missing browser operation"))?
-                        .into(),
-                    show_operation: result["showOperationId"]
-                        .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("Missing browser operation"))?
-                        .into(),
+                    prepared,
                 }))
             },
         );
@@ -753,8 +757,8 @@ impl BrowserSettings {
                         self.chosen = None;
                         self.preview = None;
                     }
-                    Ok(LibraryReply::OpenAccepted(open)) => {
-                        self.status="Bookmark queued for this thread's browser. Native navigation is still pending.".into();
+                    Ok(LibraryReply::OpenPrepared(open)) => {
+                        self.status = "Opening bookmark…".into();
                         self.bookmark_open = Some(open);
                     }
                     Err(error) => {
@@ -970,8 +974,6 @@ impl Render for BrowserSettings {
             let pages = count.div_ceil(10);
             let mut review = div()
                 .id("browser-bookmark-review")
-                .max_h(px(220.))
-                .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap_1();
@@ -1003,8 +1005,6 @@ impl Render for BrowserSettings {
             )));
             let mut rows = div()
                 .id("browser-bookmark-library")
-                .max_h(px(260.))
-                .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap_2();
