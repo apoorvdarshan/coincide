@@ -39,21 +39,33 @@ fn saturated_import(valid_image: bool, expired: bool) {
     let operation = id.clone();
     let activity = engine.idle_sleep.background_job();
     let (done_tx, done_rx) = mpsc::channel();
+    let (saturated_tx, saturated_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         let _activity = activity;
         // The production attachments.add worker calls this exact ingestion +
         // completion path; no provider, native host, or environment discovery.
-        import_attachment(root, source, tx, operation);
+        import_attachment(root, source, tx, operation, || {
+            saturated_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
         done_tx.send(()).unwrap();
     });
-    assert_eq!(
-        done_rx.recv_timeout(Duration::from_millis(100)),
-        Err(mpsc::RecvTimeoutError::Timeout),
-        "the full mailbox must retain the worker instead of dropping its completion"
-    );
+    // This acknowledgement is emitted only after the production completion
+    // publisher receives TrySendError::Full for this ingested result. The
+    // timeout is solely a deadlock watchdog, never evidence of saturation.
+    saturated_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(engine.attachment_operations.contains(&id));
-    // poll never waits for the worker: it only consumes available completions.
+    assert_eq!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+    // Keep the worker gated while polling: poll must return without waiting for
+    // publication. It drains exactly the unrelated, prefilled mailbox entries.
     engine.poll();
+    if expired {
+        assert!(!engine.workspace_pending.contains_key(&id));
+    }
+    assert!(engine.attachment_operations.contains(&id));
+    assert!(!engine.workspace_results.contains_key(&id));
+    release_tx.send(()).unwrap();
     done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     worker.join().unwrap();
     engine.poll();
