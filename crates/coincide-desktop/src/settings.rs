@@ -10,6 +10,7 @@ pub(super) enum SettingsSection {
     Accounts,
     Browser,
     Media,
+    ComputerUse,
 }
 impl SettingsSection {
     fn id(self) -> &'static str {
@@ -21,6 +22,7 @@ impl SettingsSection {
             Self::Accounts => "accounts",
             Self::Browser => "browser",
             Self::Media => "media",
+            Self::ComputerUse => "computer-use",
         }
     }
     fn label(self) -> &'static str {
@@ -32,6 +34,7 @@ impl SettingsSection {
             Self::Accounts => "Providers and passwords",
             Self::Browser => "Browser",
             Self::Media => "Historical images",
+            Self::ComputerUse => "Computer Use",
         }
     }
 }
@@ -543,6 +546,7 @@ impl Coincide {
             S::Accounts,
             S::Browser,
             S::Media,
+            S::ComputerUse,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -721,6 +725,12 @@ impl Coincide {
                 "antigravity provider configured account models",
             ),
             (
+                S::ComputerUse,
+                "computer-use",
+                "Computer Use",
+                "computer use desktop accessibility screen capture observe input permissions thread access",
+            ),
+            (
                 S::Media,
                 "media",
                 "Restore historical images",
@@ -754,6 +764,7 @@ impl Coincide {
                                 this.credentials_open = id == "passwords";
                                 this.browser_settings_open = id == "browser";
                                 this.media.opened = id == "media";
+                                this.computer_use_open = id == "computer-use";
                                 this.provider_settings.open = false;
                                 if id == "antigravity" {
                                     this.open_antigravity_settings(window, cx);
@@ -926,6 +937,13 @@ mod navigation_tests {
         ));
         assert_eq!(S::Accounts.id(), "accounts");
         assert_eq!(S::Browser.id(), "browser");
+        assert_eq!(S::ComputerUse.id(), "computer-use");
+        assert!(settings_match(
+            S::ComputerUse,
+            S::ComputerUse,
+            "screen permissions",
+            "capture screen permissions"
+        ));
         assert!(settings_match(
             S::Browser,
             S::Browser,
