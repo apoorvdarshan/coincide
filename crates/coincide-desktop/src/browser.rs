@@ -21,14 +21,14 @@ use objc2::{MainThreadMarker, rc::Retained};
 use objc2_web_kit::{WKWebViewConfiguration, WKWebsiteDataStore};
 use serde_json::{Value, json};
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -44,7 +44,7 @@ struct Tab {
     url: String,
     loading: bool,
     console: Rc<RefCell<BrowserConsole>>,
-    credential_console_suppressed: Rc<Cell<bool>>,
+    credential_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
 }
 struct PendingWait {
@@ -255,7 +255,9 @@ impl BrowserController {
             .and_then(|tabs| tabs.iter().position(|tab| tab.id == target))
             .context("No such tab in this thread")?;
         ensure!(
-            !self.tabs[thread][index].credential_console_suppressed.get()
+            !self.tabs[thread][index]
+                .credential_console_suppressed
+                .load(Ordering::Acquire)
                 || private_document_action_allowed(&request.action),
             "Page inspection is paused during a saved-login request. Navigate or reload before inspecting this document again."
         );
@@ -317,7 +319,7 @@ impl BrowserController {
                 let tab = &self.tabs[thread][index];
                 let mut result = tab.console.borrow_mut().read(*clear);
                 result["credentialCaptureSuppressed"] =
-                    json!(tab.credential_console_suppressed.get());
+                    json!(tab.credential_console_suppressed.load(Ordering::Acquire));
                 Ok(Some(result))
             }
             BrowserAction::WaitFor { timeout, .. } => {
@@ -391,7 +393,7 @@ impl BrowserController {
                         let result = public_script_reply(
                             &payload,
                             navigation.load(Ordering::Acquire) == epoch,
-                            protected.get(),
+                            protected.load(Ordering::Acquire),
                             click,
                         );
                         let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
@@ -439,7 +441,7 @@ impl BrowserController {
         let completed_sender = self.sender.clone();
         let console = Rc::new(RefCell::new(BrowserConsole::default()));
         let console_handler = console.clone();
-        let credential_console_suppressed = Rc::new(Cell::new(false));
+        let credential_console_suppressed = Arc::new(AtomicBool::new(false));
         let console_suppressed = credential_console_suppressed.clone();
         let load_console_suppressed = credential_console_suppressed.clone();
         let load_console = console.clone();
@@ -476,7 +478,7 @@ impl BrowserController {
             .with_clipboard(false)
             .with_initialization_script_for_main_only(CONSOLE_SCRIPT, false)
             .with_ipc_handler(move |message| {
-                if console_suppressed.get() {
+                if console_suppressed.load(Ordering::Acquire) {
                     return;
                 }
                 console_handler
@@ -534,7 +536,7 @@ impl BrowserController {
             .with_on_page_load_handler(move |event, url| {
                 if matches!(event, wry::PageLoadEvent::Started) {
                     load_navigation.fetch_add(1, Ordering::AcqRel);
-                } else if load_console_suppressed.replace(false) {
+                } else if load_console_suppressed.swap(false, Ordering::AcqRel) {
                     // Keep old-document messages out while navigation is in
                     // flight. Start the new committed page with an empty log.
                     let _ = load_console.borrow_mut().read(true);
@@ -703,7 +705,7 @@ impl BrowserController {
                 let tab = tab.context("Upload tab closed")?;
                 ensure!(
                     tab.navigation.load(Ordering::Acquire) == upload.epoch
-                        && !tab.credential_console_suppressed.get(),
+                        && !tab.credential_console_suppressed.load(Ordering::Acquire),
                     "Upload cancelled because document access changed"
                 );
                 Ok(())
@@ -737,7 +739,7 @@ impl BrowserController {
                                 result: public_script_reply(
                                     &payload,
                                     navigation.load(Ordering::Acquire) == epoch,
-                                    protected.get(),
+                                    protected.load(Ordering::Acquire),
                                     false,
                                 ),
                             }));
@@ -819,7 +821,7 @@ impl BrowserController {
                                 result: public_script_reply(
                                     &payload,
                                     navigation.load(Ordering::Acquire) == epoch,
-                                    protected.get(),
+                                    protected.load(Ordering::Acquire),
                                     false,
                                 ),
                             });
@@ -935,7 +937,8 @@ impl BrowserController {
                 // A native approved job may trigger site input handlers that
                 // log its fields. Clear and suppress page console capture
                 // before any private renderer work, until the next navigation.
-                tab.credential_console_suppressed.set(true);
+                tab.credential_console_suppressed
+                    .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
                 credential_bridge::NativeCredentialTarget::new(
                     tab.view.read(cx).raw(),
