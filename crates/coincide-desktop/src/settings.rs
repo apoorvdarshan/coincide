@@ -484,6 +484,7 @@ impl Coincide {
                             .label("Done")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.settings_open = false;
+                                this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
                     ),
@@ -531,6 +532,28 @@ impl Coincide {
             .child(div().p_3().child("Shift-Return always inserts a new line. Command / Control + Return sends from the message composer."))
             .child(div().p_3().child("Shortcuts: Command / Control + N — new conversation; + F — search; + comma — settings."))
             .child(self.awake_settings(cx))
+            .child(div().p_3().flex().gap_2()
+                .child(Button::new("settings-bots").label("Bots and bot instructions")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.bots_open = true;
+                        this.transcription_open = false;
+                        this.credentials_open = false;
+                        this.provider_settings.open = false;
+                        this.sync_transcription_binding(cx);
+                        cx.notify();
+                    })))
+                .child(Button::new("settings-transcription").label("Local WAV transcription")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.transcription_open = true;
+                        this.bots_open = false;
+                        this.credentials_open = false;
+                        this.provider_settings.open = false;
+                        // The hidden composer must not retain keyboard focus
+                        // or cursor-blink notifications during transcription.
+                        window.blur(cx);
+                        this.sync_transcription_binding(cx);
+                        cx.notify();
+                    }))))
             .child(div().p_3().text_sm().child(self.settings_status.clone()));
         pane.into_any_element()
     }
@@ -556,6 +579,7 @@ impl Coincide {
         match key.key.as_str() {
             "," => {
                 self.settings_open = !self.settings_open;
+                self.sync_transcription_binding(cx);
                 cx.notify();
             }
             "n" => self.new_thread(window, cx),

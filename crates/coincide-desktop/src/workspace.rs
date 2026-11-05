@@ -220,6 +220,7 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
 pub struct WorkspacePanel {
     engine: SharedEngine,
     thread: Option<String>,
+    root_hint: Option<String>,
     generation: u64,
     snapshot: Option<Snapshot>,
     diff: String,
@@ -249,6 +250,7 @@ impl WorkspacePanel {
         Self {
             engine,
             thread: None,
+            root_hint: None,
             generation: 0,
             snapshot: None,
             diff: String::new(),
@@ -273,8 +275,22 @@ impl WorkspacePanel {
         if self.thread == thread {
             return;
         }
+        self.set_context(thread, None, cx);
+    }
+    /// The hint is cached stored metadata, never canonicalized on the UI thread.
+    /// A root change invalidates in-flight results even for the same thread.
+    pub fn set_context(
+        &mut self,
+        thread: Option<String>,
+        root_hint: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread == thread && self.root_hint == root_hint {
+            return;
+        }
         self.generation = self.generation.wrapping_add(1);
         self.thread = thread.clone();
+        self.root_hint = root_hint;
         self.snapshot = None;
         self.diff.clear();
         self.confirmation = None;
@@ -290,6 +306,12 @@ impl WorkspacePanel {
             self.notice = "Waiting for the previous workspace operation. It may finish after switching conversations.".into();
         }
         cx.notify();
+    }
+    /// Only a completed worker refresh supplies an authoritative canonical root.
+    pub fn cached_context(&self) -> Option<(String, String)> {
+        let binding = &self.snapshot.as_ref()?.binding;
+        (self.thread.as_deref() == Some(binding.thread.as_str()))
+            .then(|| (binding.thread.clone(), binding.root.clone()))
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
         if self.busy {

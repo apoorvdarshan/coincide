@@ -4,6 +4,7 @@
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::{
+    base::Disableable,
     component::{
         button::*,
         input::{Input, InputState},
@@ -628,7 +629,7 @@ mod tests {
             }
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn list_uses_chosen_contract_and_polls_with_same_thread_root() {
         let request = request(View::List("open".into()));
         let result = payload(&request);
@@ -662,7 +663,7 @@ mod tests {
             )
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn read_binds_selected_list_head_and_preserves_nullable_review_metadata() {
         let request = request(View::Detail {
             number: 42,
@@ -689,7 +690,7 @@ mod tests {
         assert!(got["pullRequest"]["reviews"][0]["author"].is_null());
         assert_eq!(got["pullRequest"]["reviews"][0]["body"], "  café 中文\n");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn head_changed_error_is_returned_once_without_detail_or_retry() {
         let request = request(View::Detail {
             number: 42,
@@ -711,7 +712,7 @@ mod tests {
         assert!(error.to_string().contains("head_changed"));
         assert_eq!(calls, 2);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn wrong_thread_root_repository_number_or_head_never_becomes_detail() {
         let request = request(View::Detail {
             number: 42,
@@ -737,7 +738,7 @@ mod tests {
             assert!(validate_payload(&request, &result).is_err(), "{key}");
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn generation_and_full_selection_identity_reject_stale_completion() {
         let first = request(View::Detail {
             number: 42,
@@ -774,7 +775,7 @@ mod tests {
             assert!(!current(7, &other, Some(&active)));
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn state_and_list_bounds_reject_unsupported_or_incomplete_data() {
         let r = request(View::List("all".into()));
         let mut result = payload(&r);
@@ -799,7 +800,7 @@ mod tests {
         );
         assert!(!called);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn repository_input_is_explicit_and_not_a_url_or_shell_fragment() {
         assert!(repository("owner/repo-name"));
         for invalid in [

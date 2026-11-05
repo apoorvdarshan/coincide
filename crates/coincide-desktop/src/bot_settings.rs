@@ -550,7 +550,7 @@ mod tests {
         json!({"bot":{"id":ID,"name":"Saved","persona":"Instructions","unknown":{"keep":true}},
         "baseline":"a".repeat(64),"origin":"local","instructionsScope":"bot-local","executionConnected":false})
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn existing_save_sends_only_name_persona_and_captured_baseline() {
         let write = Write {
             key: ID.into(),
@@ -578,7 +578,7 @@ mod tests {
             json!({"botId":ID,"baseline":"b".repeat(64),"patch":{"name":"New name","persona":"Local bot text"}})
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn new_bot_uses_save_without_client_identity() {
         let write = Write {
             key: NEW.into(),
@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(method, "bots.save");
         assert_eq!(bound.bot["id"], ID);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn conflict_returns_error_without_retry_or_draft_mutation() {
         let fields = Fields {
             name: "Draft".into(),
@@ -630,7 +630,7 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(write.fields, fields);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn local_validation_bounds_unicode_and_read_checks_identity() {
         assert!(
             Fields {
@@ -691,7 +691,7 @@ mod fixture_tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn real_api_creates_reads_patches_and_rejects_stale_baseline() {
         let fixture = Fixture::new();
         let store = Store::open(&fixture.0.join("rust/state.sqlite")).unwrap();
@@ -739,7 +739,7 @@ mod fixture_tests {
                 .all(|entry| entry.unwrap().file_name() == "rust")
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn real_api_preserves_imported_envelope_unknown_fields_casing_and_whitespace() {
         let fixture = Fixture::new();
         let source = fixture.0.join("synthetic-source");

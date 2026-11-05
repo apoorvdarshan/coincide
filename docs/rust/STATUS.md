@@ -14,6 +14,7 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 - [x] Rust workspace and independent GPUI macOS build.
 - [x] Initial Linux desktop compilation (no GUI acceptance yet).
+- [x] Native Windows desktop compilation (no GUI acceptance yet).
 - [x] Lossless source-file capture and transactional thread import.
 - [x] Preserve unknown fields, attachments, drafts and provider session references.
 - [x] Rollback invalid/duplicate imports and refuse symlink traversal.
@@ -57,27 +58,42 @@ The broad feature groups above remain open until their complete behavior passes.
 
 | Owner | Verified evidence | Current work / remaining acceptance |
 | --- | --- | --- |
-| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY and control integration each passed 1/1 at f9e0ca0 | Splits/shell parity; Windows GPUI compile job added, first result pending |
-| Browser | Native Mac upload fixture passed seven groups; 47 combined Mac desktop tests pass, including 10 private-channel cases | Private isolated-world WebKit fill implemented but capability remains disabled pending native acceptance; Windows uploads unavailable |
-| Organization | CLI import Store/API tests passed on Mac/Linux; native preview/import panel mounted with five passing tests | Native picker/confirmation acceptance; bots persistence and native editor underway |
-| Credentials | Six native-workflow fixture tests passed; local Whisper subprocess tests passed 5/5 plus strict clippy on Linux at cf90172 | Local transcription UI; real model/microphone, native fill, vault and passkey acceptance remain |
-| Workspace | Async checkpoint/worktree panel mounted; seven worker tests pass; exact-copy helper mounted with five pure tests | Native panel/copy acceptance; bounded live GitHub metadata API and panel underway |
+| Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY and control integration each passed 1/1 at f9e0ca0 | Splits/shell parity; Windows GPUI compile passed at 1e5387e; GUI acceptance pending |
+| Browser | Native Mac upload fixture passed seven groups; 77 combined Mac desktop tests pass with native notification feature compiled, including 10 private-channel cases | Private isolated-world WebKit fill passed 11 native fixture groups and is enabled on supported Mac builds; Windows uploads unavailable |
+| Organization | CLI import Store/API tests passed on Mac/Linux; native preview/import panel mounted with five passing tests | Native picker/confirmation acceptance; bot-local persistence and editor mounted/tested; execution and native acceptance pending |
+| Credentials | Six native-workflow fixture tests passed; local Whisper subprocess tests passed 5/5 plus strict clippy on Linux at cf90172 | Local WAV workflow mounted/tested; real model/microphone, visual approval, vault and passkey acceptance remain |
+| Workspace | Async checkpoint/worktree panel mounted; seven worker tests pass; exact-copy helper mounted with five pure tests | Native panel/copy acceptance; bounded GitHub metadata API/panel mounted; 11 Mac/Linux service/Engine tests and seven panel tests pass; live account acceptance pending |
 | Host | Runtime synthetic tests and four Engine idle-sleep tests passed on Linux; explicit Rust-owned opt-in wired | Native idle-sleep lifecycle acceptance; notifications delivery adapter; privileged power/remote/iCloud remain |
 | Packaging | d4a9de5 passed 22 tests per host on Mac/Linux/Windows (DMG explicitly skipped off Mac), plus real store rehearsal; actual Mac ZIP/DMG payload readback verified | Runtime dependencies, signatures, HFS/Finder behavior, launch/install/updater and release readiness remain unverified |
-| Coordinator | Full Mac desktop suite passed 47 tests including current import/transcript hooks; Windows long-destination handling corrected with explicit long-cwd limitation | Integrated Linux checks, native acceptance, CI triage and combined UI/UX parity |
+| Coordinator | Full Mac desktop suite passed 77 tests including bot/transcription mounts and native notification feature compilation; Windows long-destination handling corrected with explicit long-cwd limitation | Integrated Linux checks, native acceptance, CI triage and combined UI/UX parity |
 
 Windows Core CI at f9e0ca0 passed the real ConPTY and private-pipe integration
-targets, then failed a long-path Git worktree test. The current fix distinguishes
-long destination support from Git for Windows' unsupported long working directory;
-its Windows CI result is still pending. The diagnostic job preserves the original
-full-suite failure while exposing PTY/control targets independently.
+targets, then failed a long-path Git worktree test. The fix distinguishes long
+destination support from Git for Windows' unsupported long working directory. At 1e5387e, the full Windows core job passed (219 reported
+test successes, zero failures) including the four Git integration cases, plus the
+real PTY/control targets. Native Windows GPUI compilation also passed in that run.
+The diagnostic job preserves the original full-suite failure while exposing PTY/control targets independently.
 
 The private macOS credential bridge uses named isolated-world WebKit argument
 objects, document/origin/deadline binding and a final native permit check. Revocation
-prevents dispatch; already-dispatched renderer work cannot be retracted. Capability
-remains disabled until native synthetic acceptance. These tests used no real vault,
+prevents dispatch; already-dispatched renderer work cannot be retracted. Eleven
+native WebKit fixture groups passed; supported Mac builds now advertise the
+native approval workflow. Visual approval and integrated console-suppression
+acceptance remain pending. These tests used no real vault,
 provider account, model inference or microphone. Copy helper pure tests establish
 byte/range handling, not native cross-message or offscreen selection acceptance.
+
+Checkpoint 1e5387e passed all five Rust CI jobs: core on Mac/Linux/Windows,
+macOS GPUI build and native Windows GPUI check (run 42023874869). Windows
+reported 219 test successes with no failures/ignored/filtered, including real
+ConPTY, control pipe and the four Git integration tests. This is compile/test
+coverage; no Windows desktop GUI launch or distribution acceptance is implied.
+
+The next combined Linux source snapshot (base fd65284 plus bot persistence)
+passed 312 reported test successes and strict core clippy. Bot-local name/persona
+edits preserve the imported envelope and unknown fields, use a full-document
+baseline and compare again in one Store transaction. No linked/global instruction
+files are writable through these endpoints. Bot execution remains disconnected.
 
 ## Verified so far
 

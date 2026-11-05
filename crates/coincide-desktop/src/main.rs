@@ -1,9 +1,13 @@
 use anyhow::Result;
+mod assets;
+mod bot_settings;
 mod browser;
 mod composer_attachments;
 mod credential_settings;
 mod credentials;
+mod github_review;
 mod navigation;
+mod notifications;
 mod presentation;
 mod provider_settings;
 mod queue;
@@ -12,6 +16,8 @@ mod session_import;
 mod settings;
 mod terminal_selection;
 mod transcript;
+mod transcription_composer;
+mod transcription_settings;
 mod workspace;
 use browser::BrowserController;
 use coincide_core::{
@@ -166,6 +172,12 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    bots_open: bool,
+    bot_panel: Entity<bot_settings::BotSettingsPanel>,
+    transcription_open: bool,
+    transcription_panel: Entity<transcription_settings::TranscriptionSettings>,
+    transcription_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
+    transcription_target: transcription_composer::ComposerTarget,
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
     credentials_open: bool,
@@ -173,6 +185,8 @@ struct Coincide {
     credential_jobs: std::sync::mpsc::Receiver<credentials::FillJob>,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    github_open: bool,
+    github_panel: Entity<github_review::GitHubReviewPanel>,
     provider_settings: provider_settings::ProviderSettings,
     settings: Value,
     awake_status: Value,
@@ -237,6 +251,132 @@ struct Coincide {
 }
 
 impl Coincide {
+    fn sync_github_context(&mut self, cx: &mut Context<Self>) {
+        let context = self
+            .workspace_panel
+            .read(cx)
+            .cached_context()
+            .filter(|(thread, _)| {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|selected| selected["id"] == *thread)
+            });
+        self.github_panel
+            .update(cx, |panel, cx| panel.set_context(context, cx));
+    }
+    fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
+        let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
+        let root_hint = self.selected.as_ref().and_then(|selected| {
+            selected["worktreePath"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    self.projects
+                        .iter()
+                        .find(|project| project["id"] == selected["projectID"])
+                        .and_then(|project| project["path"].as_str())
+                        .map(str::to_owned)
+                })
+        });
+        self.workspace_panel
+            .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
+        self.sync_github_context(cx);
+    }
+    fn sync_transcription_binding(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<transcription_settings::ComposerBinding> {
+        let thread = if self.settings_open
+            && self.transcription_open
+            && !self.bots_open
+            && !self.session_import_open
+            && !self.credentials_open
+            && !self.provider_settings.open
+        {
+            self.selected.as_ref().map(|thread| text(thread, "id"))
+        } else {
+            None
+        };
+        let composer = self.composer.read(cx);
+        let binding = self.transcription_target.bind(
+            thread.as_deref(),
+            composer.value().as_ref(),
+            composer.selected_range(),
+            composer.is_selection_reversed(),
+        );
+        self.transcription_panel
+            .update(cx, |panel, cx| panel.set_binding(binding.clone(), cx));
+        binding
+    }
+    fn poll_transcription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_transcription_binding(cx);
+        self.transcription_panel
+            .update(cx, |panel, cx| panel.poll(cx));
+        let events = self
+            .transcription_events
+            .try_iter()
+            .take(4)
+            .collect::<Vec<_>>();
+        for event in events {
+            // Re-read text/range and ownership immediately before insertion,
+            // independent of whether GPUI has delivered pending observations.
+            let Some(binding) = self.sync_transcription_binding(cx) else {
+                continue;
+            };
+            if !self
+                .transcription_panel
+                .read(cx)
+                .accepts_text(&event, &binding)
+            {
+                continue;
+            }
+            let original = self.composer.read(cx).value().to_string();
+            if self
+                .selected
+                .as_ref()
+                .is_none_or(|thread| text(thread, "draft") != original)
+            {
+                self.transcription_target.changed();
+                self.status = "Draft changed; transcript discarded.".into();
+                cx.notify();
+                continue;
+            }
+            match transcription_composer::insert(&binding, &event, &original) {
+                Ok((updated, caret)) => {
+                    if let Some(thread) = self
+                        .selected
+                        .as_mut()
+                        .filter(|thread| thread["id"] == binding.thread_id)
+                    {
+                        thread["draft"] = json!(updated);
+                    } else {
+                        continue;
+                    }
+                    self.pending_drafts.insert(
+                        binding.thread_id.clone(),
+                        PendingDraft {
+                            text: updated.clone(),
+                            retry: true,
+                        },
+                    );
+                    self.composer.update(cx, |composer, cx| {
+                        composer.replace_all(updated, window, cx);
+                        composer.set_selected_range(caret..caret, cx);
+                    });
+                    self.transcription_target.changed();
+                    self.sync_transcription_binding(cx);
+                    self.status =
+                        "Transcript inserted into the selected draft. Nothing was sent.".into();
+                    self.save_pending_draft(&binding.thread_id);
+                    cx.notify();
+                }
+                Err(error) => {
+                    self.status = error.to_string();
+                    cx.notify();
+                }
+            }
+        }
+    }
     fn save_pending_draft(&mut self, id: &str) {
         let Some(pending) = self.pending_drafts.get(id).filter(|draft| draft.retry) else {
             return;
@@ -274,6 +414,16 @@ impl Coincide {
                 .placeholder("Write a message…")
                 .submit_on_enter(settings["sendOnReturn"].as_bool().unwrap_or(true))
         });
+        let mut transcription_events = None;
+        let transcription_panel = cx.new(|cx| {
+            let (panel, events) = transcription_settings::TranscriptionSettings::new(window, cx);
+            transcription_events = Some(events);
+            panel
+        });
+        let transcription_events =
+            transcription_events.expect("Transcription receiver initialized");
+        let bot_panel =
+            cx.new(|cx| bot_settings::BotSettingsPanel::new(engine.clone(), window, cx));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -286,6 +436,8 @@ impl Coincide {
         let credential_panel = cx.new(|_| credential_settings);
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let github_panel =
+            cx.new(|cx| github_review::GitHubReviewPanel::new(engine.clone(), window, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -301,6 +453,19 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
+            cx.observe(&composer, |this, _, cx| {
+                // Selection has no dedicated InputEvent in gpui-base 0.9.0.
+                // Invalidate on every notification, including a coalesced
+                // caret-away/back sequence; hidden unfocused composer is stable.
+                this.transcription_target.changed();
+                this.sync_transcription_binding(cx);
+            }),
+            cx.subscribe(&bot_panel, |this, _, event, cx| {
+                let bot_settings::BotSettingsEvent::Saved { bot_id } = event;
+                this.settings_status = format!("Bot {bot_id} saved locally. Execution is not connected yet.");
+                cx.notify();
+            }),
             cx.subscribe_in(
                 &session_import_panel,
                 window,
@@ -418,6 +583,12 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            bots_open: false,
+            bot_panel,
+            transcription_open: false,
+            transcription_panel,
+            transcription_events,
+            transcription_target: Default::default(),
             session_import_open: false,
             session_import_panel,
             credentials_open: false,
@@ -425,6 +596,8 @@ impl Coincide {
             credential_jobs,
             workspace_open: false,
             workspace_panel,
+            github_open: false,
+            github_panel,
             provider_settings,
             settings,
             awake_status: json!({}),
@@ -779,6 +952,7 @@ impl Coincide {
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
                 self.preserve_pending_draft(&mut v);
+                self.transcription_target.changed();
                 let draft = text(&v, "draft");
                 if self
                     .selected
@@ -800,6 +974,7 @@ impl Coincide {
                     self.schedule_editor.open = false;
                 }
                 self.selected = Some(v);
+                self.sync_workspace_context(cx);
                 self.settings_open = false;
                 self.rename_target = None;
                 self.archive_confirmation = None;
@@ -1019,6 +1194,7 @@ impl Coincide {
             }
         }
         self.refresh_pending(window, cx);
+        self.poll_transcription(window, cx);
     }
     fn refresh_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
@@ -2775,9 +2951,7 @@ impl Render for Coincide {
         let import_project = self.selected_project.clone();
         self.session_import_panel
             .update(cx, |panel, cx| panel.set_project(import_project, cx));
-        let workspace_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
-        self.workspace_panel
-            .update(cx, |panel, cx| panel.set_thread(workspace_thread, cx));
+        self.sync_workspace_context(cx);
         self.sync_model_input(window, cx);
         if let Some(thread) = self.selected.as_mut()
             && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
@@ -2819,7 +2993,42 @@ impl Render for Coincide {
                 .child(self.session_import_panel.clone())
                 .into_any_element()
         } else if self.settings_open {
-            if self.credentials_open {
+            if self.bots_open || self.transcription_open {
+                div()
+                    .id("extra-settings-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Button::new("extra-settings-back")
+                            .label("Back to Settings")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.bots_open = false;
+                                this.transcription_open = false;
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(if self.bots_open {
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.bot_panel.clone())
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id("transcription-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(self.transcription_panel.clone())
+                            .child(div().p_3().text_sm().child(self.status.clone()))
+                            .into_any_element()
+                    })
+                    .into_any_element()
+            } else if self.credentials_open {
                 div()
                     .id("password-settings-surface")
                     .flex_1()
@@ -2846,7 +3055,50 @@ impl Render for Coincide {
                 .min_h_0()
                 .min_w_0()
                 .overflow_hidden()
-                .child(self.workspace_panel.clone())
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .p_2()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            Button::new("workspace-local-tab")
+                                .label("Local Git")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.github_open = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("workspace-github-tab")
+                                .label("GitHub pull requests")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.github_open = true;
+                                    this.sync_workspace_context(cx);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(if self.github_open {
+                    div()
+                        .flex_1()
+                        .flex_basis(px(0.))
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(self.github_panel.clone())
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex_1()
+                        .flex_basis(px(0.))
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(self.workspace_panel.clone())
+                        .into_any_element()
+                })
                 .into_any_element()
         } else {
             transcript.into_any_element()
@@ -2918,6 +3170,7 @@ impl Render for Coincide {
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.session_import_open = !this.session_import_open;
+                                        this.sync_transcription_binding(cx);
                                         this.sync_credentials(cx);
                                         cx.notify();
                                     })),
@@ -2933,11 +3186,14 @@ impl Render for Coincide {
                                         this.session_import_open = false;
                                         let open = !(this.settings_open && this.credentials_open);
                                         this.credentials_open = open;
+                                        this.bots_open = false;
+                                        this.transcription_open = false;
                                         this.settings_open = open;
                                         this.provider_settings.open = false;
                                         this.workspace_open = false;
                                         this.schedules_open = false;
                                         this.sync_credentials(cx);
+                                        this.sync_transcription_binding(cx);
                                         cx.notify();
                                     })),
                             )
@@ -3243,24 +3499,26 @@ fn main() -> Result<()> {
     let application = gpui_kit::platform::linux(WindowingModes::X11);
     #[cfg(not(target_os = "linux"))]
     let application = gpui_kit::application();
-    application.run(move |cx| {
-        gpui_kit::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
-        let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
-        gpui_kit::open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            cx,
-            |window, cx| {
-                window.set_window_title("Coincide Rust Preview");
-                cx.new(|cx| Coincide::new(engine, data.join("browser-profile"), window, cx))
-            },
-        )
-        .expect("Unable to open Coincide window");
-        cx.activate(true);
-    });
+    application
+        .with_assets(assets::CoincideAssets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            Theme::change(ThemeMode::Dark, None, cx);
+            let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_window_title("Coincide Rust Preview");
+                    cx.new(|cx| Coincide::new(engine, data.join("browser-profile"), window, cx))
+                },
+            )
+            .expect("Unable to open Coincide window");
+            cx.activate(true);
+        });
     Ok(())
 }
 
