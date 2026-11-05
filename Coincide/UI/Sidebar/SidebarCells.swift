@@ -377,6 +377,15 @@ final class ProjectCell: HoverCellView {
 
 // MARK: - Thread
 
+/// A thread title is navigation until an explicit rename starts. Its text-field
+/// cursor must not cover the clickable row's hand with an arrow or I-beam.
+final class SidebarThreadLabel: NSTextField {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addPointerCursorRect(clickable: !isEditable && !isSelectable)
+    }
+}
+
 final class ThreadCell: HoverCellView {
     /// What the row's archive button and its VoiceOver actions ask for.
     enum Command {
@@ -389,14 +398,14 @@ final class ThreadCell: HoverCellView {
 
     private let icon = NSImageView()
     private let spinner = NSProgressIndicator()
-    private let titleField = NSTextField(labelWithString: "")
-    private let placeField = NSTextField(labelWithString: "")
+    private let titleField = SidebarThreadLabel(labelWithString: "")
+    private let placeField = SidebarThreadLabel(labelWithString: "")
     private let pin = NSImageView()
     /// Shown while the thread has active schedules.
     private let clock = NSImageView()
     private let badge = StatusBadge()
     private let unseenDot = StatusDot()
-    private let timeField = NSTextField(labelWithString: "")
+    private let timeField = SidebarThreadLabel(labelWithString: "")
     private let archiveButton: NSButton
     private var model: ThreadRowModel?
     /// Place the project name after the title; active while it shows.
@@ -473,6 +482,11 @@ final class ThreadCell: HoverCellView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addPointerCursorRect()
+    }
 
     func configure(_ model: ThreadRowModel) {
         guard model != self.model else { return }

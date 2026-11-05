@@ -173,6 +173,15 @@ final class SidebarViewController: NSViewController {
         outlineView.setAccessibilityLabel(String(localized: "Projects and threads"))
         outlineView.onDelete = { [weak self] in self?.deleteSelectedThread() }
         outlineView.onActivate = { AppEvents.post(.coincideFocusComposer) }
+        outlineView.onMouseActivation = { [weak self] node, modifiers, rename in
+            guard let self else { return }
+            let row = self.outlineView.row(forItem: node)
+            if rename, node.threadID == self.selectedThreadID, self.editing == nil {
+                self.beginRename(node)
+            } else {
+                self.focusComposerAfterClick(at: row, modifiers: modifiers)
+            }
+        }
 
         scrollView.documentView = outlineView
         // The "Show more" cut follows the sidebar's height.
@@ -908,7 +917,7 @@ final class SidebarViewController: NSViewController {
             // A click on a section's header, outside its buttons, collapses or expands it.
             if let section = node.section { toggleSection(section) }
         case .bot, .thread:
-            focusComposerAfterClick(at: row, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+            outlineView.recordMouseActivation()
         case .empty:
             break
         }
@@ -917,7 +926,7 @@ final class SidebarViewController: NSViewController {
     /// Mouse activation hands typing to the chat after AppKit finishes selecting the row. Selection-change callbacks
     /// alone also run for arrow keys and bulk actions, which must keep their focus in the outline.
     func focusComposerAfterClick(at row: Int, modifiers: NSEvent.ModifierFlags) {
-        guard modifiers.intersection([.command, .shift]).isEmpty,
+        guard modifiers.intersection([.command, .shift, .control]).isEmpty,
             outlineView.selectedRowIndexes.count == 1, outlineView.isRowSelected(row),
             let node = sidebarNode(atRow: row), let selectedThreadID
         else { return }
@@ -929,8 +938,8 @@ final class SidebarViewController: NSViewController {
 
     @objc private func rowDoubleClicked() {
         let row = outlineView.clickedRow
-        guard let node = sidebarNode(atRow: row), node.threadID != nil else { return }
-        beginRename(node)
+        guard let node = sidebarNode(atRow: row), node.isSelectable else { return }
+        outlineView.recordMouseActivation()
     }
 
     @objc private func addProject() {
@@ -1138,6 +1147,7 @@ final class SidebarViewController: NSViewController {
         editing = (node, field.stringValue)
         field.isEditable = true
         field.isSelectable = true
+        field.window?.invalidateCursorRects(for: field)
         field.delegate = self
         view.window?.makeFirstResponder(field)
         if let editor = field.currentEditor() as? NSTextView {
@@ -1165,6 +1175,7 @@ final class SidebarViewController: NSViewController {
         self.editing = nil
         field.isEditable = false
         field.isSelectable = false
+        field.window?.invalidateCursorRects(for: field)
         field.delegate = nil
         let title = field.stringValue
         switch editing.node.kind {
@@ -1959,6 +1970,40 @@ extension SidebarViewController: NSSearchFieldDelegate {
 final class SidebarOutlineView: NSOutlineView {
     var onDelete: (() -> Void)?
     var onActivate: (() -> Void)?
+    var onMouseActivation: ((SidebarNode, NSEvent.ModifierFlags, Bool) -> Void)?
+    private var trackingMouseDown = false
+    private var mouseActivated = false
+    private var renameCandidate: (kind: SidebarNode.Kind, timestamp: TimeInterval)?
+
+    /// NSTableView actions run inside its mouse-tracking loop. Handing focus over
+    /// there lets AppKit take it back before the click finishes.
+    func recordMouseActivation() {
+        if trackingMouseDown { mouseActivated = true }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        let node = row >= 0 ? item(atRow: row) as? SidebarNode : nil
+        let plainClick = event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty
+        let wasSelected = row >= 0 && selectedRowIndexes.count == 1 && isRowSelected(row)
+        let field = row >= 0 ? (view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)?.textField : nil
+        let onTitle = field.map { !$0.isEditable && $0.bounds.contains($0.convert(event.locationInWindow, from: nil)) } ?? false
+        let previous = renameCandidate
+        let rename = event.clickCount == 2 && plainClick && wasSelected && onTitle && node?.threadID != nil
+            && previous?.kind == node?.kind && previous.map {
+                event.timestamp >= $0.timestamp && event.timestamp - $0.timestamp <= NSEvent.doubleClickInterval
+            } == true
+        renameCandidate = nil
+        trackingMouseDown = true
+        mouseActivated = false
+        super.mouseDown(with: event)
+        trackingMouseDown = false
+        guard mouseActivated, let node else { return }
+        if event.clickCount == 1, plainClick, wasSelected, onTitle, node.threadID != nil {
+            renameCandidate = (node.kind, event.timestamp)
+        }
+        onMouseActivation?(node, event.modifierFlags, rename)
+    }
 
     var hasRows: Bool { numberOfRows > 0 }
     override var undoManager: UndoManager? { ThreadInbox.shared.undoManager }
