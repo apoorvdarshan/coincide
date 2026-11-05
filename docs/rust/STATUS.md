@@ -56,11 +56,22 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
-- 5a5962b passed all six Rust CI jobs (42124866672), packaging validation
-  (42124866812) and general CI (42124866470). The subsequent outcome-diagnostic
-  and cookie-notification changes passed 511 core unit tests and every core
-  integration target, strict feature core Clippy, 351 desktop unit tests and all
-  four desktop integration targets (19, 10, 14, 11). Their remote CI is pending.
+- e88132a passed all six Rust CI jobs (42128919172), packaging validation
+  (42128919100) and general CI (42128919184), verified on the exact pushed SHA.
+  Local outcome-diagnostic and cookie-notification changes passed 511 core unit
+  tests and every core integration target, strict feature core Clippy, 351 desktop
+  unit tests and all four desktop integration targets (19, 10, 14, 11).
+- Isolated native credential acceptance on dfdcc88 passed visible Deny without
+  individual secret reads, separate Allow once with exact synthetic field/event
+  assertions and zero submissions, public Read/Tabs/Console shielding, and pending
+  approval revocation after document replacement and thread switching. Normal
+  fixture Quit joined its workflow workers and the retained launcher exited zero.
+  Only synthetic vault data was used. This does not prove real-vault integration,
+  passkeys, full-product shutdown or native WebKit release.
+- A separate opt-in per-WebView release receipt prototype compiled and passed its
+  eight token tests and nine GPUI release tests. Native ownership checks are in
+  progress in an isolated fixture. The prototype is not integrated into the main
+  application; global native release and updater readiness remain unproven.
 - Native cookie acceptance on immutable dfdcc88 passed choosing the synthetic
   closed SQLite source, host/count review, explicit four-cookie import, exact
   asynchronous native readback and a new unselected profile with no automatic
