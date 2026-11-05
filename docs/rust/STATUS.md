@@ -56,6 +56,38 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- f8d1103 passed all six Rust CI jobs (42117508742) and packaging validation
+  (42117508764), plus general CI (42117508739). The earlier 50f1aa1 Linux desktop job stalled installing system
+  packages before compilation and was superseded by this fully passing run.
+- The combined native model-control fixture on a30013f passed visible failed
+  catalog refresh, stale effort/speed repair, explicit model replacement and
+  normal native Quit with exact draft/context/image preservation, two catalog
+  calls and zero runtime provider calls. Offscreen action attempts were excluded.
+  An external selection-change setup exposed Discard using cached settings;
+  07d47c7 now reloads authoritative selection fields without replacing local
+  composer content, with all 36 focused selection tests passing. This reload fix
+  has not yet been retested through native UI.
+- Native bookmark acceptance passed on isolated f703202: choosing/reviewing
+  showed no saved library or HTTP requests, explicit Save produced 23 unique
+  bookmarks from 24 rows, Reload/paging worked, and Open displayed the exact
+  owned local page in the same thread. Normal Quit and read-only checks preserved
+  source bytes, draft/context/image metadata and bytes, unrelated data and empty
+  history. The owned server was stopped and its actual exit collected. No native
+  restart, cookie import or existing-account/session migration is claimed.
+- The closed-file Firefox cookie snapshot parser passed 14 synthetic tests,
+  including sidecar/partition/schema refusal, source preservation and explicit
+  private-copy cleanup custody. Three callback/lease fixtures passed for its
+  checked asynchronous macOS setter. The typed desktop flow is now mounted:
+  explicit host review and a new unselected destination, per-cookie asynchronous
+  completion/readback, profile revision fences and retained cleanup ownership.
+  Closing revokes further dispatch and waits for actual owned work; a minimal
+  cleanup-only retry remains reachable. All 13 focused mounted cookie tests pass,
+  including late readback after revocation and foreign profile changes. The full
+  feature run passed 508 core unit tests (six isolated parent-invoked child
+  entrypoints), every core integration target, strict core Clippy, 349 desktop
+  unit tests and all four desktop integration targets (19, 10, 14, 11). Native
+  cookie acceptance and remote CI for this new batch remain pending; no existing
+  Firefox profile or sign-in has been read.
 - The model-control follow-up passed 494 core unit tests (six isolated child
   entrypoints invoked by parents), strict core Clippy, 333 desktop unit tests
   and all four integration targets. Explicit Codex speed and Standard controls
@@ -64,7 +96,7 @@ Latest verification and current gates:
   a current private catalog actually advertises it. Reported and app defaults
   are labelled separately. Missing proof blocks execution while explicit catalog
   refresh or validated model replacement remains available. Synthetic protocol
-  tests passed; combined native speed/Astra acceptance is pending.
+  tests passed; the scoped combined native follow-up is recorded above.
 - The isolated native effort v4 flow passed catalog discovery, High, Plan
   preservation, explicit provider-default clear and failed-refresh repair.
   Ordinary Quit exited normally; exact draft, context, image metadata/bytes,
@@ -78,11 +110,11 @@ Latest verification and current gates:
   integration targets (19, 10, 14 and 11 tests). Bookmark opens now prepare an opaque saved-ID proof off UI and
   enqueue only after synchronous Settings-route and selected-thread checks;
   close/reopen between polls invalidates old work. Source files are rechecked
-  before explicit Save. Native bookmark acceptance is pending. Codex speed now
+  before explicit Save. Native bookmark acceptance passed as recorded above. Codex speed now
   admits only exact catalog-backed tiers and sends an explicit Standard reset
   after a resumed nondefault tier; the actual fake-protocol regression passed.
   Explicit one-field and combined stale-option repair preserve unrelated data.
-  Desktop speed controls and native effort acceptance remain in progress.
+  Desktop speed controls are implemented; native effort acceptance passed above.
 - a296e7c passed all six Rust CI jobs (run 42112221154), plus packaging
   validation (42112221196). A Windows-only test assumption was corrected to
   expect the platform's Unsupported catalog state; proof revocation and refusal
@@ -95,8 +127,7 @@ Latest verification and current gates:
   /plan, /build and /model controls passed without creating messages, sessions
   or provider attempts, then normal Quit preserved the exact final draft.
   Codex effort proof, explicit clear and revoked-catalog repair have backend
-  regression coverage; their new native acceptance is still pending. Bookmark
-  import/open is under integration review and is not yet accepted.
+  regression coverage; scoped native effort and bookmark acceptance passed above.
 - cbc7eef passed all six Rust CI jobs (run 42105540376): macOS GPUI build,
   Linux/macOS/Windows core, Windows GPUI check and the new Linux GPUI check.
   Linux checks both desktop configurations and all eight headless release-receipt
