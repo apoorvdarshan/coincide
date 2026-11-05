@@ -386,6 +386,8 @@ fn run(
     let started = Instant::now();
     let mut stage = 1;
     let mut completed = false;
+    let mut early_completions = std::collections::VecDeque::new();
+    let mut provisional_turn = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -409,7 +411,15 @@ fn run(
         if stage < 4 && started.elapsed() > Duration::from_secs(120) {
             bail!("Codex startup timed out");
         }
-        if let Some(frame) = transport.next()? {
+        let frame = if stage >= 4 {
+            match early_completions.pop_front() {
+                Some(frame) => Some(frame),
+                None => transport.next()?,
+            }
+        } else {
+            transport.next()?
+        };
+        if let Some(frame) = frame {
             if frame.get("error").is_some() && frame.get("id").is_some() {
                 bail!("Codex rejected request: {}", frame["error"]);
             }
@@ -459,7 +469,27 @@ fn run(
                 && frame.get("result").is_some()
             {
                 bail!("Codex returned a duplicate or out-of-order startup response");
+            } else if frame["method"] == "turn/started" {
+                if stage == 3 && capture.owns_thread(&frame["params"]) {
+                    ensure!(
+                        !provisional_turn,
+                        "Codex returned a duplicate provisional turn identity"
+                    );
+                    ensure!(
+                        capture.bind_turn(&frame["params"]["turn"]["id"]),
+                        "Codex returned an invalid provisional turn identity"
+                    );
+                    provisional_turn = true;
+                }
             } else if frame["method"] == "turn/completed" {
+                if stage == 3 && capture.owns_thread(&frame["params"]) {
+                    ensure!(
+                        early_completions.len() < 8 && frame.to_string().len() <= 65_536,
+                        "Codex early completion buffer exceeded limit"
+                    );
+                    early_completions.push_back(frame);
+                    continue;
+                }
                 if !capture.matches_completion(&frame["params"]) {
                     continue;
                 }
@@ -481,7 +511,10 @@ fn run(
                 completed = true;
             } else {
                 if frame["method"] == "thread/tokenUsage/updated" {
-                    capture.update(&frame["params"]);
+                    ensure!(
+                        capture.update(&frame["params"]),
+                        "Codex early usage buffer exceeded limit"
+                    );
                 }
                 events.send(Event::Frame(frame))?;
             }

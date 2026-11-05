@@ -90,3 +90,27 @@ fn source_failed_and_interrupted_outcomes_are_not_relabelled_success() {
         assert_eq!(record["outcome"], status);
     }
 }
+
+#[test]
+fn early_usage_is_retained_until_matching_response_or_provisional_start_binds_identity() {
+    for provisional in [false, true] {
+        let mut capture = Capture::default();
+        capture.bind_thread("existing-native-session");
+        if provisional {
+            assert!(capture.bind_turn(&json!("turn-fixture")));
+        }
+        assert!(capture.update(&update()));
+        assert!(capture.bind_turn(&json!("turn-fixture")));
+        assert!(!capture.bind_turn(&json!("different")));
+        let snapshot = capture.complete(&complete()).unwrap();
+        assert_eq!(snapshot.raw, update()["tokenUsage"]);
+    }
+    let mut capture = Capture::default();
+    capture.bind_thread("existing-native-session");
+    for n in 0..8 {
+        let mut frame = update();
+        frame["turnId"] = json!(format!("turn-{n}"));
+        assert!(capture.update(&frame));
+    }
+    assert!(!capture.update(&update()));
+}
