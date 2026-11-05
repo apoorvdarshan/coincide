@@ -214,11 +214,13 @@ pub struct AuthenticatedParent {
 pub enum RunningSubject {
     Helper,
     Parent(ParentBinding),
+    /// Only a launcher-owned Child.id()/start binding, never a wire PID.
+    ChildHelper(ParentBinding),
 }
 impl RunningSubject {
     pub fn identifier(&self) -> &'static str {
         match self {
-            Self::Helper => HELPER_ID,
+            Self::Helper | Self::ChildHelper(_) => HELPER_ID,
             Self::Parent(_) => crate::updater::PREVIEW_ID,
         }
     }
@@ -673,21 +675,176 @@ impl PrivateChannel for PipeChannel {
     }
     fn send(&mut self, frame: &Frame<HelperMessage>, deadline: Instant) -> Result<()> {
         let bytes = encode_frame(frame)?;
-        let mut remaining = bytes.as_slice();
-        while !remaining.is_empty() {
-            wait_pipe(&self.output, libc::POLLOUT, deadline)?;
-            match self.output.write(remaining) {
-                Ok(0) => bail!("Helper private output closed"),
-                Ok(size) => remaining = &remaining[size..],
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                    ) => {}
+        write_pipe_bytes(&mut self.output, &bytes, deadline)
+    }
+}
+
+#[cfg(unix)]
+pub struct ParentPipeChannel {
+    pipes: PipeChannel,
+    incoming: Vec<u8>,
+    started: Option<Instant>,
+    frame_timeout: Duration,
+}
+#[cfg(unix)]
+impl ParentPipeChannel {
+    pub fn from_anonymous_files(
+        input: std::fs::File,
+        output: std::fs::File,
+        frame_timeout: Duration,
+    ) -> Result<Self> {
+        use std::os::fd::AsRawFd;
+        ensure!(
+            !frame_timeout.is_zero() && frame_timeout <= Duration::from_secs(30),
+            "Invalid parent pipe frame timeout"
+        );
+        for file in [&input, &output] {
+            let fd = file.as_raw_fd();
+            let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
+            ensure!(
+                unsafe { libc::fstat(fd, info.as_mut_ptr()) } == 0,
+                "Parent pipe stat failed"
+            );
+            let info = unsafe { info.assume_init() };
+            ensure!(
+                info.st_mode & libc::S_IFMT == libc::S_IFIFO
+                    && info.st_nlink == 0
+                    && info.st_uid == unsafe { libc::geteuid() },
+                "Private anonymous parent pipes required"
+            );
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            ensure!(
+                flags >= 0
+                    && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == 0,
+                "Cannot protect inherited parent pipe"
+            );
+            nonblocking(file)?;
+        }
+        Ok(Self {
+            pipes: PipeChannel { input, output },
+            incoming: Vec::new(),
+            started: None,
+            frame_timeout,
+        })
+    }
+    pub fn send_parent(&mut self, frame: &Frame<ParentMessage>, deadline: Instant) -> Result<()> {
+        let bytes = encode_frame(frame)?;
+        write_pipe_bytes(&mut self.pipes.output, &bytes, deadline)
+    }
+    /// Nonblocking incremental reader: partial frames survive polling so UI
+    /// cancellation never waits for a missing peer byte. Absolute deadlines remain
+    /// hard, including a per-frame deadline beginning at the first header byte.
+    pub fn poll_helper(&mut self, deadline: Instant) -> Result<Option<Frame<HelperMessage>>> {
+        loop {
+            let now = Instant::now();
+            ensure!(
+                now < deadline
+                    && self
+                        .started
+                        .is_none_or(|start| now < start + self.frame_timeout),
+                "Parent helper response/frame deadline expired"
+            );
+            let needed = if self.incoming.len() < 4 {
+                4
+            } else {
+                let size = u32::from_be_bytes(self.incoming[..4].try_into()?) as usize;
+                ensure!(
+                    size > 0 && size <= MAX_FRAME,
+                    "Parent helper frame length rejected"
+                );
+                size + 4
+            };
+            if self.incoming.len() == needed && needed > 4 {
+                let frame = decode_frame(&self.incoming)?;
+                self.incoming.clear();
+                self.started = None;
+                return Ok(Some(frame));
+            }
+            let mut bytes = [0u8; 8192];
+            let count = (needed - self.incoming.len()).min(bytes.len());
+            match self.pipes.input.read(&mut bytes[..count]) {
+                Ok(0) => bail!("Private helper output closed"),
+                Ok(size) => {
+                    self.started.get_or_insert(now);
+                    self.incoming.extend_from_slice(&bytes[..size]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => return Err(error.into()),
             }
         }
-        Ok(())
+    }
+}
+#[cfg(unix)]
+fn write_pipe_bytes(output: &mut std::fs::File, bytes: &[u8], deadline: Instant) -> Result<()> {
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        wait_pipe(output, libc::POLLOUT, deadline)?;
+        match output.write(remaining) {
+            Ok(0) => bail!("Private helper pipe output closed"),
+            Ok(size) => remaining = &remaining[size..],
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Opaque launcher-owned copy. Its only constructor derives OS account/cache and
+/// current signed preview identity. No request-supplied paths or serialized proof.
+/// The private job is retained when dropped: helper may outlive its quitting parent.
+pub struct PreparedNativeHelper {
+    executable: PathBuf,
+    target: PathBuf,
+    parent: ParentBinding,
+    version: String,
+    #[cfg(target_os = "macos")]
+    anchor: String,
+    #[cfg(target_os = "macos")]
+    digest: String,
+}
+impl PreparedNativeHelper {
+    pub fn executable(&self) -> &std::path::Path {
+        &self.executable
+    }
+    pub fn target(&self) -> &std::path::Path {
+        &self.target
+    }
+    pub fn parent(&self) -> &ParentBinding {
+        &self.parent
+    }
+    pub fn installed_version(&self) -> &str {
+        &self.version
+    }
+    /// Recheck copied bytes/signature AND actual child executable/start/dynamic
+    /// identity. Caller supplies only its owned std::process::Child.id().
+    pub fn verify_child(&self, pid: u32, deadline: Instant) -> Result<ParentBinding> {
+        #[cfg(target_os = "macos")]
+        {
+            native::verify_launcher_child(self, pid, deadline)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (pid, deadline);
+            bail!("Native signed helper child verification unavailable")
+        }
+    }
+}
+/// Worker-thread only. Native operations/UUID copy are never invoked at module
+/// load or by default. Fixed existing private OS-account directories required.
+pub fn prepare_native_helper(anchor: &str, deadline: Instant) -> Result<PreparedNativeHelper> {
+    #[cfg(target_os = "macos")]
+    {
+        native::prepare_launcher(anchor, deadline)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (anchor, deadline);
+        bail!("Native signed helper launcher unavailable")
     }
 }
 
@@ -917,7 +1074,7 @@ mod native {
                 let pid = unsafe { libc::getpid() };
                 (process_binding(pid)?, process_path(pid)?)
             }
-            RunningSubject::Parent(expected) => {
+            RunningSubject::Parent(expected) | RunningSubject::ChildHelper(expected) => {
                 let pid = i32::try_from(expected.pid).context("Running parent PID overflow")?;
                 ensure!(
                     pid > 1 && process_binding(pid)? == *expected,
@@ -936,7 +1093,7 @@ mod native {
                     "Dynamically running helper is not trusted (OSStatus {status})"
                 );
             }
-            RunningSubject::Parent(expected) => {
+            RunningSubject::Parent(expected) | RunningSubject::ChildHelper(expected) => {
                 let pid = i32::try_from(expected.pid).context("Running parent PID overflow")?;
                 let number = OwnedCf::new(unsafe {
                     cf_number_create(std::ptr::null(), 3, (&pid as *const i32).cast())
@@ -962,7 +1119,7 @@ mod native {
                 let status = unsafe { sec_code_check_validity(code.0, 0, requirement.0) };
                 ensure!(
                     status == 0,
-                    "Dynamically running preview parent is not trusted (OSStatus {status})"
+                    "Dynamically running guest identity is not trusted (OSStatus {status})"
                 );
             }
         }
@@ -1243,6 +1400,170 @@ mod native {
             architecture,
         })
     }
+    pub(super) fn prepare_launcher(
+        anchor: &str,
+        deadline: Instant,
+    ) -> Result<PreparedNativeHelper> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        ensure!(
+            Instant::now() < deadline,
+            "Native helper preparation deadline expired"
+        );
+        ensure!(
+            unsafe { libc::getuid() } != 0
+                && unsafe { libc::getuid() } == unsafe { libc::geteuid() }
+                && unsafe { libc::getgid() } == unsafe { libc::getegid() },
+            "Elevated preview launcher refused"
+        );
+        anchor_valid(anchor)?;
+        let parent = process_binding(unsafe { libc::getpid() })?;
+        let executable = std::env::current_exe()?;
+        no_links(&executable)?;
+        let target = executable
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .context("Current preview bundle unavailable")?
+            .to_path_buf();
+        ensure!(
+            target.file_name().is_some_and(|name| name == APP)
+                && executable == target.join("Contents/MacOS/coincide-rust"),
+            "Only the current fixed preview may launch its helper"
+        );
+        let architecture = architecture()?;
+        let identity = updater_install::MacCodeVerifier.verify(&target, anchor, architecture)?;
+        MacRunningCodeTrust.verify(&RunningSubject::Parent(parent.clone()), anchor)?;
+        ensure!(
+            process_binding(unsafe { libc::getpid() })? == parent
+                && process_path(parent.pid as i32)? == executable,
+            "Preview changed during launcher authentication"
+        );
+        let helpers = cache_root()?.join("helpers");
+        updater::SystemDiskSpace.verify_private(&helpers)?;
+        let source = target.join("Contents/MacOS").join(HELPER_NAME);
+        no_links(&source)?;
+        helper_signature(&source, anchor)?;
+        let digest = hash(&source)?;
+        let size = fs::metadata(&source)?.len();
+        ensure!(
+            size > 0 && size <= 256 * 1024 * 1024,
+            "Installed helper copy size rejected"
+        );
+        ensure!(
+            updater::SystemDiskSpace.available_bytes(&helpers)?
+                >= size.saturating_add(64 * 1024 * 1024),
+            "Insufficient helper-copy disk space"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "Native helper preparation deadline expired"
+        );
+        let job = helpers.join(Uuid::new_v4().to_string());
+        fs::DirBuilder::new().mode(0o700).create(&job)?;
+        let copy = job.join(HELPER_NAME);
+        let mut input = File::open(&source)?.take(size + 1);
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&copy)?;
+        let mut bytes = [0u8; 65536];
+        let mut count = 0u64;
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "Native helper copy deadline expired"
+            );
+            let got = input.read(&mut bytes)?;
+            if got == 0 {
+                break;
+            }
+            count += got as u64;
+            ensure!(count <= size, "Installed helper grew during copy");
+            output.write_all(&bytes[..got])?;
+        }
+        ensure!(count == size, "Installed helper size changed");
+        output.sync_all()?;
+        drop(output);
+        File::open(&job)?.sync_all()?;
+        helper_signature(&copy, anchor)?;
+        ensure!(
+            hash(&copy)? == digest && hash(&source)? == digest,
+            "Verified helper copy/source changed"
+        );
+        let after = updater_install::MacCodeVerifier.verify(&target, anchor, architecture)?;
+        ensure!(
+            after == identity
+                && process_binding(unsafe { libc::getpid() })? == parent
+                && process_path(parent.pid as i32)? == executable,
+            "Preview source changed during helper copy"
+        );
+        MacRunningCodeTrust.verify(&RunningSubject::Parent(parent.clone()), anchor)?;
+        ensure!(
+            Instant::now() < deadline,
+            "Native helper preparation deadline expired"
+        );
+        Ok(PreparedNativeHelper {
+            executable: copy,
+            target,
+            parent,
+            version: identity.version,
+            anchor: anchor.into(),
+            digest,
+        })
+    }
+    pub(super) fn verify_launcher_child(
+        prepared: &PreparedNativeHelper,
+        pid: u32,
+        deadline: Instant,
+    ) -> Result<ParentBinding> {
+        ensure!(
+            Instant::now() < deadline,
+            "Helper child verification deadline expired"
+        );
+        let pid = i32::try_from(pid).context("Helper child PID overflow")?;
+        ensure!(pid > 1, "Owned helper child required");
+        let before = process_binding(pid)?;
+        ensure!(
+            process_path(pid)? == prepared.executable,
+            "Spawned child is not the fixed private helper copy"
+        );
+        no_links(&prepared.executable)?;
+        let info = fs::symlink_metadata(&prepared.executable)?;
+        ensure!(
+            info.is_file()
+                && info.uid() == unsafe { libc::geteuid() }
+                && info.nlink() == 1
+                && info.permissions().mode() & 0o777 == 0o700,
+            "Private helper copy ownership/mode changed"
+        );
+        helper_signature(&prepared.executable, &prepared.anchor)?;
+        ensure!(
+            hash(&prepared.executable)? == prepared.digest,
+            "Private helper bytes changed after verification"
+        );
+        MacRunningCodeTrust.verify(
+            &RunningSubject::ChildHelper(before.clone()),
+            &prepared.anchor,
+        )?;
+        MacRunningCodeTrust.verify(
+            &RunningSubject::Parent(prepared.parent.clone()),
+            &prepared.anchor,
+        )?;
+        ensure!(
+            process_binding(pid)? == before
+                && process_path(pid)? == prepared.executable
+                && process_binding(unsafe { libc::getpid() })? == prepared.parent
+                && process_path(prepared.parent.pid as i32)?
+                    == prepared.target.join("Contents/MacOS/coincide-rust"),
+            "Launcher or helper process instance/path changed"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "Helper child verification deadline expired"
+        );
+        Ok(before)
+    }
     pub(super) fn configuration(
         anchor: &str,
         feed: &str,
@@ -1368,7 +1689,7 @@ mod tests {
     impl RunningCodeTrust for FakeRunningCodeTrust {
         fn verify(&self, subject: &RunningSubject, anchor: &str) -> Result<()> {
             let marker = match subject {
-                RunningSubject::Helper => &self.helper_marker,
+                RunningSubject::Helper | RunningSubject::ChildHelper(_) => &self.helper_marker,
                 RunningSubject::Parent(_) => &self.parent_marker,
             };
             // Deliberately independent of the signed-on-disk fixture bundle.
@@ -2316,6 +2637,116 @@ mod tests {
         (read, write)
     }
     #[test]
+    fn parent_pipe_adapter_roundtrips_existing_helper_protocol() {
+        let (parent_input, helper_output) = pipes();
+        let (helper_input, parent_output) = pipes();
+        let mut parent = ParentPipeChannel::from_anonymous_files(
+            parent_input,
+            parent_output,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let mut helper = PipeChannel {
+            input: helper_input,
+            output: helper_output,
+        };
+        let frame = Frame {
+            version: PROTOCOL,
+            session: Uuid::new_v4(),
+            sequence: 0,
+            body: ParentMessage::Cancel { transaction: None },
+        };
+        parent
+            .send_parent(&frame, Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(
+            helper
+                .receive(Instant::now() + Duration::from_secs(1))
+                .unwrap(),
+            frame
+        );
+        let ack = Frame {
+            version: PROTOCOL,
+            session: frame.session,
+            sequence: 0,
+            body: HelperMessage::Disarmed { transaction: None },
+        };
+        helper
+            .send(&ack, Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .unwrap(),
+            Some(ack)
+        );
+    }
+    #[test]
+    fn parent_pipe_reader_retains_partial_header_and_bounds_incomplete_frames() {
+        let (input, mut helper_output) = pipes();
+        let (_helper_input, output) = pipes();
+        let mut parent =
+            ParentPipeChannel::from_anonymous_files(input, output, Duration::from_secs(1)).unwrap();
+        let frame = Frame {
+            version: PROTOCOL,
+            session: Uuid::new_v4(),
+            sequence: 0,
+            body: HelperMessage::Disarmed { transaction: None },
+        };
+        let bytes = encode_frame(&frame).unwrap();
+        helper_output.write_all(&bytes[..2]).unwrap();
+        assert!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .unwrap()
+                .is_none()
+        );
+        helper_output.write_all(&bytes[2..]).unwrap();
+        assert_eq!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .unwrap(),
+            Some(frame)
+        );
+        helper_output.write_all(&[0, 0]).unwrap();
+        assert!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .unwrap()
+                .is_none()
+        );
+        parent.started = Some(Instant::now() - Duration::from_secs(2));
+        assert!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+    }
+    #[test]
+    fn parent_pipe_constructor_and_length_reject_regular_files_and_oversized_frames() {
+        let directory = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let file = File::create(directory.path().join("not-a-pipe.fixture")).unwrap();
+        let (_read, output) = pipes();
+        assert!(
+            ParentPipeChannel::from_anonymous_files(file, output, Duration::from_secs(1)).is_err()
+        );
+        let (input, mut helper_output) = pipes();
+        let (_read, output) = pipes();
+        let mut parent =
+            ParentPipeChannel::from_anonymous_files(input, output, Duration::from_secs(1)).unwrap();
+        helper_output
+            .write_all(&((MAX_FRAME + 1) as u32).to_be_bytes())
+            .unwrap();
+        assert!(
+            parent
+                .poll_helper(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+    }
+    #[test]
     fn real_fixture_pipe_roundtrip_and_partial_header_deadline_are_bounded() {
         let (input, mut parent_write) = pipes();
         let (_parent_read, output) = pipes();
@@ -2437,6 +2868,15 @@ mod codec_tests {
         });
         assert_eq!(parent.identifier(), crate::updater::PREVIEW_ID);
         assert_eq!(RunningSubject::Helper.identifier(), HELPER_ID);
+        assert_eq!(
+            RunningSubject::ChildHelper(ParentBinding {
+                pid: 43,
+                start_seconds: 101,
+                start_micros: 1
+            })
+            .identifier(),
+            HELPER_ID
+        );
         let requirement = code_requirement("FIXTURE001", parent.identifier()).unwrap();
         assert!(requirement.contains("identifier \"com.apoorvdarshan.coincide.rust\""));
         assert!(!requirement.contains(HELPER_ID));
