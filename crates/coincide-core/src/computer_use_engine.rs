@@ -305,6 +305,14 @@ impl Engine {
             self.revision += 1;
         }
     }
+    /// Trusted selection transition: revoke the old grant synchronously, even
+    /// when desktop polling never observes an intermediate selected thread.
+    pub(super) fn computer_use_selection_changed(&mut self, thread: Uuid) {
+        if let Some(authority) = self.computer_use.authority.as_ref() {
+            authority.native_revoke(thread);
+        }
+        self.computer_use_revoke(thread);
+    }
     /// Pair with native master disable, which revokes every Runtime grant.
     /// Invalidate queued work and retained observation payloads for all threads.
     pub fn computer_use_revoke_all(&mut self) {
