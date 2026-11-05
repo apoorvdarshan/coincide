@@ -130,6 +130,17 @@ pub struct WorkerCompletion {
     outcome: Arc<AtomicU8>,
 }
 impl WorkerCompletion {
+    /// Observe an owned Rust thread without joining on the calling thread.
+    pub(crate) fn observe(worker: thread::JoinHandle<()>) -> Self {
+        let outcome = Arc::new(AtomicU8::new(0));
+        let joined_outcome = outcome.clone();
+        // is_finished may precede TLS destruction; publish only after join.
+        thread::spawn(move || {
+            let status = if worker.join().is_ok() { 1 } else { 2 };
+            joined_outcome.store(status, Ordering::Release);
+        });
+        Self { outcome }
+    }
     pub fn status(&self) -> WorkerThreadStatus {
         match self.outcome.load(Ordering::Acquire) {
             0 => WorkerThreadStatus::Running,
@@ -207,23 +218,13 @@ impl Session {
     fn spawn_worker(work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (control, commands) = mpsc::channel();
-        let outcome = Arc::new(AtomicU8::new(0));
         let worker = thread::spawn(move || {
             work(commands, &events_tx);
-        });
-        let joined_outcome = outcome.clone();
-        // is_finished may become true before TLS destructors have completed.
-        // Only join's return acknowledges the provider thread's exit. Joining
-        // lives exclusively on this independent observer, never the Engine/UI
-        // caller or a Session/WorkerCompletion destructor.
-        thread::spawn(move || {
-            let status = if worker.join().is_ok() { 1 } else { 2 };
-            joined_outcome.store(status, Ordering::Release);
         });
         Self {
             events,
             control,
-            completion: WorkerCompletion { outcome },
+            completion: WorkerCompletion::observe(worker),
         }
     }
     #[cfg(test)]
