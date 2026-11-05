@@ -14,6 +14,7 @@ default = []
 native-notifications = ["dep:objc2-user-notifications"]
 native-microphone = []
 native-computer-use = []
+preview-updater-helper = ["coincide-core/preview-updater-helper"]
 
 [dependencies]
 coincide-core = { path = "../coincide-core" }

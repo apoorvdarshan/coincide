@@ -37,6 +37,8 @@ mod transcript;
 mod transcript_find;
 mod transcription_composer;
 mod transcription_settings;
+#[cfg(feature = "preview-updater-helper")]
+pub mod updater_helper_transport;
 mod updater_lifecycle;
 mod updater_settings;
 mod workspace;

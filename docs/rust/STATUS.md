@@ -514,3 +514,22 @@ reuse is limited to deriving the actual preview launcher context, preparing and
 reverifying a private helper copy, validating the spawned helper's running
 identity and reusing bounded anonymous-pipe IO. Native preparation and launch
 belong only in its worker thread; current validation uses fakes.
+
+Rust CI run 42053620690 passed all five jobs at exact commit
+`3196ed28dff3317c38977c50862d0cdd53dbffff`, including Mac/Linux/Windows core,
+Windows desktop compilation, three GPUI regressions and 244 desktop tests.
+The helper suites passed 26 Mac, 29 Linux and six Windows fixtures at that
+checkpoint. The earlier run at `4960947` was superseded before Mac core finished.
+
+The opt-in desktop helper transport now has 16 passing headless fixtures; the
+expanded core helper has 29 passing Mac fixtures, including three parent-pipe
+tests, and strict feature-on core Clippy passes. The transport validates
+ReadyAck/Armed ordering, hides validated late progress during cancellation,
+requires a wire disarm acknowledgement after Select, and permanently fences
+ambiguous clean consent. Feature/module registration remains default-off and
+the mounted launcher remains unavailable. No helper process, dynamic identity
+API, native interaction or installation was exercised by these fixtures.
+Desktop-wide strict Clippy was attempted and is not passing: existing unused
+and style warnings remain, and the intentionally unmounted transport is unused
+in the application target. No lint was disabled or runtime mount added to hide
+those failures. Core feature strict Clippy is a separate passing check.

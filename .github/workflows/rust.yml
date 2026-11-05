@@ -93,6 +93,8 @@ jobs:
         run: cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support prepaint_transaction --locked -- --nocapture
       - name: Test synthetic desktop fixtures with notification, microphone and computer-use adapters
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use
+      - name: Test isolated desktop helper transport without native launch
+        run: cargo test -p coincide-desktop --locked --features preview-updater-helper updater_helper_transport
   desktop-windows:
     name: Windows GPUI check
     runs-on: windows-latest
@@ -118,3 +120,5 @@ jobs:
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo check -p coincide-desktop --locked
+      - name: Check opt-in desktop helper transport
+        run: cargo check -p coincide-desktop --locked --features preview-updater-helper
