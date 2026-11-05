@@ -184,6 +184,53 @@ pub fn preserve_selected_copy(
     div().id(selection_id(thread, item)).min_w_0().child(body)
 }
 
+/// Use a find-owned native state without bypassing the existing exact-copy
+/// registry. The parent's typography, media and action siblings remain intact.
+pub fn managed_markdown(
+    _thread: &str,
+    _item: &str,
+    state: &Entity<TextViewState>,
+    window: &mut Window,
+    cx: &mut App,
+) -> TextView {
+    let registry = cx.default_global::<TranscriptViews>();
+    registry.views.retain(|_, state| state.upgrade().is_some());
+    registry.views.insert(
+        (window.window_handle().window_id(), state.entity_id()),
+        state.downgrade(),
+    );
+    TextView::new(state)
+}
+
+/// Apply only to the exact native document captured by the find controller.
+/// true means this serial's one-shot reveal request was accepted, not proof of
+/// a visible scroll. Parent first mounts/reveals the virtualized stable-ID row.
+pub fn apply_find_projection(
+    state: &Entity<TextViewState>,
+    projection: &super::transcript_find::FindProjection,
+    cx: &mut App,
+) -> anyhow::Result<bool> {
+    if !projection.current() || state.read(cx).rendered_text() != projection.rendered {
+        return Ok(false);
+    }
+    state
+        .update(cx, |state, cx| {
+            if !projection.highlights_applied() {
+                state.set_range_highlights(projection.highlights(), cx)?;
+                projection.mark_applied();
+            }
+            if let Some(range) = projection.reveal_range() {
+                state.reveal_range(range, cx)?;
+                Ok(projection.mark_revealed())
+            } else {
+                Ok(false)
+            }
+        })
+        .map_err(|error: gpui_kit::base::RangeHighlightError| {
+            anyhow::anyhow!("Native find projection failed: {error:?}")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{copy_payload, selection_id};
@@ -246,51 +293,4 @@ mod tests {
         assert_ne!(selection_id("a/b", "c"), selection_id("a", "b/c"));
         assert_ne!(selection_id("中文", "item"), selection_id("中", "文/item"));
     }
-}
-
-/// Use a find-owned native state without bypassing the existing exact-copy
-/// registry. The parent's typography, media and action siblings remain intact.
-pub fn managed_markdown(
-    _thread: &str,
-    _item: &str,
-    state: &Entity<TextViewState>,
-    window: &mut Window,
-    cx: &mut App,
-) -> TextView {
-    let registry = cx.default_global::<TranscriptViews>();
-    registry.views.retain(|_, state| state.upgrade().is_some());
-    registry.views.insert(
-        (window.window_handle().window_id(), state.entity_id()),
-        state.downgrade(),
-    );
-    TextView::new(state)
-}
-
-/// Apply only to the exact native document captured by the find controller.
-/// true means this serial's one-shot reveal request was accepted, not proof of
-/// a visible scroll. Parent first mounts/reveals the virtualized stable-ID row.
-pub fn apply_find_projection(
-    state: &Entity<TextViewState>,
-    projection: &super::transcript_find::FindProjection,
-    cx: &mut App,
-) -> anyhow::Result<bool> {
-    if !projection.current() || state.read(cx).rendered_text() != projection.rendered {
-        return Ok(false);
-    }
-    state
-        .update(cx, |state, cx| {
-            if !projection.highlights_applied() {
-                state.set_range_highlights(projection.highlights(), cx)?;
-                projection.mark_applied();
-            }
-            if let Some(range) = projection.reveal_range() {
-                state.reveal_range(range, cx)?;
-                Ok(projection.mark_revealed())
-            } else {
-                Ok(false)
-            }
-        })
-        .map_err(|error: gpui_kit::base::RangeHighlightError| {
-            anyhow::anyhow!("Native find projection failed: {error:?}")
-        })
 }

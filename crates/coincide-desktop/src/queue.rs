@@ -171,7 +171,7 @@ impl Coincide {
                     let full_text = text(message, "text");
                     let mut preview: String = full_text.chars().take(400).collect();
                     if preview.len() < full_text.len() {
-                        preview.push_str("…");
+                        preview.push('…');
                     }
                     div()
                         .flex()

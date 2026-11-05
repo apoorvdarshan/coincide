@@ -532,18 +532,18 @@ impl GitHubReviewPanel {
             self.discard_read_results();
             return;
         }
-        if let Some(status) = self.writes.as_ref().and_then(|writes| writes.status()) {
-            if self.write_status.as_ref() != Some(&status) {
-                let ready = status == crate::github_write_transport::Status::Ready;
-                self.write_status = Some(status);
-                if ready {
-                    self.sync_action_scope(cx);
-                    if let Some(actions) = &self.actions {
-                        actions.update(cx, |actions, cx| actions.invalidate(cx));
-                    }
+        if let Some(status) = self.writes.as_ref().and_then(|writes| writes.status())
+            && self.write_status.as_ref() != Some(&status)
+        {
+            let ready = status == crate::github_write_transport::Status::Ready;
+            self.write_status = Some(status);
+            if ready {
+                self.sync_action_scope(cx);
+                if let Some(actions) = &self.actions {
+                    actions.update(cx, |actions, cx| actions.invalidate(cx));
                 }
-                cx.notify();
             }
+            cx.notify();
         }
         let Ok((generation, request, result)) = self.rx.try_recv() else {
             return;
@@ -591,37 +591,37 @@ impl Drop for GitHubReviewPanel {
 }
 impl Render for GitHubReviewPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.actions_open {
-            if let Some(actions) = self.actions.clone() {
-                return div()
-                    .id("github-action-surface")
-                    .size_full()
-                    .overflow_hidden()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Button::new("github-actions-back")
-                            .label("Back to PR details")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.actions_open = false;
-                                if let Some(actions) = &this.actions {
-                                    actions.update(cx, |actions, cx| actions.invalidate(cx));
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .child(actions),
-                    )
-                    .into_any_element();
-            }
+        if self.actions_open
+            && let Some(actions) = self.actions.clone()
+        {
+            return div()
+                .id("github-action-surface")
+                .size_full()
+                .overflow_hidden()
+                .min_h_0()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    Button::new("github-actions-back")
+                        .label("Back to PR details")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.actions_open = false;
+                            if let Some(actions) = &this.actions {
+                                actions.update(cx, |actions, cx| actions.invalidate(cx));
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(actions),
+                )
+                .into_any_element();
         }
         let mut pane = div()
             .id("github-review-panel")

@@ -360,9 +360,9 @@ impl GitHubThreadsPanel {
         if self.workers.closed() {
             return;
         }
-        if self.repository.read(cx).value().to_string() == repository
-            && self.number.read(cx).value().to_string() == number.to_string()
-            && self.head.read(cx).value().to_string() == head
+        if self.repository.read(cx).value().as_str() == repository.as_str()
+            && self.number.read(cx).value().as_str() == number.to_string().as_str()
+            && self.head.read(cx).value().as_str() == head.as_str()
         {
             return;
         }

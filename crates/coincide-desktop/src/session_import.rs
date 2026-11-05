@@ -249,7 +249,7 @@ impl SessionImportPanel {
             "Choose a Codex rollout or Claude Code JSONL file. Originals are preserved.".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result: Result<_> = async { Ok(picker.await??) }.await;
+            let result: Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| {
                 this.choosing = false;
                 if !finish_choice(&mut this.workers, generation, this.generation) {

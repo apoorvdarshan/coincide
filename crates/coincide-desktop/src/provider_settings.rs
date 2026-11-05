@@ -182,7 +182,7 @@ impl Coincide {
             ),
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result: Result<_> = async { Ok(picker.await??) }.await;
+            let result: Result<_> = async { picker.await? }.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.provider_settings.account != account || this.provider_settings.busy {
                     return;

@@ -774,8 +774,14 @@ mod tests {
     #[::core::prelude::v1::test]
     fn nonoverlapping_matches_empty_queries_and_limits_are_explicit() {
         assert_eq!(match_ranges("aaaaa", "aa", 10), (vec![0..2, 2..4], false));
-        assert_eq!(match_ranges("aa aa", "aa", 1), (vec![0..2], true));
-        assert_eq!(match_ranges("aa", "aa", 1), (vec![0..2], false));
+        assert_eq!(
+            match_ranges("aa aa", "aa", 1),
+            (std::iter::once(0..2).collect::<Vec<_>>(), true)
+        );
+        assert_eq!(
+            match_ranges("aa", "aa", 1),
+            (std::iter::once(0..2).collect::<Vec<_>>(), false)
+        );
         assert_eq!(match_ranges("aa", "aa", 0), (vec![], true));
         assert_eq!(match_ranges("aa", "", 0), (vec![], false));
     }
