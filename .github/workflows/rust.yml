@@ -80,6 +80,8 @@ jobs:
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo build -p coincide-desktop --locked
+      - name: Test synthetic desktop fixtures with notification adapter
+        run: cargo test -p coincide-desktop --locked --features native-notifications
   desktop-windows:
     name: Windows GPUI check
     runs-on: windows-latest
