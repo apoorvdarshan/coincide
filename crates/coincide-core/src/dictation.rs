@@ -132,3 +132,5 @@ mod tests {
 }
 
 pub mod transcription;
+
+pub mod local;
