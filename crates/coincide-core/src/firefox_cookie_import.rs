@@ -587,6 +587,9 @@ impl Plan {
     }
 }
 impl ApprovedPlan {
+    pub fn remaining(&self) -> usize {
+        self.cookies.len()
+    }
     /// A stale route consumes no cookie. Parent admission still must close on
     /// shutdown; this binding is typed context, never imported authorization.
     pub fn next(&mut self, current: &Binding, now: i64) -> Result<Option<Cookie>> {
@@ -630,13 +633,20 @@ mod tests {
         let mut approved = plan
             .approve(&["example.test".into()], bound.clone())
             .unwrap();
+        assert_eq!(approved.remaining(), 1);
         let mut stale = bound.clone();
         stale.epoch += 1;
         assert!(matches!(
             approved.next(&stale, 100),
             Err(Failure::StaleContext)
         ));
+        assert_eq!(
+            approved.remaining(),
+            1,
+            "stale context must consume nothing"
+        );
         let cookie = approved.next(&bound, 100).unwrap().unwrap();
+        assert_eq!(approved.remaining(), 0);
         assert_eq!(cookie.value(), "synthetic-private-value");
         assert!(cookie.http_only());
         assert!(matches!(cookie.same_site(), SameSite::Lax));

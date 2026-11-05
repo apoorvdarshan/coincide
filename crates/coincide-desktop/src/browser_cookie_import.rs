@@ -69,8 +69,38 @@ mod native {
     use objc2_foundation::{
         NSDate, NSDictionary, NSHTTPCookie, NSHTTPCookiePropertyKey, NSMutableDictionary, NSString,
     };
-    use objc2_web_kit::WKHTTPCookieStore;
+    use objc2_web_kit::{WKHTTPCookieStore, WKWebsiteDataStore};
     use wry::WebViewExtMacOS;
+    pub(in super::super) struct PreparedCookie {
+        native: Retained<NSHTTPCookie>,
+        input: Cookie,
+    }
+    impl PreparedCookie {
+        pub fn expired(&self, now: u64) -> bool {
+            self.input
+                .expires()
+                .is_some_and(|expiry| expiry < 0 || expiry as u64 <= now)
+        }
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(in super::super) struct ReadbackCounts {
+        pub expected: usize,
+        pub observed: usize,
+        pub matched: usize,
+    }
+    pub(in super::super) struct ReadbackReceipt {
+        result: Arc<std::sync::Mutex<Option<ReadbackCounts>>>,
+        released: Arc<AtomicBool>,
+    }
+    impl ReadbackReceipt {
+        pub fn result(&self) -> Option<(ReadbackCounts, bool)> {
+            self.result
+                .try_lock()
+                .ok()
+                .and_then(|result| *result)
+                .map(|result| (result, self.released.load(Ordering::Acquire)))
+        }
+    }
     pub(in super::super) struct Target {
         store: Retained<WKHTTPCookieStore>,
         binding: Binding,
@@ -133,28 +163,65 @@ mod native {
                     Failure::InvalidCookie
                 },
             )?;
-            // Foundation may reject/normalize unsupported policy. Never silently
-            // drop SameSite=None or import a weaker cookie than the reviewed one.
-            let actual = cookie.sameSitePolicy().map(|policy| policy.to_string());
-            validate_policy(input.same_site(), actual.as_deref())?;
-            if cookie.isSecure() != input.secure()
-                || cookie.isHTTPOnly() != input.http_only()
-                || cookie.name().to_string() != input.name()
-                || cookie.value().to_string() != input.value()
-                || cookie.domain().to_string() != input.domain()
-                || cookie.path().to_string() != input.path()
-                || cookie.isSessionOnly() != input.expires().is_none()
-                || cookie
-                    .expiresDate()
-                    .map(|date| date.timeIntervalSince1970() as i64)
-                    != input.expires()
-            {
-                return Err(Failure::InvalidCookie);
-            }
+            matches_cookie(&cookie, input)?;
             Ok(cookie)
         }
     }
+    fn matches_cookie(cookie: &NSHTTPCookie, input: &Cookie) -> Result<(), Failure> {
+        let actual = cookie.sameSitePolicy().map(|policy| policy.to_string());
+        validate_policy(input.same_site(), actual.as_deref())?;
+        if cookie.isSecure() != input.secure()
+            || cookie.isHTTPOnly() != input.http_only()
+            || cookie.name().to_string() != input.name()
+            || cookie.value().to_string() != input.value()
+            || cookie.domain().to_string() != input.domain()
+            || cookie.path().to_string() != input.path()
+            || cookie.isSessionOnly() != input.expires().is_none()
+            || cookie
+                .expiresDate()
+                .map(|date| date.timeIntervalSince1970() as i64)
+                != input.expires()
+        {
+            return Err(Failure::InvalidCookie);
+        }
+        Ok(())
+    }
     impl Target {
+        /// Parent must mark ever-native BEFORE calling this factory, including
+        /// failures/zero-view contexts, and only use a freshly reserved UUID.
+        pub fn for_named_profile(binding: Binding, callbacks: Callbacks) -> Result<Self, Failure> {
+            let mtm = MainThreadMarker::new().ok_or(Failure::Unavailable)?;
+            if callbacks.closed() || binding.profile.is_nil() {
+                return Err(Failure::ClosedOrStale);
+            }
+            let available: bool = unsafe {
+                objc2::msg_send![objc2::class!(WKWebsiteDataStore), respondsToSelector:objc2::sel!(dataStoreForIdentifier:)]
+            };
+            if !available {
+                return Err(Failure::Unavailable);
+            }
+            let identifier = objc2_foundation::NSUUID::from_bytes(*binding.profile.as_bytes());
+            let store = unsafe {
+                WKWebsiteDataStore::dataStoreForIdentifier(&identifier, mtm).httpCookieStore()
+            };
+            let lease = callbacks.lifetimes().target();
+            Ok(Self {
+                store,
+                binding,
+                callbacks,
+                _lease: lease,
+            })
+        }
+        pub fn prepare(&self, input: Cookie, current: &Binding) -> Result<PreparedCookie, Failure> {
+            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
+            if self.callbacks.closed() || *current != self.binding {
+                return Err(Failure::ClosedOrStale);
+            }
+            Ok(PreparedCookie {
+                native: cookie(&input)?,
+                input,
+            })
+        }
         pub fn new(
             view: &wry::WebView,
             binding: Binding,
@@ -193,9 +260,24 @@ mod native {
             {
                 return Err(Failure::InvalidCookie);
             }
-            let cookie = cookie(&input)?;
+            let prepared = self.prepare(input, current)?;
+            self.dispatch_prepared(&prepared, current)
+        }
+        pub fn dispatch_prepared(
+            &self,
+            prepared: &PreparedCookie,
+            current: &Binding,
+        ) -> Result<Receipt, Failure> {
+            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
             if self.callbacks.closed() || *current != self.binding {
                 return Err(Failure::ClosedOrStale);
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| Failure::Unavailable)?
+                .as_secs();
+            if prepared.expired(now) {
+                return Err(Failure::InvalidCookie);
             }
             let stored = Arc::new(AtomicBool::new(false));
             let released = Arc::new(AtomicBool::new(false));
@@ -214,14 +296,69 @@ mod native {
             });
             unsafe {
                 self.store
-                    .setCookie_completionHandler(&cookie, Some(&block));
+                    .setCookie_completionHandler(&prepared.native, Some(&block));
             }
             Ok(Receipt { stored, released })
+        }
+        /// Read only this freshly-created destination. Native result values stay
+        /// inside the callback; no target/store/view/manager is captured.
+        pub fn readback(
+            &self,
+            expected: Vec<PreparedCookie>,
+            current: &Binding,
+        ) -> Result<ReadbackReceipt, Failure> {
+            MainThreadMarker::new().ok_or(Failure::Unavailable)?;
+            if self.callbacks.closed() || *current != self.binding {
+                return Err(Failure::ClosedOrStale);
+            }
+            if expected.len() > 1000 {
+                return Err(Failure::InvalidCookie);
+            }
+            let result = Arc::new(std::sync::Mutex::new(None));
+            let released = Arc::new(AtomicBool::new(false));
+            let held = BlockOwner {
+                _lease: self.callbacks.lifetimes().block(),
+                _released: Released(released.clone()),
+            };
+            let ack = self.callbacks.begin();
+            let output = result.clone();
+            let block = RcBlock::new(
+                move |cookies: std::ptr::NonNull<objc2_foundation::NSArray<NSHTTPCookie>>| {
+                    let _owner = &held;
+                    let cookies = unsafe { cookies.as_ref() };
+                    let observed = cookies.len();
+                    let matched = if observed <= 1000 {
+                        let actual = cookies.to_vec();
+                        expected
+                            .iter()
+                            .filter(|expected| {
+                                actual
+                                    .iter()
+                                    .any(|cookie| matches_cookie(cookie, &expected.input).is_ok())
+                            })
+                            .count()
+                    } else {
+                        0
+                    };
+                    if let Ok(mut result) = output.lock() {
+                        *result = Some(ReadbackCounts {
+                            expected: expected.len(),
+                            observed,
+                            matched,
+                        });
+                    }
+                    ack.ack();
+                },
+            );
+            unsafe {
+                self.store.getAllCookies(&block);
+            }
+            Ok(ReadbackReceipt { result, released })
         }
     }
 }
 #[cfg(target_os = "macos")]
-pub(super) use native::Target;
+pub(super) use native::{PreparedCookie, ReadbackReceipt, Target};
 
 #[cfg(test)]
 mod tests {
