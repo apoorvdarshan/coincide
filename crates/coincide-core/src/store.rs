@@ -476,6 +476,117 @@ impl Store {
         Ok(())
     }
 
+    /// Private native service connection: existing schema3 only, no CREATE,
+    /// directory creation, migration, journal-mode or schema writes.
+    pub fn open_existing_for_legacy_media(path: &Path, expected_data_dir: &Path) -> Result<Self> {
+        use crate::legacy_media_service::{open_regular_existing, verify_database_identity};
+        let held = open_regular_existing(path)?;
+        ensure!(
+            expected_data_dir.is_absolute()
+                && expected_data_dir.canonicalize()? == expected_data_dir,
+            "Expected data directory must be canonical"
+        );
+        ensure!(
+            path.parent() == Some(expected_data_dir),
+            "Database data directory mismatch"
+        );
+        let db = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        verify_database_identity(path, &held, &db)?;
+        let verify_schema = |db: &Connection| -> Result<()> {
+            let version: String =
+                db.query_row("SELECT value FROM metadata WHERE key='schema'", [], |r| {
+                    r.get(0)
+                })?;
+            ensure!(
+                version == "3",
+                "Legacy media service requires existing schema3"
+            );
+            for sql in [
+                "SELECT id,document FROM threads LIMIT 0",
+                "SELECT name,document FROM documents LIMIT 0",
+                "SELECT path,data FROM original_files LIMIT 0",
+                "SELECT id,title,project_id,archived,pinned,updated_at,search_body,snoozed_until FROM thread_summaries LIMIT 0",
+                "SELECT thread_id,title,body FROM search LIMIT 0",
+                "SELECT thread_id,body FROM search_trigram LIMIT 0",
+                "SELECT id FROM imported_threads LIMIT 0",
+            ] {
+                db.prepare(sql)?;
+            }
+            Ok(())
+        };
+        verify_schema(&db)?;
+        drop(db);
+        let db = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        verify_database_identity(path, &held, &db)?;
+        verify_schema(&db)?;
+        ensure!(
+            !db.is_readonly("main")?,
+            "Media service database must be writable"
+        );
+        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { db })
+    }
+
+    /// Atomically compare the complete current thread AND local-only overlay,
+    /// then write one Rust-owned overlay document. Never changes source threads.
+    pub fn commit_legacy_media_overlay_if_unchanged(
+        &mut self,
+        expected_thread: &Value,
+        expected_local_overlay: Option<&Value>,
+        next_overlay: &Value,
+    ) -> Result<()> {
+        use crate::legacy_media_service::{overlay_name, validate_overlay};
+        let id = validate_thread(expected_thread)?;
+        validate_overlay(expected_thread, next_overlay)?;
+        let name = overlay_name(id)?;
+        let serialized = serde_json::to_string(next_overlay)?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let size: i64 = tx.query_row(
+            "SELECT length(CAST(document AS BLOB)) FROM threads WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            size <= 16_000_000,
+            "Legacy media thread changed or exceeds limit"
+        );
+        let current: String =
+            tx.query_row("SELECT document FROM threads WHERE id=?1", [id], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            &serde_json::from_str::<Value>(&current)? == expected_thread,
+            "Legacy media thread changed"
+        );
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name=?1",
+                [&name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        ensure!(
+            local.as_ref().is_none_or(|v| v.len() <= 4 * 1024 * 1024),
+            "Legacy media overlay limit"
+        );
+        let local: Option<Value> = local.as_deref().map(serde_json::from_str).transpose()?;
+        ensure!(
+            local.as_ref() == expected_local_overlay,
+            "Legacy media overlay changed"
+        );
+        tx.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document", params![name,serialized])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
         let id = Uuid::new_v4().to_string().to_uppercase();
         let now = swift_timestamp();
