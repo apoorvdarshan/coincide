@@ -2,6 +2,8 @@ use anyhow::Result;
 mod browser;
 mod composer_attachments;
 mod navigation;
+mod presentation;
+mod provider_settings;
 mod queue;
 mod scheduling;
 mod settings;
@@ -126,6 +128,7 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    provider_settings: provider_settings::ProviderSettings,
     settings: Value,
     settings_status: String,
     appearance_dark: bool,
@@ -198,6 +201,7 @@ impl Coincide {
         });
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
+        let provider_settings = provider_settings::ProviderSettings::new(window, cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -248,6 +252,7 @@ impl Coincide {
             }),
         ];
         subscriptions.extend(schedule_editor.subscriptions(cx));
+        subscriptions.extend(provider_settings.subscriptions(cx));
         let threads = call(&engine, "threads.list", json!({}))
             .and_then(|v| Ok(serde_json::from_value(v)?))
             .unwrap_or_default();
@@ -283,6 +288,7 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            provider_settings,
             settings,
             settings_status: String::new(),
             appearance_dark: true,
@@ -1396,7 +1402,7 @@ impl Coincide {
         match call(
             &self.engine,
             "agent.select",
-            json!({"threadId":thread["id"],"provider":thread["selection"]["provider"],"model":if model.is_empty(){"default"}else{model}}),
+            json!({"threadId":thread["id"],"provider":thread["selection"]["provider"],"accountId":thread["selection"]["accountID"],"model":if model.is_empty(){"default"}else{model}}),
         ) {
             Ok(thread) => {
                 self.selected = Some(thread);
@@ -1446,7 +1452,21 @@ impl Coincide {
         } else {
             body
         };
-        let label = format!("{} {}", kind, text(item, "provider"));
+        let provider = text(item, "provider");
+        let model = item["modelID"]
+            .as_str()
+            .or_else(|| item["model"].as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let label = match kind.as_str() {
+            "user" => "You".to_owned(),
+            "assistant" => presentation::provider_name(&provider).to_owned(),
+            "reasoning" => format!("{} · Thinking", presentation::provider_name(&provider)),
+            "tool" => "Tool activity".to_owned(),
+            "error" => "Error".to_owned(),
+            "system" => "Conversation update".to_owned(),
+            _ => kind.clone(),
+        };
         let action_excerpt: String = text(item, "text").chars().take(72).collect();
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
@@ -1464,94 +1484,135 @@ impl Coincide {
                     .child(div().max_w(px(240.)).truncate().text_xs().child(name))
             })
             .collect::<Vec<_>>();
-        let card = div()
-            .id(SharedString::from(format!(
-                "message-row-{source_id}-{item_id}"
-            )))
-            .min_w_0()
-            .flex_1()
-            .max_w(relative(0.92))
-            .my_2()
-            .p_4()
-            .rounded_lg()
-            .bg(self.color(if kind == "user" { 0x222c3d } else { 0x181d28 }))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.color(0x98b1d4))
-                    .mb_2()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(div().child(label))
-                    .child({
-                        let source = source_id.clone();
-                        let item = item_id.clone();
-                        Button::new(SharedString::from(format!(
-                            "copy-message-{source_id}-{item_id}"
-                        )))
-                        .accessibility_id(SharedString::from(format!(
-                            "copy-message-{source_id}-{item_id}"
-                        )))
-                        .label("Copy message")
-                        .disabled(copy_empty)
-                        .tooltip("Copy the complete message text, including collapsed content")
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                this.copy_message(&source, &item, cx)
-                            }),
-                        )
-                    }),
-            )
-            .when(collapsible, |view| {
-                let source = source_id.clone();
-                let item = item_id.clone();
-                view.child(
-                    Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                        .accessibility_id(SharedString::from(format!(
-                            "expand-{source_id}-{item_id}"
-                        )))
-                        .label(if expanded { "Collapse" } else { "Expand" })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source)
-                            else {
-                                return;
-                            };
-                            let Some(index) = thread["items"]
-                                .as_array()
-                                .and_then(|items| items.iter().position(|v| v["id"] == item))
-                            else {
-                                return;
-                            };
-                            if !this.expanded.remove(&index) {
-                                this.expanded.insert(index);
-                            }
-                            this.transcript_list.splice(index..index + 1, 1);
-                            cx.notify();
-                        })),
+        let card =
+            div()
+                .id(SharedString::from(format!(
+                    "message-row-{source_id}-{item_id}"
+                )))
+                .min_w_0()
+                .w_full()
+                .my_3()
+                .p_3()
+                .rounded(px(12.))
+                .when(kind == "user", |card| {
+                    card.max_w(px((presentation::CONTENT_WIDTH
+                        - presentation::RAIL_GUTTER)
+                        * 0.75))
+                        .bg(self.color(0xe4e9f2).opacity(0.06))
+                })
+                .when(kind == "assistant", |card| {
+                    card.border_l_2()
+                        .border_color(self.provider_ink(&provider))
+                        .rounded_none()
+                })
+                .when(collapsible, |card| {
+                    card.bg(self.color(0x181d28))
+                        .border_1()
+                        .border_color(self.color(0x29303d))
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(if kind == "assistant" {
+                            self.provider_ink(&provider)
+                        } else {
+                            self.color(0xe4e9f2).opacity(0.7)
+                        })
+                        .mb_2()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(div().min_w_0().flex_1().child(label).when(
+                            kind == "assistant" && !model.is_empty(),
+                            |label| {
+                                label.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                                        .child(model),
+                                )
+                            },
+                        ))
+                        .child({
+                            let source = source_id.clone();
+                            let item = item_id.clone();
+                            Button::new(SharedString::from(format!(
+                                "copy-message-{source_id}-{item_id}"
+                            )))
+                            .accessibility_id(SharedString::from(format!(
+                                "copy-message-{source_id}-{item_id}"
+                            )))
+                            .label("Copy message")
+                            .ghost()
+                            .compact()
+                            .disabled(copy_empty)
+                            .tooltip("Copy the complete message text, including collapsed content")
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.copy_message(&source, &item, cx),
+                            ))
+                        }),
                 )
-            })
-            .child(
-                TextView::markdown(
-                    SharedString::from(format!("message-body-{source_id}-{item_id}")),
-                    shown,
+                .when(collapsible, |view| {
+                    let source = source_id.clone();
+                    let item = item_id.clone();
+                    view.child(
+                        Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                            .accessibility_id(SharedString::from(format!(
+                                "expand-{source_id}-{item_id}"
+                            )))
+                            .label(if expanded { "Collapse" } else { "Expand" })
+                            .ghost()
+                            .compact()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let Some(thread) =
+                                    this.selected.as_ref().filter(|v| v["id"] == source)
+                                else {
+                                    return;
+                                };
+                                let Some(index) = thread["items"]
+                                    .as_array()
+                                    .and_then(|items| items.iter().position(|v| v["id"] == item))
+                                else {
+                                    return;
+                                };
+                                if !this.expanded.remove(&index) {
+                                    this.expanded.insert(index);
+                                }
+                                this.transcript_list.splice(index..index + 1, 1);
+                                cx.notify();
+                            })),
+                    )
+                })
+                .child(
+                    TextView::markdown(
+                        SharedString::from(format!("message-body-{source_id}-{item_id}")),
+                        shown,
+                    )
+                    .text_size(px(self.conversation_font_size()
+                        + if kind == "assistant"
+                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                == "newYork"
+                        {
+                            1.
+                        } else {
+                            0.
+                        }))
+                    .when(
+                        kind == "assistant"
+                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                == "newYork",
+                        |view| view.font_family(settings::reply_font()),
+                    ),
                 )
-                .text_size(px(self.conversation_font_size()))
-                .when(
-                    kind == "assistant"
-                        && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                            == "newYork",
-                    |view| view.font_family(settings::reply_font()),
-                ),
-            )
-            .when(!previews.is_empty(), |view| {
-                view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
-            })
-            .when(kind == "user", |view| {
-                let source = source_id.clone();
-                let item = item_id.clone();
-                view.child(
+                .when(!previews.is_empty(), |view| {
+                    view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
+                })
+                .when(kind == "user", |view| {
+                    let source = source_id.clone();
+                    let item = item_id.clone();
+                    view.child(
                     div().mt_2().child(
                         Button::new(SharedString::from(format!(
                             "edit-message-branch-{source_id}-{item_id}"
@@ -1563,6 +1624,7 @@ impl Coincide {
                             "Edit message in new branch: {action_excerpt}"
                         )))
                         .label("Edit in new branch")
+                        .ghost().compact()
                         .disabled(source_running)
                         .tooltip(if source_running {
                             "Stop the current turn before editing an earlier message"
@@ -1576,9 +1638,9 @@ impl Coincide {
                         )),
                     ),
                 )
-            })
-            .when(kind == "assistant" && settled, |view| {
-                view.child(
+                })
+                .when(kind == "assistant" && settled, |view| {
+                    view.child(
                     div().mt_2().child(
                         Button::new(SharedString::from(format!(
                             "fork-message-turn-{source_id}-{item_id}"
@@ -1590,6 +1652,7 @@ impl Coincide {
                             "Fork through response: {action_excerpt}"
                         )))
                         .label("Fork through this turn")
+                        .ghost().compact()
                         .tooltip(
                             "Copy settled conversation through this turn into a separate branch",
                         )
@@ -1600,16 +1663,27 @@ impl Coincide {
                         )),
                     ),
                 )
-            });
+                });
         div()
             .flex()
-            .mx_6()
-            .when(
-                kind == "user"
-                    && self.settings["userMessageSide"].as_str().unwrap_or("right") != "left",
-                |row| row.justify_end(),
+            .w_full()
+            .px(px(presentation::CONTENT_GUTTER))
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(px(presentation::CONTENT_WIDTH))
+                    .pl(px(presentation::RAIL_GUTTER))
+                    .when(
+                        kind == "user"
+                            && self.settings["userMessageSide"].as_str().unwrap_or("right")
+                                != "left",
+                        |row| row.justify_end(),
+                    )
+                    .child(card),
             )
-            .child(card)
             .into_any_element()
     }
     fn refresh_terminal_tabs(&mut self) {
@@ -2288,7 +2362,11 @@ impl Render for Coincide {
         .flex_1()
         .min_h_0();
         let conversation_content = if self.settings_open {
-            self.settings_pane(cx)
+            if self.provider_settings.open {
+                self.antigravity_settings(cx)
+            } else {
+                self.settings_pane(cx)
+            }
         } else if self.schedules_open {
             self.schedules_pane(cx)
         } else {
@@ -2402,154 +2480,199 @@ impl Render for Coincide {
                     .when(!self.schedules_open && !self.settings_open, |view| {
                         view.child(
                             div()
-                                .p_4()
-                                .border_t_1()
-                                .border_color(self.color(0x29303d))
+                                .id("composer-column")
+                                .w_full()
+                                .flex()
+                                .justify_center()
+                                .flex_shrink_0()
+                                .px(px(presentation::CONTENT_GUTTER))
+                                .py_3()
                                 .child(
                                     div()
-                                        .flex()
-                                        .gap_2()
-                                        .mb_2()
-                                        .child(
-                                            Button::new("provider-codex").label("Codex").on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.select_provider("codex", cx)
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            Button::new("provider-claude")
-                                                .label("Claude")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.select_provider("claude", cx)
-                                                })),
-                                        )
-                                        .child(Button::new("provider-grok").label("Grok").on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                this.select_provider("grok", cx)
-                                            }),
-                                        ))
-                                        .child(
-                                            Button::new("provider-cursor")
-                                                .label("Cursor")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.select_provider("cursor", cx)
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("provider-opencode")
-                                                .label("OpenCode")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.select_provider("opencode", cx)
-                                                })),
-                                        )
-                                        .child(
-                                            div().text_sm().child(
-                                                self.selected
-                                                    .as_ref()
-                                                    .map(|v| text(&v["selection"], "provider"))
-                                                    .unwrap_or_default(),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_2()
-                                        .items_center()
-                                        .mb_2()
-                                        .child(div().text_sm().child("Model ID"))
+                                        .w_full()
+                                        .min_w_0()
+                                        .max_w(px(presentation::CONTENT_WIDTH))
+                                        .p_3()
+                                        .rounded(px(22.))
+                                        .bg(self.color(0x181d28))
+                                        .border_1()
+                                        .border_color(self.color(0x29303d))
                                         .child(
                                             div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .child(Input::new(&self.model_input)),
+                                                .flex()
+                                                .flex_wrap()
+                                                .gap_2()
+                                                .mb_2()
+                                                .child(
+                                                    Button::new("provider-codex")
+                                                        .label("Codex")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.select_provider("codex", cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("provider-claude")
+                                                        .label("Claude")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.select_provider("claude", cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("provider-grok")
+                                                        .label("Grok")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.select_provider("grok", cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("provider-cursor")
+                                                        .label("Cursor")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.select_provider("cursor", cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("provider-opencode")
+                                                        .label("OpenCode")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.select_provider("opencode", cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("provider-antigravity-setup")
+                                                        .accessibility_id(
+                                                            "provider-antigravity-setup",
+                                                        )
+                                                        .label("Antigravity setup")
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.open_antigravity_settings(
+                                                                    window, cx,
+                                                                )
+                                                            },
+                                                        )),
+                                                )
+                                                .child(
+                                                    div().text_sm().child(
+                                                        self.selected
+                                                            .as_ref()
+                                                            .map(|v| {
+                                                                text(&v["selection"], "provider")
+                                                            })
+                                                            .unwrap_or_default(),
+                                                    ),
+                                                ),
                                         )
                                         .child(
-                                            Button::new("apply-model")
-                                                .label("Apply model")
-                                                .disabled(self.selected.as_ref().is_none_or(
-                                                    |thread| {
-                                                        self.running.contains(&text(thread, "id"))
+                                            div()
+                                                .flex()
+                                                .gap_2()
+                                                .items_center()
+                                                .mb_2()
+                                                .child(div().text_sm().child("Model ID"))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .child(Input::new(&self.model_input)),
+                                                )
+                                                .child(
+                                                    Button::new("apply-model")
+                                                        .label("Apply model")
+                                                        .disabled(
+                                                            self.selected.as_ref().is_none_or(
+                                                                |thread| {
+                                                                    self.running.contains(&text(
+                                                                        thread, "id",
+                                                                    ))
+                                                                },
+                                                            ),
+                                                        )
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.apply_model(cx)
+                                                        })),
+                                                ),
+                                        )
+                                        .when_some(queue_pane, |view, queue| view.child(queue))
+                                        .when_some(draft_images, |view, images| view.child(images))
+                                        .child({
+                                            let target = cx.entity().downgrade();
+                                            div()
+                                                .id("composer-image-drop")
+                                                .on_drop(cx.listener(
+                                                    |this, paths: &ExternalPaths, _, cx| {
+                                                        this.drop_image_paths(paths, cx)
                                                     },
                                                 ))
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.apply_model(cx)
-                                                })),
+                                                .child(
+                                                    Textarea::new(&self.composer)
+                                                        .h(px(110.))
+                                                        .on_paste(move |item, _, cx| {
+                                                            target
+                                                                .update(cx, |this, cx| {
+                                                                    this.paste_images(item, cx)
+                                                                })
+                                                                .unwrap_or(false)
+                                                        }),
+                                                )
+                                        })
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_wrap()
+                                                .gap_2()
+                                                .mt_2()
+                                                .child(
+                                                    Button::new("attach-images")
+                                                        .label(if importing_images {
+                                                            "Importing images…"
+                                                        } else {
+                                                            "Attach images"
+                                                        })
+                                                        .disabled(importing_images)
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.attach_images(cx)
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("send")
+                                                        .primary()
+                                                        .disabled(importing_images)
+                                                        .label(
+                                                            if self.running.contains(&selected_id) {
+                                                                "Queue message"
+                                                            } else {
+                                                                "Send"
+                                                            },
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.send(window, cx)
+                                                            },
+                                                        )),
+                                                )
+                                                .child(Button::new("stop").label("Stop").on_click(
+                                                    cx.listener(|this, _, _, cx| {
+                                                        if let Some(v) = this.selected.as_ref() {
+                                                            if let Err(e) = call(
+                                                                &this.engine,
+                                                                "agent.stop",
+                                                                json!({"threadId":v["id"]}),
+                                                            ) {
+                                                                this.status = e.to_string();
+                                                            }
+                                                        }
+                                                        cx.notify();
+                                                    }),
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .mt_2()
+                                                .text_sm()
+                                                .text_color(self.color(0xe4e9f2).opacity(0.7))
+                                                .child(self.status.clone()),
                                         ),
-                                )
-                                .when_some(queue_pane, |view, queue| view.child(queue))
-                                .when_some(draft_images, |view, images| view.child(images))
-                                .child({
-                                    let target = cx.entity().downgrade();
-                                    div()
-                                        .id("composer-image-drop")
-                                        .on_drop(cx.listener(
-                                            |this, paths: &ExternalPaths, _, cx| {
-                                                this.drop_image_paths(paths, cx)
-                                            },
-                                        ))
-                                        .child(Textarea::new(&self.composer).h(px(110.)).on_paste(
-                                            move |item, _, cx| {
-                                                target
-                                                    .update(cx, |this, cx| {
-                                                        this.paste_images(item, cx)
-                                                    })
-                                                    .unwrap_or(false)
-                                            },
-                                        ))
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_2()
-                                        .mt_2()
-                                        .child(
-                                            Button::new("attach-images")
-                                                .label(if importing_images {
-                                                    "Importing images…"
-                                                } else {
-                                                    "Attach images"
-                                                })
-                                                .disabled(importing_images)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.attach_images(cx)
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("send")
-                                                .primary()
-                                                .disabled(importing_images)
-                                                .label(if self.running.contains(&selected_id) {
-                                                    "Queue message"
-                                                } else {
-                                                    "Send"
-                                                })
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.send(window, cx)
-                                                })),
-                                        )
-                                        .child(Button::new("stop").label("Stop").on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                if let Some(v) = this.selected.as_ref() {
-                                                    if let Err(e) = call(
-                                                        &this.engine,
-                                                        "agent.stop",
-                                                        json!({"threadId":v["id"]}),
-                                                    ) {
-                                                        this.status = e.to_string();
-                                                    }
-                                                }
-                                                cx.notify();
-                                            }),
-                                        )),
-                                )
-                                .child(
-                                    div()
-                                        .mt_2()
-                                        .text_sm()
-                                        .text_color(self.color(0x98a6ba))
-                                        .child(self.status.clone()),
                                 ),
                         )
                     }),

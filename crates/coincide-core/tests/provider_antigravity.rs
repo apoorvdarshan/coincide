@@ -22,6 +22,10 @@ assert Path(__file__).resolve().is_relative_to(profile/'runtime')
 assert Path(os.environ['ANTIGRAVITY_HARNESS_PATH']).parent==Path(__file__).resolve().parent
 assert os.environ['AGY_ACP_FORCE_FILE_STORAGE']=='1'
 assert Path(os.environ['TMPDIR']).is_relative_to(profile/'runtime')
+# Model an extracted runtime tree so completion must wait for real cleanup.
+for index in range(32):
+ extracted=Path(os.environ['TMPDIR'])/str(index);extracted.mkdir()
+ (extracted/'runtime-part').write_bytes(b'fixture extraction')
 for key in ['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_APPLICATION_CREDENTIALS','AGY_ACP_ENABLE_OAUTH']:
  assert key not in os.environ
 assert json.loads((profile/'antigravity-acp/settings.json').read_text())=={'auth':{'type':'oauth-personal'}}
@@ -233,10 +237,12 @@ fn antigravity_fixture_child() {
             }
             Ok(Event::Session(id)) => assert_eq!(id, ID),
             Ok(Event::Finished) => {
+                assert_completed_cleanup(&root, &profile);
                 finished = true;
                 break;
             }
             Ok(Event::Failed(error)) => {
+                assert_completed_cleanup(&root, &profile);
                 assert!(!error.contains("secret-must-not-leak"));
                 failed = true;
                 break;
@@ -273,6 +279,38 @@ fn antigravity_fixture_child() {
                     .file_name()
                     .to_string_lossy()
                     .starts_with("extract-"))
+        );
+    }
+}
+
+// A terminal event promises completed teardown, not merely a queued teardown.
+// Check before dropping Session or polling/waiting, so this catches the original
+// Finished-before-Profile-drop race and proves immediate profile reuse is safe.
+fn assert_completed_cleanup(root: &std::path::Path, profile: &std::path::Path) {
+    if let Ok(lock) = fs::File::open(profile.join(".lock")) {
+        use std::os::fd::AsRawFd;
+        assert_eq!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0,
+            "terminal event preceded profile lock release"
+        );
+    }
+    if let Ok(pid) = fs::read_to_string(root.join("pid")) {
+        let pid = pid.parse::<i32>().unwrap();
+        assert_ne!(
+            unsafe { libc::kill(pid, 0) },
+            0,
+            "terminal event preceded child reap"
+        );
+    }
+    if let Ok(mut entries) = fs::read_dir(profile.join("runtime")) {
+        assert!(
+            !entries.any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("extract-")),
+            "terminal event preceded extraction cleanup"
         );
     }
 }

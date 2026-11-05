@@ -1,4 +1,8 @@
-//! Owner-only local socket. No listening TCP port and no browser-accessible endpoint.
+//! Owner-only local transport. No TCP port or browser-accessible endpoint.
+#[cfg(windows)]
+#[path = "control_windows.rs"]
+mod windows;
+#[cfg(not(windows))]
 use crate::api::SharedEngine;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
@@ -7,15 +11,18 @@ use std::os::unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
 };
+#[cfg(not(windows))]
+use std::path::Path;
+#[cfg(unix)]
+use std::time::Duration;
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
 };
 const MAX_FRAME: u64 = 4 * 1024 * 1024;
 pub struct Server {
@@ -81,7 +88,7 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
                     })()
                     .unwrap_or_else(|e| serde_json::json!({"error":{"message":e.to_string()}}));
                     if serde_json::to_vec(&response)
-                        .is_ok_and(|bytes| bytes.len() as u64 > MAX_FRAME)
+                        .is_ok_and(|bytes| bytes.len() as u64 >= MAX_FRAME)
                     {
                         let _ = write_frame(
                             &mut stream,
@@ -104,9 +111,11 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
         worker: Some(worker),
     })
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub use windows::{request, serve};
+#[cfg(not(any(unix, windows)))]
 pub fn serve(_path: PathBuf, _engine: SharedEngine) -> Result<Server> {
-    anyhow::bail!("Windows named-pipe transport is not implemented yet")
+    anyhow::bail!("Local control transport is unavailable on this platform")
 }
 #[cfg(unix)]
 fn configure_client_stream(stream: &UnixStream) -> Result<()> {
@@ -130,9 +139,9 @@ pub fn request(path: &Path, request: &Value) -> Result<Value> {
     write_frame(&mut stream, request).context("Sending control request")?;
     read_frame(&mut stream).context("Reading control reply")
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn request(_path: &Path, _request: &Value) -> Result<Value> {
-    anyhow::bail!("Windows named-pipe transport is not implemented yet")
+    anyhow::bail!("Local control transport is unavailable on this platform")
 }
 fn read_frame(stream: &mut impl Read) -> Result<Value> {
     let mut bytes = Vec::new();
@@ -146,7 +155,7 @@ fn read_frame(stream: &mut impl Read) -> Result<Value> {
 fn write_frame(stream: &mut impl Write, frame: &Value) -> Result<()> {
     let bytes = serde_json::to_vec(frame)?;
     ensure!(
-        bytes.len() as u64 <= MAX_FRAME,
+        (bytes.len() as u64) < MAX_FRAME,
         "Control response exceeds 4 MiB"
     );
     stream.write_all(&bytes)?;
@@ -157,14 +166,41 @@ pub fn data_directory() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("COINCIDE_RUST_DATA_DIR") {
         return Ok(path.into());
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is missing")?;
-    Ok(if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/Coincide Rust")
-    } else {
-        home.join(".local/share/coincide-rust")
-    })
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(path).join("Coincide Rust"))
+            .context("LOCALAPPDATA is missing; set COINCIDE_RUST_DATA_DIR explicitly")
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is missing")?;
+        Ok(if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/Coincide Rust")
+        } else {
+            home.join(".local/share/coincide-rust")
+        })
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+    #[test]
+    fn frame_limit_includes_newline_and_rejects_partial_frames() {
+        let largest = Value::String("x".repeat(MAX_FRAME as usize - 3));
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &largest).unwrap();
+        assert_eq!(bytes.len() as u64, MAX_FRAME);
+        assert_eq!(read_frame(&mut bytes.as_slice()).unwrap(), largest);
+        bytes.pop();
+        assert!(read_frame(&mut bytes.as_slice()).is_err());
+        let oversized = Value::String("x".repeat(MAX_FRAME as usize - 2));
+        assert!(write_frame(&mut Vec::new(), &oversized).is_err());
+    }
 }
 #[cfg(all(test, unix))]
 mod tests {

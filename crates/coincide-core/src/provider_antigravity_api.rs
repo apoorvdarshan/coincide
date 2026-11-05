@@ -109,6 +109,19 @@ impl Engine {
                     account.is_object(),
                     "Invalid Antigravity account configuration"
                 );
+                if let Some(name) = p.get("name") {
+                    let name = name
+                        .as_str()
+                        .context("Antigravity account name must be text")?
+                        .trim();
+                    ensure!(
+                        !name.is_empty()
+                            && name.len() <= 120
+                            && !name.chars().any(char::is_control),
+                        "Antigravity account name must contain 1–120 bytes without control characters"
+                    );
+                    account["name"] = json!(name);
+                }
                 account["auth"] = json!("login");
                 account["executable"] = json!(executable);
                 account["sourceProfile"] = json!(source);
@@ -282,7 +295,7 @@ mod tests {
             .execute("threads.create", &json!({"cwd":root.path()}))
             .unwrap()["id"]
             .clone();
-        let params = json!({"auth":"login","sourceProfile":source,"executable":executable});
+        let params = json!({"auth":"login","name":"  Work account  ","sourceProfile":source,"executable":executable});
         engine
             .antigravity_command("providers.antigravity.configure", &params)
             .unwrap();
@@ -318,6 +331,27 @@ mod tests {
                     .is_err()
             );
         }
+        for name in [
+            json!(""),
+            json!("   "),
+            json!("Work\naccount"),
+            json!("x".repeat(121)),
+            json!(42),
+        ] {
+            let mut invalid = params.clone();
+            invalid["name"] = name;
+            assert!(
+                engine
+                    .antigravity_command("providers.antigravity.configure", &invalid)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            engine
+                .antigravity_command("providers.antigravity.status", &json!({}))
+                .unwrap()["accounts"]["default"]["name"],
+            "Work account"
+        );
         let alternate = Uuid::new_v4().to_string();
         let mut configuration = params.clone();
         configuration["accountId"] = json!(alternate);
@@ -338,6 +372,7 @@ mod tests {
             .antigravity_command("providers.antigravity.status", &json!({}))
             .unwrap();
         assert_eq!(status["riskAcknowledged"], true);
+        assert_eq!(status["accounts"]["default"]["name"], "Work account");
         assert_eq!(status["accounts"].as_object().unwrap().len(), 2);
         assert_eq!(status["authenticationVerified"], false);
         assert!(

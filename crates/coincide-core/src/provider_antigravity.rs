@@ -96,6 +96,32 @@ fn answer_question(question: &Value, reply: &Value) -> Result<Value> {
     Ok(json!({"outcome":{"outcome":"selected","optionId":option["value"]}}))
 }
 pub(super) fn run(
+    launch: Launch,
+    images: Vec<ImageAttachment>,
+    directory: Option<PathBuf>,
+    source: Option<PathBuf>,
+    acknowledged: bool,
+    commands: Receiver<Control>,
+    events: &Sender<Event>,
+) -> Result<()> {
+    // Completion is a lifecycle boundary: the child must be reaped, its private
+    // extraction files removed and the profile lock released before the engine
+    // can start another turn on this same profile. Errors follow the same order:
+    // Session emits Failed only after this function unwinds its owned resources.
+    run_owned(
+        launch,
+        images,
+        directory,
+        source,
+        acknowledged,
+        commands,
+        events,
+    )?;
+    events.send(Event::Finished)?;
+    Ok(())
+}
+
+fn run_owned(
     mut launch: Launch,
     images: Vec<ImageAttachment>,
     directory: Option<PathBuf>,
@@ -196,7 +222,6 @@ pub(super) fn run(
         if (completed && (stopping.is_some() || transport.is_flushed()?))
             || stopping.is_some_and(|t: Instant| t.elapsed() >= Duration::from_secs(2))
         {
-            events.send(Event::Finished)?;
             return Ok(());
         }
         ensure!(
@@ -207,7 +232,6 @@ pub(super) fn run(
             Ok(Some(f)) => f,
             Ok(None) => continue,
             Err(_) if stopping.is_some() => {
-                events.send(Event::Finished)?;
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -290,7 +314,6 @@ pub(super) fn run(
             continue;
         }
         if stopping.is_some() {
-            events.send(Event::Finished)?;
             return Ok(());
         }
         if let Some(error) = frame.get("error") {

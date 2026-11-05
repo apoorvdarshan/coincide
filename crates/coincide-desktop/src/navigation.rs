@@ -72,6 +72,10 @@ impl Coincide {
             let target = group_id.clone();
             let mut group = div().flex().flex_col().mb_2().child(
                 Button::new(SharedString::from(format!("project-group-{group_id}")))
+                    .ghost()
+                    .compact()
+                    .justify_start()
+                    .w_full()
                     .accessibility_id(SharedString::from(format!("project-group-{group_id}")))
                     .accessibility_label(SharedString::from(format!(
                         "{} project {name}, {} conversations",
@@ -108,14 +112,20 @@ impl Coincide {
                     group =
                         group.child(
                             Button::new(SharedString::from(format!("thread-{id}")))
+                                .ghost()
+                                .compact()
+                                .justify_start()
+                                .h(px(32.))
+                                .min_w_0()
                                 .accessibility_id(SharedString::from(format!("thread-{id}")))
                                 .accessibility_label(SharedString::from(format!(
                                     "Open conversation: {}",
                                     thread.title
                                 )))
                                 .label(label)
+                                .tooltip(thread.title.clone())
                                 .w_full()
-                                .when(id == selected, |button| button.primary())
+                                .selected(id == selected)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.select(&id, window, cx)
                                 })),
@@ -128,15 +138,20 @@ impl Coincide {
             .flex()
             .flex_col()
             .w(px(280.))
+            .flex_shrink_0()
             .h_full()
             .bg(self.color(0x151922))
             .border_r_1()
             .border_color(self.color(0x29303d))
             .p_3()
-            .gap_3()
-            .child(div().text_xl().child("Coincide"))
+            .gap_2()
+            .child(div().px_2().py_2().text_sm().child("Coincide"))
             .child(
                 Button::new("settings")
+                    .ghost()
+                    .compact()
+                    .justify_start()
+                    .h(px(32.))
                     .label("Settings")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings_open = !this.settings_open;
@@ -145,11 +160,19 @@ impl Coincide {
             )
             .child(
                 Button::new("new")
+                    .ghost()
+                    .compact()
+                    .justify_start()
+                    .h(px(32.))
                     .label("New conversation")
                     .on_click(cx.listener(|this, _, window, cx| this.new_thread(window, cx))),
             )
             .child(
                 Button::new("projects-toggle")
+                    .ghost()
+                    .compact()
+                    .justify_start()
+                    .h(px(32.))
                     .label(format!("Project: {project_label}"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.project_picker_open = !this.project_picker_open;
@@ -226,6 +249,8 @@ impl Coincide {
                     .gap_2()
                     .child(
                         Button::new("archived")
+                            .ghost()
+                            .compact()
                             .label(if self.show_archived {
                                 "Hide archived"
                             } else {
@@ -238,6 +263,8 @@ impl Coincide {
                     )
                     .child(
                         Button::new("snoozed")
+                            .ghost()
+                            .compact()
                             .label(if self.show_snoozed {
                                 "Hide snoozed"
                             } else {
