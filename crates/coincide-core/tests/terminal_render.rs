@@ -434,3 +434,51 @@ fn scrollback_copy_preserves_wide_combining_wraps_and_concealment() {
     assert_eq!(page["grid"][0], history["grid"][1]);
     assert_eq!(page["viewport"], history["viewport"]);
 }
+
+#[test]
+fn checked_scroll_rejects_stale_output_resize_and_even_noop_requests() {
+    use coincide_core::terminal::TerminalScroll;
+    let mut fixture = Fixture::new(3, 8, &["a\r\nb\r\nc\r\nd", "\r\ne"]);
+    let original = fixture.snapshot(0);
+    let revision = original["revision"].as_u64().unwrap();
+    assert!(
+        !fixture
+            .terminal
+            .scroll_checked(revision, TerminalScroll::Bottom)
+            .unwrap()
+    );
+    assert_eq!(fixture.snapshot(0)["revision"], revision);
+    let output = fixture.next(1);
+    assert!(
+        fixture
+            .terminal
+            .scroll_checked(revision, TerminalScroll::Bottom)
+            .is_err()
+    );
+    assert_eq!(fixture.snapshot(1)["viewport"], output["viewport"]);
+    let current = output["revision"].as_u64().unwrap();
+    fixture.terminal.resize(4, 8).unwrap();
+    let resized = fixture.snapshot(1);
+    assert!(
+        fixture
+            .terminal
+            .scroll_checked(current, TerminalScroll::Top)
+            .is_err()
+    );
+    assert_eq!(fixture.snapshot(1)["revision"], resized["revision"]);
+    let current = resized["revision"].as_u64().unwrap();
+    assert!(
+        fixture
+            .terminal
+            .scroll_checked(current, TerminalScroll::Top)
+            .unwrap()
+    );
+    let history = fixture.snapshot(1);
+    assert!(
+        fixture
+            .terminal
+            .scroll_checked(current, TerminalScroll::Bottom)
+            .is_err()
+    );
+    assert_eq!(fixture.snapshot(1)["lines"], history["lines"]);
+}
