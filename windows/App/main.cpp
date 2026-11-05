@@ -576,7 +576,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         selecting = false;
     }
 
-    void open_thread(const std::string& id) {
+    // A sidebar row can pass an ID stored in visible; refreshing that vector
+    // during navigation must not invalidate the destination still in use.
+    void open_thread(std::string id) {
         if (!writable) return;
         if(id!=selected&&thread_find)thread_find->close(false);
         save_current();
