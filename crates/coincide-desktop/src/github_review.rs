@@ -224,6 +224,7 @@ pub struct GitHubReviewPanel {
     writes: Option<crate::github_write_transport::NativeWrites>,
     write_status: Option<crate::github_write_transport::Status>,
     actions_open: bool,
+    scroll: ScrollHandle,
 }
 impl GitHubReviewPanel {
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -275,6 +276,7 @@ impl GitHubReviewPanel {
             writes: None,
             write_status: None,
             actions_open: false,
+            scroll: ScrollHandle::new(),
         }
     }
     pub fn attach_actions(
@@ -480,6 +482,7 @@ impl Render for GitHubReviewPanel {
                 return div()
                     .id("github-action-surface")
                     .size_full()
+                    .overflow_hidden()
                     .min_h_0()
                     .min_w_0()
                     .flex()
@@ -509,6 +512,9 @@ impl Render for GitHubReviewPanel {
         let mut pane = div()
             .id("github-review-panel")
             .size_full()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
             .flex()
             .flex_col()
             .gap_2()
@@ -570,16 +576,16 @@ impl Render for GitHubReviewPanel {
                 request.binding.repository, request.binding.root
             )));
         }
-        let mut body = div()
-            .id("github-review-scroll")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
+        // Keep navigation and write entry points outside the long metadata
+        // viewport. Its natural-height child supplies the scrollable extent.
+        let mut toolbar = div()
+            .id("github-detail-toolbar")
             .flex()
-            .flex_col()
-            .gap_2();
+            .flex_wrap()
+            .gap_2()
+            .flex_none();
         if self.selected.is_some() {
-            body = body.child(
+            toolbar = toolbar.child(
                 Button::new("github-back")
                     .label("Back to PR list")
                     .disabled(self.busy)
@@ -593,8 +599,51 @@ impl Render for GitHubReviewPanel {
         }
         if let Some(pr) = &self.detail {
             let number = pr["number"].as_u64().unwrap_or(0);
+            let refresh_head = text(pr, "headRefOid");
+            let copied = text(pr, "url");
+            toolbar = toolbar
+                .child(
+                    Button::new("github-copy-url")
+                        .label("Copy PR URL")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+                        }),
+                )
+                .child(
+                    Button::new("github-open-actions")
+                        .label("Comment review / merge…")
+                        .disabled(
+                            self.busy
+                                || self.actions.is_none()
+                                || self.write_status
+                                    != Some(crate::github_write_transport::Status::Ready),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sync_action_scope(cx);
+                            this.actions_open = true;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("github-refresh-detail")
+                        .label("Refresh selected PR")
+                        .disabled(self.busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.load_detail(number, refresh_head.clone(), cx);
+                        })),
+                );
+        }
+        pane = pane.child(toolbar);
+        let mut body = div()
+            .w_full()
+            .min_w_0()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_2();
+        if let Some(pr) = &self.detail {
+            let number = pr["number"].as_u64().unwrap_or(0);
             let full_head = text(pr, "headRefOid");
-            let refresh_head = full_head.clone();
             body = body
                 .child(format!("#{number} {}", text(pr, "title")))
                 .child(format!(
@@ -632,14 +681,7 @@ impl Render for GitHubReviewPanel {
                         .unwrap_or_else(|| "Unknown".into())
                 ));
             }
-            let url = text(pr, "url");
-            let copied = url.clone();
-            body=body.child(div().text_sm().child(url)).child(Button::new("github-copy-url").label("Copy PR URL").on_click(move |_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))))
-                .child(Button::new("github-open-actions").label("Comment review / merge…")
-                    .disabled(self.busy || self.actions.is_none() || self.write_status != Some(crate::github_write_transport::Status::Ready))
-                    .on_click(cx.listener(|this, _, _, cx| { this.sync_action_scope(cx); this.actions_open = true; cx.notify(); })))
-                .child(Button::new("github-refresh-detail").label("Refresh selected PR").disabled(self.busy)
-                    .on_click(cx.listener(move |this, _, _, cx| { this.load_detail(number, refresh_head.clone(), cx); })))
+            body = body.child(div().text_sm().child(text(pr, "url")))
                 .child(div().flex().flex_wrap().gap_2().children(["Approve","Request changes","Check out"].into_iter().enumerate().map(|(index,label)|Button::new(SharedString::from(format!("github-unavailable-{index}"))).label(label).disabled(true))))
                 .child("Approve and Request changes are unavailable because review submission cannot atomically require the current PR head. Checkout and involvement filters are not connected.")
                 .child("Checks");
@@ -744,7 +786,18 @@ impl Render for GitHubReviewPanel {
                 body=body.child("List may be truncated at 30 pull requests. Use a narrower state filter; pagination is unavailable.");
             }
         }
-        pane.child(body).into_any_element()
+        pane.child(
+            div()
+                .id("github-review-scroll")
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_h_0()
+                .min_w_0()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .child(body),
+        )
+        .into_any_element()
     }
 }
 
