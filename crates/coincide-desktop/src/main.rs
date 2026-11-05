@@ -898,23 +898,23 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Change) {
-                    if let Some(v) = this.selected.as_mut() {
-                        let draft = this.composer.read(cx).value().to_string();
-                        if v["draft"].as_str() == Some(draft.as_str()) {
-                            return;
-                        }
-                        v["draft"] = json!(draft);
-                        let id = text(v, "id");
-                        this.pending_drafts.insert(
-                            id.clone(),
-                            PendingDraft {
-                                text: draft,
-                                retry: true,
-                            },
-                        );
-                        this.save_pending_draft(&id);
+                if matches!(event, InputEvent::Change)
+                    && let Some(v) = this.selected.as_mut()
+                {
+                    let draft = this.composer.read(cx).value().to_string();
+                    if v["draft"].as_str() == Some(draft.as_str()) {
+                        return;
                     }
+                    v["draft"] = json!(draft);
+                    let id = text(v, "id");
+                    this.pending_drafts.insert(
+                        id.clone(),
+                        PendingDraft {
+                            text: draft,
+                            retry: true,
+                        },
+                    );
+                    this.save_pending_draft(&id);
                 }
             }),
         ];
@@ -1503,12 +1503,12 @@ impl Coincide {
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
                 let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
-                    if engine.active_thread() != Some(id) {
-                        if let Err(error) = engine.set_active_thread(Some(id.into())) {
-                            let _ = engine.set_active_thread(None);
-                            self.status =
-                                format!("Selected conversation authority unavailable: {error}");
-                        }
+                    if engine.active_thread() != Some(id)
+                        && let Err(error) = engine.set_active_thread(Some(id.into()))
+                    {
+                        let _ = engine.set_active_thread(None);
+                        self.status =
+                            format!("Selected conversation authority unavailable: {error}");
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
@@ -2469,8 +2469,7 @@ impl Coincide {
                 .min_h_0()
                 .gap_2()
                 .overflow_y_scroll();
-            let actions;
-            if request["method"] == "item/tool/requestUserInput" {
+            let actions = if request["method"] == "item/tool/requestUserInput" {
                 body = body.child(div().font_semibold().child("The agent needs your answer"));
                 for (index, question) in request["params"]["questions"]
                     .as_array()
@@ -2538,11 +2537,11 @@ impl Coincide {
                     }
                 }
                 let id = request_id.clone();
-                actions = div().flex_shrink_0().child(
+                div().flex_shrink_0().child(
                     Button::new(SharedString::from(format!("submit-{request_id}")))
                         .label("Submit answers")
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
-                );
+                )
             } else {
                 body = body.child(div().font_semibold().child("Approval required"));
                 let mut details = request["params"].clone();
@@ -2579,8 +2578,8 @@ impl Coincide {
                         })),
                     );
                 }
-                actions = div().flex_shrink_0().child(buttons);
-            }
+                div().flex_shrink_0().child(buttons)
+            };
             // Only the request details scroll. Decisions stay in a separate
             // footer, reachable even when questions/options exceed the pane.
             cards.push(card.child(body).child(actions));
@@ -2661,10 +2660,10 @@ impl Coincide {
         }
         if !self.image_previews.contains_key(&key) {
             if self.image_validations_running >= 4 {
-                if let Some(index) = row {
-                    if let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) {
-                        self.image_waiting_rows.insert((thread, index));
-                    }
+                if let Some(index) = row
+                    && let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id"))
+                {
+                    self.image_waiting_rows.insert((thread, index));
                 }
                 return placeholder("Loading image…");
             }
@@ -2739,12 +2738,12 @@ impl Coincide {
             .image_previews
             .get_mut(&key)
             .expect("preview was inserted");
-        if let Some(index) = row {
-            if let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) {
-                let target = (thread, index);
-                if !entry.rows.contains(&target) {
-                    entry.rows.push(target);
-                }
+        if let Some(index) = row
+            && let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id"))
+        {
+            let target = (thread, index);
+            if !entry.rows.contains(&target) {
+                entry.rows.push(target);
             }
         }
         let path = match &entry.state {
@@ -3915,14 +3914,14 @@ impl Render for Coincide {
                                                 )
                                                 .child(Button::new("stop").label("Stop").on_click(
                                                     cx.listener(|this, _, _, cx| {
-                                                        if let Some(v) = this.selected.as_ref() {
-                                                            if let Err(e) = call(
+                                                        if let Some(v) = this.selected.as_ref()
+                                                            && let Err(e) = call(
                                                                 &this.engine,
                                                                 "agent.stop",
                                                                 json!({"threadId":v["id"]}),
-                                                            ) {
-                                                                this.status = e.to_string();
-                                                            }
+                                                            )
+                                                        {
+                                                            this.status = e.to_string();
                                                         }
                                                         cx.notify();
                                                     }),

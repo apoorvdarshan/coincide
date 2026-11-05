@@ -86,7 +86,11 @@ pub struct Microphone {
 }
 impl Microphone {
     pub fn new() -> Self {
-        Self::with_backend(Box::new(platform::Native::default()))
+        #[cfg(all(target_os = "macos", feature = "native-microphone"))]
+        let backend = platform::Native::default();
+        #[cfg(not(all(target_os = "macos", feature = "native-microphone")))]
+        let backend = platform::Native;
+        Self::with_backend(Box::new(backend))
     }
     fn with_backend(backend: Box<dyn CaptureBackend>) -> Self {
         Self {
@@ -187,47 +191,43 @@ impl Microphone {
     }
     /// Parent polls native events; Audio never starts inference itself.
     pub fn poll(&mut self) -> Option<CaptureEvent> {
-        if let Some(permission) = self.backend.poll_permission() {
-            if self.permission_generation.take() == Some(self.generation) {
-                self.permission = permission;
-                self.events
-                    .push_back(CaptureEvent::PermissionChanged(permission));
-            }
+        if let Some(permission) = self.backend.poll_permission()
+            && self.permission_generation.take() == Some(self.generation)
+        {
+            self.permission = permission;
+            self.events
+                .push_back(CaptureEvent::PermissionChanged(permission));
         }
-        if let Some(event) = self.backend.poll() {
-            if let Some(session) = self.session.take() {
-                if session.generation == self.generation
-                    && self.binding.as_ref() == Some(&session.binding)
-                {
-                    match event {
-                        BackendEvent::Ready(samples, limited) => {
-                            let result = if samples.is_empty() {
-                                Err(CaptureError::NothingRecorded)
-                            } else if samples.len() > session.maximum_samples {
-                                Err(CaptureError::Overflow)
-                            } else {
-                                encode_wav(&samples, SAMPLE_RATE as u32)
-                                    .map_err(|_| CaptureError::Conversion)
-                            };
-                            match result {
-                                Ok(wav) => {
-                                    self.completed = Some(session.id);
-                                    self.events.push_back(CaptureEvent::Audio(CapturedAudio {
-                                        session: session.id,
-                                        generation: session.generation,
-                                        binding: session.binding,
-                                        wav,
-                                        limit_reached: limited,
-                                    }));
-                                }
-                                Err(error) => self.events.push_back(CaptureEvent::Failed(error)),
-                            }
+        if let Some(event) = self.backend.poll()
+            && let Some(session) = self.session.take()
+            && session.generation == self.generation
+            && self.binding.as_ref() == Some(&session.binding)
+        {
+            match event {
+                BackendEvent::Ready(samples, limited) => {
+                    let result = if samples.is_empty() {
+                        Err(CaptureError::NothingRecorded)
+                    } else if samples.len() > session.maximum_samples {
+                        Err(CaptureError::Overflow)
+                    } else {
+                        encode_wav(&samples, SAMPLE_RATE as u32)
+                            .map_err(|_| CaptureError::Conversion)
+                    };
+                    match result {
+                        Ok(wav) => {
+                            self.completed = Some(session.id);
+                            self.events.push_back(CaptureEvent::Audio(CapturedAudio {
+                                session: session.id,
+                                generation: session.generation,
+                                binding: session.binding,
+                                wav,
+                                limit_reached: limited,
+                            }));
                         }
-                        BackendEvent::Failed(error) => {
-                            self.events.push_back(CaptureEvent::Failed(error))
-                        }
+                        Err(error) => self.events.push_back(CaptureEvent::Failed(error)),
                     }
                 }
+                BackendEvent::Failed(error) => self.events.push_back(CaptureEvent::Failed(error)),
             }
         }
         self.events.pop_front()

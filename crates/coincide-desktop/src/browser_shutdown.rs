@@ -368,8 +368,10 @@ mod tests {
     }
     #[test]
     fn callback_ack_is_explicit_and_idempotent_but_native_release_still_blocks() {
-        let mut owner = Shutdown::default();
-        owner.ever_native = true;
+        let owner = Shutdown {
+            ever_native: true,
+            ..Shutdown::default()
+        };
         let ack = owner.callbacks.begin();
         owner.close();
         assert!(!owner.status(0, 1, 1).owners_drained());

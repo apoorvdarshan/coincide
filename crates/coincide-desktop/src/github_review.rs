@@ -678,9 +678,9 @@ impl Render for GitHubReviewPanel {
                 pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger")
                     .on_click(cx.listener(|this, _, _, cx| {
                         if this.workers.closed() { return; }
-                        if let Some(writes) = &this.writes {
-                            if !writes.initialize_from_user_action() { this.notice = "Ledger setup is busy or no longer available. No action was queued.".into(); }
-                        }
+                        if let Some(writes) = &this.writes
+                            && !writes.initialize_from_user_action()
+                        { this.notice = "Ledger setup is busy or no longer available. No action was queued.".into(); }
                         cx.notify();
                     })));
             }
