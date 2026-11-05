@@ -386,7 +386,7 @@ try {
             return $null
         }
         $observed=@{control=$null;more=$null;scrollIssued=$false}
-        $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests')
+        $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests','OpenTerminal')
         Wait-Until {
             $observed.control=Find-Invokable $script:window $id
             $observed.more=$null
