@@ -89,15 +89,37 @@ impl Write {
         Ok(params)
     }
 }
+#[derive(Clone)]
+struct Conversation {
+    bot_id: String,
+    baseline: String,
+}
+impl Conversation {
+    fn from_saved(bound: &Bound) -> Result<Self> {
+        let bot_id = bound.bot["id"]
+            .as_str()
+            .context("Save this bot before creating a conversation")?;
+        uuid::Uuid::parse_str(bot_id)?;
+        Ok(Self {
+            bot_id: bot_id.into(),
+            baseline: bound.baseline.clone(),
+        })
+    }
+    fn params(&self) -> Value {
+        json!({"botId":self.bot_id,"baseline":self.baseline})
+    }
+}
 enum Action {
     List,
     Read(String),
     Write(Write),
+    Conversation(Conversation),
 }
 enum Outcome {
     List(Value),
     Read(Bound),
     Saved(Write, Bound),
+    ConversationCreated(String),
 }
 fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Result<Outcome> {
     match action {
@@ -117,6 +139,26 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
                 "Bot read returned another bot"
             );
             Ok(Outcome::Read(bound))
+        }
+        Action::Conversation(request) => {
+            let reply = api("bots.conversations.create", request.params())?;
+            ensure!(
+                reply["created"] == true
+                    && reply["executionStarted"] == false
+                    && reply["instructionsScope"] == "bot-local",
+                "Conversation creation outcome unknown; refresh conversations before retrying"
+            );
+            ensure!(
+                reply["botId"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&request.bot_id)),
+                "Conversation was created for another bot; refresh before retrying"
+            );
+            let thread = reply["threadId"]
+                .as_str()
+                .context("Created conversation has no thread ID; refresh before retrying")?;
+            uuid::Uuid::parse_str(thread)?;
+            Ok(Outcome::ConversationCreated(thread.into()))
         }
         Action::Write(write) => {
             let method = if write.id.is_some() {
@@ -184,6 +226,7 @@ impl Editor {
 }
 pub enum BotSettingsEvent {
     Saved { bot_id: String },
+    ConversationCreated { thread_id: String },
 }
 pub struct BotSettingsPanel {
     engine: SharedEngine,
@@ -195,6 +238,7 @@ pub struct BotSettingsPanel {
     busy: bool,
     pending_key: Option<String>,
     pending_write: bool,
+    pending_conversation: bool,
     notice: String,
     tx: mpsc::Sender<(u64, Result<Outcome>)>,
     rx: mpsc::Receiver<(u64, Result<Outcome>)>,
@@ -227,6 +271,7 @@ impl BotSettingsPanel {
             busy: false,
             pending_key: None,
             pending_write: false,
+            pending_conversation: false,
             notice: String::new(),
             tx,
             rx,
@@ -241,12 +286,16 @@ impl BotSettingsPanel {
         }
         self.busy = true;
         self.pending_write = matches!(&action, Action::Write(_));
+        self.pending_conversation = matches!(&action, Action::Conversation(_));
         self.pending_key = match &action {
             Action::Write(w) => Some(w.key.clone()),
             Action::Read(id) => Some(id.clone()),
             Action::List => None,
+            Action::Conversation(request) => Some(request.bot_id.clone()),
         };
-        self.notice = if self.pending_write {
+        self.notice = if self.pending_conversation {
+            "Creating an empty conversation from saved settings… Editor drafts are retained; no message is sent."
+        } else if self.pending_write {
             "Saving bot… You can keep editing; edits made now will remain unsaved."
         } else {
             "Loading saved bot data… Drafts are retained."
@@ -293,7 +342,7 @@ impl BotSettingsPanel {
             )
         });
         self.notice =
-            "New bot draft. Save creates one stable server ID. Execution is unavailable.".into();
+            "New bot draft. Save creates one stable server ID. Creating a conversation is a separate action.".into();
         cx.notify();
     }
     fn save(&mut self, cx: &mut Context<Self>) {
@@ -320,6 +369,26 @@ impl BotSettingsPanel {
         };
         self.start(Action::Write(write), cx);
     }
+    fn new_conversation(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let Some(editor) = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.editors.get(id))
+            .filter(|editor| !editor.blocked)
+        else {
+            return;
+        };
+        match Conversation::from_saved(&editor.bound) {
+            Ok(request) => self.start(Action::Conversation(request), cx),
+            Err(error) => {
+                self.notice = error.to_string();
+                cx.notify();
+            }
+        }
+    }
     fn reload(&mut self, cx: &mut Context<Self>) {
         if self.busy {
             return;
@@ -339,6 +408,7 @@ impl BotSettingsPanel {
         self.busy = false;
         let key = self.pending_key.take();
         let was_write = std::mem::take(&mut self.pending_write);
+        let was_conversation = std::mem::take(&mut self.pending_conversation);
         match result {
             Ok(Outcome::List(reply)) => {
                 self.baseline = reply["baseline"].as_str().map(str::to_owned);
@@ -364,6 +434,12 @@ impl BotSettingsPanel {
             }
             Ok(Outcome::Read(_)) => {
                 self.notice = "Selection changed; stale read discarded. Drafts retained.".into();
+            }
+            Ok(Outcome::ConversationCreated(thread_id)) => {
+                // Durable creation is independent of selection generation. Keep all
+                // input entities/baselines untouched; parent opens/focuses this ID.
+                self.notice = "Created an empty conversation from saved bot settings. No message was sent. Editor drafts are retained; later bot edits apply to later new conversations.".into();
+                cx.emit(BotSettingsEvent::ConversationCreated { thread_id });
             }
             Ok(Outcome::Saved(write, bound)) => {
                 let id = bound.bot["id"].as_str().unwrap_or_default().to_owned();
@@ -396,16 +472,22 @@ impl BotSettingsPanel {
                 } else {
                     self.bots.push(bound.bot);
                 }
-                self.notice="Saved bot settings. Any edits typed during Save remain in the draft. Bot execution is unavailable.".into();
+                self.notice="Saved bot settings. Any edits typed during Save remain in the draft. Existing conversation instruction snapshots stay unchanged.".into();
                 cx.emit(BotSettingsEvent::Saved { bot_id: id });
             }
             Err(error) => {
                 if was_write && let Some(editor) = key.and_then(|key| self.editors.get_mut(&key)) {
                     editor.blocked = true;
                 }
-                self.notice = format!(
-                    "{error}. Draft retained. Reload the saved baseline before retrying; after uncertain creation, refresh the list and check for a created bot first."
-                );
+                self.notice = if was_conversation {
+                    format!(
+                        "{error}. Bot editor drafts retained. No fallback or automatic retry. Reload saved baseline for conflicts; refresh conversations before retrying an uncertain creation."
+                    )
+                } else {
+                    format!(
+                        "{error}. Draft retained. Reload the saved baseline before retrying; after uncertain creation, refresh the list and check for a created bot first."
+                    )
+                };
             }
         }
         cx.notify();
@@ -415,7 +497,7 @@ impl Render for BotSettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut pane=div().id("bot-settings-panel").size_full().flex().flex_col().gap_2().p_3()
             .child("Bots")
-            .child("Name and instructions are saved in Coincide Rust. Bot execution is unavailable; these edits do not activate a provider or change global instructions.")
+            .child("Save edits this bot locally. New conversation uses saved settings and never sends a message. Global instructions and existing conversation snapshots stay unchanged.")
             .child(div().flex().gap_2()
                 .child(Button::new("bots-refresh").label("Refresh list").disabled(self.busy).on_click(cx.listener(|this,_,_,cx|this.start(Action::List,cx))))
                 .child(Button::new("bots-new").label("New bot").disabled(self.busy||self.baseline.is_none()).on_click(cx.listener(|this,_,window,cx|this.create(window,cx)))))
@@ -472,7 +554,16 @@ impl Render for BotSettingsPanel {
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     ),
             );
+            pane = pane.child(
+                Button::new("bots-new-conversation")
+                    .label("New conversation (saved settings)")
+                    .disabled(
+                        self.busy || editor.blocked || editor.bound.bot["id"].as_str().is_none(),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.new_conversation(cx))),
+            );
             body = body
+                .child("New conversations use the saved settings shown below. Unsaved editor text stays here until you Save it.")
                 .child(if dirty {
                     "Unsaved draft"
                 } else {
@@ -664,6 +755,49 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn conversation_creation_uses_saved_baseline_only_and_never_sends_or_saves() {
+        let bound = Bound::parse(reply()).unwrap();
+        let draft = Fields {
+            name: "Unsaved name".into(),
+            persona: "Unsaved instructions".into(),
+        };
+        let before = draft.clone();
+        let request = Conversation::from_saved(&bound).unwrap();
+        let mut calls = Vec::new();
+        let outcome=run(&mut|method,params|{
+            calls.push((method.to_owned(),params));
+            Ok(json!({"created":true,"executionStarted":false,"instructionsScope":"bot-local","botId":ID,"threadId":uuid::Uuid::nil().to_string()}))
+        },Action::Conversation(request)).unwrap();
+        assert!(matches!(outcome, Outcome::ConversationCreated(_)));
+        assert_eq!(
+            calls,
+            vec![(
+                "bots.conversations.create".into(),
+                json!({"botId":ID,"baseline":"a".repeat(64)})
+            )]
+        );
+        assert_eq!(draft, before);
+        assert_eq!(bound.bot["name"], "Saved");
+    }
+    #[test]
+    fn unsupported_conversation_creation_errors_without_fallback_or_retry() {
+        let bound = Bound::parse(reply()).unwrap();
+        let mut calls = 0;
+        let error = run(
+            &mut |method, _| {
+                assert_eq!(method, "bots.conversations.create");
+                calls += 1;
+                anyhow::bail!("Unsupported provider/account/mode")
+            },
+            Action::Conversation(Conversation::from_saved(&bound).unwrap()),
+        );
+        assert!(error.is_err());
+        assert_eq!(calls, 1);
+        assert_eq!(bound.bot["persona"], "Instructions");
+        assert!(run(&mut|_,_|Ok(json!({"created":true,"executionStarted":true,"instructionsScope":"bot-local","botId":ID,"threadId":uuid::Uuid::nil().to_string()})),
+            Action::Conversation(Conversation::from_saved(&bound).unwrap())).is_err());
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -787,5 +921,78 @@ mod fixture_tests {
         assert_eq!(store.document("bots.json").unwrap().unwrap(), expected);
         assert_eq!(store.original("bots.json").unwrap().unwrap(), original);
         assert_eq!(fs::read(source.join("bots.json")).unwrap(), original);
+    }
+    #[test]
+    fn real_api_new_conversation_preserves_drafts_and_does_not_execute() {
+        let fixture = Fixture::new();
+        let mut store = Store::open(&fixture.0.join("rust/state.sqlite")).unwrap();
+        let bot_id = uuid::Uuid::new_v4().to_string();
+        let persona = "  saved instruction snapshot\n";
+        let bots = json!({"addedStarters":false,"starterLineup":1,"bots":[{"id":bot_id,"name":"Saved bot","persona":persona,
+            "selection":{"provider":"codex","modelID":"default"},"accessMode":"approval","interactionMode":"build","folder":fixture.0.to_str().unwrap()}]});
+        store.save_document("bots.json", &bots).unwrap();
+        let mut existing = store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        existing["draft"] = json!("Keep this unsent chat draft");
+        store.save(&existing).unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut api = |method: &str, params| call(&engine, method, params);
+        let Outcome::Read(bound) = run(&mut api, Action::Read(bot_id.clone())).unwrap() else {
+            panic!("read")
+        };
+        let editor_draft = Fields {
+            name: "Unsaved editor name".into(),
+            persona: "Keep unsaved editor text".into(),
+        };
+        let before = editor_draft.clone();
+        let Outcome::ConversationCreated(thread_id) = run(
+            &mut api,
+            Action::Conversation(Conversation::from_saved(&bound).unwrap()),
+        )
+        .unwrap() else {
+            panic!("create")
+        };
+        assert_eq!(editor_draft, before);
+        let created = api("threads.read", json!({"threadId":thread_id})).unwrap();
+        assert_eq!(created["botID"], bot_id);
+        assert_eq!(created["draft"], "");
+        assert!(created["items"].as_array().unwrap().is_empty());
+        assert!(created["sessions"].as_object().unwrap().is_empty());
+        assert_eq!(created["rustBotContext"]["persona"], persona);
+        assert!(
+            api("app.status", json!({})).unwrap()["running"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .thread(existing["id"].as_str().unwrap())
+                .unwrap(),
+            existing
+        );
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .document("bots.json")
+                .unwrap()
+                .unwrap(),
+            bots
+        );
+        api(
+            "bots.patch",
+            json!({"botId":bot_id,"baseline":bound.baseline,"patch":{"persona":"Edited later"}}),
+        )
+        .unwrap();
+        assert_eq!(
+            api("threads.read", json!({"threadId":thread_id})).unwrap()["rustBotContext"],
+            created["rustBotContext"]
+        );
     }
 }
