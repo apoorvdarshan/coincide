@@ -197,6 +197,78 @@ fn effort_choices(
     }
     Ok(choices)
 }
+fn exact_astra_model(draft: &SelectionDraft) -> bool {
+    draft.provider == "codex"
+        && draft.use_custom
+        && matches!(draft.custom.as_str(), "gpt-6-astra" | "openai.gpt-6-astra")
+}
+fn effort_default_label(
+    draft: &SelectionDraft,
+    thread: &Value,
+    provider: Option<&Value>,
+) -> String {
+    if !exact_astra_model(draft) {
+        return "Provider default".into();
+    }
+    let proven = provider.is_some_and(|provider| {
+        provider["provider"] == "codex"
+            && provider["effort"]["effectiveDefault"] == "medium"
+            && provider["effort"]["effectiveDefaultProvenance"] == "app_policy+provider_model_list"
+            && provider["effort"]["appDefaultRequired"] == true
+            && provider["effort"]["appDefaultAvailable"] == true
+            && effort_choices(draft, thread, Some(provider))
+                .is_ok_and(|choices| choices.iter().any(|choice| choice == "medium"))
+    });
+    if proven {
+        "Model/app default: Medium".into()
+    } else {
+        "Model/app default — refresh catalog required".into()
+    }
+}
+fn automatic_default_replacement_context(
+    draft: &SelectionDraft,
+    thread: &Value,
+    capabilities: &Value,
+    running: bool,
+) -> bool {
+    !running
+        && capabilities["provenance"] == "static_runtime_contract"
+        && capabilities["providers"].is_array()
+        && capabilities["locked"] == true
+        && capabilities["canReplaceUnprovedAutomaticDefault"] == true
+        && thread["rustBotContext"].is_null()
+        && thread["botID"].is_null()
+        && thread["selection"]["provider"] == "codex"
+        && matches!(
+            thread["selection"]["modelID"].as_str(),
+            Some("gpt-6-astra" | "openai.gpt-6-astra")
+        )
+        && default_account_id(&thread["selection"]["accountID"]) == Some("default")
+        && thread["selection"]["effort"].is_null()
+        && thread["selection"]["speed"].is_null()
+        && draft.original == thread["selection"]
+        && draft.access == thread["accessMode"]
+        && draft.interaction == thread["interactionMode"]
+        && draft.account == draft.original["accountID"]
+        && draft.proposed_effort == draft.original["effort"]
+        && draft.proposed_speed == draft.original["speed"]
+        && draft.proposed_access == mode_or_default(&draft.access, "approval")
+        && draft.proposed_interaction == mode_or_default(&draft.interaction, "build")
+}
+fn automatic_default_replacement_target(
+    draft: &SelectionDraft,
+    thread: &Value,
+    capabilities: &Value,
+    running: bool,
+) -> bool {
+    automatic_default_replacement_context(draft, thread, capabilities, running)
+        && (draft.provider != text(&thread["selection"], "provider")
+            || (if draft.use_custom {
+                draft.custom.trim()
+            } else {
+                "default"
+            }) != thread["selection"]["modelID"].as_str().unwrap_or("default"))
+}
 fn effort_problem(
     draft: &SelectionDraft,
     thread: &Value,
@@ -913,6 +985,13 @@ impl Coincide {
                 self.selected = Some(thread);
                 self.selection_ui.context = None;
                 self.status="Saved effort explicitly cleared. Other selection fields, message draft and references were retained. No message was sent.".into();
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|thread| exact_astra_model(&SelectionDraft::from_thread(thread)))
+                {
+                    self.status.push_str(" Model/app default applies only with fresh catalog proof; refresh capabilities before sending.");
+                }
             }
             Err(error) => self.status = format!("Saved effort was not cleared: {error}"),
         }
@@ -972,6 +1051,13 @@ impl Coincide {
                 self.selected = Some(thread);
                 self.selection_ui.context = None;
                 self.status=match repair {SpeedRepair::Speed=>"Saved speed explicitly cleared to Standard. Other selection fields, message draft and references were retained. No message was sent.",SpeedRepair::Both=>"Saved effort and speed explicitly cleared. Other selection fields, message draft and references were retained. No message was sent."}.into();
+                if matches!(repair, SpeedRepair::Both)
+                    && self.selected.as_ref().is_some_and(|thread| {
+                        exact_astra_model(&SelectionDraft::from_thread(thread))
+                    })
+                {
+                    self.status.push_str(" Model/app default applies only with fresh catalog proof; refresh capabilities before sending.");
+                }
             }
             Err(error) => self.status = format!("Saved options were not cleared: {error}"),
         }
@@ -997,7 +1083,14 @@ impl Coincide {
                 "agent.selection.capabilities",
                 json!({"threadId":id}),
             )?;
-            if let Some(reason) = capability_lock(&capabilities, self.running.contains(&id)) {
+            if let Some(reason) = capability_lock(&capabilities, self.running.contains(&id))
+                && !automatic_default_replacement_target(
+                    draft,
+                    &current,
+                    &capabilities,
+                    self.running.contains(&id),
+                )
+            {
                 anyhow::bail!(reason);
             }
             let provider = capabilities["providers"]
@@ -1041,17 +1134,23 @@ impl Coincide {
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
+        let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
+            return;
+        };
         if capability_lock(
             &self.selection_ui.capabilities,
             self.running.contains(&text(thread, "id")),
         )
         .is_some()
+            && !automatic_default_replacement_context(
+                draft,
+                thread,
+                &self.selection_ui.capabilities,
+                self.running.contains(&text(thread, "id")),
+            )
         {
             return;
         }
-        let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
-            return;
-        };
         let Some(provider) = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|providers| providers.iter().find(|p| p["provider"] == draft.provider))
@@ -1067,11 +1166,33 @@ impl Coincide {
         let account_id = default_account_id(&draft.account)
             .unwrap_or("default")
             .to_owned();
-        match call(
-            &self.engine,
-            "agent.models.refresh",
-            json!({"provider":provider,"accountId":draft.account}),
-        ) {
+        let response = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let id = text(thread, "id");
+            let current = engine.store.thread(&id)?;
+            draft.params(&current)?;
+            let caps = selection_response(
+                &mut engine,
+                "agent.selection.capabilities",
+                json!({"threadId":id}),
+            )?;
+            if let Some(reason) = capability_lock(&caps, self.running.contains(&id))
+                && !automatic_default_replacement_context(
+                    draft,
+                    &current,
+                    &caps,
+                    self.running.contains(&id),
+                )
+            {
+                anyhow::bail!(reason);
+            }
+            selection_response(
+                &mut engine,
+                "agent.models.refresh",
+                json!({"provider":provider,"accountId":draft.account}),
+            )
+        })();
+        match response {
             Ok(value) => {
                 let request = CatalogRequest {
                     request_id: text(&value, "requestId"),
@@ -1084,6 +1205,10 @@ impl Coincide {
                     self.selection_ui.catalog = value;
                     self.selection_ui.catalog_request = Some(request);
                     self.selection_ui.catalog_last_poll = None;
+                    // Starting a new job revokes the prior private proof. Do not
+                    // keep displaying its effective default as currently proved.
+                    self.selection_ui.capabilities = Value::Null;
+                    self.selection_ui.context = None;
                 }
             }
             Err(error) => {
@@ -1143,17 +1268,23 @@ impl Coincide {
         else {
             return;
         };
+        let Some(draft) = self.selection_ui.drafts.get(thread_id) else {
+            return;
+        };
         if capability_lock(
             &self.selection_ui.capabilities,
             self.running.iter().any(|id| id == thread_id),
         )
         .is_some()
+            && !automatic_default_replacement_context(
+                draft,
+                thread,
+                &self.selection_ui.capabilities,
+                self.running.iter().any(|id| id == thread_id),
+            )
         {
             return;
         }
-        let Some(draft) = self.selection_ui.drafts.get(thread_id) else {
-            return;
-        };
         let catalog = &self.selection_ui.catalog;
         if draft.original != thread["selection"]
             || catalog["state"] != "ready"
@@ -1192,6 +1323,20 @@ impl Coincide {
             || thread["accessMode"] != draft.access
             || thread["interactionMode"] != draft.interaction;
         let disabled = lock.is_some() || conflict;
+        let replacement_context = automatic_default_replacement_context(
+            draft,
+            thread,
+            &self.selection_ui.capabilities,
+            self.running.contains(&text(thread, "id")),
+        );
+        let model_disabled = disabled && !replacement_context;
+        let apply_disabled = disabled
+            && !automatic_default_replacement_target(
+                draft,
+                thread,
+                &self.selection_ui.capabilities,
+                self.running.contains(&text(thread, "id")),
+            );
         let saved = &thread["selection"];
         let model = if saved["modelID"] == "default" {
             "Provider default".to_owned()
@@ -1263,7 +1408,7 @@ impl Coincide {
                 Button::new(SharedString::from(format!("selection-provider-{id}")))
                     .label(text(provider, "displayName"))
                     .when(selected, |button| button.primary())
-                    .disabled(disabled)
+                    .disabled(model_disabled)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.edit_selection(|draft| draft.provider = id.clone(), cx)
                     })),
@@ -1342,7 +1487,7 @@ impl Coincide {
         });
         let draft_effort_problem = effort_problem(draft, thread, provider);
         let proposed_effort_label = if draft.proposed_effort.is_null() {
-            "Provider default".to_owned()
+            effort_default_label(draft, thread, provider)
         } else {
             draft
                 .proposed_effort
@@ -1363,7 +1508,11 @@ impl Coincide {
                 let default_selection = source_selection.clone();
                 let mut row = div().flex().flex_wrap().gap_2().child(
                     Button::new("selection-effort-default")
-                        .label("Provider default effort (clear explicit choice)")
+                        .label(if exact_astra_model(draft) {
+                            "Model/app default effort (clear explicit choice)"
+                        } else {
+                            "Provider default effort (clear explicit choice)"
+                        })
                         .when(draft.proposed_effort.is_null(), |button| button.primary())
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1390,14 +1539,17 @@ impl Coincide {
                 if let Some(default) =
                     provider.and_then(|p| p["effort"]["reportedDefault"].as_str())
                 {
-                    effort_panel = effort_panel.child(div().text_xs().child(format!(
-                        "Provider-reported default: {default}. No effort is selected automatically."
-                    )));
+                    effort_panel = effort_panel.child(div().text_xs().child(if exact_astra_model(draft) {
+                        format!("Provider-reported default: {default}. Model/app default is shown separately; stored null is retained.")
+                    } else {format!("Provider-reported default: {default}. No effort is selected automatically.")}));
                 }
             }
             Err(error) => {
                 effort_panel = effort_panel.child(div().text_xs().child(error.to_string()))
             }
+        }
+        if exact_astra_model(draft) {
+            effort_panel=effort_panel.child(div().text_xs().child("Clearing explicit effort selects this model's app default. It requires a fresh catalog proof; Send remains unavailable when that default cannot be proved."));
         }
         if self.selection_ui.capabilities["repairClearAvailable"] == true {
             let repair_problem = repair_clear_params(
@@ -1558,15 +1710,15 @@ impl Coincide {
             .child(effort_panel)
             .child(speed_panel)
             .child(div().flex().flex_wrap().items_center().gap_2()
-                .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(disabled || !default_supported)
+                .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
-                .child(Button::new("selection-model-custom").label("Custom model ID").when(draft.use_custom,|button|button.primary()).disabled(disabled || provider.is_none_or(|p|p["customModel"]["supported"] != true))
+                .child(Button::new("selection-model-custom").label("Custom model ID").when(draft.use_custom,|button|button.primary()).disabled(model_disabled || provider.is_none_or(|p|p["customModel"]["supported"] != true))
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=true,cx))))
                 .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
             .child(div().text_xs().child(if draft.use_custom { "Custom IDs are unverified unless listed in the provider-reported catalog below. Model access and authentication are not verified." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some() || draft_speed_problem.is_some())
+                .child(Button::new("selection-apply").label("Apply selection").disabled(apply_disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some() || draft_speed_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -1584,6 +1736,9 @@ impl Coincide {
         }
         if let Some(reason) = draft_speed_problem {
             pane = pane.child(div().text_sm().child(reason));
+        }
+        if replacement_context {
+            pane=pane.child(div().text_sm().child("The current model's app default is unproved. Refresh its catalog, or explicitly choose another provider/model and Apply. Modes, effort, speed and Send remain locked; the replacement is validated normally."));
         }
         if let Some(reason) = lock {
             pane = pane.child(div().text_sm().child(reason));
@@ -1610,7 +1765,7 @@ impl Coincide {
             Button::new("selection-model-refresh")
                 .label("Refresh provider model catalog")
                 .disabled(
-                    disabled
+                    model_disabled
                         || !discovery_supported
                         || self.selection_ui.catalog_request.is_some()
                         || provider.is_some_and(|provider| {
@@ -1659,7 +1814,7 @@ impl Coincide {
                     models = models.child(
                         Button::new(SharedString::from(format!("selection-catalog-model-{id}")))
                             .label(format!("{name} · {id}"))
-                            .disabled(disabled)
+                            .disabled(model_disabled)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.select_catalog_model(
                                     &target,
@@ -2499,5 +2654,188 @@ mod tests {
         let mut pending = draft.clone();
         pending.proposed_speed = Value::Null;
         assert!(repair_clear_params(&pending, &thread, &effort_caps, false).is_err());
+    }
+    fn astra_thread() -> Value {
+        let mut thread = command_thread("exact draft");
+        thread["selection"]["modelID"] = json!("gpt-6-astra");
+        thread
+    }
+    fn astra_provider() -> Value {
+        json!({"provider":"codex","effort":{"supported":true,"requiresExplicitModel":true,"provenance":"provider_model_list","choices":["low","medium","high"],"reportedDefault":"low","effectiveDefault":"medium","effectiveDefaultProvenance":"app_policy+provider_model_list","appDefaultRequired":true,"appDefaultAvailable":true}})
+    }
+    fn replacement_caps() -> Value {
+        json!({"provenance":"static_runtime_contract","locked":true,"canReplaceUnprovedAutomaticDefault":true,"providers":[modes("codex",true),modes("claude",false)]})
+    }
+    #[::core::prelude::v1::test]
+    fn astra_default_label_needs_exact_current_proof_and_keeps_reported_default_separate() {
+        let thread = astra_thread();
+        let draft = SelectionDraft::from_thread(&thread);
+        let provider = astra_provider();
+        assert_eq!(
+            effort_default_label(&draft, &thread, Some(&provider)),
+            "Model/app default: Medium"
+        );
+        assert_eq!(provider["effort"]["reportedDefault"], "low");
+        assert!(draft.proposed_effort.is_null());
+        assert!(draft.params(&thread).unwrap()["effort"].is_null());
+        for field in [
+            "effectiveDefault",
+            "effectiveDefaultProvenance",
+            "appDefaultRequired",
+            "appDefaultAvailable",
+            "supported",
+            "provenance",
+        ] {
+            let mut bad = provider.clone();
+            bad["effort"].as_object_mut().unwrap().remove(field);
+            let label = effort_default_label(&draft, &thread, Some(&bad));
+            assert!(label.contains("refresh catalog required"));
+            assert!(!label.contains("Medium"));
+            assert!(!label.contains("Provider default"));
+        }
+        let mut bad = provider.clone();
+        bad["effort"]["choices"] = json!(["low", "high"]);
+        assert!(
+            effort_default_label(&draft, &thread, Some(&bad)).contains("refresh catalog required")
+        );
+        let mut stale = thread.clone();
+        stale["selection"]["speed"] = json!("priority");
+        assert!(
+            effort_default_label(&draft, &stale, Some(&provider))
+                .contains("refresh catalog required")
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn non_astra_and_explicit_effort_keep_existing_semantics_and_raw_values() {
+        let thread = command_thread("draft");
+        let draft = SelectionDraft::from_thread(&thread);
+        assert_eq!(
+            effort_default_label(&draft, &thread, None),
+            "Provider default"
+        );
+        for id in ["gpt-6-astra-v2", "GPT-6-Astra", "default", "gpt-6-sol"] {
+            let mut thread = thread.clone();
+            thread["selection"]["modelID"] = json!(id);
+            let draft = SelectionDraft::from_thread(&thread);
+            assert_eq!(
+                effort_default_label(&draft, &thread, Some(&astra_provider())),
+                "Provider default"
+            );
+        }
+        let mut thread = astra_thread();
+        thread["selection"]["modelID"] = json!("openai.gpt-6-astra");
+        thread["selection"]["effort"] = json!("high");
+        let draft = SelectionDraft::from_thread(&thread);
+        assert!(exact_astra_model(&draft));
+        assert_eq!(draft.params(&thread).unwrap()["effort"], "high");
+        assert_eq!(draft.proposed_effort, "high");
+    }
+    #[::core::prelude::v1::test]
+    fn automatic_default_exit_requires_explicit_provider_or_model_change_only() {
+        let thread = astra_thread();
+        let original = thread.clone();
+        let draft = SelectionDraft::from_thread(&thread);
+        let caps = replacement_caps();
+        assert!(automatic_default_replacement_context(
+            &draft, &thread, &caps, false
+        ));
+        assert!(!automatic_default_replacement_target(
+            &draft, &thread, &caps, false
+        ));
+        let mut provider = draft.clone();
+        provider.provider = "claude".into();
+        assert!(automatic_default_replacement_target(
+            &provider, &thread, &caps, false
+        ));
+        let mut model = draft.clone();
+        model.custom = "another-explicit-model".into();
+        assert!(automatic_default_replacement_target(
+            &model, &thread, &caps, false
+        ));
+        let params = model.params(&thread).unwrap();
+        assert_eq!(params["model"], "another-explicit-model");
+        assert!(params["effort"].is_null());
+        assert!(params["speed"].is_null());
+        assert_eq!(params["interactionMode"], "build");
+        assert_eq!(thread, original);
+        let mut same = draft.clone();
+        same.custom = " gpt-6-astra ".into();
+        assert!(!automatic_default_replacement_target(
+            &same, &thread, &caps, false
+        ));
+        for kind in ["effort", "speed", "account", "access", "interaction"] {
+            let mut bad = model.clone();
+            match kind {
+                "effort" => bad.proposed_effort = json!("high"),
+                "speed" => bad.proposed_speed = json!("priority"),
+                "account" => bad.account = json!("default"),
+                "access" => bad.proposed_access = json!("approval"),
+                _ => bad.proposed_interaction = json!("plan"),
+            };
+            assert!(
+                !automatic_default_replacement_target(&bad, &thread, &caps, false),
+                "{kind}"
+            );
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn automatic_default_exit_flag_never_overrides_running_origin_stale_or_unavailable_caps() {
+        let thread = astra_thread();
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.custom = "replacement".into();
+        let caps = replacement_caps();
+        assert!(!automatic_default_replacement_target(
+            &draft, &thread, &caps, true
+        ));
+        for key in [
+            "provenance",
+            "locked",
+            "providers",
+            "canReplaceUnprovedAutomaticDefault",
+        ] {
+            let mut bad = caps.clone();
+            bad.as_object_mut().unwrap().remove(key);
+            assert!(!automatic_default_replacement_target(
+                &draft, &thread, &bad, false
+            ));
+        }
+        for (key, value) in [
+            ("botID", json!("bot")),
+            ("rustBotContext", json!({})),
+            ("accessMode", json!("approval")),
+            ("interactionMode", json!("plan")),
+        ] {
+            let mut bad = thread.clone();
+            bad[key] = value;
+            assert!(!automatic_default_replacement_target(
+                &draft, &bad, &caps, false
+            ));
+        }
+        for (field, value) in [
+            ("accountID", json!("named")),
+            ("effort", json!("high")),
+            ("speed", json!("priority")),
+            ("provider", json!("claude")),
+            ("modelID", json!("other")),
+        ] {
+            let mut bad = thread.clone();
+            bad["selection"][field] = value;
+            assert!(!automatic_default_replacement_target(
+                &draft, &bad, &caps, false
+            ));
+        }
+        assert!(capability_lock(&caps, false).is_some()); // Send and ordinary controls retain their lock.
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                false,
+                "thread",
+                &thread["selection"],
+                &Value::Null
+            )
+            .is_err()
+        );
     }
 }
