@@ -34,3 +34,5 @@ pub mod github_write;
 pub mod updater;
 
 pub mod legacy_media;
+
+pub mod composer_selection;
