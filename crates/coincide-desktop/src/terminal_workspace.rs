@@ -691,6 +691,16 @@ impl TerminalWorkspace {
     pub fn thread_id(&self) -> &str {
         &self.thread
     }
+    /// App shortcuts must leave control sequences with the visible PTY pane.
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.visible
+            && window.is_window_active()
+            && self.ids().iter().any(|id| {
+                self.panes
+                    .get(id)
+                    .is_some_and(|pane| !pane.closing && pane.focus.is_focused(window))
+            })
+    }
     fn ids(&self) -> Vec<PaneId> {
         let mut ids = vec![];
         if let Some(tab) = self.tabs.iter().find(|t| Some(t.key) == self.active) {
