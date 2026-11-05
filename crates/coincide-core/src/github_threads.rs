@@ -377,6 +377,7 @@ fn comments(connection: &Value, scope: &Scope) -> Result<Vec<InlineComment>> {
         ensure!(
             parsed.scheme() == "https"
                 && parsed.host_str() == Some("github.com")
+                && parsed.port().is_none()
                 && parsed.username().is_empty()
                 && parsed.password().is_none()
                 && parsed.query().is_none()
@@ -1129,5 +1130,51 @@ print(open(name).read(),flush=True)
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_shared_fixture_covers_bigint_nullable_commit_and_partial_error_scenarios() {
+        let (dir, mut service, scope) =
+            fixture(include_str!("../tests/fixtures/github_threads_gh.py"));
+        let p = scope.params();
+        let id = service
+            .start(&scope.thread_id, dir.path(), "github.threads.list", &p)
+            .unwrap()["operationId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let page = wait(&mut service, &scope, &id);
+        assert_eq!(page["threads"][0]["comments"][0]["databaseId"], 101);
+        let mut p = p.clone();
+        p["reviewThreadId"] = json!("fixture-thread-1");
+        p["cursor"] = json!("fixture-replies-2");
+        let id = service
+            .start(&scope.thread_id, dir.path(), "github.threads.comments", &p)
+            .unwrap()["operationId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let replies = wait(&mut service, &scope, &id);
+        assert!(replies["comments"][0]["commit"].is_null());
+        assert_eq!(replies["comments"][0]["mentions"][0]["text"], "@org/team");
+        std::fs::write(dir.path().join("threads-partial-errors"), []).unwrap();
+        let id = service
+            .start(
+                &scope.thread_id,
+                dir.path(),
+                "github.threads.list",
+                &scope.params(),
+            )
+            .unwrap()["operationId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rejected = wait(&mut service, &scope, &id);
+        assert_eq!(rejected["code"], "read_failed");
+        assert!(
+            !rejected
+                .to_string()
+                .contains("SYNTHETIC-UNTRUSTED-DIAGNOSTIC")
+        );
     }
 }
