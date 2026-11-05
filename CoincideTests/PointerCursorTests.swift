@@ -303,7 +303,7 @@ struct PointerCursorTests {
             toolTip: "Owned fixture", accessibilityLabel: "Owned thread"))
         cell.layoutSubtreeIfNeeded()
         let title = try #require(cell.textField as? SidebarThreadLabel)
-        let labels = cell.subviews.compactMap { $0 as? SidebarThreadLabel }
+        let labels = TerminalFocus.descendants(of: cell, as: SidebarThreadLabel.self)
         #expect(labels.count == 3)
         Self.withRecorder(on: true) { recorder in
             #expect(recorder.hands(cell) == [cell.bounds])
