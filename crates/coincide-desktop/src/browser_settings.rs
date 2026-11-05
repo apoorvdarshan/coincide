@@ -323,6 +323,10 @@ impl ProfileCatalog {
                     || profile.name.eq_ignore_ascii_case(&fresh.name)),
             "Cookie destination is no longer fresh"
         );
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Profile revision exhausted"))?;
         self.profiles.push(ProfileMetadata {
             id: fresh.id,
             name: fresh.name.clone(),
@@ -333,12 +337,16 @@ impl ProfileCatalog {
             self.profiles.pop();
             return Err(error);
         }
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision;
         // No native dispatch before the incomplete marker's directory entry sync.
         fs::File::open(&self.root)?.sync_all()?;
         Ok(())
     }
     pub(crate) fn mark_cookie_readback_verified(&mut self, id: Uuid) -> Result<()> {
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Profile revision exhausted"))?;
         let index = self
             .profiles
             .iter()
@@ -351,7 +359,7 @@ impl ProfileCatalog {
             self.profiles[index].cookie_import = Some(CookieImportMarker::Incomplete);
             return Err(error);
         }
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision;
         fs::File::open(&self.root)?.sync_all()?;
         Ok(())
     }

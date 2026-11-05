@@ -37,11 +37,23 @@ pub(crate) struct PreparedImport {
     pub(crate) reservation: Reservation,
     pub(crate) cookies: ApprovedPlan,
 }
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ImportRevision {
+    #[default]
+    Progress,
+    Created {
+        previous: u64,
+    },
+    MarkerAttempt {
+        previous: u64,
+    },
+}
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct ImportStatus {
     pub(crate) profile: Option<Uuid>,
     pub(crate) name: String,
     pub(crate) revision: u64,
+    pub(crate) transition: ImportRevision,
     pub(crate) thread: String,
     pub(crate) generation: u64,
     pub(crate) applied: usize,
@@ -71,6 +83,8 @@ pub(crate) struct Flow {
     reserve: Option<ReserveRequest>,
     prepared: Option<PreparedImport>,
     destination: Option<Uuid>,
+    creation_acknowledged: bool,
+    marker_acknowledged: bool,
     pub(crate) status: ImportStatus,
 }
 fn now() -> i64 {
@@ -111,6 +125,8 @@ impl Flow {
         self.reserve = None;
         self.prepared = None;
         self.destination = None;
+        self.creation_acknowledged = false;
+        self.marker_acknowledged = false;
         if self.workers.status().unjoined == 0
             && self
                 .mailbox
@@ -304,6 +320,8 @@ impl Flow {
         let Some(plan) = self.plan.take() else { return };
         let hosts = reservation.hosts.clone();
         self.destination = Some(reservation.fresh.id());
+        self.creation_acknowledged = false;
+        self.marker_acknowledged = false;
         let Some(binding) = reservation.context.binding(reservation.fresh.id()) else {
             return;
         };
@@ -332,17 +350,43 @@ impl Flow {
                 "Cookie approval worker could not start. Choose the source again.".into();
         }
     }
-    pub(crate) fn accept_status(&mut self, status: ImportStatus) {
-        // Acknowledges only this actor's fresh profile creation/marker update;
-        // ordinary snapshot reconciliation still revokes unrelated changes.
-        if let Some(context) = self.context.as_mut()
-            && status.profile == self.destination
-            && status.profile.is_some()
-            && context.generation == status.generation
-            && context.snapshot.thread == status.thread
-            && status.revision >= context.snapshot.revision
-        {
-            context.snapshot.revision = status.revision;
+    pub(crate) fn accept_status(&mut self, mut status: ImportStatus) {
+        let owned = self.context.as_ref().is_some_and(|context| {
+            context.valid()
+                && status.profile == self.destination
+                && status.profile.is_some()
+                && context.generation == status.generation
+                && context.snapshot.thread == status.thread
+        });
+        if owned && let Some(context) = self.context.as_mut() {
+            let revision = context.snapshot.revision;
+            let accepted = match status.transition {
+                ImportRevision::Progress => {
+                    self.creation_acknowledged && status.revision == revision
+                }
+                ImportRevision::Created { previous } => {
+                    !self.creation_acknowledged
+                        && previous == revision
+                        && revision.checked_add(1) == Some(status.revision)
+                }
+                ImportRevision::MarkerAttempt { previous } => {
+                    self.creation_acknowledged
+                        && !self.marker_acknowledged
+                        && previous == revision
+                        && revision.checked_add(1) == Some(status.revision)
+                }
+            };
+            if accepted {
+                match status.transition {
+                    ImportRevision::Created { .. } => self.creation_acknowledged = true,
+                    ImportRevision::MarkerAttempt { .. } => self.marker_acknowledged = true,
+                    ImportRevision::Progress => {}
+                }
+                context.snapshot.revision = status.revision;
+            } else {
+                self.route_changed();
+                status.message="Unexpected profile revision. Import admission revoked; incomplete native work remains owned.".into();
+            }
         }
         self.status = status;
     }
@@ -376,6 +420,15 @@ impl BrowserSettings {
             self.cookie_flow.accept_status(status);
             cx.notify();
         }
+    }
+    pub(crate) fn cookie_cleanup_recovery(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let count = self.cookie_flow.cleanup_count();
+        (count!=0).then(||div().flex().flex_col().gap_2().p_4()
+            .child(format!("Closing waits for {count} private cookie snapshot cleanup owner(s)."))
+            .child("Only already-owned private snapshot cleanup can run here. No new source, profile or navigation is admitted.")
+            .child(Button::new("closing-cookie-retry-cleanup").label("Retry private snapshot cleanup")
+                .on_click(cx.listener(|this,_,_,cx|{this.cookie_flow.retry_cleanup();cx.notify();})))
+            .into_any_element())
     }
     fn choose_cookie_source(&mut self, cx: &mut Context<Self>) {
         self.cookie_flow.poll();
@@ -582,6 +635,7 @@ mod tests {
             thread: original.snapshot.thread.clone(),
             generation: original.generation,
             revision: 1,
+            transition: ImportRevision::Created { previous: 0 },
             ..Default::default()
         });
         assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 1);
@@ -654,5 +708,68 @@ mod tests {
         assert!(owners.lock().unwrap().is_empty());
         assert!(general.status().closed);
         assert_eq!(cleanup.status().returned, 2);
+    }
+    #[::core::prelude::v1::test]
+    fn exact_owned_revision_steps_reject_creation_progress_and_marker_jumps() {
+        for bad in [
+            ImportRevision::Created { previous: 0 },
+            ImportRevision::Progress,
+            ImportRevision::MarkerAttempt { previous: 1 },
+        ] {
+            let mut flow = Flow::default();
+            flow.set_snapshot(Some(snapshot()));
+            let context = flow.context.as_ref().unwrap().clone();
+            let destination = Uuid::new_v4();
+            flow.destination = Some(destination);
+            if !matches!(bad, ImportRevision::Created { .. }) {
+                flow.accept_status(ImportStatus {
+                    profile: Some(destination),
+                    thread: context.snapshot.thread.clone(),
+                    generation: context.generation,
+                    revision: 1,
+                    transition: ImportRevision::Created { previous: 0 },
+                    ..Default::default()
+                });
+                assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, 1);
+            }
+            let jumped = if matches!(bad, ImportRevision::MarkerAttempt { .. }) {
+                3
+            } else {
+                2
+            };
+            flow.accept_status(ImportStatus {
+                profile: Some(destination),
+                thread: context.snapshot.thread.clone(),
+                generation: context.generation,
+                revision: jumped,
+                transition: bad,
+                ..Default::default()
+            });
+            assert!(flow.context.is_none());
+            assert!(!context.valid());
+            assert!(flow.status.message.contains("Unexpected profile revision"));
+        }
+        let mut flow = Flow::default();
+        flow.set_snapshot(Some(snapshot()));
+        let context = flow.context.as_ref().unwrap().clone();
+        let destination = Uuid::new_v4();
+        flow.destination = Some(destination);
+        for (revision, transition) in [
+            (1, ImportRevision::Created { previous: 0 }),
+            (1, ImportRevision::Progress),
+            (2, ImportRevision::MarkerAttempt { previous: 1 }),
+            (2, ImportRevision::Progress),
+        ] {
+            flow.accept_status(ImportStatus {
+                profile: Some(destination),
+                thread: context.snapshot.thread.clone(),
+                generation: context.generation,
+                revision,
+                transition,
+                ..Default::default()
+            });
+            assert_eq!(flow.context.as_ref().unwrap().snapshot.revision, revision);
+            assert!(context.valid());
+        }
     }
 }

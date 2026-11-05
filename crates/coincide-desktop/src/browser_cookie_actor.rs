@@ -2,14 +2,61 @@
 //! selection, mutation retries, or atomic/durable whole-import claims.
 use super::*;
 use crate::browser_settings::cookie_flow::{
-    ImportStatus, PreparedImport, Reservation, ReserveRequest,
+    ImportRevision, ImportStatus, PreparedImport, Reservation, ReserveRequest,
 };
 #[cfg(target_os = "macos")]
 use cookie_import::{PreparedCookie, ReadbackReceipt, Receipt, Status, Target};
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone)]
+struct ProfileFence {
+    thread: String,
+    revision: u64,
+    selected: ProfileChoice,
+}
+#[cfg(any(target_os = "macos", test))]
+impl ProfileFence {
+    fn allows(&self, current: &ProfileSnapshot) -> bool {
+        self.thread == current.thread
+            && self.revision == current.revision
+            && self.selected == current.selected
+    }
+}
+#[cfg(any(target_os = "macos", test))]
+#[derive(PartialEq, Eq, Debug)]
+enum ReadbackDisposition {
+    Waiting,
+    DrainedIncomplete,
+    Promote,
+}
+#[cfg(any(target_os = "macos", test))]
+fn finish_readback(
+    status: &mut ImportStatus,
+    stopped: bool,
+    counts: cookie_import::ReadbackCounts,
+    released: bool,
+) -> ReadbackDisposition {
+    if !released {
+        status.pending = true;
+        return ReadbackDisposition::Waiting;
+    }
+    status.pending = false;
+    status.verified = counts.matched;
+    if stopped {
+        status.message="Readback arrived after import revocation. Counts are retained; the unselected profile stays incomplete/uncertain.".into();
+        ReadbackDisposition::DrainedIncomplete
+    } else if counts.exact() {
+        status.message="Exact cookie readback matched. The new profile remains unselected; disk persistence has not been proven.".into();
+        ReadbackDisposition::Promote
+    } else {
+        status.message="Cookie readback did not exactly match. The profile remains incomplete/uncertain and unselected.".into();
+        ReadbackDisposition::DrainedIncomplete
+    }
+}
 #[cfg(target_os = "macos")]
 pub(super) struct Actor {
     context: crate::browser_settings::cookie_flow::ImportContext,
     binding: coincide_core::firefox_cookie_import::Binding,
+    fence: ProfileFence,
     target: Option<Target>,
     waiting: Option<Receipt>,
     readback: Option<ReadbackReceipt>,
@@ -23,14 +70,23 @@ pub(super) struct Actor {
 #[cfg(target_os = "macos")]
 impl Actor {
     pub(super) fn stop(&mut self) {
+        if self.marker_attempted
+            && self.target.is_none()
+            && self.waiting.is_none()
+            && self.readback.is_none()
+        {
+            return;
+        }
+        self.status.transition = ImportRevision::Progress;
         self.stopped = true;
         self.status.message="Import stopped. The new unselected profile may contain a partial import; undispatched cookies are not retried.".into();
     }
-    fn poll(&mut self, closed: bool) -> bool {
+    fn poll(&mut self, closed: bool, current: &ProfileSnapshot) -> bool {
         if self.target.is_none() && self.waiting.is_none() && self.readback.is_none() {
             return false;
         }
-        if closed || !self.context.valid() {
+        self.status.transition = ImportRevision::Progress;
+        if closed || !self.context.valid() || !self.fence.allows(current) {
             self.stop();
         }
         if let Some(waiting) = &self.waiting {
@@ -58,22 +114,13 @@ impl Actor {
                 self.status.pending = true;
                 return false;
             };
-            if !released {
-                self.status.pending = true;
+            let disposition = finish_readback(&mut self.status, self.stopped, counts, released);
+            if disposition == ReadbackDisposition::Waiting {
                 return false;
             }
-            self.status.pending = false;
-            self.status.verified = counts.matched;
-            self.status.message = if counts.expected == counts.observed
-                && counts.expected == counts.matched
-            {
-                "Exact cookie readback matched. The new profile remains unselected; disk persistence has not been proven.".into()
-            } else {
-                "Cookie readback did not exactly match. The profile remains incomplete/uncertain and unselected.".into()
-            };
             self.readback = None;
             self.target = None;
-            return counts.exact();
+            return disposition == ReadbackDisposition::Promote;
         }
         if self.stopped {
             self.target = None;
@@ -247,6 +294,9 @@ impl BrowserController {
                 profile: Some(id),
                 name,
                 revision: self.profiles.revision,
+                transition: ImportRevision::Created {
+                    previous: current.revision,
+                },
                 thread: current_thread.into(),
                 generation: prepared.reservation.context.generation,
                 expired,
@@ -272,6 +322,11 @@ impl BrowserController {
                     .into();
             self.cookie_actor = Some(Actor {
                 context: prepared.reservation.context,
+                fence: ProfileFence {
+                    thread: current_thread.into(),
+                    revision: self.profiles.revision,
+                    selected: current.selected,
+                },
                 binding,
                 target: Some(target),
                 waiting: None,
@@ -308,17 +363,35 @@ impl BrowserController {
         }
         #[cfg(target_os = "macos")]
         {
+            let thread = self.cookie_actor.as_ref()?.context.snapshot.thread.clone();
+            let current = self.profile_snapshot(&thread);
             let actor = self.cookie_actor.as_mut()?;
-            if actor.poll(self.shutdown.callbacks.closed()) && !actor.marker_attempted {
-                actor.marker_attempted = true;
-                if self
-                    .profiles
-                    .mark_cookie_readback_verified(actor.binding.profile)
-                    .is_err()
+            if actor.poll(self.shutdown.callbacks.closed(), &current) && !actor.marker_attempted {
+                if self.shutdown.callbacks.closed()
+                    || !actor.context.valid()
+                    || self.profiles.revision != actor.fence.revision
+                    || self.profiles.selected(&thread) != actor.fence.selected
                 {
-                    actor.status.message="Cookie readback matched, but profile marker update could not be confirmed. No automatic retry or selection.".into();
+                    actor.stop();
+                } else {
+                    // poll fenced current exact revision/selection before accepting
+                    // readback; only this own single marker transition may advance.
+                    actor.marker_attempted = true;
+                    let previous = actor.fence.revision;
+                    let result = self
+                        .profiles
+                        .mark_cookie_readback_verified(actor.binding.profile);
+                    if result.is_err() {
+                        actor.status.message="Cookie readback matched, but profile marker update could not be confirmed. No automatic retry or selection.".into();
+                    }
+                    if previous.checked_add(1) == Some(self.profiles.revision) {
+                        actor.fence.revision = self.profiles.revision;
+                        actor.status.revision = self.profiles.revision;
+                        actor.status.transition = ImportRevision::MarkerAttempt { previous };
+                    } else if self.profiles.revision != previous {
+                        actor.stop();
+                    }
                 }
-                actor.status.revision = self.profiles.revision;
             }
             if actor.published.as_ref() == Some(&actor.status) {
                 None
@@ -335,4 +408,106 @@ fn chrono_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs().min(i64::MAX as u64) as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn snapshot() -> ProfileSnapshot {
+        ProfileSnapshot {
+            thread: Uuid::new_v4().to_string(),
+            revision: 1,
+            profiles: Vec::new(),
+            selected: ProfileChoice::Private,
+            open_tabs: 0,
+            persistent_profiles_available: true,
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn exact_profile_fence_rejects_foreign_revision_or_selection_before_progress() {
+        let current = snapshot();
+        let fence = ProfileFence {
+            thread: current.thread.clone(),
+            revision: current.revision,
+            selected: current.selected.clone(),
+        };
+        assert!(fence.allows(&current));
+        let mut external = current.clone();
+        external.revision += 1;
+        assert!(!fence.allows(&external));
+        external = current.clone();
+        external.selected = ProfileChoice::Persistent(Uuid::new_v4());
+        assert!(!fence.allows(&external));
+        external = current;
+        external.thread = Uuid::new_v4().to_string();
+        assert!(!fence.allows(&external));
+    }
+    #[::core::prelude::v1::test]
+    fn late_exact_readback_after_close_or_foreign_revision_drains_without_promotion() {
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        for closed in [true, false] {
+            let current = snapshot();
+            let fence = ProfileFence {
+                thread: current.thread.clone(),
+                revision: current.revision,
+                selected: current.selected.clone(),
+            };
+            let mut external = current;
+            if !closed {
+                external.revision += 1;
+            }
+            let stopped = closed || !fence.allows(&external);
+            let mut owner = shutdown::Shutdown::default();
+            let target = owner.callbacks.lifetimes().target();
+            let block_lease = owner.callbacks.lifetimes().block();
+            let ack = owner.callbacks.begin();
+            let released = Arc::new(AtomicBool::new(false));
+            let block = (block_lease, Release(released.clone()));
+            // Semantic readback arrived, but native callback still retains its
+            // captured block owner. Closing is not a release/completion ACK.
+            ack.ack();
+            let counts = cookie_import::ReadbackCounts {
+                expected: 2,
+                observed: 2,
+                matched: 2,
+            };
+            let mut status = ImportStatus {
+                pending: true,
+                ..Default::default()
+            };
+            assert_eq!(
+                finish_readback(
+                    &mut status,
+                    stopped,
+                    counts,
+                    released.load(Ordering::Acquire)
+                ),
+                ReadbackDisposition::Waiting
+            );
+            assert!(status.pending);
+            assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 1);
+            drop(block);
+            assert_eq!(
+                finish_readback(
+                    &mut status,
+                    stopped,
+                    counts,
+                    released.load(Ordering::Acquire)
+                ),
+                ReadbackDisposition::DrainedIncomplete
+            );
+            assert!(!status.pending);
+            assert_eq!(status.verified, 2);
+            assert!(status.message.contains("incomplete/uncertain"));
+            assert!(matches!(status.transition, ImportRevision::Progress));
+            drop(target);
+            assert_eq!(owner.status(0, 0, 0).native_targets_pending, 0);
+            assert_eq!(owner.status(0, 0, 0).callback_blocks_pending, 0);
+        }
+    }
 }
