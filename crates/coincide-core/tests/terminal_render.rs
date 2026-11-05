@@ -482,3 +482,119 @@ fn checked_scroll_rejects_stale_output_resize_and_even_noop_requests() {
     );
     assert_eq!(fixture.snapshot(1)["lines"], history["lines"]);
 }
+
+#[test]
+fn structured_input_reaches_synthetic_pty_with_current_modes_and_exact_framing() {
+    use coincide_core::terminal::{KeyModifiers, TerminalInput};
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("mode-input-fixture");
+    let payload = "界e\u{301}\n";
+    let expected = format!("\x1bOA\x1b[200~{payload}\x1b[201~ok\x1b[1;6D");
+    let source = format!(
+        r#"#!/bin/sh
+stty raw -echo
+printf '\033[?1l\033[?2004l\033]2;fixture-0\007'
+od -An -v -tx1 -N 3 | tr -d ' \n'
+printf '\r\n\033[?1h\033[?2004h\033]2;fixture-1\007'
+od -An -v -tx1 -N {} | tr -d ' \n'
+printf '\r\n\033[?1l\033[?2004l\033]2;fixture-2\007'
+od -An -v -tx1 -N 3 | tr -d ' \n'
+printf '\033]2;fixture-3\007'
+IFS= read -r finish
+"#,
+        expected.len()
+    );
+    fs::write(&script, source).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    let terminal = Terminal::spawn(dir.path(), script.to_str().unwrap(), 6, 160).unwrap();
+    let mut fixture = Fixture {
+        terminal,
+        _dir: dir,
+    };
+    let normal = fixture.snapshot(0);
+    assert_eq!(
+        normal["modes"],
+        json!({"applicationCursor":false,"bracketedPaste":false})
+    );
+    let up = || TerminalInput::Key {
+        key: "up".into(),
+        modifiers: Default::default(),
+    };
+    assert_eq!(fixture.terminal.input(up()).unwrap()["encodedBytes"], 3);
+    let app = fixture.snapshot(1);
+    assert!(app["revision"].as_u64() > normal["revision"].as_u64());
+    assert_eq!(
+        app["modes"],
+        json!({"applicationCursor":true,"bracketedPaste":true})
+    );
+    assert_eq!(fixture.terminal.snapshot().unwrap()["modes"], app["modes"]);
+    assert_eq!(app["lines"][0], "1b5b41");
+    for input in [
+        TerminalInput::Paste {
+            text: "\x1b[201~bad".into(),
+        },
+        TerminalInput::Text {
+            text: "\x03".into(),
+        },
+        TerminalInput::Paste {
+            text: "a".repeat(32757),
+        },
+    ] {
+        assert!(fixture.terminal.input(input).is_err());
+    }
+    fixture.terminal.input(up()).unwrap();
+    assert_eq!(
+        fixture
+            .terminal
+            .input(TerminalInput::Paste {
+                text: payload.into()
+            })
+            .unwrap()["encodedBytes"],
+        payload.len() + 12
+    );
+    fixture
+        .terminal
+        .input(TerminalInput::Text { text: "ok".into() })
+        .unwrap();
+    fixture
+        .terminal
+        .input(TerminalInput::Key {
+            key: "left".into(),
+            modifiers: KeyModifiers {
+                shift: true,
+                control: true,
+                alt: false,
+            },
+        })
+        .unwrap();
+    let disabled = fixture.snapshot(2);
+    let hex: String = expected.bytes().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(disabled["lines"][1], hex);
+    assert_eq!(disabled["modes"], normal["modes"]);
+    assert_eq!(
+        fixture
+            .terminal
+            .input(TerminalInput::Paste { text: "end".into() })
+            .unwrap()["encodedBytes"],
+        3
+    );
+    assert_eq!(fixture.snapshot(3)["lines"][2], "656e64");
+}
+
+#[test]
+fn input_modes_are_independent_of_alternate_screen_and_reset_by_ris() {
+    let mut fixture = Fixture::new(3, 20, &["\x1b[?1h\x1b[?2004h", "\x1b[?1049h", "\x1bc"]);
+    let enabled = fixture.snapshot(0);
+    assert_eq!(enabled["viewport"]["alternateScreen"], false);
+    assert_eq!(
+        enabled["modes"],
+        json!({"applicationCursor":true,"bracketedPaste":true})
+    );
+    assert_eq!(fixture.next(1)["modes"], enabled["modes"]);
+    let reset = fixture.next(2);
+    assert_eq!(
+        reset["modes"],
+        json!({"applicationCursor":false,"bracketedPaste":false})
+    );
+    assert!(reset["revision"].as_u64() > enabled["revision"].as_u64());
+}
