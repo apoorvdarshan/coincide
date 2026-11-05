@@ -35,13 +35,30 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
     let parent = path
         .parent()
         .context("Socket requires a parent directory")?;
+    let existed = parent.exists();
     std::fs::create_dir_all(parent)?;
-    // Callers use the dedicated Rust data directory, never the legacy directory.
-    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    if !existed {
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
     ensure!(
-        !path.exists(),
-        "Control socket already exists; another Rust instance may be running"
+        std::fs::metadata(parent)?.permissions().mode() & 0o077 == 0,
+        "Control directory must be private (mode 700)"
     );
+    if path.exists() {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let metadata = std::fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.file_type().is_socket() && metadata.uid() == std::fs::metadata(parent)?.uid(),
+            "Control path is not an owned socket"
+        );
+        match UnixStream::connect(&path) {
+            Ok(_) => anyhow::bail!("Another Rust instance is running"),
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                std::fs::remove_file(&path)?
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
@@ -64,7 +81,16 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
                             .dispatch(request))
                     })()
                     .unwrap_or_else(|e| serde_json::json!({"error":{"message":e.to_string()}}));
-                    let _ = write_frame(&mut stream, &response);
+                    if serde_json::to_vec(&response)
+                        .is_ok_and(|bytes| bytes.len() as u64 > MAX_FRAME)
+                    {
+                        let _ = write_frame(
+                            &mut stream,
+                            &serde_json::json!({"id":response["id"],"error":{"message":"Response exceeds 4 MiB; use itemLimit/itemOffset with threads.read"}}),
+                        );
+                    } else {
+                        let _ = write_frame(&mut stream, &response);
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(20))
@@ -138,9 +164,9 @@ mod tests {
     fn socket_commands_reach_shared_state_and_do_not_replace_active_socket() {
         let dir = tempfile::tempdir().unwrap();
         let engine = Arc::new(Mutex::new(Engine::new(
-            Store::open(&dir.path().join("db")).unwrap(),
+            Store::open(&dir.path().join("instance/db")).unwrap(),
         )));
-        let path = dir.path().join("control.sock");
+        let path = dir.path().join("instance/control.sock");
         let server = serve(path.clone(), engine.clone()).unwrap();
         assert!(serve(path.clone(), engine.clone()).is_err());
         assert_eq!(

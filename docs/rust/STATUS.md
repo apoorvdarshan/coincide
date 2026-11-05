@@ -45,16 +45,45 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Verified so far
 
+2026-11-05 checkpoint: approximately 15% of the macOS replacement is verified.
+This remains a planning estimate; the broad acceptance groups above stay unchecked
+until their complete behavior is accepted. Mac is the first release target; Linux
+currently supplies additional build/test capacity and portability feedback.
+
 The first Mac preview compiled and rendered imported data. Its isolated database
 captured 71 threads / 569 source files (220,682,918 bytes); no source files were
 written. This is a per-file capture while the legacy app remains active, not a
 transactionally consistent snapshot of an entire running application. A final
 quiesced capture and verification are required at cutover.
 
-The Linux host compiled the initial GPUI desktop and passed nine Rust core/protocol
-tests, including a real fixture subprocess for resume, streaming and approvals.
-Strict core clippy checks passed. The Mac CLI reached the preview through its
-owner-only local socket. Real provider accounts have not been exercised yet.
+The Linux host compiles the GPUI desktop and runs the portable test suite and strict
+clippy checks. The suite covers transactional schema migration, literal Unicode
+search, retained unknown fields, real PTY I/O, Codex/Claude/ACP fixture subprocesses,
+multi-turn engine integration, process-group cancellation, and timezone/DST/cron
+calculations. Real provider accounts have not been exercised yet.
+
+The Mac preview's native WebKit browser passed manual API/CLI checks against a local
+fixture: navigation, reading, text entry, clicking, password-input refusal, hidden
+page access, and cross-thread tab isolation. Visual inspection caught and corrected
+a toolbar overlap; the address field follows navigation. API controls also changed
+the selected provider and persisted drafts. The accessibility tree currently exposes
+only window controls; full keyboard/accessibility acceptance is still outstanding.
+
+Implemented foundations are deliberately narrower than full feature groups:
+
+- Shared CLI/API supports project CRUD, settings-document patches, thread actions,
+  Codex/Claude selection, pending approvals/questions, and explicit responses.
+- Browser has a separate persistent profile and thread-scoped tabs. Frames,
+  downloads/uploads, passwords, passkeys, dialogs, screenshots and native-key actions
+  still need implementation. Existing Swift browser profiles are not migrated.
+- Terminal has a real PTY and monochrome screen grid. Full colors, selection, splits,
+  tabs and shell integration remain. Candidate child processes cannot inherit the
+  running Swift conversation's control bindings.
+- Claude and generic ACP protocol adapters have fixture coverage. ACP is not exposed
+  as a named provider until its launch/account/mode integration is implemented.
+- Scheduling has validated persisted models and recurrence calculations only;
+  nothing executes schedules and there is no approval UI yet.
+- Transcripts use a virtualized list, but selectable text/media parity is unfinished.
 
 ## Data boundaries
 
@@ -73,7 +102,8 @@ owner-only local socket. Real provider accounts have not been exercised yet.
 
 Use a session-specific `CARGO_TARGET_DIR` outside the repository. Mac builds run on
 Mac; portable validation and Linux compilation run over SSH on the ASUS Omarchy
-host in `~/coincide-work/rust-gpui-rewrite`. No user data is copied to Linux.
+host in `~/coincide-work/rust-gpui-checkout`, reusing the build cache in
+`~/coincide-work/rust-gpui-rewrite/target`. No user data is copied to Linux.
 
 ```sh
 cargo build -p coincide-desktop
@@ -81,6 +111,12 @@ cargo test -p coincide-core
 cargo run -p coincide-core --bin coincide-store -- import SOURCE NEW_DATABASE
 cargo run -p coincide-core --bin coincide-rs -- help
 ```
+
+For a running preview, `coincide-rs browser THREAD_ID '{"action":"read"}'` runs a
+bounded browser command and collects its asynchronous result. `provider THREAD_ID
+claude`, `pending THREAD_ID`, and `answer THREAD_ID REQUEST_ID ANSWERS_JSON` use
+the same dispatcher as the GUI. Imported threads must be forked before execution;
+forks explicitly start in approval/build mode while unsupported modes remain gated.
 
 The CLI talks to the running Rust app's owner-only Unix socket. `coincide-rs api`
 accepts one JSON request (`id`, `method`, `params`) on stdin. `capabilities` reports

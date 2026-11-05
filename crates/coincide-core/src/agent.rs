@@ -1,4 +1,4 @@
-//! Owned Codex app-server process and bounded JSON-RPC transport.
+//! Owned provider processes and bounded JSON transports.
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -9,6 +9,26 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+#[path = "provider_acp.rs"]
+mod acp;
+#[path = "provider_claude.rs"]
+mod claude;
+#[path = "provider_transport.rs"]
+mod transport;
+
+/// Protocol selection is separate from executable discovery and account selection.
+/// Launches inherit the caller's environment; no adapter switches accounts or permissions.
+#[derive(Clone, Debug)]
+pub enum Provider {
+    Codex,
+    Claude,
+    /// An explicitly configured ACP v1 server. Provider-specific discovery, login,
+    /// modes and extensions are not implied by support for its wire protocol.
+    AcpV1 {
+        arguments: Vec<String>,
+    },
+}
 
 pub struct Launch {
     pub executable: PathBuf,
@@ -34,10 +54,18 @@ pub struct Session {
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
+        Self::start_with(Provider::Codex, launch)
+    }
+    pub fn start_with(provider: Provider, launch: Launch) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (control, commands) = mpsc::channel();
         thread::spawn(move || {
-            if let Err(e) = run(launch, commands, &events_tx) {
+            let result = match provider {
+                Provider::Codex => run(launch, commands, &events_tx),
+                Provider::Claude => claude::run(launch, commands, &events_tx),
+                Provider::AcpV1 { arguments } => acp::run(launch, arguments, commands, &events_tx),
+            };
+            if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));
             }
         });
@@ -56,8 +84,29 @@ impl Drop for Session {
     }
 }
 struct OwnedChild(Child);
+impl OwnedChild {
+    fn spawn(command: &mut Command) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // A dedicated group lets cancellation terminate tools and shells too.
+            command.process_group(0);
+        }
+        Ok(Self(command.spawn()?))
+    }
+}
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // Only groups created by OwnedChild::spawn are owned here. Negative
+            // PID targets this child's process group, never the host app's group.
+            if let Ok(pid) = i32::try_from(self.0.id()) {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -77,16 +126,17 @@ fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> R
         launch.cwd.is_dir(),
         "Agent working directory does not exist"
     );
-    let mut child = OwnedChild(
-        Command::new(&launch.executable)
+    let mut command = Command::new(&launch.executable);
+    transport::isolate_environment(&mut command);
+    let mut child = OwnedChild::spawn(
+        command
             .arg("app-server")
             .current_dir(&launch.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("Unable to launch Codex app-server")?,
-    );
+            .stderr(Stdio::piped()),
+    )
+    .context("Unable to launch Codex app-server")?;
     let mut stdin = child.0.stdin.take().context("Missing stdin")?;
     let stdout = child.0.stdout.take().context("Missing stdout")?;
     // Drain stderr without ever logging provider output or allowing an unbounded buffer.
@@ -244,7 +294,10 @@ pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
         if !thread["sessions"].is_object() {
             thread["sessions"] = json!({});
         }
-        thread["sessions"][provider] = json!({"sessionID":id,"seenItemCount":count});
+        if !thread["sessions"][provider].is_object() {
+            thread["sessions"][provider] = json!({"seenItemCount":count});
+        }
+        thread["sessions"][provider]["sessionID"] = json!(id);
     }
 }
 #[cfg(test)]

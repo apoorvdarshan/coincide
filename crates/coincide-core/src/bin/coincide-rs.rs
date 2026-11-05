@@ -13,10 +13,18 @@ fn main() -> Result<()> {
         let engine = Arc::new(Mutex::new(Engine::new(Store::open(
             &data.join("coincide.sqlite"),
         )?)));
-        let _server = control::serve(data.join("control.sock"), engine)?;
+        let _server = control::serve(data.join("control.sock"), engine.clone())?;
         loop {
+            if engine
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Engine lock failed"))?
+                .shutdown
+            {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
+        return Ok(());
     }
     let argument = |n: usize| {
         args.get(n)
@@ -24,6 +32,7 @@ fn main() -> Result<()> {
             .with_context(|| format!("Missing argument {n}"))
     };
     let (method, params) = match cmd {
+        "quit" => ("app.quit", json!({})),
         "status" => ("app.status", json!({})),
         "capabilities" => ("app.capabilities", json!({})),
         "projects" => ("projects.list", json!({})),
@@ -32,7 +41,10 @@ fn main() -> Result<()> {
             json!({"query":args.get(1).map(String::as_str).unwrap_or(""),"includeArchived":true}),
         ),
         "open" => ("threads.open", json!({"threadId":argument(1)?})),
-        "read" => ("threads.read", json!({"threadId":argument(1)?})),
+        "read" => (
+            "threads.read",
+            json!({"threadId":argument(1)?,"itemLimit":100}),
+        ),
         "new" => ("threads.create", json!({"cwd":argument(1)?})),
         "fork" => ("threads.fork", json!({"threadId":argument(1)?})),
         "send" => (
@@ -40,6 +52,54 @@ fn main() -> Result<()> {
             json!({"threadId":argument(1)?,"text":argument(2)?}),
         ),
         "stop" => ("agent.stop", json!({"threadId":argument(1)?})),
+        "provider" => (
+            "agent.select",
+            json!({"threadId":argument(1)?,"provider":argument(2)?,"model":args.get(3)}),
+        ),
+        "pending" => ("agent.pending", json!({"threadId":argument(1)?})),
+        "answer" => (
+            "agent.answer",
+            json!({"threadId":argument(1)?,"requestId":argument(2)?,"answers":serde_json::from_str::<Value>(&argument(3)?)?}),
+        ),
+        "browser" => {
+            let thread = argument(1)?;
+            let mut params: Value = serde_json::from_str(&argument(2)?)?;
+            anyhow::ensure!(params.is_object(), "Browser action must be a JSON object");
+            params["threadId"] = json!(thread);
+            let socket = data.join("control.sock");
+            let response = control::request(
+                &socket,
+                &json!({"id":1,"method":"browser.request","params":params}),
+            )?;
+            if response.get("error").is_some() {
+                return output(response);
+            }
+            let operation = response["result"]["operationId"]
+                .as_str()
+                .context("Missing browser operation ID")?;
+            let started = std::time::Instant::now();
+            loop {
+                let response = control::request(
+                    &socket,
+                    &json!({"id":1,"method":"browser.result","params":{"threadId":thread,"operationId":operation}}),
+                )?;
+                if response.get("error").is_some() {
+                    return output(response);
+                }
+                if response["result"]["ready"] == true {
+                    let result = &response["result"]["result"];
+                    if let Some(error) = result.get("error") {
+                        return output(json!({"id":1,"error":{"message":error}}));
+                    }
+                    return output(json!({"id":1,"result":result}));
+                }
+                anyhow::ensure!(
+                    started.elapsed() < std::time::Duration::from_secs(35),
+                    "Browser result timed out; verify page state before retrying"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
         "draft" => (
             "threads.patch",
             json!({"threadId":argument(1)?,"patch":{"draft":argument(2)?}}),
@@ -66,7 +126,7 @@ fn main() -> Result<()> {
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }

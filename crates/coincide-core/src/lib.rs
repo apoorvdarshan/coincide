@@ -3,4 +3,7 @@ pub mod store;
 
 pub mod agent;
 pub mod api;
+pub mod browser_protocol;
 pub mod control;
+pub mod scheduling;
+pub mod terminal;
