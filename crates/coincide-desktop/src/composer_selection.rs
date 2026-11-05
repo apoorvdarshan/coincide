@@ -158,16 +158,11 @@ fn effort_choices(
         saved_effort_scope(draft, thread),
         "Apply the provider/account/model first, then refresh capabilities before choosing effort. Existing effort was retained"
     );
-    anyhow::ensure!(
-        draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
-        "Choose an explicit Codex model before effort options"
-    );
-    let capability = provider
-        .filter(|p| p["provider"] == "codex")
-        .map(|p| &p["effort"])
-        .context("Effort capabilities are unavailable")?;
+    let provider = provider.context("Effort capabilities are unavailable")?;
+    let capability = &provider["effort"];
     anyhow::ensure!(
         draft.provider == "codex"
+            && provider["provider"] == "codex"
             && capability["supported"] == true
             && capability["provenance"] == "provider_model_list"
             && capability["requiresExplicitModel"] == true,
@@ -175,6 +170,10 @@ fn effort_choices(
         capability["reason"]
             .as_str()
             .unwrap_or("Refresh the current model catalog to choose effort")
+    );
+    anyhow::ensure!(
+        draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
+        "Choose an explicit Codex model before effort options"
     );
     let values = capability["choices"]
         .as_array()
