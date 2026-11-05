@@ -417,6 +417,8 @@ pub struct GitHubActions {
     records: Value,
     confirmation: Option<Box<Confirmation>>,
     body: Entity<TextareaState>,
+    content_scroll: ScrollHandle,
+    confirmation_scroll: ScrollHandle,
     notice: String,
     tx: mpsc::Sender<(u64, ActionScope, bool, Result<Reply>)>,
     rx: mpsc::Receiver<(u64, ActionScope, bool, Result<Reply>)>,
@@ -452,6 +454,8 @@ impl GitHubActions {
                     .placeholder("Comment review body")
                     .submit_on_enter(false)
             }),
+            content_scroll: ScrollHandle::new(),
+            confirmation_scroll: ScrollHandle::new(),
             notice: "Select an exact PR head to load durable write history.".into(),
             tx,
             rx,
@@ -518,6 +522,7 @@ impl GitHubActions {
         }
         if let Some(scope) = self.scope.clone() {
             self.confirmation = None;
+            self.confirmation_scroll.set_offset(point(px(0.), px(0.)));
             self.notice = "Reading fresh PR/check/review baseline…".into();
             self.start(Work::Prepare(scope, action), cx);
         }
@@ -625,15 +630,59 @@ impl GitHubActions {
 impl Render for GitHubActions {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = self.busy || !self.history_known || self.locked || self.scope.is_none();
-        let mut pane = div()
-            .id("github-write-actions")
-            .size_full()
+        // Confirmation owns the remaining panel; the editor/history cannot
+        // push its decision controls below the viewport. Only the full snapshot
+        // and exact action body scroll, with a persistent native scroll handle.
+        if let Some(c) = &self.confirmation {
+            let expired = !self
+                .scope
+                .as_ref()
+                .is_some_and(|scope| c.valid(scope, now(), c.received.elapsed()));
+            let pr = &c.snapshot;
+            let summary = format!(
+                "{} PR #{}: {}\nRoot: {}\nThread: {}\nExact head: {}\n{} → {}\nState: {} / draft {}\nReview decision: {}\nMergeability: {} / {}\nBaseline fingerprint: {}\nExpires Unix seconds: {}",
+                c.scope.repository,
+                c.scope.number,
+                pr["title"].as_str().unwrap_or(""),
+                c.scope.root,
+                c.scope.thread,
+                c.scope.head,
+                pr["headRefName"].as_str().unwrap_or(""),
+                pr["baseRefName"].as_str().unwrap_or(""),
+                pr["state"],
+                pr["isDraft"],
+                pr["reviewDecision"],
+                pr["mergeable"],
+                pr["mergeStateStatus"],
+                c.fingerprint,
+                c.expires
+            );
+            return div().id("github-write-actions").size_full().min_h_0().min_w_0().overflow_hidden()
+                .flex().flex_col().gap_2().p_3()
+                .child(div().flex_none().child("Confirm prepared GitHub action"))
+                .child(div().id("github-write-confirmation-notice").flex_none().max_h(px(64.)).overflow_y_scroll().text_sm().child(self.notice.clone()))
+                .child(div().id("github-write-confirmation-actions").flex_none().flex().flex_wrap().gap_2()
+                    .child(Button::new("github-write-confirm").label(if expired {"Expired — prepare again"}else{"Confirm this exact action"})
+                        .disabled(self.busy || expired || disabled).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
+                    .child(Button::new("github-write-cancel").label("Cancel confirmation").disabled(self.busy)
+                        .on_click(cx.listener(|this,_,_,cx|{this.confirmation=None;this.notice="Confirmation cancelled; draft preserved.".into();cx.notify();})))
+                    .child(Button::new("github-copy-confirmation").label("Copy full prepared summary")
+                        .on_click(cx.listener(|this,_,_,cx|{if let Some(c)=&this.confirmation{cx.write_to_clipboard(ClipboardItem::new_string(json!({"scope":c.scope.params(),"snapshot":c.snapshot,"availability":c.availability,"action":c.action.value().ok(),"fingerprint":c.fingerprint,"expiresAt":c.expires}).to_string()));}}))))
+                .child(div().id("github-write-confirmation").flex_1().flex_basis(px(0.)).min_h_0().min_w_0()
+                    .overflow_y_scroll().track_scroll(&self.confirmation_scroll)
+                    .child(div().id("github-write-confirmation-summary").flex_none().min_w_0().flex().flex_col().gap_2()
+                        .child(summary)
+                        .child(format!("Checks (fresh snapshot): {}\nReviews (fresh snapshot): {}",pr["statusCheckRollup"],pr["reviews"]))
+                        .child(c.action.label()).child(NOTICE)))
+                .into_any_element();
+        }
+        let content = div()
+            .id("github-write-editor-content")
+            .flex_none()
+            .min_w_0()
             .flex()
             .flex_col()
             .gap_2()
-            .p_3()
-            .child("GitHub explicit actions")
-            .child(div().text_sm().child(self.notice.clone()))
             .child(
                 Button::new("github-write-history")
                     .label("Refresh durable history / recover IDs")
@@ -683,24 +732,10 @@ impl Render for GitHubActions {
                         }))
                 }),
             ));
-        if let Some(c) = &self.confirmation {
-            let scope = self.scope.as_ref();
-            let expired = !scope.is_some_and(|s| c.valid(s, now(), c.received.elapsed()));
-            let pr = &c.snapshot;
-            pane=pane.child(div().id("github-write-confirmation").p_2().border_1()
-                .child(div().id("github-write-confirmation-summary").max_h(px(220.)).overflow_y_scroll()
-                    .child(format!("{} PR #{}: {}\nRoot: {}\nThread: {}\nExact head: {}\n{} → {}\nState: {} / draft {}\nReview decision: {}\nMergeability: {} / {}\nBaseline fingerprint: {}\nExpires Unix seconds: {}",c.scope.repository,c.scope.number,pr["title"].as_str().unwrap_or(""),c.scope.root,c.scope.thread,c.scope.head,pr["headRefName"].as_str().unwrap_or(""),pr["baseRefName"].as_str().unwrap_or(""),pr["state"],pr["isDraft"],pr["reviewDecision"],pr["mergeable"],pr["mergeStateStatus"],c.fingerprint,c.expires))
-                    .child(format!("Checks (fresh snapshot): {}\nReviews (fresh snapshot): {}",pr["statusCheckRollup"],pr["reviews"]))
-                    .child(c.action.label()).child(NOTICE))
-                .child(Button::new("github-write-confirm").label(if expired {"Expired — prepare again"}else{"Confirm this exact action"}).disabled(self.busy || expired || disabled).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
-                .child(Button::new("github-write-cancel").label("Cancel confirmation").disabled(self.busy).on_click(cx.listener(|this,_,_,cx|{this.confirmation=None;this.notice="Confirmation cancelled; draft preserved.".into();cx.notify();})))
-                .child(Button::new("github-copy-confirmation").label("Copy full prepared summary").on_click(cx.listener(|this,_,_,cx|{if let Some(c)=&this.confirmation{cx.write_to_clipboard(ClipboardItem::new_string(json!({"scope":c.scope.params(),"snapshot":c.snapshot,"availability":c.availability,"action":c.action.value().ok(),"fingerprint":c.fingerprint,"expiresAt":c.expires}).to_string()));}}))));
-        }
         let mut records = div()
             .id("github-write-records")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
+            .flex_none()
+            .min_w_0()
             .flex()
             .flex_col()
             .gap_2();
@@ -747,7 +782,38 @@ impl Render for GitHubActions {
                     ),
             );
         }
-        pane.child(records)
+        div()
+            .id("github-write-actions")
+            .size_full()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(div().flex_none().child("GitHub explicit actions"))
+            .child(
+                div()
+                    .id("github-write-editor-notice")
+                    .flex_none()
+                    .max_h(px(80.))
+                    .overflow_y_scroll()
+                    .text_sm()
+                    .child(self.notice.clone()),
+            )
+            .child(
+                div()
+                    .id("github-write-editor-scroll")
+                    .flex_1()
+                    .flex_basis(px(0.))
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.content_scroll)
+                    .child(content.child(records)),
+            )
+            .into_any_element()
     }
 }
 
