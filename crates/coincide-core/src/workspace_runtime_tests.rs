@@ -74,6 +74,9 @@ fn checkpoint_routes_preserve_files_and_worktree_routes_reserve_in_app_storage()
     std::fs::write(root.join("file.txt"), "staged\n").unwrap();
     git(&root, &["add", "."]);
     std::fs::write(root.join("file.txt"), "unstaged\n").unwrap();
+    std::fs::write(root.join("untracked.txt"), "keep untracked\n").unwrap();
+    let original_index = git(&root, &["write-tree"]);
+    let original_status = git(&root, &["status", "--porcelain=v1", "-z"]);
     let reply = call(
         &mut engine,
         "git.checkpoints.create",
@@ -113,11 +116,33 @@ fn checkpoint_routes_preserve_files_and_worktree_routes_reserve_in_app_storage()
         .unwrap()
         .canonicalize()
         .unwrap();
+    let destination = Path::new(reserved["path"].as_str().unwrap());
+    // Git uses ordinary drive/UNC syntax while Rust canonicalizes Windows paths
+    // with a verbatim prefix. Compare the exact existing filesystem targets.
     assert_eq!(
-        Path::new(reserved["path"].as_str().unwrap()),
-        data.join("worktrees/fixture-tree")
+        destination.canonicalize().unwrap(),
+        data.join("worktrees/fixture-tree").canonicalize().unwrap()
     );
     assert_eq!(reserved["populated"], false);
+    assert!(destination.join(".git").is_file());
+    assert!(!destination.join("file.txt").exists());
+    assert!(!destination.join("untracked.txt").exists());
+    assert_eq!(git(destination, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git(destination, &["symbolic-ref", "HEAD"]),
+        "refs/heads/fixture/dispatch"
+    );
+    assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
+    assert_eq!(git(&root, &["write-tree"]), original_index);
+    assert_eq!(
+        git(&root, &["status", "--porcelain=v1", "-z"]),
+        original_status
+    );
+    assert_eq!(std::fs::read(root.join("file.txt")).unwrap(), b"unstaged\n");
+    assert_eq!(
+        std::fs::read(root.join("untracked.txt")).unwrap(),
+        b"keep untracked\n"
+    );
     let reply = call(
         &mut engine,
         "git.worktrees.list",
