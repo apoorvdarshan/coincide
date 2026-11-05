@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Core/Workspace.h"
+#include "../Core/ConversationSearch.h"
 #include <windows.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.h>
@@ -138,6 +139,58 @@ public:
         thread.host_cursors=std::move(host_cursors);
         transcript_originals_.insert_or_assign(thread.id, value);
         loaded_.insert(thread.id);
+    }
+
+    // Capture only a pinned physical root on the UI thread. The worker's reader
+    // has no references to this store, its COM objects or its lazy transcript cache.
+    ConversationSearch::Reader message_search_reader() const {
+        require_open();
+        auto root=std::make_shared<DirectoryHandle>(directory_);
+        if(scope_identity_&&root->identity!=*scope_identity_)throw std::runtime_error("Workspace search scope changed");
+        return [root](const std::string& id,std::size_t& total,const ConversationSearch::Cancel& cancel){
+            validate_id(id);
+            if(cancel&&cancel())throw TranscriptFind::Cancelled{};
+            const auto expected=root->resolved/L"threads";
+            DirectoryHandle folder(expected);
+            if(!ordinal_path_equal(folder.resolved,expected))throw std::runtime_error("Search transcript folder is redirected");
+            const auto file=folder.resolved/winrt::to_hstring(id+".json").c_str();
+            const auto handle=CreateFileW(file.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
+            if(handle==INVALID_HANDLE_VALUE)throw std::runtime_error("Saved conversation is unavailable");
+            struct Pin {HANDLE value;~Pin(){CloseHandle(value);}} pin{handle};
+            BY_HANDLE_FILE_INFORMATION info{};LARGE_INTEGER size{};
+            if(!GetFileInformationByHandle(handle,&info)||!GetFileSizeEx(handle,&size)||
+                (info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||info.nNumberOfLinks!=1||size.QuadPart<0)
+                throw std::runtime_error("Saved conversation must be an ordinary unlinked file");
+            if(static_cast<ULONGLONG>(size.QuadPart)>ConversationSearch::maximum_file_bytes)
+                throw std::runtime_error("Saved conversation exceeds the search file limit");
+            if(total>ConversationSearch::maximum_total_bytes||static_cast<ULONGLONG>(size.QuadPart)>ConversationSearch::maximum_total_bytes-total)
+                throw ConversationSearch::ReadLimit{};
+            std::string bytes;bytes.reserve(static_cast<std::size_t>(size.QuadPart));std::array<char,65536> buffer{};
+            for(;;){
+                if(cancel&&cancel())throw TranscriptFind::Cancelled{};
+                DWORD count{};if(!ReadFile(handle,buffer.data(),static_cast<DWORD>(buffer.size()),&count,nullptr))throw std::runtime_error("Saved conversation read failed");
+                if(!count)break;
+                total+=count;
+                if(total>ConversationSearch::maximum_total_bytes)throw ConversationSearch::ReadLimit{};
+                if(bytes.size()+count>ConversationSearch::maximum_file_bytes)throw std::runtime_error("Saved conversation grew beyond its search limit");
+                bytes.append(buffer.data(),count);
+            }
+            const auto value=json::JsonObject::Parse(winrt::to_hstring(bytes));
+            const auto version=value.GetNamedNumber(L"version",0);
+            if((version!=1&&version!=2)||text(value,L"id")!=id)throw std::runtime_error("Saved conversation search identity is invalid");
+            if(version==2)require_host_format(value);
+            const auto messages=value.GetNamedArray(L"messages");
+            if(messages.Size()>100000)throw std::runtime_error("Saved conversation has too many messages to search");
+            std::vector<TranscriptFindDocument> result;result.reserve(messages.Size());std::unordered_set<std::string> seen;
+            for(const auto& entry:messages){
+                if(cancel&&cancel())throw TranscriptFind::Cancelled{};
+                const auto message=entry.GetObject();const auto key=text(message,L"id");
+                if(key.empty()||key.size()>1024||key.find('\0')!=std::string::npos||!seen.insert(key).second)throw std::runtime_error("Saved message search identity is invalid");
+                result.push_back({key,text(message,L"text")});
+            }
+            return result;
+        };
     }
 
     void save_index(const Workspace& workspace) {
@@ -359,6 +412,10 @@ public:
     }
 
 private:
+    static bool ordinal_path_equal(const std::filesystem::path& left,const std::filesystem::path& right){
+        const auto a=left.lexically_normal().native(),b=right.lexically_normal().native();
+        return CompareStringOrdinal(a.c_str(),static_cast<int>(a.size()),b.c_str(),static_cast<int>(b.size()),TRUE)==CSTR_EQUAL;
+    }
     struct DirectoryIdentity{ULONGLONG volume{};std::array<BYTE,16> id{};bool operator==(const DirectoryIdentity&)const=default;};
     struct DirectoryHandle{
         HANDLE value{INVALID_HANDLE_VALUE};DirectoryIdentity identity;std::filesystem::path resolved;

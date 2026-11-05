@@ -50,6 +50,7 @@ public:
     bool limited()const{return limited_;}
     const TranscriptFindMatch* current()const{return matches_.empty()?nullptr:&matches_[active_];}
     std::size_t position()const{return active_;}
+    bool select(const std::string& message_id){const auto at=std::find_if(matches_.begin(),matches_.end(),[&](const auto& hit){return hit.message_id==message_id;});if(at==matches_.end())return false;active_=static_cast<std::size_t>(at-matches_.begin());return true;}
     void preserve_selection(const TranscriptFind& previous){if(query_!=previous.query_||!previous.current())return;const auto at=std::find_if(matches_.begin(),matches_.end(),[&](const auto& hit){return hit.message_id==previous.current()->message_id;});if(at!=matches_.end())active_=static_cast<std::size_t>(at-matches_.begin());else if(!matches_.empty())active_=std::min(previous.active_,matches_.size()-1);}
     const TranscriptFindMatch* move(bool backwards){if(!matches_.empty())active_=backwards?(active_?active_-1:matches_.size()-1):(active_+1)%matches_.size();return current();}
 private:
