@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc,
+        atomic::{AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
 };
@@ -22,7 +23,8 @@ pub struct OwnershipOutcome {
 }
 /// No automatic ack, deletion, retry, receipt export, DB/media mutation, or joining on UI thread.
 pub struct ParentRecoveryOwner {
-    sender: SyncSender<Request>,
+    sender: Option<SyncSender<Request>>,
+    completion: Arc<AtomicU8>,
     receiver: Receiver<OwnershipOutcome>,
     pending: HashMap<ReceiptId, Arc<CompletionReceipt>>,
     inflight: HashSet<ReceiptId>,
@@ -34,7 +36,7 @@ impl ParentRecoveryOwner {
     pub fn spawn(config: ServiceConfig) -> Self {
         let (sender, requests) = mpsc::sync_channel::<Request>(MAX_PENDING);
         let (results, receiver) = mpsc::sync_channel(MAX_PENDING);
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let mut store = None;
             while let Ok(request) = requests.recv() {
                 let result = (|| {
@@ -58,8 +60,14 @@ impl ParentRecoveryOwner {
             }
             // No memory-only job/Arc implies a crash-safety guarantee. Parent must drain first.
         });
+        let completion = Arc::new(AtomicU8::new(0));
+        let joined = completion.clone();
+        std::thread::spawn(move || {
+            joined.store(if worker.join().is_ok() { 1 } else { 2 }, Ordering::Release);
+        });
         Self {
-            sender,
+            sender: Some(sender),
+            completion,
             receiver,
             pending: HashMap::new(),
             inflight: HashSet::new(),
@@ -73,6 +81,9 @@ impl ParentRecoveryOwner {
         id: ReceiptId,
         receipt: Arc<CompletionReceipt>,
     ) -> RecoveryResult<()> {
+        if self.sender.is_none() {
+            return Err(RecoveryError::Busy);
+        }
         if let Some(existing) = self.pending.get(&id) {
             // A receipt ID cannot be rebound to another object even with matching visible fields.
             if !Arc::ptr_eq(existing, &receipt) {
@@ -87,7 +98,12 @@ impl ParentRecoveryOwner {
         if self.inflight.contains(&id) || self.durable.contains_key(&id) {
             return Err(RecoveryError::Busy);
         }
-        match self.sender.try_send(Request { id, receipt }) {
+        match self
+            .sender
+            .as_ref()
+            .ok_or(RecoveryError::Busy)?
+            .try_send(Request { id, receipt })
+        {
             Ok(()) => {
                 self.inflight.insert(id);
                 Ok(())
@@ -138,18 +154,61 @@ impl ParentRecoveryOwner {
             && self.pending.is_empty()
             && self.inflight.is_empty()
     }
+    /// Close IO only after every durable handoff was acknowledged. The panel's
+    /// service worker is a separate owner; this never substitutes for its drain.
+    pub fn request_worker_shutdown(&mut self) -> RecoveryResult<()> {
+        if !self.pending.is_empty() || !self.inflight.is_empty() || !self.durable.is_empty() {
+            return Err(RecoveryError::Busy);
+        }
+        self.sender.take();
+        Ok(())
+    }
+    pub fn worker_shutdown_status(&self) -> coincide_core::agent::WorkerThreadStatus {
+        use coincide_core::agent::WorkerThreadStatus;
+        match self.completion.load(Ordering::Acquire) {
+            0 => WorkerThreadStatus::Running,
+            1 => WorkerThreadStatus::Returned,
+            2 => WorkerThreadStatus::Panicked,
+            _ => WorkerThreadStatus::Unclassified,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn recovery_worker_explicit_eof_is_joined_without_opening_storage() {
+        let directory =
+            std::env::temp_dir().join(format!("unused-recovery-{}", uuid::Uuid::new_v4()));
+        let mut owner = ParentRecoveryOwner::spawn(ServiceConfig {
+            database_path: directory.join("missing.sqlite"),
+            expected_data_directory: directory.clone(),
+        });
+        owner.request_worker_shutdown().unwrap();
+        owner.request_worker_shutdown().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while owner.worker_shutdown_status() == coincide_core::agent::WorkerThreadStatus::Running {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recovery worker failed to join"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            owner.worker_shutdown_status(),
+            coincide_core::agent::WorkerThreadStatus::Returned
+        );
+        assert!(!directory.exists());
+    }
+    #[test]
     fn shutdown_blocks_on_panel_work_and_unowned_receipts_without_opening_storage() {
         // Channels only: no native effects or background jobs; opaque IDs are never reconstructed.
         let (sender, _) = mpsc::sync_channel(MAX_PENDING);
         let (_, receiver) = mpsc::sync_channel(MAX_PENDING);
         let owner = ParentRecoveryOwner {
-            sender,
+            sender: Some(sender),
+            completion: Arc::new(AtomicU8::new(0)),
             receiver,
             pending: HashMap::new(),
             inflight: HashSet::new(),

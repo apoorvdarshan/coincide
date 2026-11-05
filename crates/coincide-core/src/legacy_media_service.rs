@@ -260,7 +260,8 @@ pub struct LegacyMediaService {
     owner: Uuid,
     generation: u64,
     selection: SelectionToken,
-    tx: SyncSender<Job>,
+    tx: Option<SyncSender<Job>>,
+    completion: crate::agent::WorkerCompletion,
     results: Results,
     receipts: Receipts,
     receipt_slots: Arc<AtomicUsize>,
@@ -275,7 +276,7 @@ impl LegacyMediaService {
         let receipts = Arc::new(Mutex::new(HashMap::new()));
         let slots = Arc::new(AtomicUsize::new(0));
         let (out, recover, reserved) = (results.clone(), receipts.clone(), slots.clone());
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let worker = Worker::open(config);
             let mut worker = worker.ok();
             while let Ok(job) = rx.recv() {
@@ -319,12 +320,34 @@ impl LegacyMediaService {
             owner,
             generation: 0,
             selection,
-            tx,
+            tx: Some(tx),
+            completion: crate::agent::WorkerCompletion::observe(worker),
             results,
             receipts,
             receipt_slots: slots,
             operations: HashMap::new(),
             caps: HashMap::new(),
+        }
+    }
+    /// Close native admissions, cancel uncommitted work, and let the owned
+    /// worker drain its queue. Committing work and every receipt remain owned.
+    pub fn request_shutdown(&mut self) {
+        self.selection.active.store(false, Ordering::SeqCst);
+        for control in self.operations.values() {
+            control.cancel();
+        }
+        for cap in self.caps.values() {
+            cap.active.store(false, Ordering::SeqCst);
+        }
+        self.tx.take();
+    }
+    /// Does not consume completion events or acknowledge retained image receipts.
+    pub fn shutdown_status(&self) -> ServiceShutdownStatus {
+        ServiceShutdownStatus {
+            requested: self.tx.is_none(),
+            worker: self.completion.status(),
+            operations: self.operations.len(),
+            retained_receipts: self.receipts.try_lock().ok().map(|r| r.len()),
         }
     }
     pub fn select_thread(&mut self, thread_id: Option<String>) -> SelectionToken {
@@ -344,11 +367,14 @@ impl LegacyMediaService {
             owner: self.owner,
             thread: thread_id,
             generation: self.generation,
-            active: Arc::new(AtomicBool::new(valid)),
+            active: Arc::new(AtomicBool::new(valid && self.tx.is_some())),
         };
         self.selection.clone()
     }
     fn selection_ok(&self, selection: &SelectionToken) -> ServiceResult<()> {
+        if self.tx.is_none() {
+            return Err(ServiceError::Cancelled);
+        }
         if !same_selection(selection, &self.selection) {
             return Err(ServiceError::InvalidSelection);
         }
@@ -383,6 +409,9 @@ impl LegacyMediaService {
         command: Command,
         reserve: bool,
     ) -> ServiceResult<OperationId> {
+        if self.tx.is_none() {
+            return Err(ServiceError::Cancelled);
+        }
         self.selection_ok(selection)?;
         if self.operations.len() >= 9 {
             return Err(ServiceError::QueueFull);
@@ -411,6 +440,8 @@ impl LegacyMediaService {
         };
         if self
             .tx
+            .as_ref()
+            .ok_or(ServiceError::Cancelled)?
             .try_send(Job {
                 id,
                 control: control.clone(),
@@ -532,15 +563,25 @@ impl LegacyMediaService {
             .unwrap_or_default()
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServiceShutdownStatus {
+    pub requested: bool,
+    pub worker: crate::agent::WorkerThreadStatus,
+    pub operations: usize,
+    /// None means the receipt registry is busy, never empty.
+    pub retained_receipts: Option<usize>,
+}
+impl ServiceShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.requested
+            && self.worker == crate::agent::WorkerThreadStatus::Returned
+            && self.operations == 0
+            && self.retained_receipts == Some(0)
+    }
+}
 impl Drop for LegacyMediaService {
     fn drop(&mut self) {
-        self.selection.active.store(false, Ordering::SeqCst);
-        for control in self.operations.values() {
-            control.cancel();
-        }
-        for cap in self.caps.values() {
-            cap.active.store(false, Ordering::SeqCst);
-        }
+        self.request_shutdown();
     }
 }
 struct PlanRecord {
@@ -1188,6 +1229,32 @@ mod tests {
     use image::{DynamicImage, ImageFormat};
     use std::{fs, os::unix::fs::symlink};
     const ITEM: &str = "00000000-0000-4000-8000-000000000002";
+    #[test]
+    fn explicit_shutdown_drains_worker_without_reopening_admissions_or_mutating_source() {
+        let fixture = fixture();
+        let before = fs::read(&fixture.config.database_path).unwrap();
+        let (mut service, selection, _) = setup(&fixture);
+        assert!(!service.shutdown_status().ready());
+        service.request_shutdown();
+        service.request_shutdown();
+        assert!(!selection.accepts(fixture.thread["id"].as_str().unwrap(), selection.generation));
+        let later = service.select_thread(Some(fixture.thread["id"].as_str().unwrap().into()));
+        assert!(matches!(
+            service.load_visible(&later, vec![]),
+            Err(ServiceError::Cancelled)
+        ));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while service.shutdown_status().worker == crate::agent::WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline, "media worker failed to join");
+            std::thread::yield_now();
+        }
+        assert!(service.shutdown_status().ready());
+        assert_eq!(fs::read(&fixture.config.database_path).unwrap(), before);
+        let held = service.receipts.lock().unwrap();
+        assert_eq!(service.shutdown_status().retained_receipts, None);
+        assert!(!service.shutdown_status().ready());
+        drop(held);
+    }
     struct Fixture {
         _dir: tempfile::TempDir,
         config: ServiceConfig,
@@ -1515,7 +1582,7 @@ mod tests {
         // consuming the preview or stealing any already-retained receipt slot.
         let (disconnected, receiver) = mpsc::sync_channel(8);
         drop(receiver);
-        let connected = std::mem::replace(&mut service.tx, disconnected);
+        let connected = service.tx.replace(disconnected);
         service
             .receipt_slots
             .store(MAX_RECEIPTS - 1, Ordering::SeqCst);

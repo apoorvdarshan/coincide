@@ -575,3 +575,34 @@ paths. The desktop draft adapter selects the narrow trusted flush under one
 try-lock after admissions freeze. All 260 desktop tests pass with notification,
 microphone, Computer Use and helper features enabled, using synthetic adapters.
 These are prerequisites for actual owner wiring, not full quiescence acceptance.
+
+
+## Overnight verified checkpoint (2026-11-05, 16:53 UTC)
+
+Rust Actions run 42066509538 passed all five jobs at exact
+`eeb88c3a1a5c4f3965b60c508d0639d0775892e9`, including the Linux pipe fix and
+Windows explicit test import. Subsequent owner work is a newer checkpoint, not
+covered by that green run. Local catalog tests pass 13, GitHub read tests 32,
+generic background-worker tests five, terminal join tests two, and GitHub write
+tests 12. Feature-on strict core Clippy passes after these owner foundations.
+The expanded feature-on core suite passed in log145 after correcting a dictation
+fixture that could time out before its synthetic child started; the 200 ms
+runtime timeout and descendant/audio cleanup assertions remain unchanged.
+
+Idle-host, catalog, provider, terminal, background and GitHub read/write ownership
+now distinguish semantic results from actual joined worker exit. Terminal child
+wait failure retains ownership; a descendant holding the PTY remains pending.
+Dispatched GitHub writes finish without cancellation or retry. Historical-media
+service and recovery IO have explicit drains while retaining receipts until
+durable ownership and acknowledgments. Native Computer Use now waits through
+backend Drop and TLS cleanup for its shutdown acknowledgment. These owners are
+not yet a mounted whole-app shutdown proof; the helper remains unavailable.
+
+Native browser candidate131 passed genuine Deny/Allow once, synthetic filling
+with no automatic submit, public read/console/tab inspection shielding and
+navigation/thread/cancel revocation. Its Close Tab harness omitted a required
+tab ID; production validation correctly rejected it. A fresh harness-only fix
+is built for the remaining close/profile checks. Native terminal132 verified
+stable split resize and actual input routing, then exposed a dead-key composition
+carrying between panes; that concrete native defect is assigned for correction.
+Find far-row verification remains active. No release or user-data cutover occurred.

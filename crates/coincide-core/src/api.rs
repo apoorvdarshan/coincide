@@ -38,8 +38,6 @@ mod github_engine;
 mod github_threads_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
-#[path = "terminal_shutdown.rs"]
-pub mod terminal_shutdown;
 #[path = "notification_events.rs"]
 pub mod notification_events;
 #[path = "organization_api.rs"]
@@ -49,6 +47,8 @@ mod organization_api;
 mod provider_worker_tests;
 #[path = "session_import_api.rs"]
 mod session_import_api;
+#[path = "terminal_shutdown.rs"]
+pub mod terminal_shutdown;
 #[path = "thread_resolution.rs"]
 mod thread_resolution;
 #[path = "workspace_api.rs"]

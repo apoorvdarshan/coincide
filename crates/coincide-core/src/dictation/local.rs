@@ -96,12 +96,20 @@ impl LocalWhisper {
     }
     #[cfg(unix)]
     pub fn transcribe_local(&mut self, wav: &[u8]) -> Result<String, LocalError> {
+        self.transcribe_after_spawn(wav, || Ok(()))
+    }
+    #[cfg(unix)]
+    fn transcribe_after_spawn(
+        &mut self,
+        wav: &[u8],
+        after_spawn: impl FnOnce() -> Result<(), LocalError>,
+    ) -> Result<String, LocalError> {
         self.check_configuration()?;
         validate_input(wav)?;
         // Drop order matters: process group is always torn down/reaped before
         // this directory is removed, on success and on every failure path.
         let directory = PrivateDirectory::create()?;
-        let result = self.run_in_directory(wav, &directory);
+        let result = self.run_in_directory(wav, &directory, after_spawn);
         directory.cleanup()?;
         result
     }
@@ -110,6 +118,7 @@ impl LocalWhisper {
         &self,
         wav: &[u8],
         directory: &PrivateDirectory,
+        after_spawn: impl FnOnce() -> Result<(), LocalError>,
     ) -> Result<String, LocalError> {
         let input = directory.0.join("dictation.wav");
         let prefix = directory.0.join("transcript");
@@ -162,6 +171,7 @@ impl LocalWhisper {
             });
         }
         let group = OwnedProcess(command.spawn().map_err(|_| LocalError::Unavailable)?);
+        after_spawn()?;
         let started = Instant::now();
         loop {
             if started.elapsed() >= self.timeout {
@@ -408,7 +418,21 @@ printf '%s' '{{"transcription":[{{"text":" world "}},{{"text":" fixture"}}]}}' >
         ));
         backend.timeout = Duration::from_millis(200);
         let start = Instant::now();
-        assert_eq!(backend.transcribe_local(&wav()), Err(LocalError::TimedOut));
+        // Exercise timeout cleanup only after this fixture's descendant exists.
+        // Scheduling under the full parallel suite may exceed the runtime budget
+        // before /bin/sh reaches PARSE; elapsed time alone is not readiness.
+        let pid_path = root.path().join("child-pid");
+        let result = backend.transcribe_after_spawn(&wav(), || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !fs::read_to_string(&pid_path).is_ok_and(|s| s.trim().parse::<i32>().is_ok()) {
+                if Instant::now() >= deadline {
+                    return Err(LocalError::Unavailable);
+                }
+                std::thread::yield_now();
+            }
+            Ok(())
+        });
+        assert_eq!(result, Err(LocalError::TimedOut));
         assert!(start.elapsed() < Duration::from_secs(3));
         assert_removed(root.path());
         let pid: i32 = fs::read_to_string(root.path().join("child-pid"))

@@ -412,6 +412,14 @@ impl LegacyMediaSettingsPanel {
             || self.choosing
             || !self.awaiting_receipts.is_empty()
     }
+    pub fn request_service_shutdown(&mut self) {
+        self.service.request_shutdown();
+    }
+    pub fn service_shutdown_status(
+        &self,
+    ) -> coincide_core::legacy_media_service::ServiceShutdownStatus {
+        self.service.shutdown_status()
+    }
     fn mapping_changed(&mut self, cx: &mut Context<Self>) {
         self.revision = self.revision.wrapping_add(1);
         if let Some(cap) = self.capability.take() {
