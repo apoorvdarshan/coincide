@@ -160,11 +160,12 @@ impl Coincide {
             for (id, receipt) in receipts {
                 if self.media.owner.durable_ownership(id).is_some() {
                     self.acknowledge_media_ownership(id, cx);
-                } else if !pending.contains(&id) && self.media.shutdown_handoffs.insert(id) {
-                    if let Err(error) = self.media.owner.take_ownership(id, receipt) {
-                        self.media.status =
-                            format!("Media recovery handoff remains pending: {error:?}");
-                    }
+                } else if !pending.contains(&id)
+                    && self.media.shutdown_handoffs.insert(id)
+                    && let Err(error) = self.media.owner.take_ownership(id, receipt)
+                {
+                    self.media.status =
+                        format!("Media recovery handoff remains pending: {error:?}");
                 }
             }
             let panel = self.media.panel.read(cx);
@@ -517,80 +518,78 @@ impl Coincide {
         }
         if let Ok((epoch, result)) = self.media.receiver.try_recv()
             && let Some(check) = self.media.freshness.take()
+            && epoch == check.epoch
+            && epoch == self.media.epoch
         {
-            if epoch == check.epoch && epoch == self.media.epoch {
-                match result {
-                    Ok((stored, images)) => {
-                        let valid = !self.media.close_requested
-                            && !self.media.shutdown_requested
-                            && self.selected.as_ref().is_some_and(|thread| {
-                                snapshot_current(
-                                    thread,
-                                    &check.snapshot,
-                                    &check.request.thread,
-                                    check.request.revision,
-                                    self.media.revision,
-                                    self.pending_drafts.contains_key(&check.request.thread),
-                                )
-                            })
-                            && stored == check.snapshot
-                            && check
-                                .request
-                                .selection
-                                .accepts(&check.request.thread, check.request.generation);
-                        if valid {
-                            self.remove_media_images(cx);
-                            self.media.images = images;
-                            self.media.status = if check.request.failures.is_empty() {
-                                "Verified historical images are available for local display only."
-                                    .into()
-                            } else {
-                                format!(
-                                    "Some historical images are unavailable: {}",
-                                    check.request.failures.join("; ")
-                                )
-                            };
-                            let ids = self
-                                .media
-                                .images
-                                .iter()
-                                .map(|image| image.item.clone())
-                                .collect::<HashSet<_>>();
-                            if let Some(thread) = &self.selected {
-                                for id in ids {
-                                    if let Some(index) =
-                                        find_row(thread, &check.request.thread, &id)
-                                    {
-                                        self.transcript_list.splice(index..index + 1, 1);
-                                    }
+            match result {
+                Ok((stored, images)) => {
+                    let valid = !self.media.close_requested
+                        && !self.media.shutdown_requested
+                        && self.selected.as_ref().is_some_and(|thread| {
+                            snapshot_current(
+                                thread,
+                                &check.snapshot,
+                                &check.request.thread,
+                                check.request.revision,
+                                self.media.revision,
+                                self.pending_drafts.contains_key(&check.request.thread),
+                            )
+                        })
+                        && stored == check.snapshot
+                        && check
+                            .request
+                            .selection
+                            .accepts(&check.request.thread, check.request.generation);
+                    if valid {
+                        self.remove_media_images(cx);
+                        self.media.images = images;
+                        self.media.status = if check.request.failures.is_empty() {
+                            "Verified historical images are available for local display only."
+                                .into()
+                        } else {
+                            format!(
+                                "Some historical images are unavailable: {}",
+                                check.request.failures.join("; ")
+                            )
+                        };
+                        let ids = self
+                            .media
+                            .images
+                            .iter()
+                            .map(|image| image.item.clone())
+                            .collect::<HashSet<_>>();
+                        if let Some(thread) = &self.selected {
+                            for id in ids {
+                                if let Some(index) = find_row(thread, &check.request.thread, &id) {
+                                    self.transcript_list.splice(index..index + 1, 1);
                                 }
                             }
-                            cx.notify();
-                        } else {
-                            self.invalidate_media_images(cx);
-                            if self
-                                .selected
-                                .as_ref()
-                                .is_some_and(|thread| thread["id"] == check.request.thread)
-                                && !self.pending_drafts.contains_key(&check.request.thread)
-                                && stored != check.snapshot
-                            {
-                                let count = stored["items"].as_array().map_or(0, Vec::len);
-                                self.transcript_list.splice(0..self.transcript_count, count);
-                                self.transcript_count = count;
-                                self.selected = Some(stored);
-                                self.sync_media_context(cx);
-                            }
-                            self.media.status="Conversation snapshot changed; stale historical images were discarded.".into();
                         }
-                    }
-                    Err(error) => {
-                        self.invalidate_media_images(cx);
-                        self.media.status = format!(
-                            "Historical images were not installed: {error}. Inspect again when ready."
-                        );
                         cx.notify();
+                    } else {
+                        self.invalidate_media_images(cx);
+                        if self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| thread["id"] == check.request.thread)
+                            && !self.pending_drafts.contains_key(&check.request.thread)
+                            && stored != check.snapshot
+                        {
+                            let count = stored["items"].as_array().map_or(0, Vec::len);
+                            self.transcript_list.splice(0..self.transcript_count, count);
+                            self.transcript_count = count;
+                            self.selected = Some(stored);
+                            self.sync_media_context(cx);
+                        }
+                        self.media.status="Conversation snapshot changed; stale historical images were discarded.".into();
                     }
+                }
+                Err(error) => {
+                    self.invalidate_media_images(cx);
+                    self.media.status = format!(
+                        "Historical images were not installed: {error}. Inspect again when ready."
+                    );
+                    cx.notify();
                 }
             }
         }

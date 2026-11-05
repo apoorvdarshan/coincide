@@ -6,7 +6,7 @@ use coincide_core::github_threads::{InlineComment, Page, ReviewThread, Scope};
 use gpui_kit::{
     App, AppContext, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    VisualContext, Window,
+    Window,
     base::Disableable,
     component::{
         button::Button,

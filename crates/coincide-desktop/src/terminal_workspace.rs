@@ -732,13 +732,13 @@ fn run_worker(
                     if !send(&tx, Update::Closed(key, ticket, result)) {
                         return;
                     }
-                } else if let Err(error) = result {
-                    if !send(
+                } else if let Err(error) = result
+                    && !send(
                         &tx,
                         Update::ActionFailed(key, format!("{failure}: {error}")),
-                    ) {
-                        return;
-                    }
+                    )
+                {
+                    return;
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -934,12 +934,11 @@ impl TerminalWorkspace {
             return false;
         }
         if let Action::Input(TerminalInput::Text { text } | TerminalInput::Paste { text }) = &action
+            && let Err(error) = valid_payload(text, false)
         {
-            if let Err(error) = valid_payload(text, false) {
-                pane.notice = error.to_string();
-                cx.notify();
-                return false;
-            }
+            pane.notice = error.to_string();
+            cx.notify();
+            return false;
         }
         let ticket = pane.ticket + 1;
         if self
@@ -1295,12 +1294,11 @@ impl TerminalWorkspace {
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("v") {
             if let Some(input) = cx.read_from_clipboard().and_then(|c| c.text()) {
                 if valid_payload(&input, true).is_ok() {
-                    if self.act(key, Action::Input(TerminalInput::Paste { text: input }), cx) {
-                        if let Some(p) = self.panes.get_mut(&key) {
-                            if let Some(ime) = &p.ime {
-                                ime.update(cx, |i, cx| i.cancel(window, cx));
-                            }
-                        }
+                    if self.act(key, Action::Input(TerminalInput::Paste { text: input }), cx)
+                        && let Some(p) = self.panes.get_mut(&key)
+                        && let Some(ime) = &p.ime
+                    {
+                        ime.update(cx, |i, cx| i.cancel(window, cx));
                     }
                 } else if let Some(p) = self.panes.get_mut(&key) {
                     p.notice="Paste contains control framing or exceeds encoded 32 KiB limit; nothing sent".into();
@@ -1772,29 +1770,29 @@ impl TerminalWorkspace {
                                 });
                             },
                             move |bounds, _, window, cx| {
-                                if native_focus.is_focused(window) {
-                                    if let Some(input) = ime {
-                                        let offset = local_scroll.offset();
-                                        input.update(cx, |input, _| {
-                                            input.bounds = Some(bounds);
-                                            input.anchor = point(
-                                                (bounds.left() + caret.x + offset.x)
-                                                    .max(bounds.left())
-                                                    .min(bounds.right()),
-                                                (bounds.top() + caret.y + offset.y)
-                                                    .max(bounds.top())
-                                                    .min(
-                                                        (bounds.bottom() - px(CELL_H))
-                                                            .max(bounds.top()),
-                                                    ),
-                                            );
-                                        });
-                                        window.handle_input(
-                                            &native_focus,
-                                            ElementInputHandler::new(bounds, input),
-                                            cx,
+                                if native_focus.is_focused(window)
+                                    && let Some(input) = ime
+                                {
+                                    let offset = local_scroll.offset();
+                                    input.update(cx, |input, _| {
+                                        input.bounds = Some(bounds);
+                                        input.anchor = point(
+                                            (bounds.left() + caret.x + offset.x)
+                                                .max(bounds.left())
+                                                .min(bounds.right()),
+                                            (bounds.top() + caret.y + offset.y)
+                                                .max(bounds.top())
+                                                .min(
+                                                    (bounds.bottom() - px(CELL_H))
+                                                        .max(bounds.top()),
+                                                ),
                                         );
-                                    }
+                                    });
+                                    window.handle_input(
+                                        &native_focus,
+                                        ElementInputHandler::new(bounds, input),
+                                        cx,
+                                    );
                                 }
                             },
                         )
@@ -1833,15 +1831,16 @@ impl Drop for TerminalWorkspace {
 }
 impl Render for TerminalWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.visible && window.is_window_active() {
-            if let Some(key) = self.ids().into_iter().find(|key| {
+        if self.visible
+            && window.is_window_active()
+            && let Some(key) = self.ids().into_iter().find(|key| {
                 self.panes.get(key).is_some_and(|p| {
                     p.focus.is_focused(window)
                         && p.ime.as_ref().is_none_or(|ime| !ime.read(cx).active)
                 })
-            }) {
-                self.focus(key, window, cx);
-            }
+            })
+        {
+            self.focus(key, window, cx);
         }
         let mut tabs = div().flex().gap_1().items_center().flex_wrap();
         for tab in &self.tabs {

@@ -765,7 +765,7 @@ impl Render for LegacyMediaSettingsPanel {
             .child(format!("Selected source folder: {}",self.folder.as_ref().map(|p|short(&p.to_string_lossy(),500)).unwrap_or_else(||"Choose with the native folder picker".into())))
             .child(div().flex().gap_2()
                 .child(Button::new("legacy-media-folder").label("Choose source folder…").disabled(busy||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.choose(cx))))
-                .child(Button::new("legacy-media-relative").label(if self.relative {"Relative paths: use this folder"}else{"Relative paths: unresolved"}).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.relative=!this.relative;this.mapping_changed(cx);}))))
+                .child(Button::new("legacy-media-relative").label(if self.relative {"Relative paths: use this folder"}else{"Relative paths: unresolved"}).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.relative = !this.relative;this.mapping_changed(cx);}))))
             .child(Button::new("legacy-media-approve").label("Approve exact mapping and inspect").disabled(busy||self.folder.is_none()||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.approve_and_inspect(cx))))
             .child(div().text_sm().child(short(&self.flow.notice,1500)))
             .child(div().flex().gap_2()

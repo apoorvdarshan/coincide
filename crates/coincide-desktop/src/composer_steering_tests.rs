@@ -25,7 +25,8 @@ fn ready(controller: &mut SteeringController) {
         std::thread::yield_now();
     }
 }
-fn backend(outcome: &str) -> (Backend, Arc<Mutex<Vec<(String, Value)>>>) {
+type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+fn backend(outcome: &str) -> (Backend, Calls) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let log = calls.clone();
     let outcome = outcome.to_owned();

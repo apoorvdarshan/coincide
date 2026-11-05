@@ -457,9 +457,7 @@ impl Connection {
         self.discard_snapshots();
     }
     fn discard_snapshots(&self) {
-        for snapshot in self.snapshots.try_iter() {
-            drop(snapshot);
-        }
+        for _ in self.snapshots.try_iter() {}
     }
     fn shutdown_status(&self) -> ShutdownStatus {
         let requested = !self.shared.alive.load(Ordering::Acquire);
