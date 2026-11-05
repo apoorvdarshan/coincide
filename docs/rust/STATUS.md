@@ -47,6 +47,33 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [ ] Real-account acceptance, full test parity and data cutover rehearsal.
 - [ ] Remove superseded Swift/C++ desktop implementation and build tooling.
 
+## Current parallel checkpoint (2026-11-05)
+
+Overall verified macOS parity remains approximately 30%. Windows/Linux feature
+parity and existing-macOS UI/UX matching remain open acceptance milestones.
+
+All seven first-round worker slices are integrated on rust-gpui-rewrite. Follow-up
+work is active or awaiting its allocated validation lane:
+
+| Owner | Completed evidence | Current work | Remaining acceptance |
+| --- | --- | --- | --- |
+| Terminal | 25 focused Mac tests passed at worker 0ebd9b7 | Revision-checked scroll UI integration | Native scroll UI; Windows PTY end-to-end; splits/shell/layout |
+| Browser | 13 Node contract tests passed | Async bounded uploads and native fixture integration | Mac WebKit byte/event acceptance; Windows uploads explicitly unavailable |
+| Organization | 15 focused Mac tests and strict core clippy passed at e08cef0 | Source schema investigation | Store/UI integration of Codex/Claude previews; bots/tasks/history parity |
+| Credentials | 6 vault + 2 dictation tests passed before latest cleanup-order fix | Unreaped-leader cleanup and native approval/sink module | Latest fix/test harness validation; real native fill; passkeys/capture |
+| Workspace | Primitives integrated; dispatch fixtures authored | API registration and timeout/mutation-exclusion correction | Combined tests; Git UI; live GitHub operations |
+| Host | Portable policy integrated; native sleep helper tests authored | Process cleanup review and test allocation | Engine worker hookup; native service/notifications/remote/iCloud |
+| Packaging | 11 Python tests and 6 real store rehearsal cases passed on Mac/Linux/Windows CI at worker 7ea58f2 | Integrated CI evidence collection | Desktop staging, signing/installers/updater/live cutover |
+| Coordinator | 234 integrated Linux test successes before second follow-ups; Antigravity cleanup fixture and native setup compile tests passed | Integration, shared-resource allocation, platform CI and native acceptance | Full acceptance checklist below |
+
+Integrated Linux clippy initially found two importer collapsible-if errors; worker
+e08cef0 fixes these and passes focused Mac tests/clippy. This is not yet evidence
+that the complete integrated follow-up batch passes. Windows named-pipe transport
+is implemented with owner-only ACL and framing/CLI fixtures, pending Windows CI.
+Native setup UI compiles and has synthetic discovery tests, but actual account
+sign-in/setup UI acceptance remains open. Worker commits and passing isolated
+checks never count as completing the broad feature groups below.
+
 ## Verified so far
 
 2026-11-05 checkpoint: approximately 30% of the macOS replacement is verified.

@@ -1,5 +1,5 @@
 use coincide_core::{cli_session_import::*, organization::*, usage_history::*};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 const ID: &str = "00000000-0000-4000-8000-000000000001";
 fn rollout(records: Vec<Value>) -> Vec<u8> {
@@ -66,12 +66,14 @@ fn codex_rejects_mixed_identity_and_oversize_records() {
     other["payload"]["id"] = json!(Uuid::nil().to_string());
     assert!(preview_codex(&rollout(vec![meta(), other, msg("user", "hello")])).is_err());
     assert!(preview_codex(&vec![b'a'; MAX_RECORD_BYTES + 1]).is_err());
-    assert!(preview_codex(&rollout(vec![
-        meta(),
-        json!({"sessionId": ID}),
-        msg("user", "hello")
-    ]))
-    .is_err());
+    assert!(
+        preview_codex(&rollout(vec![
+            meta(),
+            json!({"sessionId": ID}),
+            msg("user", "hello")
+        ]))
+        .is_err()
+    );
     assert!(preview_codex(&rollout(vec![meta()])).is_err());
 }
 #[test]
@@ -105,12 +107,14 @@ fn history_sums_only_turn_totals_and_retains_snapshots() {
             .total(),
         0
     );
-    assert!(history
-        .filtered(&HistoryFilter {
-            since: Some("2027-01-01T00:00:00Z".parse().unwrap()),
-            ..Default::default()
-        })
-        .is_empty());
+    assert!(
+        history
+            .filtered(&HistoryFilter {
+                since: Some("2027-01-01T00:00:00Z".parse().unwrap()),
+                ..Default::default()
+            })
+            .is_empty()
+    );
 }
 #[test]
 fn limits_update_keeps_unknown_fields_and_omitted_reset() {
@@ -208,26 +212,32 @@ fn claude_selects_latest_ancestry_and_counts_unsupported_content() {
 }
 #[test]
 fn claude_rejects_cycles_incomplete_chains_and_mixed_sessions() {
-    assert!(preview_claude(&rollout(vec![
-        claude("a", Some("b"), "user", json!("a")),
-        claude("b", Some("a"), "assistant", json!("b"))
-    ]))
-    .is_err());
-    assert!(preview_claude(&rollout(vec![claude(
-        "a",
-        Some("missing"),
-        "user",
-        json!("a")
-    )]))
-    .is_err());
+    assert!(
+        preview_claude(&rollout(vec![
+            claude("a", Some("b"), "user", json!("a")),
+            claude("b", Some("a"), "assistant", json!("b"))
+        ]))
+        .is_err()
+    );
+    assert!(
+        preview_claude(&rollout(vec![claude(
+            "a",
+            Some("missing"),
+            "user",
+            json!("a")
+        )]))
+        .is_err()
+    );
     let mut other = claude("b", None, "assistant", json!("b"));
     other["sessionId"] = json!(Uuid::nil().to_string());
     assert!(preview_claude(&rollout(vec![claude("a", None, "user", json!("a")), other])).is_err());
-    assert!(preview_claude(&rollout(vec![
-        meta(),
-        claude("a", None, "user", json!("a"))
-    ]))
-    .is_err());
+    assert!(
+        preview_claude(&rollout(vec![
+            meta(),
+            claude("a", None, "user", json!("a"))
+        ]))
+        .is_err()
+    );
 }
 #[test]
 fn claude_last_revision_wins_and_unicode_is_bounded() {

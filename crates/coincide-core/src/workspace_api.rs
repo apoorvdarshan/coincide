@@ -46,6 +46,10 @@ impl Engine {
         let thread = self.store.thread(&owner)?;
         if method == "git.workspace.result" {
             let id = bounded(p, "operationId", 36)?;
+            ensure!(
+                self.workspace_git_operations.contains(id),
+                "Use workspace.result for this operation, or refresh if it has expired"
+            );
             let (thread, started) = self
                 .workspace_pending
                 .get(id)
@@ -60,12 +64,14 @@ impl Engine {
             );
             if let Some(result) = self.workspace_results.remove(id) {
                 self.workspace_pending.remove(id);
+                self.workspace_git_operations.remove(id);
                 return Ok(json!({"ready":true,"result":result}));
             }
             if started.elapsed() > Duration::from_secs(120) {
                 self.workspace_pending.remove(id);
+                self.workspace_git_operations.remove(id);
                 return Ok(
-                    json!({"ready":true,"result":{"error":"Workspace operation timed out; refresh before retrying mutations"}}),
+                    json!({"ready":true,"result":{"error":"Workspace operation timed out; work may still be running. Mutations remain blocked until it finishes; refresh before retrying"}}),
                 );
             }
             return Ok(json!({"ready":false}));
@@ -76,6 +82,10 @@ impl Engine {
         );
         let mutating = matches!(method, "git.checkpoints.create" | "git.worktrees.reserve");
         if mutating {
+            ensure!(
+                self.workspace_mutations.is_empty(),
+                "A workspace mutation is still running; wait for completion and refresh before retrying"
+            );
             ensure!(
                 !self.store.is_imported(&owner)?,
                 "Fork an imported thread before changing Git state"
@@ -142,6 +152,10 @@ impl Engine {
         let id = Uuid::new_v4().to_string();
         self.workspace_pending
             .insert(id.clone(), (owner, Instant::now()));
+        self.workspace_git_operations.insert(id.clone());
+        if mutating {
+            self.workspace_mutations.insert(id.clone());
+        }
         let tx = self.workspace_tx.clone();
         let operation = id.clone();
         let method = method.to_owned();
@@ -191,8 +205,19 @@ impl Engine {
                 }
             })()
             .unwrap_or_else(|error| json!({"error":error.to_string()}));
-            let _ = tx.try_send((operation, result));
+            // A full bounded channel must apply backpressure, never discard a
+            // mutation completion and strand its exclusion. Engine::poll drains
+            // it; dropping the engine disconnects and releases waiting workers.
+            publish_completion(tx, operation, result);
         });
         Ok(json!({"operationId":id,"resultMethod":"git.workspace.result"}))
     }
+}
+
+pub(super) fn publish_completion(
+    tx: std::sync::mpsc::SyncSender<(String, Value)>,
+    operation: String,
+    result: Value,
+) {
+    let _ = tx.send((operation, result));
 }

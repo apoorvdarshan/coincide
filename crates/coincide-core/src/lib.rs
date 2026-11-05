@@ -16,11 +16,11 @@ pub mod message_queue;
 pub mod thread_history;
 
 pub mod cli_session_import;
-pub mod organization;
-pub mod usage_history;
 pub mod credentials;
 pub mod dictation;
+pub mod organization;
 pub mod platform_host;
 pub mod remote;
+pub mod usage_history;
 pub mod workspace_git;
 pub mod workspace_github;

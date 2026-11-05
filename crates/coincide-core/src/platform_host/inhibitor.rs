@@ -221,9 +221,33 @@ mod process {
             if self.reaped {
                 bail!("idle sleep utility is no longer running");
             }
-            if let Some(status) = self.child.try_wait()? {
-                self.reaped = true;
-                bail!("idle sleep utility exited: {status}");
+            // Health checks must not reap the leader: its PID pins the process
+            // group until stop() has signalled any surviving descendants.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.child.id() as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == ErrorKind::Interrupted {
+                    return Ok(());
+                }
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    // Ownership was lost (for example an external SIGCHLD
+                    // reaper); never signal a potentially recycled group ID.
+                    self.reaped = true;
+                }
+                return Err(error).context("inspect idle sleep utility");
+            }
+            if unsafe { info.si_pid() } != 0 {
+                bail!("idle sleep utility exited (status {})", unsafe {
+                    info.si_status()
+                });
             }
             Ok(())
         }
@@ -241,7 +265,12 @@ mod process {
                         return Err(error).context("stop idle sleep process group");
                     }
                 }
-                self.child.wait().context("reap idle sleep utility")?;
+                if let Err(error) = self.child.wait() {
+                    if error.raw_os_error() == Some(libc::ECHILD) {
+                        self.reaped = true;
+                    }
+                    return Err(error).context("reap idle sleep utility");
+                }
                 self.reaped = true;
             }
             Ok(())
@@ -309,6 +338,80 @@ mod process {
                 )
                 .is_err()
             );
+        }
+        #[test]
+        fn exited_leader_stays_owned_until_descendant_group_teardown() {
+            let temporary = tempfile::tempdir().unwrap();
+            let descendant_file = temporary.path().join("descendant.pid");
+            let mut child = Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "/bin/sleep 60 </dev/null >/dev/null 2>&1 & printf '%s' \"$!\" > \"$1\"; /bin/cat >/dev/null",
+                    "fixture",
+                ])
+                .arg(&descendant_file)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .process_group(0)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let input = child.stdin.take();
+            let mut lease = Lease {
+                child,
+                input,
+                reaped: false,
+            };
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let descendant: i32 = loop {
+                if let Ok(pid) = std::fs::read_to_string(&descendant_file)
+                    && let Ok(pid) = pid.parse()
+                {
+                    break pid;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture descendant did not start"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            // The leader exits after EOF; its background sleep remains alive.
+            lease.input.take();
+            while lease.check_running().is_ok() {
+                assert!(Instant::now() < deadline, "fixture leader did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                !lease.reaped,
+                "health polling must retain the exited leader"
+            );
+            assert!(lease.check_running().is_err());
+            assert!(!lease.reaped, "repeated inspection must still use WNOWAIT");
+            lease.stop().unwrap();
+            assert!(lease.reaped);
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if unsafe { libc::kill(descendant, 0) } != 0 {
+                    break;
+                }
+                // A killed orphan may remain a zombie until init reaps it. It
+                // must be terminated, but immediate PID disappearance is not required.
+                let state = Command::new("/bin/ps")
+                    .args(["-o", "stat=", "-p", &descendant.to_string()])
+                    .output()
+                    .unwrap();
+                let state = String::from_utf8_lossy(&state.stdout);
+                if state.trim().is_empty() || state.trim_start().starts_with('Z') {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "descendant survived lease teardown"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 }

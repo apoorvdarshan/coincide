@@ -15,6 +15,11 @@ use uuid::Uuid;
 
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[path = "workspace_api.rs"]
+mod workspace_api;
+#[cfg(test)]
+#[path = "workspace_runtime_tests.rs"]
+mod workspace_runtime_tests;
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
 struct Running {
@@ -42,6 +47,10 @@ pub struct Engine {
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
     workspace_pending: HashMap<String, (String, Instant)>,
     workspace_results: HashMap<String, Value>,
+    workspace_git_operations: HashSet<String>,
+    // Running mutations outlive result collection deadlines. Only worker
+    // completion may release their exclusion. This is intentionally in-memory.
+    workspace_mutations: HashSet<String>,
     attachment_operations: HashSet<String>,
     workspace_tx: std::sync::mpsc::SyncSender<(String, Value)>,
     workspace_rx: std::sync::mpsc::Receiver<(String, Value)>,
@@ -76,6 +85,8 @@ impl Engine {
             browser_results: HashMap::new(),
             workspace_pending: HashMap::new(),
             workspace_results: HashMap::new(),
+            workspace_git_operations: HashSet::new(),
+            workspace_mutations: HashSet::new(),
             attachment_operations: HashSet::new(),
             workspace_tx,
             workspace_rx,
@@ -105,6 +116,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if workspace_api::METHODS.contains(&method) {
+            return self.workspace_command(method, p);
+        }
         match method {
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
@@ -194,6 +208,7 @@ impl Engine {
             }
             "workspace.result"=>{
                 let id=required(p,"operationId")?;
+                ensure!(!self.workspace_git_operations.contains(id),"Use git.workspace.result for this operation");
                 let (owner,started)=self.workspace_pending.get(id).context("Workspace operation not found")?;
                 ensure!(owner==required(p,"threadId")?,"Workspace operation belongs to another thread");
                 if let Some(result)=self.workspace_results.remove(id) {
@@ -283,7 +298,8 @@ impl Engine {
             "app.status" => Ok(
                 json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
-            "app.capabilities" => Ok(json!([
+            "app.capabilities" => {
+                let mut methods = vec![
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
@@ -298,7 +314,10 @@ impl Engine {
                 "agent.stop",
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select"
-            ])),
+                ];
+                methods.extend_from_slice(workspace_api::METHODS);
+                Ok(json!(methods))
+            },
             "threads.open" => {
                 let id = required(p, "threadId")?;
                 self.store.thread(id)?;
@@ -979,7 +998,12 @@ impl Engine {
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
         self.workspace_results
             .retain(|id, _| self.workspace_pending.contains_key(id));
+        self.workspace_git_operations
+            .retain(|id| self.workspace_pending.contains_key(id));
         for (id, mut result) in self.workspace_rx.try_iter() {
+            // Worker completion, not a client timeout or abandoned result,
+            // releases mutation exclusion even if its result has expired.
+            self.workspace_mutations.remove(&id);
             let is_attachment = self.attachment_operations.remove(&id);
             if id == "provider-discovery" {
                 self.provider_discovery = Some(result);

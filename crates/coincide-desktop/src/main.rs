@@ -15,6 +15,7 @@ use coincide_core::{
     browser_protocol::BrowserAction,
     control,
     store::{Store, ThreadSummary, text},
+    terminal::TerminalScroll,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -144,6 +145,8 @@ struct Coincide {
     terminal_tabs: Vec<Value>,
     terminal_selected: std::collections::HashMap<String, String>,
     terminal_row_offset: usize,
+    terminal_grid_scroll: ScrollHandle,
+    terminal_wheel: Option<(String, f32)>,
     terminal_tabs_last_poll: Instant,
     terminal_blink_origin: Instant,
     terminal_blink_on: bool,
@@ -304,6 +307,8 @@ impl Coincide {
             terminal_tabs: Vec::new(),
             terminal_selected: Default::default(),
             terminal_row_offset: 0,
+            terminal_grid_scroll: ScrollHandle::new(),
+            terminal_wheel: None,
             terminal_tabs_last_poll: Instant::now(),
             terminal_blink_origin: Instant::now(),
             terminal_blink_on: true,
@@ -1733,6 +1738,8 @@ impl Coincide {
     }
     fn select_terminal(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal_selection.clear();
+        self.terminal_wheel = None;
+        self.terminal_grid_scroll.scroll_to_bottom();
         if let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) {
             self.terminal_selected.insert(thread, id.clone());
         }
@@ -1743,6 +1750,8 @@ impl Coincide {
         self.terminal_blink_origin = Instant::now();
         self.terminal_blink_on = true;
         window.focus(&self.terminal_focus, cx);
+        self.poll_terminal(cx);
+        self.terminal_grid_scroll.scroll_to_bottom();
         cx.notify();
     }
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1869,6 +1878,109 @@ impl Coincide {
             }
         }
     }
+    fn scroll_terminal(
+        &mut self,
+        expected_id: &str,
+        scroll: TerminalScroll,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_id.as_deref() != Some(expected_id) {
+            return;
+        }
+        self.poll_terminal(cx);
+        let Some(frame) = &self.terminal_frame else {
+            return;
+        };
+        if frame["viewport"]["alternateScreen"] == true {
+            return;
+        }
+        let Some(revision) = frame["revision"].as_u64() else {
+            return;
+        };
+        let result = call(
+            &self.engine,
+            "terminal.scroll",
+            json!({
+                "terminalId":expected_id,"revision":revision,"scroll":scroll
+            }),
+        );
+        self.terminal_selection.clear();
+        if let Ok(result) = &result {
+            match scroll {
+                TerminalScroll::Top => self.terminal_row_offset = 0,
+                TerminalScroll::Bottom => {
+                    let rows = result["frame"]["rows"].as_u64().unwrap_or(0) as usize;
+                    self.terminal_row_offset =
+                        rows.saturating_sub(1) / TERMINAL_PAGE_ROWS * TERMINAL_PAGE_ROWS;
+                }
+                _ => {}
+            }
+        }
+        self.terminal_frame = None;
+        self.poll_terminal(cx);
+        match result {
+            Ok(_) => match scroll {
+                TerminalScroll::Bottom => self.terminal_grid_scroll.scroll_to_bottom(),
+                TerminalScroll::Top => self.terminal_grid_scroll.set_offset(point(px(0.), px(0.))),
+                _ => {}
+            },
+            Err(error) => self.terminal_status = error.to_string(),
+        }
+        cx.notify();
+    }
+
+    fn terminal_wheel(&mut self, expected_id: &str, event: &ScrollEvent, cx: &mut Context<Self>) {
+        if self.terminal_id.as_deref() != Some(expected_id)
+            || event.modifiers.control
+            || event.modifiers.platform
+            || event.modifiers.alt
+        {
+            return;
+        }
+        let Some(frame) = &self.terminal_frame else {
+            return;
+        };
+        if frame["viewport"]["alternateScreen"] == true {
+            return;
+        }
+        let delta = event.delta.pixel_delta(px(TERMINAL_CELL_HEIGHT));
+        let dy = f32::from(delta.y);
+        if !dy.is_finite() || dy == 0. || delta.x.abs() > delta.y.abs() {
+            return;
+        }
+        // First traverse the locally clipped grid. At its edge, continue into
+        // PTY history. Shift+vertical-wheel explicitly targets history.
+        let offset = self.terminal_grid_scroll.offset().y;
+        let max = self.terminal_grid_scroll.max_offset().y;
+        let at_edge = if dy > 0. {
+            offset >= px(-1.)
+        } else {
+            offset <= -max + px(1.)
+        };
+        if !at_edge && !event.modifiers.shift {
+            self.terminal_wheel = None;
+            return;
+        }
+        let history = frame["viewport"]["historySize"].as_u64().unwrap_or(0);
+        let above = frame["viewport"]["displayOffset"].as_u64().unwrap_or(0);
+        if (dy > 0. && above >= history) || (dy < 0. && above == 0) {
+            return;
+        }
+        let remainder = self
+            .terminal_wheel
+            .get_or_insert_with(|| (expected_id.into(), 0.));
+        if remainder.0 != expected_id || remainder.1.signum() != dy.signum() {
+            *remainder = (expected_id.into(), 0.);
+        }
+        remainder.1 += (dy / TERMINAL_CELL_HEIGHT).clamp(-40., 40.);
+        let lines = remainder.1.trunc() as i32;
+        remainder.1 -= lines as f32;
+        cx.stop_propagation();
+        if lines != 0 {
+            self.scroll_terminal(expected_id, TerminalScroll::Lines(lines), cx);
+        }
+    }
+
     fn terminal_pane(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let mut tabs = div()
             .id("terminal-tabs")
@@ -1929,6 +2041,7 @@ impl Coincide {
             .flex_1()
             .min_h_0()
             .overflow_scroll()
+            .track_scroll(&self.terminal_grid_scroll)
             .p_2()
             .bg(rgb(0x0c0c0c))
             .track_focus(&self.terminal_focus)
@@ -1952,7 +2065,7 @@ impl Coincide {
             })
             .text_size(px(12.))
             .line_height(px(TERMINAL_CELL_HEIGHT));
-        let mut footer = div().flex().gap_2().items_center().text_sm();
+        let mut footer = div().flex().flex_wrap().gap_2().items_center().text_sm();
         if let Some(frame) = &self.terminal_frame {
             let cols = frame["cols"].as_u64().unwrap_or(0) as usize;
             let offset = frame["rowOffset"].as_u64().unwrap_or(0) as usize;
@@ -1963,9 +2076,13 @@ impl Coincide {
             let selection_terminal = self.terminal_id.clone().unwrap_or_default();
             let selection_revision = frame["revision"].as_u64().unwrap_or(0);
             if let Some(grid) = grid {
+                let scroll_terminal = selection_terminal.clone();
                 let mut canvas = div()
                     .flex()
                     .flex_col()
+                    .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                        this.terminal_wheel(&scroll_terminal, event, cx);
+                    }))
                     .w(px(cols as f32 * TERMINAL_CELL_WIDTH))
                     .flex_shrink_0();
                 for (index, cells) in grid.iter().enumerate() {
@@ -2143,6 +2260,60 @@ impl Coincide {
                 .tooltip("Select cells with the mouse or Shift+arrows. Copy: Cmd+C or Ctrl+Shift+C. Select displayed page: Cmd+A or Ctrl+Shift+A.")
                 .disabled(!self.terminal_selection.has_selection(&selection_terminal,frame))
                 .on_click(cx.listener(|this,_,window,cx|this.copy_terminal_selection(window,cx))));
+            let history = frame["viewport"]["historySize"].as_u64().unwrap_or(0);
+            let above = frame["viewport"]["displayOffset"].as_u64().unwrap_or(0);
+            let alternate = frame["viewport"]["alternateScreen"] == true;
+            footer = footer.child(div().text_xs().child(if alternate {
+                "Alternate screen".into()
+            } else if above == 0 {
+                format!("Live · {history} history rows")
+            } else {
+                format!("{above} rows above live")
+            }));
+            for (id, label, scroll, disabled, shortcut) in [
+                (
+                    "terminal-history-up",
+                    "History ↑",
+                    TerminalScroll::PageUp,
+                    alternate || above >= history,
+                    "Ctrl+Shift+PageUp",
+                ),
+                (
+                    "terminal-history-down",
+                    "History ↓",
+                    TerminalScroll::PageDown,
+                    alternate || above == 0,
+                    "Ctrl+Shift+PageDown",
+                ),
+                (
+                    "terminal-history-top",
+                    "Oldest",
+                    TerminalScroll::Top,
+                    alternate || above >= history,
+                    "Ctrl+Shift+Home",
+                ),
+                (
+                    "terminal-history-bottom",
+                    "Live",
+                    TerminalScroll::Bottom,
+                    alternate || above == 0,
+                    "Ctrl+Shift+End",
+                ),
+            ] {
+                let terminal = selection_terminal.clone();
+                footer = footer.child(
+                    Button::new(id)
+                        .accessibility_id(id)
+                        .label(label)
+                        .ghost()
+                        .compact()
+                        .disabled(disabled)
+                        .tooltip(shortcut)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.scroll_terminal(&terminal, scroll, cx)
+                        })),
+                );
+            }
             if rows > TERMINAL_PAGE_ROWS {
                 footer = footer
                     .child(
@@ -2193,6 +2364,29 @@ impl Coincide {
             .into_any_element()
     }
     fn terminal_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let key = &event.keystroke;
+        if key.modifiers.control
+            && key.modifiers.shift
+            && !key.modifiers.alt
+            && !key.modifiers.platform
+            && self
+                .terminal_frame
+                .as_ref()
+                .is_some_and(|frame| frame["viewport"]["alternateScreen"] == false)
+        {
+            let scroll = match key.key.as_str() {
+                "pageup" => Some(TerminalScroll::PageUp),
+                "pagedown" => Some(TerminalScroll::PageDown),
+                "home" => Some(TerminalScroll::Top),
+                "end" => Some(TerminalScroll::Bottom),
+                _ => None,
+            };
+            if let (Some(id), Some(scroll)) = (self.terminal_id.clone(), scroll) {
+                self.scroll_terminal(&id, scroll, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
         let Some(id) = self.terminal_id.as_ref() else {
             return;
         };
@@ -2244,6 +2438,28 @@ impl Coincide {
                 "down" => "\x1b[B".into(),
                 "right" => "\x1b[C".into(),
                 "left" => "\x1b[D".into(),
+                "pageup" | "pagedown" | "home" | "end" => {
+                    // Unmodified navigation belongs to the shell. Preserve
+                    // modified keys in alternate-screen applications too.
+                    let modifier = 1
+                        + u8::from(key.modifiers.shift)
+                        + 2 * u8::from(key.modifiers.alt)
+                        + 4 * u8::from(key.modifiers.control);
+                    match (key.key.as_str(), modifier) {
+                        ("home", 1) => "\x1b[H".into(),
+                        ("end", 1) => "\x1b[F".into(),
+                        ("home", m) => format!("\x1b[1;{m}H"),
+                        ("end", m) => format!("\x1b[1;{m}F"),
+                        (key, m) => {
+                            let code = if key == "pageup" { 5 } else { 6 };
+                            if m == 1 {
+                                format!("\x1b[{code}~")
+                            } else {
+                                format!("\x1b[{code};{m}~")
+                            }
+                        }
+                    }
+                }
                 _ => match &key.key_char {
                     Some(text) => text.clone(),
                     None => return,

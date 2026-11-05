@@ -176,11 +176,19 @@ pub struct UploadSlots(Arc<AtomicUsize>);
 pub struct UploadPermit(Arc<AtomicUsize>);
 impl UploadSlots {
     pub fn reserve(&self) -> Result<UploadPermit> {
-        self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < 2).then_some(n + 1)
-            })
-            .map_err(|_| anyhow::anyhow!("At most two upload workers may be active"))?;
+        let mut active = self.0.load(Ordering::Acquire);
+        loop {
+            ensure!(active < 2, "At most two upload workers may be active");
+            match self.0.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => active = observed,
+            }
+        }
         Ok(UploadPermit(self.0.clone()))
     }
 }

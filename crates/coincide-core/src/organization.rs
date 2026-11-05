@@ -1,7 +1,7 @@
 //! Lossless, bounded views over captured Swift organization documents.
 //! Callers supply bytes (for example `Store::original`); this module never discovers,
 //! writes, or activates instruction files or provider sessions.
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
