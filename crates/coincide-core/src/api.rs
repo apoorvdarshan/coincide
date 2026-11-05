@@ -74,6 +74,7 @@ pub struct ProviderWorkersStatus {
     pub unclassified: u64,
 }
 struct Running {
+    usage_context: Option<agent::usage_capture::TurnContext>,
     session: Session,
     provider: String,
     transcript_start: usize,
@@ -123,6 +124,7 @@ pub struct Engine {
     schedule_completions: Vec<(String, crate::schedule_service::Outcome, Option<String>)>,
     pub schedule_error: Option<String>,
     unsaved_threads: HashMap<String, Value>,
+    pending_usage: HashMap<String, agent::usage_capture::Record>,
     enabled_queues: HashSet<String>,
 }
 impl Engine {
@@ -191,6 +193,7 @@ impl Engine {
             schedule_completions: Vec::new(),
             schedule_error: None,
             unsaved_threads: HashMap::new(),
+            pending_usage: HashMap::new(),
             enabled_queues: HashSet::new(),
         }
     }
@@ -843,6 +846,7 @@ impl Engine {
         self.insert_running(
             id,
             Running {
+                usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
                 session: Session::start_with_images_and_instructions(
                     adapter,
                     Launch {
@@ -1350,6 +1354,15 @@ impl Engine {
             let mut completion_alert = None;
             let transcript_start = self.runs[&id].transcript_start;
             for event in events {
+                if matches!(&event, Event::Finished | Event::Failed(_)) {
+                    let run = self.runs.get_mut(&id).unwrap();
+                    if let Some(context) = run.usage_context.take()
+                        && let Some(snapshot) = run.session.take_usage()
+                    {
+                        self.pending_usage
+                            .insert(id.clone(), context.finish(snapshot));
+                    }
+                }
                 match event {
                     Event::Session(session) => {
                         agent::set_provider_session(&mut v, &self.runs[&id].provider, &session)
@@ -1582,7 +1595,10 @@ impl Engine {
                     self.notification_events.stage(&v, &item, kind, None);
                 }
             }
-            if let Err(error) = self.store.save(&v) {
+            if let Err(error) = self
+                .store
+                .save_with_usage(&v, self.pending_usage.get(&id).map(|record| &record.0))
+            {
                 let message = format!("Transcript could not be saved: {error}");
                 self.enabled_queues.remove(&id);
                 self.unsaved_threads.insert(id.clone(), v);
@@ -1592,6 +1608,7 @@ impl Engine {
                 self.schedule_error = Some(message);
             } else {
                 self.unsaved_threads.remove(&id);
+                self.pending_usage.remove(&id);
                 self.notification_events.persisted(&v);
             }
             self.revision += 1;
@@ -1614,10 +1631,15 @@ impl Engine {
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);
             self.schedule_last_poll = Instant::now();
-            self.unsaved_threads.retain(|_, thread| {
-                if self.store.save(thread).is_err() {
+            self.unsaved_threads.retain(|id, thread| {
+                if self
+                    .store
+                    .save_with_usage(thread, self.pending_usage.get(id).map(|record| &record.0))
+                    .is_err()
+                {
                     true
                 } else {
+                    self.pending_usage.remove(id);
                     self.notification_events.persisted(thread);
                     false
                 }
@@ -1992,3 +2014,7 @@ mod catalog_shutdown_adapter_tests {
         assert_eq!(reply["error"]["message"], "Engine admissions are frozen");
     }
 }
+
+#[cfg(test)]
+#[path = "usage_capture_engine_tests.rs"]
+mod usage_capture_engine_tests;
