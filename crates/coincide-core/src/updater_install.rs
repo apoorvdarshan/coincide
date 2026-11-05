@@ -755,6 +755,23 @@ impl Installer {
 struct TargetLock {
     _file: File,
 }
+impl Drop for TargetLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // A concurrent fork can inherit this open-file description until
+            // CLOEXEC. Close alone would leave our lease held by that copy.
+            // Explicit unlock releases only this description's transaction lock.
+            // SAFETY: the owned file descriptor remains live through this Drop.
+            while unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) } != 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
 fn target_lock(parent: &Path, create: bool) -> Result<TargetLock> {
     no_symlinks(parent)?;
     let path = parent.join(".Coincide-Rust-update.lock");
@@ -2042,6 +2059,26 @@ mod tests {
         ));
         assert_eq!(f.version(), "0.1.0");
     }
+    #[test]
+    fn target_lock_drop_releases_even_with_inherited_open_description() {
+        let parent = temp();
+        let lock = target_lock(parent.path(), true).unwrap();
+        // dup shares the open-file description, as a concurrent fork does
+        // before exec closes inherited CLOEXEC descriptors. No scheduling race.
+        let inherited = lock._file.try_clone().unwrap();
+        assert!(target_lock(parent.path(), false).is_err());
+        drop(lock);
+        let replacement = target_lock(parent.path(), false)
+            .expect("finished transaction unlocks despite inherited descriptor");
+        assert!(inherited.metadata().is_ok());
+        assert!(target_lock(parent.path(), false).is_err());
+        // The old descriptor must not release the replacement's distinct lock.
+        drop(inherited);
+        assert!(target_lock(parent.path(), false).is_err());
+        drop(replacement);
+        assert!(target_lock(parent.path(), false).is_ok());
+    }
+
     #[test]
     fn post_exchange_failure_atomically_restores_previous_bundle() {
         let f = Fixture::new();
