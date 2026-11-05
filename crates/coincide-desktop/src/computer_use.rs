@@ -1,5 +1,6 @@
 //! Serialized Computer Use adapter. Construction is inert. Native controls are
 //! deliberately distinct from the agent Request protocol. No listener is started.
+use coincide_core::agent::WorkerThreadStatus;
 use coincide_core::computer_use::*;
 use serde_json::Value;
 #[cfg(all(target_os = "macos", feature = "native-computer-use"))]
@@ -8,7 +9,7 @@ use std::{
     collections::BTreeSet,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     thread,
@@ -66,6 +67,7 @@ pub struct Handle {
     stop: Arc<AtomicBool>,
     compiled: bool,
     in_flight: Arc<Mutex<BTreeSet<Uuid>>>,
+    joined: Arc<AtomicU8>,
 }
 impl Handle {
     /// Native UI only; revocation is immediate even when the mailbox is full.
@@ -201,6 +203,7 @@ impl Handle {
         self.status.try_lock().ok().map(|s| {
             let mut status = s.clone();
             status.enabled = self.authority.enabled();
+            status.stopped = matches!(self.joined.load(Ordering::Acquire), 1 | 2);
             status
         })
     }
@@ -209,10 +212,23 @@ impl Handle {
         self.stop.store(true, Ordering::Release);
     }
 }
-/// Drop signals only. The worker owns native object cleanup; no join on GPUI.
+/// Runtime shutdown describes this owned worker only, not whole-app readiness
+/// or acceptance by macOS. Returned still requires inspection of backend errors.
+#[derive(Debug, Clone)]
+pub struct ShutdownStatus {
+    pub requested: bool,
+    pub worker: WorkerThreadStatus,
+    pub backend: Option<Status>,
+    pub observer_error: Option<String>,
+    pub pending_reservations: Option<usize>,
+}
+/// Drop signals only. Worker joins happen on an independent observer, never GPUI.
 pub struct Runtime {
     handle: Handle,
     rx: Receiver<Reply>,
+    worker: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    join_observer_started: bool,
+    join_observer_error: Option<String>,
 }
 impl Runtime {
     pub fn spawn_native() -> std::io::Result<Self> {
@@ -226,6 +242,17 @@ impl Runtime {
         }
     }
     pub fn spawn<B: Backend + Send + 'static>(backend: B, compiled: bool) -> std::io::Result<Self> {
+        Self::spawn_with_observer(backend, compiled, |observe| {
+            thread::Builder::new()
+                .name("coincide-computer-use-join".into())
+                .spawn(observe)
+        })
+    }
+    fn spawn_with_observer<B: Backend + Send + 'static>(
+        backend: B,
+        compiled: bool,
+        spawn_observer: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>,
+    ) -> std::io::Result<Self> {
         let (tx, requests) = mpsc::sync_channel(8);
         let (results, rx) = mpsc::sync_channel(8);
         let authority = Authority::default();
@@ -239,9 +266,10 @@ impl Runtime {
             stop: Arc::new(AtomicBool::new(false)),
             compiled,
             in_flight: Arc::new(Mutex::new(BTreeSet::new())),
+            joined: Arc::new(AtomicU8::new(0)),
         };
         let h = handle.clone();
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("coincide-computer-use".into())
             .spawn(move || {
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -307,20 +335,122 @@ impl Runtime {
                 h.authority.native_enable(false);
                 h.stop.store(true, Ordering::Release);
                 let mut status = h.status.lock().unwrap_or_else(|e| e.into_inner());
-                status.stopped = true;
                 status.enabled = false;
                 status.busy = false;
                 if outcome.is_err() {
                     status.error = Some(Failure::Native);
                 }
             })?;
-        Ok(Self { handle, rx })
+        let mut runtime = Self {
+            handle,
+            rx,
+            worker: Arc::new(Mutex::new(Some(worker))),
+            join_observer_started: false,
+            join_observer_error: None,
+        };
+        runtime.start_join_observer_with(spawn_observer);
+        Ok(runtime)
+    }
+    fn start_join_observer_with(
+        &mut self,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>,
+    ) {
+        if self.join_observer_started {
+            return;
+        }
+        let slot = self.worker.clone();
+        let handle = self.handle.clone();
+        let observe = Box::new(move || {
+            let worker = slot
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            let Some(worker) = worker else {
+                handle.joined.store(3, Ordering::Release);
+                return;
+            };
+            let panicked = worker.join().is_err();
+            let mut status = handle
+                .status
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            status.stopped = true;
+            status.busy = false;
+            if panicked {
+                status.error = Some(Failure::Native);
+            }
+            drop(status);
+            handle
+                .joined
+                .store(if panicked { 2 } else { 1 }, Ordering::Release);
+        });
+        match spawn(observe) {
+            Ok(_) => {
+                self.join_observer_started = true;
+                self.join_observer_error = None;
+            }
+            Err(error) => {
+                // Closure drop has not taken the shared JoinHandle. Keep it in
+                // Runtime for an explicit retry, never claim it has exited.
+                self.join_observer_error = Some(error.to_string().chars().take(1024).collect());
+            }
+        }
+    }
+    fn discard_shutdown_data(&self) {
+        // Bounded reply queue; no private observation survives shutdown polling.
+        for _ in 0..8 {
+            if self.rx.try_recv().is_err() {
+                break;
+            }
+        }
+        if let Ok(mut in_flight) = self.handle.in_flight.try_lock() {
+            in_flight.clear();
+        }
+    }
+    /// Signal revocation and request stop. This never joins or waits for backend
+    /// work, and revocation itself is not worker-exit acknowledgement.
+    pub fn request_shutdown(&mut self) {
+        self.handle.shutdown();
+        self.discard_shutdown_data();
+        self.start_join_observer_with(|observe| {
+            thread::Builder::new()
+                .name("coincide-computer-use-join".into())
+                .spawn(observe)
+        });
+    }
+    /// Poll-only status. Actual join includes backend Drop and TLS destruction;
+    /// an observer-start failure retains ownership and reports Running + error.
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        let requested = self.handle.stop.load(Ordering::Acquire);
+        if requested {
+            self.discard_shutdown_data();
+        }
+        let worker = match self.handle.joined.load(Ordering::Acquire) {
+            0 => WorkerThreadStatus::Running,
+            1 => WorkerThreadStatus::Returned,
+            2 => WorkerThreadStatus::Panicked,
+            _ => WorkerThreadStatus::Unclassified,
+        };
+        if requested {
+            self.discard_shutdown_data();
+        }
+        ShutdownStatus {
+            requested,
+            worker,
+            backend: self.handle.try_status(),
+            observer_error: self.join_observer_error.clone(),
+            pending_reservations: self.handle.in_flight.try_lock().ok().map(|set| set.len()),
+        }
     }
     pub fn handle(&self) -> Handle {
         self.handle.clone()
     }
     /// Replies can contain private UI data. Parent routes ONLY to matching thread.
     pub fn try_reply(&self) -> Result<Reply, TryRecvError> {
+        if self.handle.stop.load(Ordering::Acquire) {
+            self.discard_shutdown_data();
+            return Err(TryRecvError::Disconnected);
+        }
         let mut reply = self.rx.try_recv()?;
         self.handle
             .in_flight
@@ -337,7 +467,7 @@ impl Runtime {
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
-        self.handle.shutdown();
+        self.request_shutdown();
     }
 }
 pub struct UnsupportedBackend;
@@ -904,5 +1034,205 @@ mod tests {
             Err(Failure::Off)
         );
         h.shutdown();
+    }
+    struct ExitGate {
+        entered: mpsc::Sender<()>,
+        release: Receiver<()>,
+    }
+    impl Drop for ExitGate {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! {
+        static EXIT_TLS_GATE: std::cell::RefCell<Option<ExitGate>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+    struct CleanupBackend {
+        backend_gate: Option<ExitGate>,
+        tls_gate: Option<ExitGate>,
+    }
+    impl Backend for CleanupBackend {
+        fn permissions(&mut self) -> Result<Permissions, Failure> {
+            panic!("no permission call expected")
+        }
+        fn request_permission(&mut self, _: PermissionKind) -> Result<Permissions, Failure> {
+            panic!("no permission request expected")
+        }
+        fn call(&mut self, _: NativeCall, _: &Permit) -> Result<NativeResult, Failure> {
+            panic!("no native call expected")
+        }
+        fn invalidate(&mut self) {}
+    }
+    impl Drop for CleanupBackend {
+        fn drop(&mut self) {
+            EXIT_TLS_GATE.with(|slot| *slot.borrow_mut() = self.tls_gate.take());
+            drop(self.backend_gate.take());
+        }
+    }
+    struct CleanupFixture {
+        backend: CleanupBackend,
+        backend_entered: Receiver<()>,
+        backend_release: mpsc::Sender<()>,
+        tls_entered: Receiver<()>,
+        tls_release: mpsc::Sender<()>,
+    }
+    fn cleanup_backend() -> CleanupFixture {
+        let (backend_entered, backend_rx) = mpsc::channel();
+        let (backend_release, backend_wait) = mpsc::channel();
+        let (tls_entered, tls_rx) = mpsc::channel();
+        let (tls_release, tls_wait) = mpsc::channel();
+        CleanupFixture {
+            backend: CleanupBackend {
+                backend_gate: Some(ExitGate {
+                    entered: backend_entered,
+                    release: backend_wait,
+                }),
+                tls_gate: Some(ExitGate {
+                    entered: tls_entered,
+                    release: tls_wait,
+                }),
+            },
+            backend_entered: backend_rx,
+            backend_release,
+            tls_entered: tls_rx,
+            tls_release,
+        }
+    }
+    fn joined_status(runtime: &mut Runtime) -> ShutdownStatus {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = runtime.shutdown_status();
+            if status.worker != WorkerThreadStatus::Running {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "fake runtime did not join");
+            thread::yield_now();
+        }
+    }
+    #[test]
+    fn shutdown_ack_waits_for_backend_drop_then_actual_tls_join() {
+        let CleanupFixture {
+            backend,
+            backend_entered,
+            backend_release,
+            tls_entered,
+            tls_release,
+        } = cleanup_backend();
+        let mut runtime = Runtime::spawn(backend, true).unwrap();
+        let handle = runtime.handle();
+        runtime.request_shutdown();
+        backend_entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            runtime.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        assert!(!handle.try_status().unwrap().stopped);
+        backend_release.send(()).unwrap();
+        tls_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            runtime.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        assert!(!handle.try_status().unwrap().stopped);
+        tls_release.send(()).unwrap();
+        let status = joined_status(&mut runtime);
+        assert!(status.requested);
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        assert!(status.backend.unwrap().stopped);
+        assert!(status.observer_error.is_none());
+        assert_eq!(status.pending_reservations, Some(0));
+    }
+    #[test]
+    fn observer_spawn_failure_retains_worker_and_requires_explicit_retry() {
+        let CleanupFixture {
+            backend,
+            backend_entered,
+            backend_release,
+            tls_entered,
+            tls_release,
+        } = cleanup_backend();
+        let mut runtime = Runtime::spawn_with_observer(backend, true, |_| {
+            Err(std::io::Error::other("synthetic observer spawn failure"))
+        })
+        .unwrap();
+        runtime.handle().shutdown(); // Existing signal does not fabricate join ACK.
+        backend_entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(runtime.worker.try_lock().unwrap().is_some());
+        let pending = runtime.shutdown_status();
+        assert_eq!(pending.worker, WorkerThreadStatus::Running);
+        assert!(pending.observer_error.is_some());
+        assert!(!pending.backend.unwrap().stopped);
+        backend_release.send(()).unwrap();
+        tls_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(runtime.worker.try_lock().unwrap().is_some());
+        assert_eq!(
+            runtime.shutdown_status().worker,
+            WorkerThreadStatus::Running
+        );
+        tls_release.send(()).unwrap();
+        runtime.request_shutdown();
+        let status = joined_status(&mut runtime);
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        assert!(status.observer_error.is_none());
+        assert!(status.backend.unwrap().stopped);
+    }
+    #[test]
+    fn caught_backend_panic_is_not_erased_by_successful_thread_join() {
+        struct PanicBackend;
+        impl Backend for PanicBackend {
+            fn permissions(&mut self) -> Result<Permissions, Failure> {
+                panic!("synthetic backend failure")
+            }
+            fn request_permission(&mut self, _: PermissionKind) -> Result<Permissions, Failure> {
+                self.permissions()
+            }
+            fn call(&mut self, _: NativeCall, _: &Permit) -> Result<NativeResult, Failure> {
+                unreachable!()
+            }
+            fn invalidate(&mut self) {}
+        }
+        let mut runtime = Runtime::spawn(PanicBackend, true).unwrap();
+        let handle = runtime.handle();
+        handle.native_enable(true).unwrap();
+        handle.native_refresh().unwrap();
+        let status = joined_status(&mut runtime);
+        assert!(status.requested);
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        let backend = status.backend.unwrap();
+        assert!(backend.stopped);
+        assert_eq!(backend.error, Some(Failure::Native));
+    }
+    #[test]
+    fn shutdown_discards_retained_private_replies_and_reservations() {
+        let mut runtime = Runtime::spawn(UnsupportedBackend, false).unwrap();
+        let (sender, receiver) = mpsc::sync_channel(8);
+        runtime.rx = receiver;
+        let owner = Uuid::new_v4();
+        runtime.handle.in_flight.lock().unwrap().insert(owner);
+        sender
+            .send(Reply {
+                grant: Uuid::new_v4(),
+                deadline: Instant::now() + Duration::from_secs(1),
+                id: Uuid::new_v4(),
+                thread: owner,
+                result: Ok(serde_json::json!({"private":"synthetic observation"})),
+            })
+            .unwrap();
+        runtime.request_shutdown();
+        assert!(matches!(runtime.rx.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(
+            runtime.try_reply(),
+            Err(TryRecvError::Disconnected)
+        ));
+        let status = joined_status(&mut runtime);
+        assert_eq!(status.pending_reservations, Some(0));
+        assert_eq!(status.worker, WorkerThreadStatus::Returned);
     }
 }
