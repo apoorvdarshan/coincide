@@ -387,15 +387,22 @@ impl LegacyMediaService {
         if self.operations.len() >= 9 {
             return Err(ServiceError::QueueFull);
         }
-        if reserve
-            && self
-                .receipt_slots
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                    (n < MAX_RECEIPTS).then_some(n + 1)
-                })
-                .is_err()
-        {
-            return Err(ServiceError::RecoveryRequired);
+        if reserve {
+            let mut slots = self.receipt_slots.load(Ordering::SeqCst);
+            loop {
+                if slots >= MAX_RECEIPTS {
+                    return Err(ServiceError::RecoveryRequired);
+                }
+                match self.receipt_slots.compare_exchange(
+                    slots,
+                    slots + 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => slots = current,
+                }
+            }
         }
         let id = OperationId(Uuid::new_v4());
         let control = Control {
@@ -1298,6 +1305,7 @@ mod tests {
             panic!("receipt")
         };
         let receipt = service.receipt(receipt_id).unwrap();
+        assert_eq!(service.receipt_slots.load(Ordering::SeqCst), 1);
         assert!(receipt.committed, "{:?}", receipt.error);
         assert_eq!(receipt.batch.references.len(), 1);
         let store = Store::open_existing_for_legacy_media(
@@ -1336,6 +1344,7 @@ mod tests {
             }
         ));
         service.acknowledge_receipt(receipt_id).unwrap();
+        assert_eq!(service.receipt_slots.load(Ordering::SeqCst), 0);
     }
     #[test]
     fn commit_failure_retains_partial_images_even_without_finished_notification() {
@@ -1501,6 +1510,24 @@ mod tests {
             service.confirm(&selection, p, ids.clone()).unwrap_err(),
             ServiceError::RecoveryRequired
         );
+        assert_eq!(service.receipt_slots.load(Ordering::SeqCst), MAX_RECEIPTS);
+        // A failed enqueue must release the last available reservation without
+        // consuming the preview or stealing any already-retained receipt slot.
+        let (disconnected, receiver) = mpsc::sync_channel(8);
+        drop(receiver);
+        let connected = std::mem::replace(&mut service.tx, disconnected);
+        service
+            .receipt_slots
+            .store(MAX_RECEIPTS - 1, Ordering::SeqCst);
+        assert_eq!(
+            service.confirm(&selection, p, ids.clone()).unwrap_err(),
+            ServiceError::QueueFull
+        );
+        assert_eq!(
+            service.receipt_slots.load(Ordering::SeqCst),
+            MAX_RECEIPTS - 1
+        );
+        service.tx = connected;
         service.receipt_slots.store(0, Ordering::SeqCst);
         let control = Control {
             state: Arc::new(AtomicU8::new(RUNNING)),
