@@ -100,10 +100,13 @@ impl DurableOwnership {
         &self.digest
     }
     pub fn matches(&self, id: ReceiptId, receipt: &CompletionReceipt) -> bool {
-        self.receipt_id == id.to_string()
-            && self.operation_id == receipt.operation_id.to_string()
-            && self.thread_id == receipt.thread_id
-            && snapshot(id, receipt).is_ok_and(|v| digest_value(&v).is_ok_and(|d| d == self.digest))
+        snapshot(id, receipt).is_ok_and(|value| self.matches_snapshot(&value))
+    }
+    fn matches_snapshot(&self, value: &Value) -> bool {
+        value["receiptId"].as_str() == Some(self.receipt_id.as_str())
+            && value["operationId"].as_str() == Some(self.operation_id.as_str())
+            && value["threadId"].as_str() == Some(self.thread_id.as_str())
+            && digest_value(value).is_ok_and(|digest| digest == self.digest)
     }
 }
 fn digest_value(value: &Value) -> RecoveryResult<String> {
@@ -122,10 +125,20 @@ fn canonical_uuid(v: &Value) -> bool {
     v.as_str()
         .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok_and(|id| id.to_string() == s))
 }
+// Store::new_thread emits uppercase; imported/native thread IDs may be lowercase.
+// Accept either exact canonical spelling without rewriting identity or accepting mixed case.
+fn canonical_thread_uuid(v: &Value) -> bool {
+    v.as_str().is_some_and(|s| {
+        uuid::Uuid::parse_str(s).is_ok_and(|id| {
+            let lower = id.to_string();
+            s == lower || s == lower.to_ascii_uppercase()
+        })
+    })
+}
 fn validate_receipt(v: &Value) -> RecoveryResult<()> {
     let valid = canonical_uuid(&v["receiptId"])
         && canonical_uuid(&v["operationId"])
-        && canonical_uuid(&v["threadId"])
+        && canonical_thread_uuid(&v["threadId"])
         && v["generation"].is_u64()
         && v["committed"].is_boolean()
         && (v["error"].is_null() || v["error"].is_string())
@@ -612,6 +625,39 @@ mod platform {
                     .len(),
                 2
             );
+        }
+        #[test]
+        fn uppercase_thread_identity_roundtrips_and_token_matching_preserves_exact_case() {
+            let (_temp, cfg) = fixture();
+            let mut store = RecoveryStore::open(&cfg).unwrap();
+            let mut r = receipt();
+            let uppercase = "ABCDEF12-ABCD-4ABC-8ABC-ABCDEF123456";
+            r["threadId"] = json!(uppercase);
+            let token = store.persist_value(r.clone()).unwrap();
+            assert_eq!(token.thread_id(), uppercase);
+            assert!(token.matches_snapshot(&r));
+            let records = store.retained().unwrap();
+            assert_eq!(records[0].thread_id(), uppercase);
+            assert_eq!(records[0].private_receipt(), &r);
+            let mut lowercase = r.clone();
+            lowercase["threadId"] = json!(uppercase.to_ascii_lowercase());
+            assert!(validate_receipt(&lowercase).is_ok());
+            assert!(!token.matches_snapshot(&lowercase));
+            let mut mixed = r.clone();
+            mixed["threadId"] = json!("aBCDEF12-ABCD-4ABC-8ABC-ABCDEF123456");
+            assert!(matches!(
+                store.persist_value(mixed),
+                Err(RecoveryError::InvalidRecord)
+            ));
+            for field in ["receiptId", "operationId"] {
+                let mut invalid = r.clone();
+                invalid[field] = json!(uppercase);
+                assert!(matches!(
+                    validate_receipt(&invalid),
+                    Err(RecoveryError::InvalidRecord)
+                ));
+                assert!(!token.matches_snapshot(&invalid));
+            }
         }
         #[test]
         fn authoritative_batch_serialization_is_preserved_without_rekeying() {
