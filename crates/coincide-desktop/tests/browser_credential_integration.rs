@@ -1,9 +1,13 @@
 // Compile the private sink against the real credential handoff module while
 // keeping main.rs registration with the coordinator. No live vault/browser.
+// Keep the same real lifetime seam as production browser::{shutdown,
+// credential_bridge}; the native child resolves it through its parent root.
 #[path = "../src/browser_credentials.rs"]
 mod browser_credentials;
 #[path = "../src/credentials.rs"]
 mod credentials;
+#[path = "../src/browser_shutdown.rs"]
+mod shutdown;
 
 use browser_credentials::BrowserCredentialSink;
 use coincide_core::credentials::{Failure, Login, Manager, PageBinding, Vault, VaultCommand};
