@@ -790,15 +790,14 @@ impl GithubThreadsService {
             })
             .unwrap_or_default();
         for id in ids {
-            if self.known_threads.len() >= 1000 {
-                if let Some(oldest) = self
+            if self.known_threads.len() >= 1000
+                && let Some(oldest) = self
                     .known_threads
                     .iter()
                     .max_by_key(|(_, (_, issued))| issued.elapsed())
                     .map(|(key, _)| key.clone())
-                {
-                    self.known_threads.remove(&oldest);
-                }
+            {
+                self.known_threads.remove(&oldest);
             }
             self.known_threads
                 .insert((thread.into(), id), (binding.clone(), Instant::now()));
