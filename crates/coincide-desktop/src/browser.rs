@@ -1,5 +1,9 @@
 //! UI-thread browser owner. The portable engine queues typed requests; native
 //! callbacks return bounded payloads without holding an engine mutex.
+#[path = "browser_credentials.rs"]
+mod credential_bridge;
+
+use crate::credentials::{FillJob, deliver_fill};
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
     BrowserAction, BrowserConsole, BrowserReply, BrowserRequest, CONSOLE_SCRIPT, DownloadRegistry,
@@ -7,6 +11,7 @@ use coincide_core::browser_protocol::{
     upload::{UploadPermit, UploadSlots, UploadWork},
     upload_probe_script, validate_url,
 };
+use coincide_core::credentials::{Failure, PageBinding};
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
 use serde_json::{Value, json};
@@ -403,6 +408,7 @@ impl BrowserController {
         let console_handler = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
         let navigation_handler = navigation.clone();
+        let load_navigation = navigation.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
             .with_devtools(false)
@@ -463,6 +469,9 @@ impl BrowserController {
                 });
             })
             .with_on_page_load_handler(move |event, url| {
+                if matches!(event, wry::PageLoadEvent::Started) {
+                    load_navigation.fetch_add(1, Ordering::AcqRel);
+                }
                 let _ = load_sender.try_send(NativeEvent::Load {
                     thread: load_thread.clone(),
                     tab: load_id.clone(),
@@ -726,6 +735,48 @@ impl BrowserController {
         }
         changed
     }
+    /// Native parent hook only. Do not register this capability as an agent action.
+    pub fn credential_fill_available(&self) -> bool {
+        credential_bridge::credential_fill_available()
+    }
+
+    /// Metadata for the selected tab of the native parent's selected thread.
+    /// Native URL access avoids trusting a JavaScript location/IPC response.
+    pub fn credential_page(&self, thread: &str, cx: &App) -> Option<PageBinding> {
+        let id = self.active.get(thread)?;
+        let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
+        if tab.loading {
+            return None;
+        }
+        let epoch = tab.navigation.load(Ordering::Acquire);
+        let address = tab.view.read(cx).raw().url().ok()?;
+        if tab.navigation.load(Ordering::Acquire) != epoch {
+            return None;
+        }
+        PageBinding::new(tab.id.clone(), epoch, &address).ok()
+    }
+
+    /// Drain only the selected thread's native workflow receiver. Never return
+    /// FillJob or completion errors through BrowserReply or console machinery.
+    pub fn drain_credential_fills(
+        &mut self,
+        thread: &str,
+        jobs: &Receiver<FillJob>,
+        cx: &App,
+    ) -> bool {
+        let mut changed = false;
+        for job in jobs.try_iter().take(2) {
+            let mut sink = credential_bridge::BrowserCredentialSink::new(|tab: &str| {
+                self.credential_page(thread, cx)
+                    .filter(|page| page.tab == tab)
+                    .ok_or(Failure::StalePage)
+            });
+            deliver_fill(job, &mut sink);
+            changed = true;
+        }
+        changed
+    }
+
     pub fn drain_replies(&mut self) -> Vec<BrowserReply> {
         self.replies.drain(..).collect()
     }
