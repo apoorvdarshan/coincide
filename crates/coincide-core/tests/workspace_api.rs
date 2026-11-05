@@ -327,3 +327,105 @@ fn imported_threads_cannot_mutate_git_but_can_inspect() {
         json!([])
     );
 }
+
+#[test]
+fn stored_worktree_override_rejects_stale_project_root() {
+    let (dir, mut engine, owner, root, _head) = fixture();
+    let other = dir.path().join("other-repo");
+    std::fs::create_dir(&other).unwrap();
+    git(&other, &["init", "-q"]);
+    let other = other.canonicalize().unwrap();
+    let mut thread = engine.store.thread(&owner).unwrap();
+    thread["worktreePath"] = json!(other);
+    engine.store.save(&thread).unwrap();
+    let denied = call(
+        &mut engine,
+        "git.checkpoints.list",
+        json!({"threadId":owner,"expectedRoot":root}),
+    );
+    assert!(
+        denied["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("changed")
+    );
+    assert!(engine.workspace_pending.is_empty());
+    let reply = call(
+        &mut engine,
+        "git.checkpoints.list",
+        json!({"threadId":owner,"expectedRoot":other}),
+    );
+    assert_eq!(
+        complete(&mut engine, &owner, reply)["checkpoints"],
+        json!([])
+    );
+}
+
+#[test]
+fn stale_head_and_invalid_worktree_names_fail_without_changing_git_state() {
+    let (_dir, mut engine, owner, root, head) = fixture();
+    let reply = call(
+        &mut engine,
+        "git.checkpoints.create",
+        json!({"threadId":owner,"expectedRoot":root,"expectedHead":"0".repeat(40),"label":"stale"}),
+    );
+    assert!(
+        complete(&mut engine, &owner, reply)["error"]
+            .as_str()
+            .unwrap()
+            .contains("HEAD changed")
+    );
+    assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
+    assert!(git(&root, &["for-each-ref", "refs/coincide/checkpoints/"]).is_empty());
+    for name in ["../escape", "CON", "new/tree", "has space", "-option"] {
+        let reply = call(
+            &mut engine,
+            "git.worktrees.reserve",
+            json!({"threadId":owner,"expectedRoot":root,"base":head,"name":name,"branch":"fixture/rejected"}),
+        );
+        assert!(
+            !complete(&mut engine, &owner, reply)["error"].is_null(),
+            "{name}"
+        );
+    }
+    assert!(git(&root, &["for-each-ref", "refs/heads/fixture/rejected"]).is_empty());
+    assert_eq!(
+        git(&root, &["worktree", "list", "--porcelain"])
+            .matches("worktree ")
+            .count(),
+        1
+    );
+    let reply = call(
+        &mut engine,
+        "git.worktrees.reserve",
+        json!({"threadId":owner,"expectedRoot":root,"base":head,"name":"safe","branch":"fixture/safe","parentPath":root.parent()}),
+    );
+    assert!(!reply["error"].is_null());
+    assert!(engine.workspace_pending.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_worktree_storage_is_refused_without_touching_target() {
+    let (dir, mut engine, owner, root, head) = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("sentinel"), "preserve").unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("worktrees")).unwrap();
+    let reply = call(
+        &mut engine,
+        "git.worktrees.reserve",
+        json!({"threadId":owner,"expectedRoot":root,"base":head,"name":"fixture-tree","branch":"fixture/denied"}),
+    );
+    assert!(
+        complete(&mut engine, &owner, reply)["error"]
+            .as_str()
+            .unwrap()
+            .contains("real directory")
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("sentinel")).unwrap(),
+        "preserve"
+    );
+    assert!(!outside.path().join("fixture-tree").exists());
+    assert!(git(&root, &["for-each-ref", "refs/heads/fixture/denied"]).is_empty());
+}
