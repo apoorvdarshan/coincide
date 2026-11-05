@@ -25,10 +25,16 @@ Native acceptance also passed **19 panels / 499 checks** and **18 app flows**. I
 no duplicate input commands, exact transcript/index/ACK convergence and final scoped process exit. Exact-revision
 CI, real-service acceptance and the remaining parity work are separate gates.
 
-The newer recovery candidate passes **3,457 checks / 65 suites**, explicit native recovery acceptance and the
+The latest [CI snapshot for app code `a5d2fed`](https://github.com/apoorvdarshan/coincide/actions/runs/41951082618)
+passed **3,507 C++ assertions across 66 suites**, **18 app flows**, and **20 native panel suites / 525 assertions**.
+Separate PowerShell 5.1 and 7 filesystem/ACL guards pass **63 checks each**. Host entry/bootstrap use restricted-job
+guard cases (3/8), so these results do not establish unrestricted hosted readiness. Current-thread find passes
+32 scanner and 26 native control checks; physical shortcut/focus and virtualized-row navigation remain pending.
+
+The earlier physical recovery candidate passed **3,457 checks / 65 suites**, explicit native recovery acceptance and the
 18 ordinary/hosted app flows. The latest crash test stops before the crash because queue delivery becomes uncertain;
 its original input remains saved. Instruction Git-root handling now separately passes **80 checks** with normal and
-real 8.3 paths. Exact-revision CI and background queue robustness remain open in the parity checklist.
+real 8.3 paths. The linked newer CI snapshot passes; physical background queue robustness remains open in the parity checklist.
 
 The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**,
 `./windows/Tests/PreviewSmoke.ps1` exercises native long-thread switching, drafts, Send/Unicode/final-text reconciliation,
@@ -73,7 +79,7 @@ Provider runtimes launch explicit executables, keep pipe work off the UI thread 
 bindings. Synthetic fixtures exercise startup, streaming, request routing, failures, cancellation and persistence without
 spending account quota. They do not establish live provider compatibility or owner acceptance.
 
-Remaining parity includes composer suggestions and selection context, message/project/terminal search, remote/mobile
+Remaining parity includes composer suggestions and selection context, cross-conversation message/project/terminal search, remote/mobile
 pairing and CLI, phone alerts, actual notification/Computer Use/voice acceptance, browser sign-in migration and passkeys,
 full localization/accessibility/DPI validation, signed distribution and updates. Offline voice currently uses a local
 whisper CLI/model and draft-only insertion; no actual microphone recognition has been validated. No public release or
