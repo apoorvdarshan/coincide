@@ -1,5 +1,6 @@
 //! Explicit, read-only model discovery. Static runtime support remains separate:
-//! reported model efforts/speeds do not enable unsupported turn options.
+//! Reported speeds stay informational; private Codex effort proofs are bound to
+//! the exact latest model-list job and configured executable metadata.
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -12,6 +13,11 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+#[path = "model_catalog_effort.rs"]
+mod effort;
+pub(crate) use effort::CodexEffortProof;
+use effort::EffortExecutable;
 
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;
@@ -43,6 +49,7 @@ struct Worker {
     completion: crate::agent::WorkerCompletion,
 }
 struct Job {
+    binding: Option<EffortExecutable>,
     response: Value,
     cancelled: Arc<AtomicBool>,
 }
@@ -154,15 +161,27 @@ impl ModelCatalog {
     /// never accepted from a request, model response, or conversation document.
     pub fn refresh(&mut self, provider: &str, executable: Option<PathBuf>) -> Result<Value> {
         let provider_owned = provider.to_owned();
-        self.refresh_with(provider, move |cancelled| {
+        let binding = executable
+            .as_deref()
+            .and_then(|path| EffortExecutable::read(path).ok());
+        self.refresh_bound(provider, binding, move |cancelled| {
             executable.context("Provider executable is unavailable; configure or discover its installation first")
                 .and_then(|path| discover(&provider_owned, path, DEADLINE, cancelled))
                 .map_err(|error| error.to_string())
         })
     }
+    #[cfg(test)]
     fn refresh_with(
         &mut self,
         provider: &str,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
+        self.refresh_bound(provider, None, work)
+    }
+    fn refresh_bound(
+        &mut self,
+        provider: &str,
+        binding: Option<EffortExecutable>,
         work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
     ) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
@@ -187,7 +206,18 @@ impl ModelCatalog {
                 .position(|id| self.jobs[id].response["state"] != "loading")
                 .context("Too many pending model catalog reads")?;
             let id = self.order.remove(index).unwrap();
-            self.jobs.remove(&id);
+            if let Some(job) = self.jobs.remove(&id) {
+                job.cancelled.store(true, Ordering::Release);
+            }
+        }
+        // A newly admitted refresh revokes old proofs immediately, even if
+        // its eventual discovery fails. Never fall back to an older catalog.
+        for job in self
+            .jobs
+            .values()
+            .filter(|job| job.response["provider"] == provider)
+        {
+            job.cancelled.store(true, Ordering::Release);
         }
         let id = uuid::Uuid::new_v4().to_string();
         let mut response = json!({"requestId":id,"provider":provider,"accountID":"default",
@@ -201,6 +231,7 @@ impl ModelCatalog {
         self.jobs.insert(
             id.clone(),
             Job {
+                binding,
                 response: response.clone(),
                 cancelled: cancelled.clone(),
             },

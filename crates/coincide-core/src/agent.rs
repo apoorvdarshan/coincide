@@ -253,6 +253,7 @@ impl Session {
                         );
                         policy.require_codex()?;
                         policy.preflight()?;
+                        policy.validate_launch_executable(&launch.executable)?;
                     }
                     Ok(())
                 })
@@ -435,6 +436,7 @@ fn run(
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
+        policy.validate_launch_executable(&launch.executable)?;
     }
     let mut capture = usage_capture::Capture::default();
     let image_paths = images

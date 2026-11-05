@@ -85,7 +85,7 @@ impl Engine {
         let projects = self.store.projects()?;
         let defaults = if let Some(defaults) = project_defaults(&projects, project)? {
             Some(
-                crate::composer_selection::validate_defaults(defaults)
+                self.validate_composer_defaults(defaults)
                     .context("Project composer defaults are unsupported")?,
             )
         } else {
@@ -94,7 +94,7 @@ impl Engine {
             let settings = self.store.document("settings.json")?;
             global_defaults(settings.as_ref(), &thread)?
                 .map(|defaults| {
-                    crate::composer_selection::validate_defaults(&defaults)
+                    self.validate_composer_defaults(&defaults)
                         .context("Global composer defaults are unsupported")
                 })
                 .transpose()?

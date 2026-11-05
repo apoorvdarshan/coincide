@@ -1,4 +1,4 @@
-//! Pure, static runtime selection contract. No provider discovery or credential access.
+//! Strict selection syntax and private-proof validation; no discovery or credential access.
 use crate::{agent::Provider, provider_catalog};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ pub fn capabilities() -> Value {
             "modelDiscovery":{"supported":crate::model_catalog::supported(id.as_str().unwrap_or("")),
                 "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
             "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"requiresBuildMode":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
-            "effort":{"supported":false,"reason":"This runtime does not apply reasoning effort."},
+            "effort":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported effort choices."}else{"Reasoning effort is not connected for this provider."}},
             "speed":{"supported":false,"reason":"This runtime does not apply speed selections."},
             "accessModes":if id=="codex"{json!(["approval","fullAccess"])}else{json!(["approval"])},"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
             "modesOrdinaryThreadsOnly":id=="codex",
@@ -62,8 +62,18 @@ pub fn validate_selection(value: &Value) -> Result<()> {
             .context("Model ID must be text")?,
     )?;
     ensure!(
-        thread["selection"]["effort"].is_null() && thread["selection"]["speed"].is_null(),
-        "Reasoning effort/speed is unsupported; selection was not changed"
+        thread["selection"]["speed"].is_null(),
+        "Speed is unsupported; selection was not changed"
+    );
+    let effort = &thread["selection"]["effort"];
+    ensure!(
+        effort.is_null()
+            || (provider == "codex"
+                && effort.as_str().is_some_and(|value| !value.is_empty()
+                    && value.len() <= 128
+                    && value.trim() == value
+                    && !value.chars().any(char::is_control))),
+        "Effort is supported only for an explicit Codex model with advertised choices"
     );
     let account = &thread["selection"]["accountID"];
     ensure!(
@@ -77,22 +87,42 @@ pub fn validate_selection(value: &Value) -> Result<()> {
     Ok(())
 }
 pub fn validate_thread(thread: &Value) -> Result<()> {
-    crate::composer_policy::Policy::parse(thread, crate::composer_policy::Origin::Ordinary)?
-        .preflight()
+    validate_thread_with_proof(thread, None)
+}
+pub(crate) fn validate_thread_with_proof(
+    thread: &Value,
+    proof: Option<&crate::model_catalog::CodexEffortProof>,
+) -> Result<()> {
+    crate::composer_policy::Policy::parse_with_effort_proof(
+        thread,
+        crate::composer_policy::Origin::Ordinary,
+        proof,
+    )?
+    .preflight()
 }
 pub fn apply_modes(params: &Value, thread: &mut Value) -> Result<()> {
+    apply_modes_with_proof(params, thread, None)
+}
+pub(crate) fn apply_modes_with_proof(
+    params: &Value,
+    thread: &mut Value,
+    proof: Option<&crate::model_catalog::CodexEffortProof>,
+) -> Result<()> {
     for key in ["accessMode", "interactionMode"] {
         if let Some(value) = params.get(key) {
             ensure!(value.is_string(), "Mode choices must be explicit text");
             thread[key] = value.clone();
         }
     }
-    validate_thread(thread)
+    validate_thread_with_proof(thread, proof)
 }
 
 /// Validate a persisted project/defaults composer envelope without dropping
 /// unknown options or substituting an unsupported account/model/mode.
-pub(crate) fn validate_defaults(value: &Value) -> Result<Value> {
+pub(crate) fn validate_defaults_with_proof(
+    value: &Value,
+    proof: Option<&crate::model_catalog::CodexEffortProof>,
+) -> Result<Value> {
     let fields = value
         .as_object()
         .context("Composer defaults must be an object")?;
@@ -109,17 +139,25 @@ pub(crate) fn validate_defaults(value: &Value) -> Result<Value> {
     if defaults["interactionMode"].is_null() {
         defaults["interactionMode"] = json!("build");
     }
-    validate_thread(&defaults)?;
+    validate_thread_with_proof(&defaults, proof)?;
     Ok(defaults)
 }
 
 /// Full target selection, not an arbitrary JSON patch. No storage mutation occurs here.
 pub fn select(params: &Value, current: &Value) -> Result<Value> {
+    select_with_proofs(params, current, None, None)
+}
+pub(crate) fn select_with_proofs(
+    params: &Value,
+    current: &Value,
+    current_proof: Option<&crate::model_catalog::CodexEffortProof>,
+    target_proof: Option<&crate::model_catalog::CodexEffortProof>,
+) -> Result<Value> {
     ensure!(
         current["rustBotContext"].is_null(),
         "Bot selection is fixed for this conversation; create a new bot conversation"
     );
-    validate_thread(current)?;
+    validate_thread_with_proof(current, current_proof)?;
     let fields = params
         .as_object()
         .context("Selection request must be an object")?;
@@ -137,10 +175,7 @@ pub fn select(params: &Value, current: &Value) -> Result<Value> {
         )),
         "Selection request contains unsupported options"
     );
-    ensure!(
-        params["effort"].is_null() && params["speed"].is_null(),
-        "Reasoning effort/speed is unsupported"
-    );
+    ensure!(params["speed"].is_null(), "Speed is unsupported");
     let provider = params["provider"]
         .as_str()
         .context("Provider must be text")?;
@@ -159,7 +194,19 @@ pub fn select(params: &Value, current: &Value) -> Result<Value> {
         provider == "antigravity" || default_account(account),
         "Alternate provider accounts are not connected yet"
     );
+    ensure!(
+        current["selection"]["effort"].is_null() || fields.contains_key("effort"),
+        "Choose effort explicitly; an existing effort cannot be silently cleared"
+    );
     let mut selection = current["selection"].clone();
+    if params["effort"].is_null() {
+        if !current["selection"]["effort"].is_null() {
+            selection.as_object_mut().unwrap().remove("effort");
+        }
+    } else {
+        selection["effort"] = params["effort"].clone();
+    }
+
     selection["provider"] = json!(provider);
     selection["modelID"] = json!(model);
     if default_account(account) {
@@ -169,7 +216,7 @@ pub fn select(params: &Value, current: &Value) -> Result<Value> {
     }
     let mut candidate = current.clone();
     candidate["selection"] = selection.clone();
-    apply_modes(params, &mut candidate)?;
+    apply_modes_with_proof(params, &mut candidate, target_proof)?;
     Ok(selection)
 }
 

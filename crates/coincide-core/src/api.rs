@@ -35,6 +35,11 @@ mod composer_context_api;
 #[cfg(test)]
 #[path = "composer_context_boundary_tests.rs"]
 mod composer_context_boundary_tests;
+#[path = "composer_effort_api.rs"]
+mod composer_effort_api;
+#[cfg(test)]
+#[path = "composer_effort_api_tests.rs"]
+mod composer_effort_api_tests;
 #[path = "computer_use_engine.rs"]
 pub mod computer_use_engine;
 #[path = "github_engine.rs"]
@@ -588,8 +593,13 @@ impl Engine {
                     } else if self.unsaved_threads.contains_key(id) {
                         Some("Transcript persistence is recovering; retry after recovery".to_owned())
                     } else {
-                        crate::composer_selection::validate_thread(&thread).err().map(|error| error.to_string())
+                        self.composer_effort_proof(&thread["selection"]).and_then(|proof| crate::composer_selection::validate_thread_with_proof(&thread,proof.as_ref())).err().map(|error|error.to_string())
                     };
+                    if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)? {
+                        if let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
+                            provider["effort"] = self.composer_effort_capability(&thread["selection"]);
+                        }
+                    }
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -601,12 +611,14 @@ impl Engine {
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
-                let selection = crate::composer_selection::select(p, &v)?;
+                let current_proof = self.composer_effort_proof(&v["selection"])?;
+                let target_proof = self.composer_target_effort_proof(p)?;
+                let selection = crate::composer_selection::select_with_proofs(p, &v,current_proof.as_ref(),target_proof.as_ref())?;
                 if selection["provider"] == "antigravity" {
                     self.antigravity_selection(&selection)?;
                 }
                 v["selection"] = selection;
-                crate::composer_selection::apply_modes(p,&mut v)?;
+                crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
                 self.store.save(&v)?; self.revision += 1;
                 Ok(v)
             }
@@ -712,7 +724,8 @@ impl Engine {
         };
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
-        crate::composer_selection::validate_thread(&v)?;
+        let effort_proof = self.composer_effort_proof(&v["selection"])?;
+        crate::composer_selection::validate_thread_with_proof(&v, effort_proof.as_ref())?;
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
                 Vec::new()
@@ -744,9 +757,10 @@ impl Engine {
         ensure!(cwd.is_dir(), "Working directory does not exist");
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
         let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
-            Some(crate::composer_policy::Policy::parse(
+            Some(crate::composer_policy::Policy::parse_with_effort_proof(
                 &v,
                 crate::composer_policy::Origin::Ordinary,
+                effort_proof.as_ref(),
             )?)
         } else {
             None
@@ -857,6 +871,16 @@ impl Engine {
                     provider.clone().into()
                 }
             });
+        // Use exactly the executable whose catalog authorized effort, not a
+        // later PATH lookup or another configured provider/account.
+        let executable = if effort_proof.is_some() {
+            self.composer_codex_executable()?
+        } else {
+            executable
+        };
+        if let Some(policy) = &mode_policy {
+            policy.validate_launch_executable(&executable)?;
+        }
         append(&mut v, "user", prompt, None);
         if crate::composer_context::has_context(&context) {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;

@@ -73,12 +73,25 @@ pub struct Policy {
     provider: String,
     model: Option<String>,
     bot: bool,
+    effort: Option<String>,
+    effort_proof: Option<crate::model_catalog::CodexEffortProof>,
 }
 impl Policy {
     /// This validates only mode/selection compatibility. Native bot snapshot
     /// authorization, account policy and imported-source checks remain required
     /// at their existing trusted Engine boundaries before launch.
     pub fn parse(thread: &Value, origin: Origin) -> Result<Self> {
+        ensure!(
+            thread["selection"]["effort"].is_null(),
+            "Reasoning effort requires a trusted private model catalog proof"
+        );
+        Self::parse_with_effort_proof(thread, origin, None)
+    }
+    pub(crate) fn parse_with_effort_proof(
+        thread: &Value,
+        origin: Origin,
+        proof: Option<&crate::model_catalog::CodexEffortProof>,
+    ) -> Result<Self> {
         ensure!(
             origin != Origin::Imported,
             "Imported conversations remain read-only; fork before executing"
@@ -108,6 +121,10 @@ impl Policy {
             || !thread["botID"].is_null();
         if bot {
             ensure!(
+                thread["selection"]["effort"].is_null(),
+                "Frozen bot effort is fixed and unsupported"
+            );
+            ensure!(
                 access == Access::Approval && interaction == Interaction::Build,
                 "Frozen bot conversations require approval/build modes"
             );
@@ -133,7 +150,12 @@ impl Policy {
             "Plan/full access policy is not implemented for this provider"
         );
         let model = composer_selection::launch_model(&thread["selection"])?;
+        if let Some(proof) = proof {
+            proof.validate(&thread["selection"])?;
+        }
         Ok(Self {
+            effort: thread["selection"]["effort"].as_str().map(str::to_owned),
+            effort_proof: proof.cloned(),
             access,
             interaction,
             provider,
@@ -149,6 +171,12 @@ impl Policy {
         Ok(())
     }
     pub fn preflight(&self) -> Result<()> {
+        if self.effort.is_some() {
+            let proof = self.effort_proof.as_ref().context(
+                "Refresh the exact Codex model catalog before applying reasoning effort",
+            )?;
+            proof.validate_executable_for_policy()?;
+        }
         if self.provider == "codex"
             && let Some(model) = &self.model
         {
@@ -157,6 +185,12 @@ impl Policy {
         if self.interaction == Interaction::Plan {
             let model=self.model.as_deref().context("Codex Plan requires an explicit model before selection or creation; provider default has no resolved model proof")?;
             validate_actual_model(model)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_launch_executable(&self, executable: &std::path::Path) -> Result<()> {
+        if let Some(proof) = &self.effort_proof {
+            proof.validate_executable(executable)?;
         }
         Ok(())
     }
@@ -188,11 +222,15 @@ impl Policy {
                 "Codex collaboration mode requires an explicit model or matching provider-resolved model; provider default alone cannot apply or clear Plan mode"
             );
         }
+        self.preflight()?;
         let mut fields = json!({"approvalPolicy":if self.access==Access::Approval{"untrusted"}else{"never"},"approvalsReviewer":"user","sandboxPolicy":{"type":if self.access==Access::Approval{"readOnly"}else{"dangerFullAccess"}}});
+        if let Some(effort) = &self.effort {
+            fields["effort"] = json!(effort);
+        }
         if let Some(model) = model {
             validate_actual_model(model)?;
             fields["model"] = json!(model);
-            fields["collaborationMode"] = json!({"mode":if self.interaction==Interaction::Plan{"plan"}else{"default"},"settings":{"model":model,"reasoning_effort":null,"developer_instructions":null}});
+            fields["collaborationMode"] = json!({"mode":if self.interaction==Interaction::Plan{"plan"}else{"default"},"settings":{"model":model,"reasoning_effort":self.effort,"developer_instructions":null}});
         }
         // Existing bot launch remains separately constrained by Engine. No
         // mode-capability advertisement or credential readiness follows here.
