@@ -1,7 +1,7 @@
 //! Typed desktop handoff only. This module never enables authority, grants a
 //! thread, requests OS permission, or invokes a native backend.
 use super::*;
-use crate::computer_use::{Failure, MAX_REQUEST, MAX_RESULT, Request};
+use crate::computer_use::{Authority, Failure, MAX_REQUEST, MAX_RESULT, Request};
 
 pub(super) const METHODS: &[&str] = &["computer_use.request", "computer_use.result"];
 const CAPACITY: usize = 8;
@@ -11,17 +11,20 @@ const RETENTION: Duration = Duration::from_secs(30);
 pub struct Pending {
     pub id: Uuid,
     pub thread: Uuid,
+    pub grant: Uuid,
     pub request: Request,
     pub deadline: Instant,
 }
 struct Operation {
     thread: Uuid,
+    grant: Uuid,
     deadline: Instant,
     result: Option<std::result::Result<Value, Failure>>,
     finished: Option<Instant>,
 }
 #[derive(Default)]
 pub(super) struct State {
+    authority: Option<Authority>,
     queue: VecDeque<Pending>,
     operations: HashMap<Uuid, Operation>,
 }
@@ -29,9 +32,17 @@ impl State {
     fn expire(&mut self) -> bool {
         let now = Instant::now();
         let mut changed = false;
+        let authority = self.authority.as_ref();
         self.operations.retain(|_, op| {
             if op.result.is_none() && now >= op.deadline {
                 op.result = Some(Err(Failure::TimedOut));
+                op.finished = Some(now);
+                changed = true;
+            }
+            if authority.is_none_or(|authority| authority.grant(op.thread) != Ok(op.grant))
+                && !matches!(op.result.as_ref(), Some(Err(Failure::Revoked)))
+            {
+                op.result = Some(Err(Failure::Revoked));
                 op.finished = Some(now);
                 changed = true;
             }
@@ -67,6 +78,16 @@ impl State {
     }
 }
 impl Engine {
+    /// Native parent only: bind the exact Authority shared by the Runtime.
+    /// This does not enable it or grant a thread. No JSON route exposes binding.
+    pub fn computer_use_bind_authority(&mut self, authority: Authority) {
+        self.computer_use_revoke_all();
+        self.computer_use.authority = Some(authority);
+    }
+    pub fn computer_use_unbind_authority(&mut self) {
+        self.computer_use_revoke_all();
+        self.computer_use.authority = None;
+    }
     /// Trusted provider transport entry point. The context must come from the
     /// session/transport owner; it must never be derived from JSON parameters.
     /// Only this narrow tool bridge is accepted on the scoped provider channel.
@@ -188,12 +209,20 @@ impl Engine {
         let request = Request::parse(&bytes).map_err(|failure| {
             anyhow::anyhow!("Invalid typed Computer Use request: {failure:?}")
         })?;
+        let grant = self
+            .computer_use
+            .authority
+            .as_ref()
+            .context("Computer Use desktop authority is not bound")?
+            .grant(thread)
+            .map_err(|failure| anyhow::anyhow!("Computer Use unavailable: {failure:?}"))?;
         let id = Uuid::new_v4();
         let deadline = Instant::now() + DEADLINE;
         self.computer_use.operations.insert(
             id,
             Operation {
                 thread,
+                grant,
                 deadline,
                 result: None,
                 finished: None,
@@ -202,6 +231,7 @@ impl Engine {
         self.computer_use.queue.push_back(Pending {
             id,
             thread,
+            grant,
             request,
             deadline,
         });
@@ -283,7 +313,7 @@ impl Engine {
         }
     }
     pub fn computer_use_shutdown(&mut self) {
-        self.computer_use_revoke_all();
+        self.computer_use_unbind_authority();
     }
     pub(super) fn computer_use_expire(&mut self) {
         if self.computer_use.expire() {
@@ -306,6 +336,15 @@ mod tests {
         let b = text(&engine.execute("threads.create", &json!({})).unwrap(), "id");
         engine.active_thread = Some(a.clone());
         engine.ui_available = true;
+        let authority = Authority::default();
+        authority.native_enable(true);
+        authority
+            .native_grant(Uuid::parse_str(&a).unwrap())
+            .unwrap();
+        authority
+            .native_grant(Uuid::parse_str(&b).unwrap())
+            .unwrap();
+        engine.computer_use_bind_authority(authority);
         (dir, engine, a, b)
     }
     fn request(thread: &str) -> Value {
@@ -327,7 +366,8 @@ mod tests {
     #[test]
     fn local_owner_requires_selected_stored_thread_and_typed_payload_cannot_grant() {
         let (_dir, mut e, a, b) = fixture();
-        let authority = Authority::default();
+        let authority = e.computer_use.authority.as_ref().unwrap().clone();
+        authority.native_enable(false);
         let before = e.store.thread(&a).unwrap();
         for p in [
             request(&b),
@@ -342,17 +382,10 @@ mod tests {
         e.ui_available = false;
         assert!(e.execute("computer_use.request", &request(&a)).is_err());
         e.ui_available = true;
-        let id = admit(&mut e, &a);
-        let jobs = e.computer_use_drain();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].id, id);
-        assert_eq!(jobs[0].thread, Uuid::parse_str(&a).unwrap());
-        // Same default-off check as Runtime admission, with no native object,
-        // permissions query, grant or backend operation constructed here.
-        assert_eq!(authority.grant(jobs[0].thread), Err(Failure::Off));
-        assert!(e.computer_use_reply(id, jobs[0].thread, Err(Failure::Off)));
-        let reply = e.execute("computer_use.result", &result(&a, id)).unwrap();
-        assert_eq!(reply, json!({"ready":true,"result":null,"error":"off"}));
+        assert!(e.execute("computer_use.request", &request(&a)).is_err());
+        assert!(e.computer_use_drain().is_empty());
+        e.computer_use_unbind_authority();
+        assert!(e.execute("computer_use.request", &request(&a)).is_err());
         assert!(!authority.enabled());
         assert_eq!(e.store.thread(&a).unwrap(), before);
     }
@@ -414,6 +447,12 @@ mod tests {
         for _ in 1..CAPACITY {
             let id = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
             e.active_thread = Some(id.clone());
+            e.computer_use
+                .authority
+                .as_ref()
+                .unwrap()
+                .native_grant(Uuid::parse_str(&id).unwrap())
+                .unwrap();
             admit(&mut e, &id);
         }
         let ninth = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
@@ -489,6 +528,42 @@ mod tests {
         assert_eq!(
             e.execute("computer_use.result", &result(&a, stopped))
                 .unwrap()["error"],
+            "revoked"
+        );
+    }
+    #[test]
+    fn collection_rechecks_shared_authority_without_waiting_for_native_revoke_hook() {
+        let (_dir, mut e, a, _) = fixture();
+        let thread = Uuid::parse_str(&a).unwrap();
+        let authority = e.computer_use.authority.as_ref().unwrap().clone();
+        for rotate in [false, true] {
+            if authority.grant(thread).is_err() {
+                authority.native_grant(thread).unwrap();
+            }
+            let id = admit(&mut e, &a);
+            let pending = e.computer_use_drain();
+            assert_eq!(pending[0].grant, authority.grant(thread).unwrap());
+            assert!(e.computer_use_reply(id, thread, Ok(json!({"private":"prior-epoch"}))));
+            if rotate {
+                authority.native_grant(thread).unwrap();
+            } else {
+                authority.native_revoke(thread);
+            }
+            // No Engine revoke hook/tick here: collection itself must fence
+            // retained successful observation content against the live grant.
+            assert_eq!(
+                e.execute("computer_use.result", &result(&a, id)).unwrap()["error"],
+                "revoked"
+            );
+        }
+        let id = admit(&mut e, &a);
+        authority.native_grant(thread).unwrap();
+        assert!(
+            e.computer_use_drain().is_empty(),
+            "old epoch work must not enter Runtime"
+        );
+        assert_eq!(
+            e.execute("computer_use.result", &result(&a, id)).unwrap()["error"],
             "revoked"
         );
     }
