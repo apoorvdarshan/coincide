@@ -298,31 +298,41 @@ impl GitHubReviewPanel {
             });
         }
     }
+    fn validated_loaded_scope(&self, cx: &App) -> Option<crate::github_actions::ActionScope> {
+        let (_, request) = self.active.as_ref()?;
+        let pr = self.detail.as_ref()?;
+        let View::Detail { number, head } = &request.view else {
+            return None;
+        };
+        if self.busy
+            || self.scope.as_ref()
+                != Some(&(request.binding.thread.clone(), request.binding.root.clone()))
+            || self.repository.read(cx).value().trim() != request.binding.repository
+            || pr["number"].as_u64() != Some(*number)
+            || pr["headRefOid"] != *head
+        {
+            return None;
+        }
+        crate::github_actions::ActionScope::new(
+            request.binding.thread.clone(),
+            request.binding.root.clone(),
+            request.binding.repository.clone(),
+            *number,
+            head.clone(),
+        )
+        .ok()
+    }
+    /// Exact currently loaded detail only; no reads, network or focus changes.
+    pub fn loaded_pr_scope(&self, cx: &App) -> Option<(String, u64, String)> {
+        self.validated_loaded_scope(cx)?;
+        let (_, request) = self.active.as_ref()?;
+        let View::Detail { number, head } = &request.view else {
+            return None;
+        };
+        Some((request.binding.repository.clone(), *number, head.clone()))
+    }
     fn sync_action_scope(&mut self, cx: &mut Context<Self>) {
-        let scope = (|| {
-            let (_, request) = self.active.as_ref()?;
-            let pr = self.detail.as_ref()?;
-            let View::Detail { number, head } = &request.view else {
-                return None;
-            };
-            if self.busy
-                || self.scope.as_ref()
-                    != Some(&(request.binding.thread.clone(), request.binding.root.clone()))
-                || self.repository.read(cx).value().trim() != request.binding.repository
-                || pr["number"].as_u64() != Some(*number)
-                || pr["headRefOid"] != *head
-            {
-                return None;
-            }
-            crate::github_actions::ActionScope::new(
-                request.binding.thread.clone(),
-                request.binding.root.clone(),
-                request.binding.repository.clone(),
-                *number,
-                head.clone(),
-            )
-            .ok()
-        })();
+        let scope = self.validated_loaded_scope(cx);
         if let Some(actions) = &self.actions {
             actions.update(cx, |actions, cx| actions.set_scope(scope, cx));
         }

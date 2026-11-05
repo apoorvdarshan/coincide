@@ -10,6 +10,7 @@ mod credential_settings;
 mod credentials;
 mod github_actions;
 mod github_review;
+mod github_threads;
 mod github_write_transport;
 mod microphone;
 mod microphone_settings;
@@ -238,6 +239,15 @@ fn transcript_find_shortcut_routes(
         .and_then(|thread| thread["id"].as_str())
         .is_some_and(|id| !browser_panels.contains(id))
 }
+fn github_threads_method_allowed(method: &str) -> bool {
+    matches!(
+        method,
+        "github.threads.list"
+            | "github.threads.comments"
+            | "github.threads.result"
+            | "github.threads.cancel"
+    )
+}
 fn find_row(thread: &Value, thread_id: &str, item_id: &str) -> Option<usize> {
     if thread["id"] != thread_id {
         return None;
@@ -294,6 +304,10 @@ struct Coincide {
     workspace_panel: Entity<workspace::WorkspacePanel>,
     github_open: bool,
     github_panel: Entity<github_review::GitHubReviewPanel>,
+    github_threads_panel: Entity<github_threads::GitHubThreadsPanel>,
+    github_threads_open: bool,
+    github_threads_seed: Option<(String, u64, String)>,
+    github_threads_scope_stale: bool,
     provider_settings: provider_settings::ProviderSettings,
     settings: Value,
     awake_status: Value,
@@ -360,7 +374,17 @@ impl Coincide {
                     .is_some_and(|selected| selected["id"] == *thread)
             });
         self.github_panel
-            .update(cx, |panel, cx| panel.set_context(context, cx));
+            .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
+        let threads_context = if self.workspace_open
+            && self.github_threads_open
+            && !self.github_threads_scope_stale
+        {
+            context
+        } else {
+            None
+        };
+        self.github_threads_panel
+            .update(cx, |panel, cx| panel.set_context(threads_context, cx));
     }
     fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
         let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
@@ -598,6 +622,17 @@ impl Coincide {
         });
         let transcript_find = cx.new(|cx| transcript_find::TranscriptFind::new(window, cx));
         let command_palette = cx.new(|cx| command_palette::CommandPalette::new(window, cx));
+        let threads_engine = engine.clone();
+        let threads_transport: github_threads::ThreadsTransport =
+            Arc::new(move |method, params| {
+                anyhow::ensure!(
+                    github_threads_method_allowed(method),
+                    "Unsupported native inline review method"
+                );
+                call(&threads_engine, method, params)
+            });
+        let github_threads_panel =
+            cx.new(|cx| github_threads::GitHubThreadsPanel::new(threads_transport, window, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -613,6 +648,15 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.observe(&github_panel, |this,_,cx| {
+                let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
+                if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
+                    this.github_threads_seed=None;
+                    this.github_threads_scope_stale=true;
+                    this.github_threads_panel.update(cx,|panel,cx|panel.set_context(None,cx));
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&transcript_find, window, |this, _, event, window, cx| {
                 this.find_event(event, window, cx);
             }),
@@ -847,6 +891,10 @@ impl Coincide {
             workspace_panel,
             github_open: false,
             github_panel,
+            github_threads_panel,
+            github_threads_open: false,
+            github_threads_seed: None,
+            github_threads_scope_stale: false,
             provider_settings,
             settings,
             awake_status: json!({}),
@@ -1921,6 +1969,7 @@ impl Coincide {
         }
         self.poll_browser(window, cx);
         self.sync_browser_settings(cx);
+        self.sync_github_context(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
@@ -3115,6 +3164,8 @@ impl Render for Coincide {
                                 .label("Local Git")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.github_open = false;
+                                    this.github_threads_open = false;
+                                    this.sync_github_context(cx);
                                     cx.notify();
                                 })),
                         )
@@ -3123,12 +3174,28 @@ impl Render for Coincide {
                                 .label("GitHub pull requests")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.github_open = true;
+                                    this.github_threads_open = false;
                                     this.sync_workspace_context(cx);
                                     cx.notify();
                                 })),
-                        ),
+                        )
+                        .child(Button::new("workspace-github-threads-tab").label("Inline review threads")
+                            .on_click(cx.listener(|this,_,window,cx|{
+                                this.github_open=false;this.github_threads_open=true;this.github_threads_scope_stale=false;
+                                this.sync_workspace_context(cx);
+                                let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
+                                this.github_threads_seed=loaded.clone();
+                                if let Some((repository,number,head))=loaded {
+                                    this.github_threads_panel.update(cx,|panel,cx|panel.set_pr(repository,number,head,window,cx));
+                                }
+                                cx.notify();
+                            }))),
                 )
-                .child(if self.github_open {
+                .child(if self.github_threads_open {
+                    div().flex_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden().flex().flex_col()
+                        .when(self.github_threads_scope_stale,|view|view.child(div().p_2().text_sm().child("PR detail changed. Reopen Inline review threads to bind the new loaded scope, or return to Local Git.")))
+                        .child(self.github_threads_panel.clone()).into_any_element()
+                } else if self.github_open {
                     div()
                         .flex_1()
                         .flex_basis(px(0.))
@@ -3645,5 +3712,25 @@ mod find_mount_tests {
         panels.insert("selected".into());
         assert!(!transcript_find_shortcut_routes(Some(&thread), &panels));
         assert!(!transcript_find_shortcut_routes(None, &panels));
+    }
+    #[::core::prelude::v1::test]
+    fn inline_threads_transport_does_not_expose_write_or_arbitrary_routes() {
+        for method in [
+            "github.threads.list",
+            "github.threads.comments",
+            "github.threads.result",
+            "github.threads.cancel",
+        ] {
+            assert!(github_threads_method_allowed(method));
+        }
+        for method in [
+            "github.write.submit",
+            "github.pr.read",
+            "agent.send",
+            "terminal.create",
+            "github.threads.unknown",
+        ] {
+            assert!(!github_threads_method_allowed(method));
+        }
     }
 }
