@@ -35,7 +35,7 @@ use std::{
 };
 use uuid::Uuid;
 #[cfg(target_os = "macos")]
-use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos};
+use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
     id: String,
@@ -914,11 +914,13 @@ impl BrowserController {
             return None;
         }
         let epoch = tab.navigation.load(Ordering::Acquire);
-        let address = tab.view.read(cx).raw().url().ok()?;
-        if tab.navigation.load(Ordering::Acquire) != epoch {
-            return None;
-        }
-        PageBinding::new(tab.id.clone(), epoch, &address).ok()
+        let address = credential_native_address(tab.view.read(cx).raw());
+        credential_binding(
+            &tab.id,
+            epoch,
+            tab.navigation.load(Ordering::Acquire),
+            address.as_deref(),
+        )
     }
 
     /// Drain only the selected thread's native workflow receiver. Never return
@@ -1025,6 +1027,40 @@ impl BrowserController {
     }
 }
 
+/// Wry 0.53.3's macOS url() unwraps nullable WKWebView.URL/absoluteString.
+/// A newly created or provisionally loading view may have neither. Absence is
+/// ineligible metadata, never a cached URL or a page-script location fallback.
+fn credential_native_address(view: &wry::WebView) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        MainThreadMarker::new()?;
+        let native = view.webview();
+        // SAFETY: native UI thread, retained WebKit view, nullable getters.
+        unsafe {
+            if native.isLoading() {
+                return None;
+            }
+            Some(native.URL()?.absoluteString()?.to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        view.url().ok()
+    }
+}
+
+fn credential_binding(
+    tab: &str,
+    epoch: u64,
+    current_epoch: u64,
+    address: Option<&str>,
+) -> Option<PageBinding> {
+    if epoch != current_epoch {
+        return None;
+    }
+    PageBinding::new(tab.to_owned(), epoch, address?).ok()
+}
+
 fn public_tab_title(title: &str, protected: bool) -> &str {
     if protected {
         "Saved-login inspection paused"
@@ -1090,6 +1126,19 @@ fn parse_script_result(payload: &str) -> Value {
 #[cfg(test)]
 mod credential_inspection_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn credential_metadata_requires_native_url_and_stable_epoch() {
+        assert!(credential_binding("new-tab", 0, 0, None).is_none());
+        for address in ["", "about:blank", "http://fixture.invalid/login"] {
+            assert!(credential_binding("new-tab", 1, 1, Some(address)).is_none());
+        }
+        let https = Some("https://credential-fixture.invalid/login");
+        assert!(credential_binding("new-tab", 1, 2, https).is_none());
+        let bound = credential_binding("new-tab", 2, 2, https).unwrap();
+        assert_eq!(bound.tab, "new-tab");
+        assert_eq!(bound.navigation, 2);
+        assert_eq!(bound.origin(), "https://credential-fixture.invalid");
+    }
     #[::core::prelude::v1::test]
     fn protected_page_echoes_and_errors_are_not_public_replies() {
         for payload in [
