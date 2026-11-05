@@ -548,12 +548,21 @@ pub fn materialize(
     candidate_ids: &[String],
     data_directory: &Path,
 ) -> Result<MediaBatch> {
-    materialize_with_ownership(preview, candidate_ids, data_directory, |_, _| Ok(()))
+    materialize_internal(preview, candidate_ids, data_directory, false, |_, _| Ok(()))
 }
 pub(crate) fn materialize_with_ownership(
     preview: &MediaPreview,
     candidate_ids: &[String],
     data_directory: &Path,
+    own: impl FnMut(&CheckedReference, &StoredImage) -> Result<()>,
+) -> Result<MediaBatch> {
+    materialize_internal(preview, candidate_ids, data_directory, true, own)
+}
+fn materialize_internal(
+    preview: &MediaPreview,
+    candidate_ids: &[String],
+    data_directory: &Path,
+    owned: bool,
     mut own: impl FnMut(&CheckedReference, &StoredImage) -> Result<()>,
 ) -> Result<MediaBatch> {
     ensure!(
@@ -650,9 +659,13 @@ pub(crate) fn materialize_with_ownership(
                 .and_then(Path::file_name)
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "Historical image".into());
-            attachments::ingest_image_bytes_owned(data_directory, &bytes, &name, |image| {
-                own(original, image)
-            })
+            if owned {
+                attachments::ingest_image_bytes_owned(data_directory, &bytes, &name, |image| {
+                    own(original, image)
+                })
+            } else {
+                attachments::ingest_image_bytes(data_directory, &bytes, &name)
+            }
         })();
         match ingested {
             Err(error) => {
@@ -763,6 +776,61 @@ mod tests {
             .iter()
             .map(|c| c.candidate_id.clone())
             .collect()
+    }
+    #[test]
+    fn public_materialize_cleans_partial_copy_but_journal_owned_materialize_retains_it() {
+        let (_dir, source, data, root) = fixture();
+        let bytes = png();
+        fs::write(source.join("image.png"), &bytes).unwrap();
+        let thread = thread(json!(["/retired-coincide/image.png"]));
+        let plan = inspect(&thread, &[root], InspectOptions::default()).unwrap();
+        let ids = all(&plan);
+        let preview = validate(&plan, &ids).unwrap();
+        let normal = attachments::with_copy_fault(|| materialize(&preview, &ids, &data)).unwrap();
+        assert_eq!(normal.references[0].reference.status, Status::IoError);
+        assert_eq!(
+            fs::read_dir(data.join("attachments")).unwrap().count(),
+            0,
+            "unowned public path cleans partial original"
+        );
+        let data = data.canonicalize().unwrap();
+        let database = data.join("state.sqlite");
+        drop(crate::store::Store::open(&database).unwrap());
+        let config = crate::legacy_media_service::ServiceConfig {
+            database_path: database,
+            expected_data_directory: data.clone(),
+        };
+        let mut journal = crate::legacy_media_recovery::IngestionStore::open(&config).unwrap();
+        let context = crate::legacy_media_recovery::IngestionContext {
+            operation_id: Uuid::new_v4().to_string(),
+            reserved_receipt_id: Uuid::new_v4().to_string(),
+            thread_id: THREAD.into(),
+            generation: 1,
+        };
+        let owned = attachments::with_copy_fault(|| {
+            materialize_with_ownership(&preview, &ids, &data, |reference, image| {
+                journal
+                    .allocate(
+                        &context,
+                        &reference.candidate.candidate_id,
+                        reference.source_sha256.as_deref().unwrap(),
+                        image,
+                    )
+                    .map_err(|error| anyhow::anyhow!("{error:?}"))
+            })
+        })
+        .unwrap();
+        assert_eq!(owned.references[0].reference.status, Status::IoError);
+        drop(journal);
+        let journal = crate::legacy_media_recovery::IngestionStore::open(&config).unwrap();
+        let records = journal.retained().unwrap();
+        assert_eq!(records.len(), 1);
+        let image: StoredImage =
+            serde_json::from_value(records[0].record["image"].clone()).unwrap();
+        assert!(image.original_path.is_file());
+        assert!(!image.path.exists());
+        assert_eq!(fs::read_dir(data.join("attachments")).unwrap().count(), 1);
+        assert_eq!(fs::read(source.join("image.png")).unwrap(), bytes);
     }
     #[test]
     fn materializes_unicode_paths_and_duplicates_without_modifying_sources_or_json() {

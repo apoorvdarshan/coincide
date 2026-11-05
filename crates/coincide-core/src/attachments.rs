@@ -105,6 +105,7 @@ impl StoredImage {
 /// Decode first, then create private UUID files. Failures never modify the source
 /// and clean only the new files created by this call.
 pub fn ingest_image(data_directory: &Path, source: &Path) -> Result<StoredImage> {
+    canonical_data_directory(data_directory)?;
     let source_bytes = read_bounded(source, MAX_SOURCE_BYTES)?;
     let name = source
         .file_name()
@@ -118,6 +119,13 @@ pub fn ingest_image(data_directory: &Path, source: &Path) -> Result<StoredImage>
         |_| Ok(()),
         |_| Ok(()),
     )
+}
+pub(crate) fn ingest_image_bytes(
+    data_directory: &Path,
+    bytes: &[u8],
+    name: &str,
+) -> Result<StoredImage> {
+    ingest_bytes(data_directory, bytes, name, false, |_| Ok(()), |_| Ok(()))
 }
 /// Trusted historical-media seam. Ownership must be durably recorded before
 /// this callback returns. Once owned, partial managed files are never auto-deleted.
@@ -186,6 +194,10 @@ fn ingest_bytes(
         keep: retain_partial,
     };
     created.write(&image.original_path, source_bytes)?;
+    #[cfg(test)]
+    if COPY_FAULT.with(std::cell::Cell::get) {
+        anyhow::bail!("injected copy failure");
+    }
     after_original(&image)?;
     created.write(&image.path, &bytes)?;
     created.keep = true;
@@ -483,4 +495,18 @@ pub(crate) fn ingest_owned_copy_fault(
     ingest_bytes(data, bytes, "fixture.png", true, own, |_| {
         anyhow::bail!("injected after original copy")
     })
+}
+
+#[cfg(test)]
+thread_local! {static COPY_FAULT:std::cell::Cell<bool>=const {std::cell::Cell::new(false)};}
+#[cfg(test)]
+pub(crate) fn with_copy_fault<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            COPY_FAULT.with(|fault| fault.set(self.0));
+        }
+    }
+    let _reset = Reset(COPY_FAULT.with(|fault| fault.replace(true)));
+    run()
 }
