@@ -1,3 +1,5 @@
+mod usage_history_mount;
+mod usage_history_view;
 mod worker_owner;
 use anyhow::Result;
 mod app_menu;
@@ -323,6 +325,7 @@ struct Coincide {
     settings_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
+    usage_history: usage_history_mount::Mount,
     computer_use_mount: Option<computer_use_mount::Mount>,
     computer_use_open: bool,
     computer_use_status: String,
@@ -670,6 +673,7 @@ impl Coincide {
         let notification_panel = cx.new(|cx| {
             notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
         });
+        let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
@@ -728,6 +732,9 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe(&usage_history.panel, |this, _, event, cx| {
+                this.usage_history.load(event, cx);
+            }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -961,6 +968,7 @@ impl Coincide {
             settings_open: false,
             settings_search,
             settings_section: Default::default(),
+            usage_history,
             computer_use_mount,
             computer_use_open: false,
             computer_use_status,
@@ -2245,6 +2253,7 @@ impl Coincide {
             self.navigation_last_clock = Instant::now();
             cx.notify();
         }
+        self.usage_history.poll(cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(cx);
         self.sync_github_context(cx);

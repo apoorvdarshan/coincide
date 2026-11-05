@@ -783,6 +783,43 @@ impl Store {
             .map(|text| serde_json::from_str(&text).map_err(Into::into))
             .transpose()
     }
+    /// Trusted bounded saved usage read. The Rust overlay is a complete document,
+    /// not an append fragment; a malformed overlay never falls back to originals.
+    pub fn saved_usage_snapshot(&self) -> Result<(Vec<u8>, crate::local_usage::Source)> {
+        use crate::{
+            local_usage::Source,
+            organization::{DOCUMENT_LIMIT, Records},
+        };
+        let db = self.connection()?;
+        let select = |sql: &str| -> Result<Option<Vec<u8>>> {
+            let row: Option<(Option<Vec<u8>>, i64)> = db
+                .query_row(sql, params![DOCUMENT_LIMIT as i64], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .optional()?;
+            row.map(|(bytes, length)| {
+                ensure!(
+                    length >= 0 && length <= DOCUMENT_LIMIT as i64,
+                    "Saved usage exceeds size limit"
+                );
+                bytes.context("Saved usage bytes unavailable")
+            })
+            .transpose()
+        };
+        let (bytes, source) = if let Some(bytes) = select(
+            "SELECT CASE WHEN length(CAST(document AS BLOB))<=?1 THEN CAST(document AS BLOB) ELSE NULL END, length(CAST(document AS BLOB)) FROM documents WHERE name='usage-history.json'",
+        )? {
+            (bytes, Source::LocalDocument)
+        } else if let Some(bytes) = select(
+            "SELECT CASE WHEN length(data)<=?1 THEN data ELSE NULL END, length(data) FROM original_files WHERE path='usage-history.json'",
+        )? {
+            (bytes, Source::CapturedOriginal)
+        } else {
+            (b"[]".to_vec(), Source::LocalDocument)
+        };
+        Records::parse(&bytes).context("Saved usage history is invalid")?;
+        Ok((bytes, source))
+    }
     pub fn document(&self, name: &str) -> Result<Option<Value>> {
         self.connection()?;
         validate_document_name(name)?;
@@ -1876,5 +1913,105 @@ mod shutdown_tests {
         drop(held);
         store.close_for_shutdown().unwrap();
         assert!(store.is_closed());
+    }
+}
+
+#[cfg(test)]
+mod saved_usage_tests {
+    use super::*;
+    use crate::{local_usage::Source, organization::DOCUMENT_LIMIT};
+    #[test]
+    fn saved_usage_snapshot_preserves_original_and_prefers_complete_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("saved.sqlite")).unwrap();
+        assert_eq!(store.saved_usage_snapshot().unwrap().0, b"[]");
+        let original =
+            br#"[ {"id":"00000000-0000-0000-0000-000000000001","unknown":{"keep":true}} ]"#;
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO original_files(path,data) VALUES('usage-history.json',?1)",
+                [original.as_slice()],
+            )
+            .unwrap();
+        let (bytes, source) = store.saved_usage_snapshot().unwrap();
+        assert_eq!(bytes, original);
+        assert_eq!(source, Source::CapturedOriginal);
+        let overlay = json!([{"id":Uuid::from_u128(1),"unknown":{"keep":true}},{"id":Uuid::from_u128(2),"usage":{"outputTokens":0}}]);
+        store.save_document("usage-history.json", &overlay).unwrap();
+        let (bytes, source) = store.saved_usage_snapshot().unwrap();
+        assert_eq!(source, Source::LocalDocument);
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), overlay);
+        assert_eq!(
+            store.original("usage-history.json").unwrap().unwrap(),
+            original
+        );
+        store.close_for_shutdown().unwrap();
+        assert!(
+            store
+                .saved_usage_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("Store is closed")
+        );
+    }
+    #[test]
+    fn saved_usage_snapshot_rejects_malformed_or_oversize_without_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("saved.sqlite")).unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO original_files(path,data) VALUES('usage-history.json',?1)",
+                [b"not-json".as_slice()],
+            )
+            .unwrap();
+        assert!(store.saved_usage_snapshot().is_err());
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO documents(name,document) VALUES('usage-history.json','[]')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.saved_usage_snapshot().unwrap().0, b"[]");
+        store
+            .connection()
+            .unwrap()
+            .execute("UPDATE documents SET document='broken'", [])
+            .unwrap();
+        assert!(store.saved_usage_snapshot().is_err());
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE documents SET document=zeroblob(?1)",
+                [DOCUMENT_LIMIT + 1],
+            )
+            .unwrap();
+        assert!(
+            store
+                .saved_usage_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("size limit")
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute("DELETE FROM documents", [])
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE original_files SET data=zeroblob(?1)",
+                [DOCUMENT_LIMIT + 1],
+            )
+            .unwrap();
+        assert!(store.saved_usage_snapshot().is_err());
     }
 }
