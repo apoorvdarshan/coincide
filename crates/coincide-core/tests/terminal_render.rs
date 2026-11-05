@@ -713,3 +713,85 @@ fn command_anchor_does_not_guess_after_history_fills_or_missing_prompt_mark() {
             .is_none()
     );
 }
+
+#[test]
+fn prompt_navigation_reports_current_history_coordinates_without_snapshot_growth() {
+    let mut fixture = Fixture::new(
+        3,
+        12,
+        &[
+            "\x1b]133;A\x07$ one\r\none\r\n\x1b]133;A\x07$ two\r\ntwo\r\n\x1b]133;A\x07$ ",
+            "\x1b[?1049h\x1b[?1049l",
+        ],
+    );
+    let frame = fixture.snapshot(0);
+    assert!(frame["shell"].get("marks").is_none());
+    let marks = fixture
+        .terminal
+        .prompt_marks(frame["revision"].as_u64().unwrap())
+        .unwrap();
+    assert_eq!(marks["revision"], frame["revision"]);
+    assert_eq!(
+        marks["marks"],
+        json!([{"line":-2,"col":0,"displayOffset":2},{"line":0,"col":0,"displayOffset":0},{"line":2,"col":0,"displayOffset":0}])
+    );
+    let changed = fixture.next(1);
+    assert!(
+        fixture
+            .terminal
+            .prompt_marks(frame["revision"].as_u64().unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .terminal
+            .prompt_marks(changed["revision"].as_u64().unwrap())
+            .unwrap()["marks"],
+        json!([])
+    );
+}
+
+#[test]
+fn running_command_output_is_anchored_until_end_and_crosses_bounded_copy_chunks() {
+    let mut fixture = Fixture::new(
+        4,
+        20,
+        &[
+            "\x1b]133;A\x07$ emit\r\n\x1b]1337;CoincideCommand=emit\x07\x1b]133;C\x07one",
+            "\r\ntwo\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ",
+        ],
+    );
+    let running = fixture.snapshot(0);
+    assert_eq!(running["shell"]["isRunning"], true);
+    assert_eq!(
+        fixture
+            .terminal
+            .last_command_output(running["revision"].as_u64().unwrap())
+            .unwrap()
+            .unwrap(),
+        "$ emit\none"
+    );
+    let ended = fixture.next(1);
+    assert_eq!(
+        fixture
+            .terminal
+            .last_command_output(ended["revision"].as_u64().unwrap())
+            .unwrap()
+            .unwrap(),
+        "$ emit\none\ntwo"
+    );
+    let mut bytes =
+        String::from("\x1b]133;A\x07$ emit\r\n\x1b]1337;CoincideCommand=emit\x07\x1b]133;C\x07");
+    bytes.push_str(&"row\r\n".repeat(400));
+    bytes.push_str("\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+    let mut fixture = Fixture::new(4, 12, &[&bytes]);
+    let frame = fixture.snapshot(0);
+    assert_eq!(
+        fixture
+            .terminal
+            .last_command_output(frame["revision"].as_u64().unwrap())
+            .unwrap()
+            .unwrap(),
+        format!("$ emit\n{}", vec!["row"; 400].join("\n"))
+    );
+}

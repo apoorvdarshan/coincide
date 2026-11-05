@@ -194,6 +194,27 @@ impl Terminal {
             self.shell_anchors.invalidate();
         }
     }
+    /// Explicit bounded navigation query; snapshots never carry a growing mark
+    /// array. Lines are relative to the current live grid (history is negative).
+    /// Apply target displayOffset through revision-checked terminal.scroll.
+    pub fn prompt_marks(&mut self, revision: u64) -> Result<Value> {
+        self.poll()?;
+        ensure!(
+            revision == self.revision,
+            "Terminal revision changed; read a fresh frame"
+        );
+        let history = self.term.grid().history_size();
+        let cols = self.term.columns();
+        let marks = if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            vec![]
+        } else {
+            self.shell_anchors.prompts.iter().filter_map(|position|{
+                let (row,col)=if position.col>=cols{(position.row+1,0)}else{(position.row,position.col)};
+                (row<history+self.term.screen_lines()).then(||json!({"line":row as i32-history as i32,"col":col,"displayOffset":history.saturating_sub(row)}))
+            }).collect::<Vec<_>>()
+        };
+        Ok(json!({"revision":self.revision,"marks":marks}))
+    }
     /// Exact observed-revision output hook for the API owner. Never executes the
     /// text. No suffix search through arbitrary output; bash's delayed mark is
     /// verified against its original prompt-anchored command line only.
