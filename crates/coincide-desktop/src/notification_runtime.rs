@@ -104,12 +104,13 @@ pub struct Handle {
 impl Handle {
     /// Bounded, nonblocking submission. Full/Closed returns the original command;
     /// the parent retains its core claim until a definitive receipt/cancellation.
-    pub fn try_send(&self, command: Command) -> std::result::Result<Uuid, SubmitError> {
+    /// Boxing the error moves, rather than clones or drops, its owned command.
+    pub fn try_send(&self, command: Command) -> std::result::Result<Uuid, Box<SubmitError>> {
         let Ok(_submission) = self.submission.try_lock() else {
-            return Err(SubmitError::Full(command));
+            return Err(Box::new(SubmitError::Full(command)));
         };
         if self.stop.load(Ordering::Acquire) {
-            return Err(SubmitError::Closed(command));
+            return Err(Box::new(SubmitError::Closed(command)));
         }
         let command_id = Uuid::new_v4();
         match self.commands.try_send(Queued {
@@ -117,8 +118,10 @@ impl Handle {
             command,
         }) {
             Ok(()) => Ok(command_id),
-            Err(TrySendError::Full(item)) => Err(SubmitError::Full(item.command)),
-            Err(TrySendError::Disconnected(item)) => Err(SubmitError::Closed(item.command)),
+            Err(TrySendError::Full(item)) => Err(Box::new(SubmitError::Full(item.command))),
+            Err(TrySendError::Disconnected(item)) => {
+                Err(Box::new(SubmitError::Closed(item.command)))
+            }
         }
     }
     /// Latest-only, bounded status slot. Busy lock returns None; GPUI never waits.
@@ -612,6 +615,87 @@ mod tests {
         runtime.shutdown().unwrap();
     }
     #[test]
+    fn boxed_submission_errors_retain_exact_dispatch_for_every_rejection_path() {
+        for reason in ["busy", "stopped", "full", "disconnected"] {
+            let (commands, receiver) = mpsc::sync_channel(1);
+            let handle = Handle {
+                commands,
+                submission: Arc::new(Mutex::new(())),
+                stop: Arc::new(AtomicBool::new(reason == "stopped")),
+                status: Arc::new(Mutex::new(Status::default())),
+            };
+            let receiver = Some(receiver);
+            let _receiver = if reason == "disconnected" {
+                drop(receiver);
+                None
+            } else {
+                receiver
+            };
+            if reason == "full" {
+                assert!(
+                    handle
+                        .commands
+                        .try_send(Queued {
+                            command_id: Uuid::new_v4(),
+                            command: Command::RefreshPermission,
+                        })
+                        .is_ok()
+                );
+            }
+            let _held = (reason == "busy").then(|| handle.submission.lock().unwrap());
+            let key = key();
+            let claim = Uuid::new_v4();
+            let title = "retained café 中文 title".to_owned();
+            let body = "  exact 👩🏽‍💻 body\n".to_owned();
+            let title_allocation = title.as_ptr();
+            let body_allocation = body.as_ptr();
+            let command = Command::Dispatch {
+                claim_id: claim,
+                alert: Alert {
+                    key,
+                    title,
+                    body: Some(body),
+                },
+                desktop: DesktopActivity {
+                    app_active: true,
+                    visible_thread: Some(key.thread),
+                    idle_seconds: 123,
+                    locked: true,
+                    display_asleep: true,
+                },
+                now: 456,
+            };
+            let error = handle.try_send(command).unwrap_err();
+            assert_eq!(
+                matches!(&*error, SubmitError::Closed(_)),
+                matches!(reason, "stopped" | "disconnected")
+            );
+            let command = match *error {
+                SubmitError::Full(command) | SubmitError::Closed(command) => command,
+            };
+            let Command::Dispatch {
+                claim_id,
+                alert,
+                desktop,
+                now,
+            } = command
+            else {
+                panic!("submission error lost the dispatch command");
+            };
+            assert_eq!(claim_id, claim);
+            assert_eq!(alert.key, key);
+            assert_eq!(alert.title, "retained café 中文 title");
+            assert_eq!(alert.title.as_ptr(), title_allocation);
+            assert_eq!(alert.body.as_deref(), Some("  exact 👩🏽‍💻 body\n"));
+            assert_eq!(alert.body.as_ref().unwrap().as_ptr(), body_allocation);
+            assert!(desktop.app_active && desktop.locked && desktop.display_asleep);
+            assert_eq!(desktop.visible_thread, Some(key.thread));
+            assert_eq!(desktop.idle_seconds, 123);
+            assert_eq!(now, 456);
+        }
+    }
+
+    #[test]
     fn saturated_receipts_pause_work_and_shutdown_returns_unsent_commands() {
         let (mut runtime, state) = setup(Delivery::Accepted, 1);
         let h = runtime.handle();
@@ -632,7 +716,10 @@ mod tests {
         }
         // Queue until bounded mailbox reports Full, retaining exactly the command.
         let rejected = loop {
-            match h.try_send(Command::ClearThread(Uuid::nil())) {
+            match h
+                .try_send(Command::ClearThread(Uuid::nil()))
+                .map_err(|error| *error)
+            {
                 Ok(_) => {}
                 Err(SubmitError::Full(c)) => break c,
                 Err(_) => panic!("unexpected close"),
@@ -651,7 +738,8 @@ mod tests {
                 || runtime.try_receipt().is_ok()
         );
         assert!(matches!(
-            h.try_send(Command::RefreshPermission),
+            h.try_send(Command::RefreshPermission)
+                .map_err(|error| *error),
             Err(SubmitError::Closed(Command::RefreshPermission))
         ));
     }
