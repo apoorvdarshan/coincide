@@ -582,7 +582,10 @@ mod tests {
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
         let id = queue(&h, &mut g, t, Instant::now() - Duration::from_secs(1));
-        step(&mut h, &mut g);
+        // The runtime's latest-status mutex may be held by its real worker.
+        // A contended snapshot intentionally pauses admission for this frame;
+        // wait for the reply instead of assuming one UI poll must drain it.
+        until(&mut h, &mut g, |g| g.results.contains_key(&id));
         assert_eq!(g.results[&id].1, Err(Failure::TimedOut));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         h.handle.native_enable(false).unwrap();

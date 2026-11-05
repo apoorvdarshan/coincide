@@ -1314,7 +1314,8 @@ mod native {
             "--strict".into(),
             "--all-architectures".into(),
             "-R".into(),
-            requirement.into(),
+            // Leading '=' selects inline requirement text rather than a file.
+            format!("={requirement}").into(),
             path.as_os_str().to_owned(),
         ])
     }

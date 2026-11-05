@@ -1188,7 +1188,8 @@ impl BundleVerifier for MacCodeVerifier {
                     "--deep".into(),
                     "--all-architectures".into(),
                     "-R".into(),
-                    requirement.into(),
+                    // codesign treats an unprefixed requirement as a filename.
+                    format!("={requirement}").into(),
                     bundle.as_os_str().to_owned(),
                 ],
             )?;
@@ -1213,7 +1214,7 @@ impl BundleVerifier for MacCodeVerifier {
                         "--strict".into(),
                         "--all-architectures".into(),
                         "-R".into(),
-                        team_requirement.into(),
+                        format!("={team_requirement}").into(),
                         path.as_os_str().to_owned(),
                     ],
                 )?;
