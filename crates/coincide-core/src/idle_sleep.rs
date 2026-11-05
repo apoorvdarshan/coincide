@@ -3,7 +3,7 @@
 use super::*;
 use crate::platform_host::{
     power::AwakePolicy,
-    runtime::{HostRuntime, LeaseState, Phase, Settings},
+    runtime::{HostRuntime, LeaseState, PendingShutdown, Phase, Settings, ShutdownStatus},
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -21,11 +21,32 @@ pub(super) struct IdleSleep {
     enabled: bool,
     jobs: Arc<AtomicUsize>,
     runtime: Option<HostRuntime>,
+    shutdown_requested: bool,
+    pending_shutdown: Option<PendingShutdown>,
     requested: AwakePolicy,
     submitted: Option<AwakePolicy>,
     error: Option<String>,
     retry_after: Option<Instant>,
     factory: Box<dyn Fn() -> Result<HostRuntime> + Send>,
+}
+/// Trusted Engine-owner observation; this is not a JSON shutdown authority.
+pub(super) struct IdleShutdownStatus {
+    pub requested: bool,
+    pub worker_started: bool,
+    pub joined: bool,
+    pub phase: Option<Phase>,
+    pub lease: LeaseState,
+    pub error: Option<String>,
+}
+impl IdleShutdownStatus {
+    pub fn ready(&self) -> bool {
+        self.requested
+            && (!self.worker_started
+                || (self.joined
+                    && self.phase == Some(Phase::Stopped)
+                    && self.lease == LeaseState::Released
+                    && self.error.is_none()))
+    }
 }
 impl IdleSleep {
     pub fn new(store: &Store) -> Self {
@@ -49,6 +70,8 @@ impl IdleSleep {
             enabled,
             jobs: Arc::new(AtomicUsize::new(0)),
             runtime: None,
+            shutdown_requested: false,
+            pending_shutdown: None,
             requested: AwakePolicy::default(),
             submitted: None,
             error,
@@ -61,11 +84,44 @@ impl IdleSleep {
             }),
         }
     }
+    pub fn request_shutdown(&mut self) {
+        if self.shutdown_requested {
+            return;
+        }
+        self.shutdown_requested = true;
+        self.requested.enabled = false;
+        self.pending_shutdown = self.runtime.take().map(HostRuntime::into_pending_shutdown);
+    }
+    pub fn poll_shutdown(&mut self) -> IdleShutdownStatus {
+        let current: Option<ShutdownStatus> = self
+            .pending_shutdown
+            .as_ref()
+            .map(PendingShutdown::poll)
+            .or_else(|| {
+                self.runtime.as_ref().map(|runtime| ShutdownStatus {
+                    joined: false,
+                    status: runtime.handle().status(),
+                })
+            });
+        IdleShutdownStatus {
+            requested: self.shutdown_requested,
+            worker_started: current.is_some() || self.runtime.is_some(),
+            joined: current.as_ref().is_some_and(|s| s.joined),
+            phase: current.as_ref().map(|s| s.status.phase),
+            lease: current
+                .as_ref()
+                .map_or(LeaseState::Released, |s| s.status.lease),
+            error: current.and_then(|s| s.status.error),
+        }
+    }
     pub fn background_job(&self) -> BackgroundJob {
         self.jobs.fetch_add(1, Ordering::SeqCst);
         BackgroundJob(self.jobs.clone())
     }
     pub fn update(&mut self, active_turns: usize, shutdown: bool) {
+        if self.shutdown_requested {
+            return;
+        }
         self.requested = AwakePolicy {
             enabled: self.enabled && !shutdown,
             active_turns,
@@ -107,13 +163,21 @@ impl IdleSleep {
     }
     pub fn status(&self) -> Value {
         let mut status = json!({"enabled":self.enabled,"supported":cfg!(any(target_os="macos",target_os="linux")),
-            "scope":"idle_sleep_during_work","configurationSource":"rust_owned","workerStarted":self.runtime.is_some(),
+            "scope":"idle_sleep_during_work","configurationSource":"rust_owned","workerStarted":self.runtime.is_some() || self.pending_shutdown.is_some(),
             "requestedPolicy":policy_json(self.requested),"phase":"idle","lease":"released",
             "requestedRevision":0,"processedRevision":null,"acknowledgedRevision":null,"acknowledgedPolicy":null,
             "error":self.error,"batteryMonitoring":false,"persistentPowerSettings":false,
             "remaining":["lid_closed_operation","battery_policy","external_jobs_after_provider_completion"]});
-        if let Some(runtime) = &self.runtime {
-            let current = runtime.handle().status();
+        let current = self
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.handle().status())
+            .or_else(|| {
+                self.pending_shutdown
+                    .as_ref()
+                    .map(|pending| pending.poll().status)
+            });
+        if let Some(current) = current {
             status["phase"] = json!(match current.phase {
                 Phase::Starting => "starting",
                 Phase::Applying => "applying",
