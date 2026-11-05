@@ -27,6 +27,7 @@ fn bounded<'a>(p: &'a Value, key: &str, max: usize) -> Result<&'a str> {
 
 impl Engine {
     pub(super) fn workspace_command(&mut self, method: &str, p: &Value) -> Result<Value> {
+        self.require_admissions()?;
         ensure!(METHODS.contains(&method), "Unknown workspace method");
         let object = p
             .as_object()
@@ -149,6 +150,7 @@ impl Engine {
         } else {
             None
         };
+        self.require_background_admission()?;
         let id = Uuid::new_v4().to_string();
         self.workspace_pending
             .insert(id.clone(), (owner, Instant::now()));
@@ -160,7 +162,7 @@ impl Engine {
         let operation = id.clone();
         let method = method.to_owned();
         let activity = self.idle_sleep.background_job();
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let _activity = activity;
             let result = (|| -> Result<Value> {
                 match method.as_str() {
@@ -212,6 +214,7 @@ impl Engine {
             // it; dropping the engine disconnects and releases waiting workers.
             publish_completion(tx, operation, result);
         });
+        self.background_workers.track(worker);
         Ok(json!({"operationId":id,"resultMethod":"git.workspace.result"}))
     }
 }

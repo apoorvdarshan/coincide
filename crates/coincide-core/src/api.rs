@@ -25,8 +25,11 @@ mod antigravity_api;
 #[cfg(test)]
 #[path = "attachment_completion_tests.rs"]
 mod attachment_completion_tests;
+#[path = "background_workers.rs"]
+mod background_workers;
 #[path = "bot_engine.rs"]
 mod bot_engine;
+pub use background_workers::BackgroundShutdownStatus;
 #[path = "computer_use_engine.rs"]
 pub mod computer_use_engine;
 #[path = "github_engine.rs"]
@@ -84,6 +87,7 @@ pub struct Engine {
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
     provider_workers: Vec<agent::WorkerCompletion>,
+    background_workers: background_workers::State,
     provider_worker_outcomes: ProviderWorkersStatus,
     pub revision: u64,
     pub requested_open: Option<String>,
@@ -123,12 +127,18 @@ impl Engine {
     }
     fn initialize(store: Store, discover: bool) -> Self {
         let (workspace_tx, workspace_rx) = std::sync::mpsc::sync_channel(32);
+        let mut background_workers = background_workers::State::default();
         if discover {
             let discovery_tx = workspace_tx.clone();
-            std::thread::spawn(move || {
+            let worker = std::thread::spawn(move || {
                 let report = crate::provider_catalog::discover_installed_tools();
-                let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
+                workspace_api::publish_completion(
+                    discovery_tx,
+                    "provider-discovery".into(),
+                    json!(report),
+                );
             });
+            background_workers.track(worker);
         }
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
@@ -146,6 +156,7 @@ impl Engine {
             },
             runs: HashMap::new(),
             provider_workers: Vec::new(),
+            background_workers,
             provider_worker_outcomes: ProviderWorkersStatus::default(),
             revision: 0,
             requested_open: None,
@@ -233,6 +244,7 @@ impl Engine {
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
+                self.require_background_admission()?;
                 ensure!(self.workspace_pending.len()<32 && self.attachment_operations.len()<4,"Too many attachment imports; wait for existing imports to finish");
                 let thread=required(p,"threadId")?.to_owned();
                 ensure!(!self.unsaved_threads.contains_key(&thread),"Transcript persistence is recovering; retry after recovery");
@@ -247,10 +259,11 @@ impl Engine {
                 self.attachment_operations.insert(id.clone());
                 let tx=self.workspace_tx.clone();let operation=id.clone();
                 let activity = self.idle_sleep.background_job();
-                std::thread::spawn(move || {
+                let worker = std::thread::spawn(move || {
                     let _activity = activity;
                     import_attachment(root, source, tx, operation, || {});
                 });
+                self.background_workers.track(worker);
                 Ok(json!({"operationId":id}))
             }
             "attachments.remove" => {
@@ -295,6 +308,7 @@ impl Engine {
                 Ok(json!({"task":crate::schedule_service::ScheduleService::new(&mut self.store).list()?.into_iter().find(|v|v["id"]==id)}))
             }
             "git.status" | "git.diff" | "files.list" | "files.read" => {
+                self.require_background_admission()?;
                 ensure!(self.workspace_pending.len()<32,"Too many workspace operations; collect results first");
                 let thread=required(p,"threadId")?;
                 let cwd=self.working_directory(&self.store.thread(thread)?)?;
@@ -302,7 +316,7 @@ impl Engine {
                 self.workspace_pending.insert(id.clone(),(thread.into(),Instant::now()));
                 let tx=self.workspace_tx.clone();let params=p.clone();let operation=id.clone();let method=method.to_owned();
                 let activity = self.idle_sleep.background_job();
-                std::thread::spawn(move || {
+                let worker = std::thread::spawn(move || {
                     let _activity = activity;
                     let result=(||->Result<Value>{
                         match method.as_str() {
@@ -313,8 +327,9 @@ impl Engine {
                             _=>unreachable!(),
                         }
                     })().unwrap_or_else(|e|json!({"error":e.to_string()}));
-                    let _=tx.try_send((operation,result));
+                    workspace_api::publish_completion(tx, operation, result);
                 });
+                self.background_workers.track(worker);
                 Ok(json!({"operationId":id}))
             }
             "workspace.result"=>{
@@ -1226,12 +1241,7 @@ impl Engine {
             })
             .context("Choose a project working directory first")
     }
-    pub fn poll(&mut self) {
-        self.provider_workers_status();
-        self.computer_use_expire();
-        if self.model_catalog.poll() {
-            self.revision += 1;
-        }
+    fn poll_workspace_completions(&mut self) {
         self.workspace_pending
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
         self.workspace_results
@@ -1290,6 +1300,15 @@ impl Engine {
                 self.revision += 1;
             }
         }
+    }
+    pub fn poll(&mut self) {
+        self.provider_workers_status();
+        self.computer_use_expire();
+        if self.model_catalog.poll() {
+            self.revision += 1;
+        }
+        self.poll_workspace_completions();
+        self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
