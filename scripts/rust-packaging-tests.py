@@ -118,6 +118,11 @@ def load_tests(loader, tests, pattern):
     staging_tests = importlib.util.module_from_spec(staging_spec)
     staging_spec.loader.exec_module(staging_tests)
     tests.addTests(loader.loadTestsFromModule(staging_tests))
+    archive_spec = importlib.util.spec_from_file_location(
+        'archive_tests', Path(__file__).with_name('rust-archive-desktop-tests.py'))
+    archive_tests = importlib.util.module_from_spec(archive_spec)
+    archive_spec.loader.exec_module(archive_tests)
+    tests.addTests(loader.loadTestsFromModule(archive_tests))
     return tests
 
 

@@ -200,3 +200,57 @@ or an active app bundle as a substitute. Full desktop build/staging/launch accep
 on each host still needs coordinator allocation. Dedicated CI automatically runs the
 synthetic staging suite through `rust-packaging-tests.py`; its real-binary lane remains
 scoped to `store-tool`. No additional desktop CI builds are introduced here.
+
+## Unsigned archive and DMG rehearsal
+
+`scripts/rust-archive-desktop.py` takes an explicit staged artifact root and its
+existing desktop manifest, validates the source, then copies it to a new private
+snapshot under a unique `coincide-desktop-archives-*` scratch directory. Source paths
+are never overwritten. Scratch root restrictions match the staging tool; output may
+not be inside the input artifact. No Cargo or signing tools are invoked.
+
+```sh
+python3 -B scripts/rust-archive-desktop.py \
+  --artifact-root /absolute/physical/staging/artifact \
+  --manifest /absolute/physical/staging/manifest.json \
+  --scratch-root /tmp --format zip --format dmg
+```
+
+`--format` may be repeated. ZIP and `tar.gz` work for any supported staged platform;
+DMG requires a macOS artifact and Mac host. For Windows use `--scratch-root $env:TEMP`
+in PowerShell and `--format zip`; for Linux use `/tmp` and `--format tar.gz`.
+These are portable archive layouts, not MSI/DEB/RPM installers. They do not perform
+system integration, dependency provisioning, install/uninstall or update operations.
+
+The output contains the archives, original `manifest.json`, and `archive-report.json`
+with archive sizes/SHA-256, extracted validation, and distinct container/payload trust
+status. Containers are unsigned, signing is not performed, and existing executable
+signatures are unverified byte-preserved inputs (they may already be ad hoc signed).
+No notarization or distribution trust is claimed. Manifests are integrity sidecars,
+not authenticated attestations, and are kept outside the exact payload inventory.
+
+ZIP/tar extraction uses an exact member allowlist, size checks and streamed writes;
+absolute/traversal/control-character paths, links, special files, unknown/duplicate
+members and missing members fail. No archive-provided owner IDs are applied. File
+content inventory and the desktop validator must match after extraction. Sources are
+validated again after packaging. Generated archives are not promised reproducible:
+compression, timestamps, filesystem image metadata and host tools may vary.
+
+The DMG is a compressed UDZO image created from a scratch HFS+/ISO/Joliet hybrid via
+`hdiutil makehybrid` and `convert`. `hdiutil verify` checks container integrity. A
+second conversion to raw UDTO allows the system `bsdtar` to read/extract ISO/Joliet
+without attaching a disk or mounting a volume. Extracted content hashes must match
+the source manifest. Known payload modes are restored on the disposable extraction
+for validator checks: this verifies file bytes, **not HFS permission metadata**.
+The HFS volume's Finder/install/launch behavior is not accepted by this rehearsal.
+No `attach`, `mount`, `open`, `codesign`, installer or app launch command is used.
+The tool checks `hdiutil info` to confirm no task image remains attached. It does not
+detach unrelated images or interact with the user's volumes.
+
+On success, only the private payload snapshot, extraction directories and intermediate
+ISO/raw image are removed; final archives/evidence remain. On failure, partial files
+in the unique task-created directory are retained for inspection rather than deleting
+caller paths. Tests run through the existing packaging test entry point (22 tests;
+the DMG test is explicitly skipped on non-Mac hosts). Real Windows/Linux desktop
+archive acceptance still requires their allocated native artifacts. Existing real
+CI continues to build only the store tool, with synthetic desktop archive coverage.
