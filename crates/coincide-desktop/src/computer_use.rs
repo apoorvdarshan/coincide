@@ -70,6 +70,9 @@ pub struct Handle {
 impl Handle {
     /// Native UI only; revocation is immediate even when the mailbox is full.
     pub fn native_enable(&self, enabled: bool) -> Result<(), Failure> {
+        if enabled && self.stop.load(Ordering::Acquire) {
+            return Err(Failure::Revoked);
+        }
         if enabled && !self.compiled {
             return Err(Failure::Unsupported);
         }
@@ -77,6 +80,9 @@ impl Handle {
         Ok(())
     }
     pub fn native_grant(&self, thread: Uuid) -> Result<(), Failure> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(Failure::Revoked);
+        }
         if !self.compiled {
             return Err(Failure::Unsupported);
         }
@@ -636,6 +642,8 @@ mod tests {
             assert_eq!(r.result, Err(Failure::Revoked));
         }
         h.shutdown();
+        assert_eq!(h.native_enable(true), Err(Failure::Revoked));
+        assert_eq!(h.native_grant(t), Err(Failure::Revoked));
         assert!(!h.thread_enabled(t));
         assert_eq!(h.try_request(t, Request::Status), Err(Failure::Revoked));
     }

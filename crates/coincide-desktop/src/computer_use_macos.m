@@ -40,6 +40,7 @@
 @property(nonatomic) pid_t pid;
 @property(nonatomic) CGWindowID windowID;
 @property(nonatomic) CGRect bounds;
+@property(nonatomic, strong) NSString *screenshot;
 @property(nonatomic, assign) bool (*check)(const void *);
 @property(nonatomic, assign) const void *guard;
 @end
@@ -142,6 +143,9 @@ static AXUIElementRef CUFindWindow(pid_t pid, CGRect bounds) {
          i++) {
       inspected++;
       AXUIElementRef w = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
+      if (CFGetTypeID(w) != AXUIElementGetTypeID())
+        continue;
+      AXUIElementSetMessagingTimeout(w, 0.15);
       if (CUSame(CUAXBounds(w), bounds)) {
         matches++;
         if (!result)
@@ -303,6 +307,7 @@ static NSDictionary *CUObserve(CUContext *ctx, NSDictionary *request) {
   if (!window)
     return CUError(@"stale_observation");
   [ctx.elements removeAllObjects];
+  ctx.screenshot = nil;
   ctx.pid = pid;
   ctx.windowID = wid;
   ctx.bounds = bounds;
@@ -326,6 +331,18 @@ static NSDictionary *CUObserve(CUContext *ctx, NSDictionary *request) {
     NSUInteger depth = [job[@"depth"] unsignedIntegerValue];
     AXUIElementRef element = record.element;
     AXUIElementSetMessagingTimeout(element, 0.15);
+    pid_t actualPID = 0;
+    if (AXUIElementGetPid(element, &actualPID) != kAXErrorSuccess ||
+        actualPID != pid)
+      continue;
+    if (!CFEqual(element, window)) {
+      CFTypeRef containing = CUCopy(element, kAXWindowAttribute);
+      BOOL same = containing && CFEqual(containing, window);
+      if (containing)
+        CFRelease(containing);
+      if (!same)
+        continue;
+    }
     BOOL secure = CUSecure(element);
     record.observedRole = CUString(element, kAXRoleAttribute, 128);
     if ([record.observedRole isEqualToString:@"AXWebArea"]) {
@@ -395,6 +412,7 @@ static NSDictionary *CUObserve(CUContext *ctx, NSDictionary *request) {
       return image;
     }
     result[@"screenshot"] = image;
+    ctx.screenshot = image[@"png_base64"];
   }
   return result;
 }
@@ -423,7 +441,14 @@ static NSDictionary *CUInput(CUContext *ctx, NSDictionary *request) {
         target = [w[(id)kCGWindowNumber] unsignedIntValue] == wid;
         break;
       }
-    if (!target)
+    if (!target || !ctx.screenshot)
+      return CUError(@"stale_observation");
+    // Pixel input is denied if the captured window content changed since the
+    // observation. Re-capture is bounded and never creates an input fallback.
+    NSDictionary *fresh = CUScreenshot(wid, pid, ctx.bounds);
+    if (fresh[@"error"])
+      return fresh;
+    if (![fresh[@"png_base64"] isEqualToString:ctx.screenshot])
       return CUError(@"stale_observation");
     CGEventRef down = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, p,
                                               kCGMouseButtonLeft),
@@ -524,6 +549,7 @@ static NSDictionary *CUExecute(CUContext *ctx, NSDictionary *r) {
   if ([op isEqualToString:@"invalidate"]) {
     [ctx.elements removeAllObjects];
     ctx.windowID = 0;
+    ctx.screenshot = nil;
     return @{@"done" : @YES};
   }
   if ([op isEqualToString:@"request_ax"]) {
