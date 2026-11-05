@@ -130,6 +130,8 @@ fn cursor_private_profiles_resume_approve_ask_cancel_without_global_writes() {
             ])
             .env("CURSOR_FIXTURE_DIRECTORY", dir.path())
             .env("CURSOR_FIXTURE_MODE", mode)
+            // Never let the no-auth fixture read the real default Keychain.
+            .env("AGENT_CLI_CREDENTIAL_STORE", "memory")
             .env("CURSOR_CONFIG_DIR", dir.path().join("original"))
             .env("COINCIDE_CURSOR_EXECUTABLE", &fixture)
             .env_remove("CURSOR_API_KEY")
