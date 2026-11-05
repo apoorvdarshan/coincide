@@ -1,6 +1,7 @@
 //! Standalone GPUI Git workspace. Parent integration: `mod workspace;`, create an
 //! Entity<WorkspacePanel> with new(engine, window, cx), call set_thread on selection,
 //! and render that entity in the workspace surface. Requires workspace_api routes.
+use crate::worker_owner::{Admission, ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::base::Disableable;
@@ -143,6 +144,19 @@ fn refresh(api: &mut impl FnMut(&str, Value) -> Result<Value>, thread: &str) -> 
         worktrees,
     })
 }
+fn run_admitted(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    action: Action,
+    admission: &Admission,
+) -> Result<Outcome> {
+    run(
+        &mut |method, params| {
+            ensure!(admission.allowed(), "Workflow is shutting down");
+            api(method, params)
+        },
+        action,
+    )
+}
 fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Result<Outcome> {
     let mut outcome = Outcome {
         snapshot: None,
@@ -218,6 +232,8 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
 }
 
 pub struct WorkspacePanel {
+    workers: WorkerOwner,
+    refresh_pending: bool,
     engine: SharedEngine,
     thread: Option<String>,
     root_hint: Option<String>,
@@ -235,6 +251,25 @@ pub struct WorkspacePanel {
     _poll: Task<()>,
 }
 impl WorkspacePanel {
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.confirmation = None;
+        self.refresh_pending = false;
+        self.discard_shutdown_results();
+    }
+    fn discard_shutdown_results(&mut self) {
+        for result in self.rx.try_iter() {
+            drop(result);
+        }
+    }
+    pub fn shutdown_status(&mut self) -> WorkerOwnerStatus {
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+        }
+        self.workers.status()
+    }
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -248,6 +283,8 @@ impl WorkspacePanel {
             }
         });
         Self {
+            workers: WorkerOwner::default(),
+            refresh_pending: false,
             engine,
             thread: None,
             root_hint: None,
@@ -285,6 +322,9 @@ impl WorkspacePanel {
         root_hint: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if self.workers.closed() {
+            return;
+        }
         if self.thread == thread && self.root_hint == root_hint {
             return;
         }
@@ -298,7 +338,11 @@ impl WorkspacePanel {
         // latest selected thread after collecting the previous worker's outcome.
         if !self.busy {
             if let Some(thread) = thread {
-                self.start(Action::Refresh(thread), cx);
+                self.refresh_pending = true;
+                if self.workers.can_start() {
+                    self.refresh_pending = false;
+                    self.start(Action::Refresh(thread), cx);
+                }
             } else {
                 self.notice = "Choose a conversation to inspect its Git workspace.".into();
             }
@@ -314,7 +358,7 @@ impl WorkspacePanel {
             .then(|| (binding.thread.clone(), binding.root.clone()))
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         self.busy = true;
@@ -323,20 +367,38 @@ impl WorkspacePanel {
         let engine = self.engine.clone();
         let tx = self.tx.clone();
         let generation = self.generation;
-        std::thread::spawn(move || {
-            let result = run(&mut |method, params| call(&engine, method, params), action);
+        if !self.workers.spawn(move |admission| {
+            let result = run_admitted(
+                &mut |method, params| call(&engine, method, params),
+                action,
+                &admission,
+            );
             let _ = tx.send((generation, result));
-        });
+        }) {
+            self.busy = false;
+            self.notice = "Background worker could not start.".into();
+        }
         cx.notify();
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+            return;
+        }
+        if self.refresh_pending && !self.busy && self.workers.can_start() {
+            self.refresh_pending = false;
+            if let Some(thread) = self.thread.clone() {
+                self.start(Action::Refresh(thread), cx);
+            }
+        }
         let Ok((generation, result)) = self.rx.try_recv() else {
             return;
         };
         self.busy = false;
         if generation != self.generation {
-            if let Some(thread) = self.thread.clone() {
-                self.start(Action::Refresh(thread), cx);
+            if self.thread.is_some() {
+                self.refresh_pending = true;
             } else {
                 self.notice = "No conversation selected. Refresh the previous workspace before retrying mutations.".into();
             }
@@ -388,6 +450,11 @@ impl WorkspacePanel {
             Action::Create(snapshot.binding.clone(), label)
         });
         cx.notify();
+    }
+}
+impl Drop for WorkspacePanel {
+    fn drop(&mut self) {
+        self.request_shutdown();
     }
 }
 impl Render for WorkspacePanel {
@@ -856,5 +923,47 @@ mod tests {
                     && p["expectedRoot"] == binding.root
                     && p["checkpointId"] == "checkpoint-id")
         );
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn closed_admitted_worker_does_not_dispatch_and_retains_actual_join_ownership() {
+        let mut owner = WorkerOwner::default();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let probe = calls.clone();
+        assert!(owner.spawn(move |admission| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            assert!(
+                run_admitted(
+                    &mut |_, _| {
+                        probe.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(json!({}))
+                    },
+                    Action::Refresh("synthetic-thread".into()),
+                    &admission
+                )
+                .is_err()
+            );
+        }));
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        owner.close();
+        assert_eq!(owner.status().unjoined, 1);
+        release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while owner.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 1);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(!owner.spawn(|_| panic!("closed owner cannot restart")));
     }
 }

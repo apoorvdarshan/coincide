@@ -1,5 +1,6 @@
 //! Parent: create/render Entity<BotSettingsPanel>; subscribe to BotSettingsEvent
 //! for saved IDs if needed. This editor only persists name and bot.persona.
+use crate::worker_owner::{Admission, ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::base::Disableable;
@@ -121,6 +122,19 @@ enum Outcome {
     Saved(Write, Bound),
     ConversationCreated(String),
 }
+fn run_admitted(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    action: Action,
+    admission: &Admission,
+) -> Result<Outcome> {
+    run(
+        &mut |method, params| {
+            ensure!(admission.allowed(), "Workflow is shutting down");
+            api(method, params)
+        },
+        action,
+    )
+}
 fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Result<Outcome> {
     match action {
         Action::List => {
@@ -229,6 +243,7 @@ pub enum BotSettingsEvent {
     ConversationCreated { thread_id: String },
 }
 pub struct BotSettingsPanel {
+    workers: WorkerOwner,
     engine: SharedEngine,
     bots: Vec<Value>,
     baseline: Option<String>,
@@ -246,6 +261,26 @@ pub struct BotSettingsPanel {
 }
 impl EventEmitter<BotSettingsEvent> for BotSettingsPanel {}
 impl BotSettingsPanel {
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.pending_key = None;
+        self.pending_write = false;
+        self.pending_conversation = false;
+        self.discard_shutdown_results();
+    }
+    fn discard_shutdown_results(&mut self) {
+        for result in self.rx.try_iter() {
+            drop(result);
+        }
+    }
+    pub fn shutdown_status(&mut self) -> WorkerOwnerStatus {
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+        }
+        self.workers.status()
+    }
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -262,6 +297,7 @@ impl BotSettingsPanel {
             }
         });
         let mut panel = Self {
+            workers: WorkerOwner::default(),
             engine,
             bots: Vec::new(),
             baseline: None,
@@ -281,7 +317,7 @@ impl BotSettingsPanel {
         panel
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         self.busy = true;
@@ -302,10 +338,17 @@ impl BotSettingsPanel {
         }
         .into();
         let (engine, tx, generation) = (self.engine.clone(), self.tx.clone(), self.generation);
-        std::thread::spawn(move || {
-            let result = run(&mut |method, params| call(&engine, method, params), action);
+        if !self.workers.spawn(move |admission| {
+            let result = run_admitted(
+                &mut |method, params| call(&engine, method, params),
+                action,
+                &admission,
+            );
             let _ = tx.send((generation, result));
-        });
+        }) {
+            self.busy = false;
+            self.notice = "Background worker could not start.".into();
+        }
         cx.notify();
     }
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
@@ -402,6 +445,11 @@ impl BotSettingsPanel {
         }
     }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+            return;
+        }
         let Ok((generation, result)) = self.rx.try_recv() else {
             return;
         };
@@ -491,6 +539,11 @@ impl BotSettingsPanel {
             }
         }
         cx.notify();
+    }
+}
+impl Drop for BotSettingsPanel {
+    fn drop(&mut self) {
+        self.request_shutdown();
     }
 }
 impl Render for BotSettingsPanel {
@@ -994,5 +1047,47 @@ mod fixture_tests {
             api("threads.read", json!({"threadId":thread_id})).unwrap()["rustBotContext"],
             created["rustBotContext"]
         );
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn closed_admitted_worker_does_not_dispatch_and_retains_actual_join_ownership() {
+        let mut owner = WorkerOwner::default();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let probe = calls.clone();
+        assert!(owner.spawn(move |admission| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            assert!(
+                run_admitted(
+                    &mut |_, _| {
+                        probe.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(json!({}))
+                    },
+                    Action::List,
+                    &admission
+                )
+                .is_err()
+            );
+        }));
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        owner.close();
+        assert_eq!(owner.status().unjoined, 1);
+        release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while owner.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 1);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(!owner.spawn(|_| panic!("closed owner cannot restart")));
     }
 }

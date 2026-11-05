@@ -1,5 +1,6 @@
 //! Native browser profile metadata and read-only import preview. No cookies,
 //! passwords, keys, login grants or original Swift website stores are imported.
+use crate::worker_owner::{ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Result, ensure};
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render,
@@ -415,7 +416,11 @@ pub fn preview_import(bytes: &[u8]) -> Result<ImportPreview> {
     })
 }
 
+fn finish_import_choice(workers: &mut WorkerOwner, expected: u64, current: u64) -> bool {
+    workers.finish_picker() && expected == current
+}
 pub struct BrowserSettings {
+    workers: WorkerOwner,
     snapshot: Option<ProfileSnapshot>,
     name: Entity<InputState>,
     sender: SyncSender<ProfileRequest>,
@@ -427,12 +432,31 @@ pub struct BrowserSettings {
     status: String,
 }
 impl BrowserSettings {
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.preview = None;
+        self.discard_shutdown_results();
+    }
+    fn discard_shutdown_results(&mut self) {
+        for result in self.imports.try_iter() {
+            drop(result);
+        }
+    }
+    pub fn shutdown_status(&mut self) -> WorkerOwnerStatus {
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+        }
+        self.workers.status()
+    }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("New Rust profile name"));
         let (sender, requests) = mpsc::sync_channel(8);
         let (import_sender, imports) = mpsc::channel();
         (
             Self {
+                workers: WorkerOwner::default(),
                 snapshot: None,
                 name,
                 sender,
@@ -447,6 +471,9 @@ impl BrowserSettings {
         )
     }
     pub fn set_snapshot(&mut self, snapshot: Option<ProfileSnapshot>, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         if self.snapshot != snapshot {
             if self.snapshot.as_ref().map(|s| (&s.thread, s.revision))
                 != snapshot.as_ref().map(|s| (&s.thread, s.revision))
@@ -462,12 +489,20 @@ impl BrowserSettings {
         }
     }
     pub fn set_result(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         self.status = result.err().unwrap_or_else(|| {
             "Browser profile metadata updated. Existing tabs were preserved.".into()
         });
         cx.notify();
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_shutdown_results();
+            return;
+        }
         while let Ok((generation, result)) = self.imports.try_recv() {
             self.import_busy = false;
             if generation == self.generation {
@@ -477,6 +512,9 @@ impl BrowserSettings {
         }
     }
     fn request(&mut self, operation: ProfileOperation, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
@@ -494,7 +532,7 @@ impl BrowserSettings {
         cx.notify();
     }
     fn choose_import(&mut self, cx: &mut Context<Self>) {
-        if self.import_busy {
+        if self.import_busy || !self.workers.begin_picker() {
             return;
         }
         self.import_busy = true;
@@ -509,7 +547,7 @@ impl BrowserSettings {
         cx.spawn(async move |this, cx| {
             let paths: Result<_> = async { Ok(picker.await??) }.await;
             let _ = this.update(cx, |this, cx| {
-                if generation != this.generation {
+                if !finish_import_choice(&mut this.workers, generation, this.generation) {
                     this.import_busy = false;
                     this.status =
                         "Preview selection discarded after a thread/profile change.".into();
@@ -520,12 +558,18 @@ impl BrowserSettings {
                     Ok(Some(paths)) if paths.len() == 1 => {
                         let path = paths[0].clone();
                         let sender = this.import_sender.clone();
-                        std::thread::spawn(move || {
-                            let result = read_document(&path)
-                                .and_then(|bytes| preview_import(&bytes))
-                                .map_err(|_| ());
+                        if !this.workers.spawn(move |admission| {
+                            let result = (|| {
+                                ensure!(admission.allowed(), "Browser settings are shutting down");
+                                read_document(&path)
+                            })()
+                            .and_then(|bytes| preview_import(&bytes))
+                            .map_err(|_| ());
                             let _ = sender.send((generation, result));
-                        });
+                        }) {
+                            this.import_busy = false;
+                            this.status = "Browser preview worker could not start.".into();
+                        }
                     }
                     Ok(None) => {
                         this.import_busy = false;
@@ -541,6 +585,11 @@ impl BrowserSettings {
         })
         .detach();
         cx.notify();
+    }
+}
+impl Drop for BrowserSettings {
+    fn drop(&mut self) {
+        self.request_shutdown();
     }
 }
 impl Render for BrowserSettings {
@@ -823,5 +872,26 @@ mod tests {
         assert_eq!(fs::read(&outside).unwrap(), b"{}");
         assert!(ProfileCatalog::open(scratch.0.clone(), None).is_err());
         assert!(read_document(&scratch.0.join("profiles.json")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn late_or_stale_picker_finishes_custody_without_starting_parser() {
+        let mut workers = WorkerOwner::default();
+        assert!(workers.begin_picker());
+        workers.close();
+        assert_eq!(workers.status().pending_pickers, 1);
+        assert!(!finish_import_choice(&mut workers, 3, 4));
+        assert_eq!(workers.status().pending_pickers, 0);
+        assert!(!workers.spawn(|_| panic!("closed chooser must not read metadata file")));
+        let mut workers = WorkerOwner::default();
+        assert!(workers.begin_picker());
+        assert!(!finish_import_choice(&mut workers, 2, 3));
+        assert_eq!(workers.status().pending_pickers, 0);
+        assert!(workers.begin_picker());
+        assert!(finish_import_choice(&mut workers, 3, 3));
     }
 }
