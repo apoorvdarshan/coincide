@@ -421,7 +421,12 @@ impl BrowserSettings {
     }
     pub(super) fn cookie_import_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let flow = &self.cookie_flow;
-        let disabled = !cfg!(target_os = "macos")
+        let supported = cfg!(target_os = "macos")
+            && flow
+                .context
+                .as_ref()
+                .is_some_and(|context| context.snapshot.persistent_profiles_available);
+        let disabled = !supported
             || flow.workers.closed()
             || flow.busy
             || flow.status.pending
@@ -429,6 +434,9 @@ impl BrowserSettings {
         let mut view=div().flex().flex_col().gap_2().child("Firefox cookies — closed snapshot only")
             .child("Choose a standalone cookies.sqlite with no WAL/SHM/journal. Only reviewed ordinary cookies are supported; other browser storage and partitioned sessions are not imported.")
             .child(Button::new("cookie-choose").label("Choose cookie snapshot").disabled(disabled||flow.context.is_none()).on_click(cx.listener(|this,_,_,cx|this.choose_cookie_source(cx))));
+        if !supported {
+            view=view.child("Cookie import requires macOS14 or later with the named website-store backend and a selected conversation.");
+        }
         if let Some(plan) = &flow.plan {
             let preview = plan.preview();
             let pages = preview.hosts.len().div_ceil(10).max(1);
