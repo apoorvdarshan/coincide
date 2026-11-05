@@ -17,12 +17,12 @@ use uuid::Uuid;
 mod antigravity_api;
 #[path = "bot_engine.rs"]
 mod bot_engine;
+#[path = "computer_use_engine.rs"]
+pub mod computer_use_engine;
 #[path = "github_engine.rs"]
 mod github_engine;
 #[path = "github_threads_engine.rs"]
 mod github_threads_engine;
-#[path = "computer_use_engine.rs"]
-pub mod computer_use_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "notification_events.rs"]

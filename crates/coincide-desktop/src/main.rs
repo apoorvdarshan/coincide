@@ -34,6 +34,8 @@ mod transcript;
 mod transcript_find;
 mod transcription_composer;
 mod transcription_settings;
+mod updater_lifecycle;
+mod updater_settings;
 mod workspace;
 use browser::BrowserController;
 use coincide_core::{
