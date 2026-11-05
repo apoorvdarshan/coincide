@@ -824,6 +824,8 @@ impl Coincide {
         }
         match key.key.as_str() {
             "," => {
+                self.credential_panel
+                    .update(cx, |panel, cx| panel.cancel(cx));
                 self.settings_open = !self.settings_open;
                 self.sync_transcription_binding(cx);
                 cx.notify();

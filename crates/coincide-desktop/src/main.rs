@@ -1190,6 +1190,8 @@ impl Coincide {
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_palette(window, cx);
         self.dismiss_find(window, cx);
+        self.credential_panel
+            .update(cx, |panel, cx| panel.cancel(cx));
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
                 self.preserve_pending_draft(&mut v);
