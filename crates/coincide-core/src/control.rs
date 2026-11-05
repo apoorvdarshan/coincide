@@ -30,15 +30,18 @@ const MAX_FRAME: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkerStatus {
     Running,
-    /// The serve closure returned and the retained thread handle is finished.
+    /// A background observer joined the serve worker with a normal return.
     Returned,
-    /// The serve closure unwound; its panic was recorded and resumed.
+    /// The observer joined a panicked serve worker and resumed its panic.
     Panicked,
     /// No retained handle, or a finished handle with no classified outcome.
     Unclassified,
 }
 pub struct Server {
     stop: Arc<AtomicBool>,
+    // The observer exclusively owns/joins the actual serve worker. Retaining
+    // this handle keeps Drop's blocking completion behavior without joining
+    // from request_stop or worker_status.
     worker: Option<thread::JoinHandle<()>>,
     outcome: Arc<AtomicU8>,
 }
@@ -49,11 +52,12 @@ impl Server {
         self.stop.store(true, Ordering::Relaxed);
     }
 
-    /// Observe worker termination without consuming or joining its handle.
+    /// Observe the background join acknowledgement without waiting or joining.
     /// Owners must observe a non-Running status before dropping this server,
-    /// and must not drop it under Engine/UI locks: Drop still joins the worker.
-    /// A recorded outcome alone is insufficient because thread-local cleanup
-    /// can continue after the serve closure returns or unwinds.
+    /// outside Engine/UI locks: Drop still joins the retained observer.
+    /// JoinHandle::is_finished alone can precede native TLS cleanup. The outcome
+    /// is therefore published only after the observer's actual worker.join()
+    /// returns, and the observer handle must also report finished.
     pub fn worker_status(&self) -> WorkerStatus {
         let Some(worker) = self.worker.as_ref() else {
             return WorkerStatus::Unclassified;
@@ -73,10 +77,13 @@ impl Server {
         let stopping = stop.clone();
         let outcome = Arc::new(AtomicU8::new(0));
         let observed = outcome.clone();
+        let serving = thread::spawn(move || work(stopping));
         let worker = thread::spawn(move || {
-            // Only observe the outcome; preserve the original panic and join
-            // semantics instead of turning a failed worker into a clean return.
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(stopping))) {
+            // Joining happens only on this dedicated observer thread, never on
+            // an Engine/UI owner. The acknowledgement follows native worker
+            // completion, including TLS teardown. Preserve the panic payload
+            // instead of converting a failed serve worker into a clean return.
+            match serving.join() {
                 Ok(()) => observed.store(1, Ordering::Release),
                 Err(panic) => {
                     observed.store(2, Ordering::Release);
@@ -457,7 +464,10 @@ mod worker_status_tests {
             });
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(server.outcome.load(Ordering::Acquire), 1);
+        // The serve closure has returned, but its TLS destructor is gated.
+        // No actual-join acknowledgement may be published yet, even on hosts
+        // where the serve JoinHandle::is_finished is already true here.
+        assert_eq!(server.outcome.load(Ordering::Acquire), 0);
         assert!(!server.worker.as_ref().unwrap().is_finished());
         assert_eq!(server.worker_status(), WorkerStatus::Running);
         server.request_stop();
