@@ -1,0 +1,25 @@
+{
+  "package": "gpui-webview",
+  "version": "0.9.0",
+  "vcs": "7591a35eced761e3613c01e71ff04c10129dae1a",
+  "original_files_sha256": {
+    "Cargo.toml": "e2a9616d639ba65b59d41069e5d12a2b104275da058f6ef04c93a46ef5a285da",
+    "Cargo.lock": "e88639059eee4a85bd5cdb9c4033dff8776854a83c0988b4493f5cf77e7a59ba",
+    "README.md": "f6f68e7235a70c8e7f4d3ac50e54394a1a3f07d2c5e8e8b28b285c12ffb3ad7c",
+    ".cargo_vcs_info.json": "cb3dcd74aa21e51da841e9f5f31e6e63bbc4c2b98d9a6441b42f3712751b2a79",
+    "Cargo.toml.orig": "156ede29063ce2ea890b1002c2c9947b15fffca3a8b3d3bcfacbdfb653dcb50a",
+    "src/macos.rs": "1b1bc620e1636957eb6151eee30bc09e1d4cbfc0edb4b8b26434fe39f8436c5c",
+    "src/lib.rs": "b6cf0f1e75ad5f9710d116069918018dd4ae9315971be270ead9fa01b87b98e7",
+    "src/composition.rs": "7d528c0d3182b8d8ef7fefed50ddbcd6a2c206816d2fef34cdc178ddde1984ef",
+    "src/linux.rs": "bf675b5e369457b8c66acbc855258c873ce7387127b521e48ee9f85fbf353057"
+  },
+  "license_files": {
+    "LICENSE-APACHE": "https://raw.githubusercontent.com/longbridge/gpui-kit/7591a35eced761e3613c01e71ff04c10129dae1a/LICENSE-APACHE",
+    "LICENSE-DOCS.md": "https://raw.githubusercontent.com/longbridge/gpui-kit/7591a35eced761e3613c01e71ff04c10129dae1a/LICENSE-DOCS.md"
+  },
+  "license_sha256": {
+    "LICENSE-APACHE": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811",
+    "LICENSE-DOCS.md": "8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f"
+  },
+  "registry_checksum": "10995df6a65620593b2f8281bb8b691893343611faa11d4b6d302d6b9b2503f8"
+}
