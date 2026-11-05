@@ -370,20 +370,18 @@ fn claude_models(rpc: &mut ProcessRpc<'_>) -> Result<Vec<Value>> {
         let id = text_field(entry, "value", 512)?.context("Claude model has no ID")?;
         crate::composer_selection::validate_model(id)?;
         let mut efforts = Vec::new();
-        if entry["supportsEffort"] != false {
-            if let Some(values) = entry.get("supportedEffortLevels") {
-                let values = values.as_array().context("Invalid Claude model efforts")?;
-                ensure!(values.len() <= 64, "Too many Claude model efforts");
-                for value in values {
-                    let value = value.as_str().context("Invalid Claude model effort")?;
-                    ensure!(
-                        !value.is_empty()
-                            && value.len() <= 128
-                            && !value.chars().any(char::is_control),
-                        "Invalid Claude model effort"
-                    );
-                    efforts.push(value);
-                }
+        if entry["supportsEffort"] != false
+            && let Some(values) = entry.get("supportedEffortLevels")
+        {
+            let values = values.as_array().context("Invalid Claude model efforts")?;
+            ensure!(values.len() <= 64, "Too many Claude model efforts");
+            for value in values {
+                let value = value.as_str().context("Invalid Claude model effort")?;
+                ensure!(
+                    !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control),
+                    "Invalid Claude model effort"
+                );
+                efforts.push(value);
             }
         }
         if ids.insert(id.to_owned()) {
