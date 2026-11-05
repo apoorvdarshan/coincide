@@ -385,6 +385,10 @@ impl Coincide {
             .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
         let threads_context = if self.workspace_open
             && self.github_threads_open
+            && !self.settings_open
+            && !self.schedules_open
+            && !self.session_import_open
+            && !self.command_palette.read(cx).is_open()
             && !self.github_threads_scope_stale
         {
             context
