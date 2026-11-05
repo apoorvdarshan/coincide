@@ -61,7 +61,7 @@ impl CommandSpec {
 pub trait CommandRunner {
     fn launch(&mut self, spec: &CommandSpec) -> Result<Box<dyn LeaseProcess>>;
 }
-pub trait LeaseProcess {
+pub trait LeaseProcess: Send {
     fn check_running(&mut self) -> Result<()>;
     /// Idempotent. Errors retain ownership so release can be retried.
     fn stop(&mut self) -> Result<()>;
@@ -425,6 +425,11 @@ mod tests {
         assert!(c.is_held());
         c.shutdown().unwrap();
         assert_eq!(state.lock().unwrap().specs.len(), 2);
+    }
+    #[test]
+    fn native_controller_can_move_to_host_worker() {
+        fn assert_send<T: Send>() {}
+        assert_send::<AwakeController<NativeSleepInhibitor>>();
     }
     #[test]
     fn unsupported_does_not_launch() {
