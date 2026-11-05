@@ -80,19 +80,28 @@ pub struct Engine {
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
+        Self::initialize(store, true)
+    }
+    #[cfg(test)]
+    fn fixture(store: Store) -> Self {
+        Self::initialize(store, false)
+    }
+    fn initialize(store: Store, discover: bool) -> Self {
         let (workspace_tx, workspace_rx) = std::sync::mpsc::sync_channel(32);
-        let discovery_tx = workspace_tx.clone();
-        std::thread::spawn(move || {
-            let report = crate::provider_catalog::discover_installed_tools();
-            let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
-        });
+        if discover {
+            let discovery_tx = workspace_tx.clone();
+            std::thread::spawn(move || {
+                let report = crate::provider_catalog::discover_installed_tools();
+                let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
+            });
+        }
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
             store,
             idle_sleep,
             notification_events,
-            github: github_engine::GithubState::discover(),
+            github: if discover { github_engine::GithubState::discover() } else { github_engine::GithubState::unavailable() },
             runs: HashMap::new(),
             revision: 0,
             requested_open: None,
@@ -371,7 +380,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.select"
+                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities"
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
@@ -462,22 +471,37 @@ impl Engine {
                 self.revision+=1;
                 Ok(branch)
             }
+            "agent.selection.capabilities" => {
+                let mut result = crate::composer_selection::capabilities();
+                if let Some(id) = p.get("threadId") {
+                    let id = id.as_str().context("threadId must be text")?;
+                    let thread = self.store.thread(id)?;
+                    let reason = if !thread["rustBotContext"].is_null() {
+                        Some("Bot selection is fixed for this conversation; create a new bot conversation".to_owned())
+                    } else if self.store.is_imported(id)? {
+                        Some("Fork an imported thread before changing its provider".to_owned())
+                    } else if self.runs.contains_key(id) {
+                        Some("Stop the current turn before changing provider".to_owned())
+                    } else if self.unsaved_threads.contains_key(id) {
+                        Some("Transcript persistence is recovering; retry after recovery".to_owned())
+                    } else {
+                        crate::composer_selection::validate_thread(&thread).err().map(|error| error.to_string())
+                    };
+                    result["locked"] = json!(reason.is_some());
+                    result["lockReason"] = json!(reason);
+                }
+                Ok(result)
+            }
             "agent.select" => {
                 let id = required(p, "threadId")?;
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
-                let provider = required(p, "provider")?;
-                Provider::from_name(provider)?;
-                let model = p["model"].as_str().unwrap_or("default");
-                ensure!(model.len() <= 512 && !model.chars().any(char::is_control), "Invalid model ID");
                 let mut v = self.store.thread(id)?;
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
-                let mut selection=json!({"provider":provider,"modelID":model});
-                if provider=="antigravity" {
-                    selection["accountID"]=p["accountId"].clone();
-                    let (account,_) = self.antigravity_selection(&selection)?;
-                    if account=="default" {selection.as_object_mut().unwrap().remove("accountID");}
-                } else {ensure!(p["accountId"].is_null(),"Alternate provider accounts are not connected yet");}
+                let selection = crate::composer_selection::select(p, &v)?;
+                if selection["provider"] == "antigravity" {
+                    self.antigravity_selection(&selection)?;
+                }
                 v["selection"] = selection;
                 self.store.save(&v)?; self.revision += 1;
                 Ok(v)
@@ -572,6 +596,7 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        crate::composer_selection::validate_thread(&v)?;
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
                 Vec::new()
@@ -613,7 +638,7 @@ impl Engine {
         let mut adapter = Provider::from_name(&provider)?;
         ensure!(
             provider == "antigravity"
-                || v["selection"]["accountID"].is_null()
+                || crate::composer_selection::default_account(&v["selection"]["accountID"])
                 || bot_instructions.is_some(),
             "Alternate provider accounts are not connected yet"
         );
@@ -689,10 +714,7 @@ impl Engine {
             .map(|image| image.prepare_in(&data))
             .collect::<Result<Vec<_>>>()?;
         agent::validate_images(&adapter, &images)?;
-        let model = v["selection"]["modelID"]
-            .as_str()
-            .filter(|m| !m.is_empty() && *m != "default")
-            .map(str::to_owned);
+        let model = crate::composer_selection::launch_model(&v["selection"])?;
         let executable_variable = match provider.as_str() {
             "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
@@ -1651,3 +1673,7 @@ mod tests {
         assert_eq!(engine.store.thread(id.as_str().unwrap()).unwrap(), source);
     }
 }
+
+#[cfg(test)]
+#[path = "composer_selection_tests.rs"]
+mod composer_selection_tests;

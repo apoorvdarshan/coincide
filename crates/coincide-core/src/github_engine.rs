@@ -13,6 +13,10 @@ pub(super) struct GithubState {
     error: String,
 }
 impl GithubState {
+    pub(super) fn unavailable() -> Self {
+        Self { service: None, error: "GitHub is unavailable in this isolated engine".into() }
+    }
+
     pub fn discover() -> Self {
         Self::configured(
             std::env::var_os("COINCIDE_RUST_GH").as_deref(),
