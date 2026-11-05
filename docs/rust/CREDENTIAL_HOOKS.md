@@ -2,8 +2,9 @@
 
 `crates/coincide-desktop/src/credentials.rs` supplies a GPUI approval view and
 an acknowledged private sink. It is compiled by the desktop integration test
-harness; it is not registered in main.rs or browser.rs yet. This is not live
-browser autofill. Passkeys and dictation capture/transcription remain unavailable.
+harness and mounted in main.rs/browser.rs. The macOS WebKit bridge has passed
+synthetic native renderer acceptance; see [the evidence](NATIVE_CREDENTIAL_ACCEPTANCE.md).
+Native manager/approval visual acceptance remains separate. Passkeys remain unavailable.
 
 Owner integration steps:
 
@@ -20,12 +21,12 @@ Owner integration steps:
    `PageBinding.tab` must be globally unique across threads; navigation must
    advance on every document replacement, including redirects, reloads,
    same-origin navigation and history restoration. Tab close invalidates it.
-4. `fill_bound_document` must check the provided `FillPermit` immediately before
-   mutation and atomically enforce the exact original document binding. Retain
-   the permit in any async callback. Ordinary delayed wry evaluate_script with
-   an earlier URL check does not provide this guarantee. Return an explicit
-   failure until the target backend can enforce it. Never fill a cross-origin
-   frame or silently substitute a new tab/document.
+4. `fill_bound_document` checks the retained `FillPermit` immediately before
+   final native dispatch and atomically enforces the original document binding
+   in the renderer. Final dispatch is the commit boundary: revocation cannot
+   retract already-dispatched work. Its document/deadline guards remain active.
+   Ordinary page-world delayed evaluation with only an earlier URL check is
+   insufficient. Never fill a cross-origin frame or substitute a new document.
 5. Fill only visible, enabled login fields; avoid arbitrary page-selected
    selectors and form submission. Confirm writes before acknowledging success.
    Return only `Result<(), Failure>`; omit passwords, codes, evaluated source,
@@ -37,8 +38,8 @@ before that deadline, and timeout revokes the shared permit. A queue send is not
 success. Drop/unsupported backend/script errors fail closed. Native UI remains
 responsive while the CLI runs. CLI executable selection is explicit and absolute;
 Bitwarden uses the inherited authorized session, 1Password uses its CLI app
-integration. No native secret-store migration, account selection or unlock UI is
-provided yet. No real account/vault tests are authorized for this checkpoint.
+integration. No native secret-store migration or in-app vault unlock is
+provided; account selection is described below. No real account/vault tests are authorized for this checkpoint.
 
 Coordinator validation requested:
 
@@ -46,9 +47,9 @@ Coordinator validation requested:
 - `cargo test -p coincide-desktop --test credential_integration`
 - strict core clippy on allocated Linux lane
 
-Native approval accessibility/keyboard and actual browser fill acceptance remain
-pending after main/browser owners integrate the hooks. Never advertise this module
-as a working browser fill capability until that acceptance succeeds.
+Native approval accessibility/keyboard acceptance remains pending. Actual macOS
+WebKit filling passed the linked synthetic acceptance; other backends remain
+unavailable. This is not real-account or complete workflow acceptance.
 
 ## Native manager/account panel
 
@@ -86,10 +87,11 @@ browser.drain_credential_fills(thread, &credential_jobs, cx);
 ```
 
 Read `browser_fill_available` from `browser.credential_fill_available()`; current
-Wry backends return false. Under that value login rows remain metadata-only and
-approval/individual-secret retrieval are disabled. Do not override the capability
+macOS backend reports true only after recorded native renderer acceptance;
+unsupported backends return false. Under false, login rows remain metadata-only
+and approval/individual-secret retrieval are disabled. Do not override capability
 for a demo. Main displays `credential_panel.clone()` in its settings/browser panel.
 Set page None before removing/closing the workflow and on loss of selected thread.
 Revocable sink scopes invalidate dispatched permits when manager, account, page or
 backend capability changes, or the workflow drops. Browser hooks still check the
-permit and original document at mutation time.
+permit before final native dispatch and original document at mutation time.

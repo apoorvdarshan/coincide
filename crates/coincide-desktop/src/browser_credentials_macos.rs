@@ -56,8 +56,9 @@ impl Drop for FillSlot {
     }
 }
 type Completion = Box<dyn FnOnce(Result<(), Failure>)>;
-// Enable only after the synthetic native acceptance has passed.
-const NATIVE_FILL_VALIDATED: bool = false;
+// Accepted against real WebKit using synthetic HTTPS-base documents; see
+// docs/rust/NATIVE_CREDENTIAL_ACCEPTANCE.md. Native approval UI remains separate.
+const NATIVE_FILL_VALIDATED: bool = true;
 pub fn available() -> bool {
     NATIVE_FILL_VALIDATED && runtime_supported()
 }

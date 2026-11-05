@@ -9,6 +9,10 @@ publish.workspace = true
 name = "coincide-rust"
 path = "src/main.rs"
 
+[features]
+default = []
+native-notifications = ["dep:objc2-user-notifications"]
+
 [dependencies]
 coincide-core = { path = "../coincide-core" }
 gpui-kit = "=0.9.0"
@@ -24,5 +28,6 @@ gtk = "0.18"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
 block2 = "0.6.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSDictionary", "NSArray", "NSNumberFormatter", "NSValue", "NSObject", "NSURL", "NSError", "block2"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSDictionary", "NSArray", "NSNumberFormatter", "NSValue", "NSObject", "NSURL", "NSError", "NSBundle", "block2"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "WKWebView", "WKContentWorld", "WKFrameInfo", "block2"] }
+objc2-user-notifications = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "block2", "bitflags", "UNUserNotificationCenter", "UNNotificationSettings", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification"] }

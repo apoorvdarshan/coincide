@@ -838,8 +838,27 @@ impl BrowserController {
         }
     }
     pub fn tab_list(&self, thread: &str) -> Value {
+        let native_password_manager = credential_bridge::credential_fill_available();
+        let mut unsupported = vec![
+            "download-progress",
+            "download-cancel",
+            "download-resume",
+            "blob-downloads",
+            "cross-origin-frame-actions",
+            "dialogs",
+            "native-key-events",
+            "screenshots",
+        ];
+        if cfg!(windows) {
+            unsupported.push("upload");
+        }
+        if !native_password_manager {
+            unsupported.push("password-manager");
+        }
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":tab.title,"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
-            "visible":self.visible.as_deref()==Some(thread),"unsupported":["download-progress","download-cancel","download-resume","blob-downloads","upload","cross-origin-frame-actions","password-manager","dialogs","native-key-events","screenshots"]})
+            "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
+            "nativePasswordManagerAvailable":native_password_manager,
+            "passwordManagerRequiresNativeApproval":true})
     }
 }
 

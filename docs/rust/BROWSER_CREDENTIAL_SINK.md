@@ -1,82 +1,57 @@
 # Browser credential sink integration
 
-The native browser bridge supplies a **disabled** credential sink until the
-backend can prove atomic original-document and revocable-permit checks at the
-actual field mutation. Current Wry asynchronous evaluation cannot supply this.
-No credentials are placed in scripts, BrowserReply, console, or DOM by this sink.
-This checkpoint does not implement successful native autofill.
+The macOS bridge now supports native credential filling after eleven real WebKit
+fixture groups passed; see [native acceptance](NATIVE_CREDENTIAL_ACCEPTANCE.md).
+Linux and Windows remain unavailable. Approval is native-only: no agent/browser
+JSON command can approve a fill or return its password/code.
 
 ## Parent hooks
 
-Register `mod credentials;` alongside `mod browser;` in the parent. The browser
-registers its own private `browser_credentials.rs` helper; it uses the same
-`crate::credentials` types as the native workflow. Do not create duplicate
-credential module instances. The worker deliberately does not edit main.rs.
+Main registers the shared `credentials` and `credential_settings` modules.
+On the UI thread, it obtains `browser.credential_page(thread, cx)`, passes that
+page and `browser.credential_fill_available()` to the retained workflow, polls
+native approval decisions, then calls `browser.drain_credential_fills` with the
+private job receiver. Jobs never pass through Engine, BrowserRequest, persisted
+settings or page IPC.
 
-On the native UI thread, with the selected thread ID:
+The selected thread's active tab must be loaded. Native URL access and its
+navigation epoch bind approval to an HTTPS origin. Navigation, reload, history
+restoration and tab close invalidate the epoch; thread/tab changes invalidate
+workflow scope. Missing or stale bindings fail without delivery.
 
-1. `let page = browser.credential_page(thread, cx);`
-2. `let available = browser.credential_fill_available();` (currently false)
-3. `workflow.set_page(page, available, cx);`
-4. `workflow.poll(cx);` and render the native workflow/ApprovalView.
-5. `browser.drain_credential_fills(thread, &fill_jobs, cx);`
+## macOS implementation
 
-The workflow owns the approval decision and shared revocation scope. Pass the
-`FillJob` receiver returned at workflow construction directly to the browser;
-never route it through the engine, BrowserRequest, persisted settings, or page
-IPC. While availability is false, metadata discovery is allowed but approval
-and secret fetch must remain disabled. Do not register an agent allow action.
+`browser_credentials_macos.rs` obtains the pinned Wry WKWebView and uses a named
+isolated `WKContentWorld`. A secret-free probe binds a random ticket to the exact
+Document and eligible field objects. Its callback rechecks native origin,
+navigation epoch and the revocable permit before dispatching the fill.
 
-`credential_page` selects only that thread's active tab, refuses loading pages,
-reads the URL from native Wry instead of JavaScript, and checks navigation epoch
-before/after native URL access. HTTPS origin validation uses PageBinding. Tab
-IDs are generated globally as UUIDs. Navigation policy and page-load-start
-callbacks advance the epoch; explicit navigation and tab close invalidate it.
-This is suitable for fail-closed metadata/approval invalidation, not proof of
-atomic mutation in a later document.
+Static JavaScript receives credentials as native NSDictionary arguments; values
+are never interpolated into script source, sent through Wry IPC or returned by
+its completion. The isolated world avoids page overrides of input prototypes.
+The final synchronous script checks ticket, document, origin, field identity,
+type, form and deadline, writes visible/enabled login fields, dispatches input
+and change events, and confirms assignments again. Ambiguous targets fail. It
+never submits a form. Password and OTP fields may support separate login steps.
 
-Draining verifies the selected thread/tab again. A missing or changed binding
-fails StalePage; an invalid permit fails FillFailed; a matching live binding
-still fails Unavailable because no backend has been accepted. Errors are sent
-only to the private acknowledgement channel; no normal browser reply is emitted.
-The sink never formats, copies or logs supplied credential arguments.
+**Final native dispatch is the commit boundary.** Revocation before dispatch
+blocks delivery. Already dispatched WebKit renderer work cannot be retracted;
+its document binding and deadline still apply. A ten-second worker timeout is
+not a guarantee that already-dispatched DOM work can be undone. The bridge
+retains at most two outstanding native operations, including stalled callbacks.
 
-## Required before enabling a backend
+Completions contain only success/coarse `Failure`, never NSError descriptions,
+credentials or DOM snapshots. The controller clears and suppresses console
+capture for an approved document until navigation completes; console replies
+report `credentialCaptureSuppressed`. A site necessarily owns values entered
+into its fields. This is not containment of a hostile site's reflection or
+exfiltration, and native fill is not exposed as an autonomous agent action.
 
-A future implementation must preserve the original document identity through
-redirects, reload/history restoration and close, validate revocable FillPermit
-at mutation rather than at dispatch, restrict writes to appropriate visible,
-enabled top-level login fields, confirm writes without returning values, and
-never submit. Origin checking followed by a delayed evaluate_script is not an
-atomic binding. Scripts carrying secrets in the page world are not acceptable.
-The normal read/console channels also need a proven design against reflected
-credential content before successful autofill can be exposed to agent control.
-Do not set availability true based only on OS name or raw WKWebView access.
+## Verification scope
 
-## Synthetic verification
-
-Run on the coordinator's allocated lane:
-
-```sh
-cargo test -p coincide-desktop --test browser_credential_integration
-cargo test -p coincide-desktop --test credential_integration
-cargo test -p coincide-core credentials::tests
-```
-
-The browser credential integration harness uses the real private channel and
-synthetic VaultCommand only. It verifies matching-document unsupported failure
-and navigation failure are acknowledged to the waiting worker, plus epoch,
-origin, tab, closed-page and permit-validation cases. It makes no real vault or
-account calls. It does not test successful DOM filling.
-
-For native negative acceptance, serve `crates/coincide-core/tests/fixtures/` on
-loopback and open `browser-credentials.html` in an allocated synthetic candidate
-thread. HTTP must yield no PageBinding and approval/fetch must remain disabled.
-With a coordinator-owned HTTPS fixture, metadata may be available, but approval
-must still remain disabled while availability is false. Never weaken certificate
-validation or access a real vault to exercise this checkpoint. Use a synthetic
-workflow runner when testing metadata selection; after navigation/reload/close
-or selected-thread/tab changes, approval must be invalidated. Inspect the fixture
-via #inspect: changes/submissions remain zero. Check normal read/console and
-agent replies have no synthetic secret sentinel. Existing apps need no restart.
-Successful native filling remains untested and unavailable.
+`cargo test -p coincide-desktop --locked` passed 47 tests before native acceptance.
+The dedicated native harness used only synthetic vault data and local HTML with
+an HTTPS base URL, without a certificate exemption. Exact cases and artifact
+hashes are recorded in the linked report. Visual manager/account selection,
+approval keyboard/accessibility behavior and the integrated console suppression
+flow remain separate native acceptance work. No real vault/login was tested.
