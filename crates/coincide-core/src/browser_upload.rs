@@ -2,7 +2,16 @@
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
-use std::{fs, io::Read, path::Path};
+use std::{
+    fs,
+    io::Read,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 const MAX_FILES: usize = 8;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -28,17 +37,29 @@ pub(super) fn validate_paths(paths: &[String]) -> Result<()> {
 }
 
 #[derive(Serialize)]
-pub(super) struct UploadFile {
+pub struct UploadFile {
     name: String,
     mime: &'static str,
     data: String,
 }
 
 pub(super) fn prepare(paths: &[String]) -> Result<Vec<UploadFile>> {
+    prepare_controlled(paths, &UploadWork::new(Duration::from_secs(10)))
+}
+
+pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<UploadFile>> {
+    // Fail before touching the filesystem until descriptor-based reparse checks
+    // are implemented. A pre-open symlink check alone is racy on Windows.
+    ensure!(
+        !cfg!(windows),
+        "Browser uploads are disabled on Windows until safe reparse-point handling is implemented"
+    );
     validate_paths(paths)?;
+    work.check()?;
     let mut remaining = MAX_BYTES;
     let mut result = Vec::with_capacity(paths.len());
     for path in paths {
+        work.check()?;
         let path = Path::new(path);
         // Reject the final symlink and special files before opening. On Unix,
         // NOFOLLOW closes the final-component race and NONBLOCK avoids a FIFO
@@ -55,7 +76,8 @@ pub(super) fn prepare(paths: &[String]) -> Result<Vec<UploadFile>> {
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
         }
-        let file = options.open(path)?;
+        let mut file = options.open(path)?;
+        work.check()?;
         let metadata = file.metadata()?;
         ensure!(metadata.is_file(), "Upload requires regular files");
         ensure!(
@@ -63,7 +85,22 @@ pub(super) fn prepare(paths: &[String]) -> Result<Vec<UploadFile>> {
             "Upload exceeds the 4 MiB combined limit"
         );
         let mut bytes = Vec::new();
-        file.take(remaining + 1).read_to_end(&mut bytes)?;
+        let mut chunk = [0u8; 65536];
+        loop {
+            work.check()?;
+            let limit = chunk
+                .len()
+                .min((remaining + 1 - bytes.len() as u64) as usize);
+            if limit == 0 {
+                break;
+            }
+            let count = file.read(&mut chunk[..limit])?;
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+        work.check()?;
         ensure!(
             bytes.len() as u64 <= remaining,
             "Upload exceeds the 4 MiB combined limit"
@@ -101,4 +138,49 @@ pub(super) fn prepare(paths: &[String]) -> Result<Vec<UploadFile>> {
         });
     }
     Ok(result)
+}
+
+/// Cancellation is cooperative between filesystem operations. Blocked kernel I/O
+/// cannot be killed safely; its permit remains held, bounding stalled workers.
+#[derive(Clone)]
+pub struct UploadWork {
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+}
+impl UploadWork {
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Instant::now() + timeout,
+        }
+    }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+    pub fn check(&self) -> Result<()> {
+        ensure!(!self.cancelled.load(Ordering::Acquire), "Upload cancelled");
+        ensure!(
+            Instant::now() < self.deadline,
+            "Upload preparation timed out"
+        );
+        Ok(())
+    }
+}
+#[derive(Default)]
+pub struct UploadSlots(Arc<AtomicUsize>);
+pub struct UploadPermit(Arc<AtomicUsize>);
+impl UploadSlots {
+    pub fn reserve(&self) -> Result<UploadPermit> {
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 2).then_some(n + 1)
+            })
+            .map_err(|_| anyhow::anyhow!("At most two upload workers may be active"))?;
+        Ok(UploadPermit(self.0.clone()))
+    }
+}
+impl Drop for UploadPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }

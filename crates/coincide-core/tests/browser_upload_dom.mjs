@@ -25,14 +25,17 @@ function fixture(options = {}) {
   const win = { HTMLInputElement: Input, DataTransfer: Transfer, File,
     Event: class { constructor(type) { this.type = type; } }, atob: s => Buffer.from(s, 'base64').toString('binary') };
   const doc = { defaultView: win, querySelectorAll: () => options.ambiguous ? [target, target] : [target] };
-  const request = {kind: 'upload', selector: '#file', files: options.files ?? [{name: 'test.bin', mime: 'application/octet-stream', data: 'AP8KQQ=='}]};
-  const context = { request, frameId: options.frame ?? null, document: doc, window: win, URL, Uint8Array };
+  const request = {kind: options.kind ?? 'upload', ticket: options.ticket, selector: '#file', files: options.files ?? [{name: 'test.bin', mime: 'application/octet-stream', data: 'AP8KQQ=='}]};
+  const context = { request, frameId: options.frame ?? null, document: doc, window: win, URL, Uint8Array, performance: {now: () => options.now ?? 0} };
   if (options.frame === 'valid') {
     const element = { isConnected: true, ownerDocument: doc, contentDocument: doc };
     win.__coincideSameOriginFramesV1 = new Map([['valid', {doc, chain: [{element, doc}]}]]);
   }
   const result = runInNewContext(`(() => { ${script} })()`, context);
-  return {result, target, events};
+  return {result, target, events, context, run: next => {
+    context.request = {...request, ...next};
+    return runInNewContext(`(() => { ${script} })()`, context);
+  }};
 }
 
 test('hidden direct file input attaches exact binary bytes and sends input/change without submitting', () => {
@@ -70,4 +73,33 @@ test('multiple input accepts multiple files including empty files', () => {
   ]});
   assert.equal(result.count, 2);
   assert.deepEqual(target.files.map(f => f.bytes), [[], [65]]);
+});
+
+test('probe binds the exact document/input, emits no events, and ticket is consumed once', () => {
+  const f = fixture({kind:'upload-probe', ticket:'ticket'});
+  assert.equal(f.result.ready, true);
+  assert.deepEqual(f.events, []);
+  assert.equal(f.run({kind:'upload'}).attached, true);
+  assert.match(f.run({kind:'upload'}).error, /document or input changed/);
+});
+test('navigation to another document refuses old ticket without attaching', () => {
+  const f = fixture({kind:'upload-probe', ticket:'ticket'});
+  f.context.document = {...f.context.document};
+  assert.match(f.run({kind:'upload'}).error, /document or input changed/);
+  assert.deepEqual(f.events, []);
+  assert.deepEqual(f.target.files, []);
+});
+test('replacing the input in the same document refuses old ticket', () => {
+  const f = fixture({kind:'upload-probe', ticket:'ticket'});
+  const replacement = Object.assign(Object.create(Object.getPrototypeOf(f.target)), f.target);
+  f.context.document.querySelectorAll = () => [replacement];
+  assert.match(f.run({kind:'upload'}).error, /document or input changed/);
+  assert.deepEqual(f.events, []);
+});
+
+test('expired document binding refuses late script execution', () => {
+  const f = fixture({kind:'upload-probe', ticket:'ticket'});
+  f.context.performance.now = () => 10000;
+  assert.match(f.run({kind:'upload'}).error, /document or input changed/);
+  assert.deepEqual(f.events, []);
 });
