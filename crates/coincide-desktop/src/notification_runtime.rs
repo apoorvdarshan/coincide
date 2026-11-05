@@ -359,6 +359,14 @@ fn process<B: Backend>(
             Ok(p) => Outcome::Permission(p),
             Err(e) => Outcome::Rejected(e.to_string().chars().take(512).collect()),
         },
+        Command::ClearThread(_)
+            if !status.enabled || adapter.permission_status() != Permission::Authorized =>
+        {
+            Outcome::Rejected(
+                "Notification clearing requires enabled notifications and observed authorization"
+                    .into(),
+            )
+        }
         Command::ClearThread(thread) => {
             dispatcher.thread_seen(thread, adapter);
             Outcome::Cleared {
@@ -648,6 +656,40 @@ mod tests {
         ));
     }
     #[test]
+    fn clear_requires_enabled_and_observed_authorization_without_implicit_queries() {
+        let (mut runtime, state) = setup(Delivery::Accepted, 8);
+        let h = runtime.handle();
+        let thread = Uuid::new_v4();
+        send(&h, Command::Configure(Settings::default()));
+        receipt(&runtime);
+        send(&h, Command::ClearThread(thread));
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
+        send(
+            &h,
+            Command::Configure(Settings {
+                enabled: true,
+                include_preview: false,
+            }),
+        );
+        receipt(&runtime);
+        send(&h, Command::ClearThread(thread));
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
+        assert!(state.lock().unwrap().calls.is_empty());
+        send(&h, Command::RefreshPermission);
+        receipt(&runtime);
+        send(&h, Command::ClearThread(thread));
+        assert!(matches!(
+            receipt(&runtime).outcome,
+            Outcome::Cleared { error: None, .. }
+        ));
+        send(&h, Command::Configure(Settings::default()));
+        receipt(&runtime);
+        send(&h, Command::ClearThread(thread));
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
+        assert_eq!(state.lock().unwrap().calls, vec!["status", "clear"]);
+        runtime.shutdown().unwrap();
+    }
+    #[test]
     fn disable_and_seen_controls_ack_in_order_and_cancel_subsequent_dispatch() {
         let (mut runtime, state) = setup(Delivery::Accepted, 8);
         let h = runtime.handle();
@@ -672,9 +714,7 @@ mod tests {
         send(&h, Command::ClearThread(original.thread));
         send(&h, job(key()));
         assert!(matches!(receipt(&runtime).outcome, Outcome::Configured));
-        assert!(
-            matches!(receipt(&runtime).outcome, Outcome::Cleared { thread, error: None } if thread == original.thread)
-        );
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
         assert!(matches!(
             receipt(&runtime).outcome,
             Outcome::Notification {
@@ -683,7 +723,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(state.lock().unwrap().calls, vec!["status", "post", "clear"]);
+        assert_eq!(state.lock().unwrap().calls, vec!["status", "post"]);
         runtime.shutdown().unwrap();
     }
     #[test]
