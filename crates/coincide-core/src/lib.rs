@@ -24,3 +24,5 @@ pub mod remote;
 pub mod usage_history;
 pub mod workspace_git;
 pub mod workspace_github;
+
+pub mod github_api;

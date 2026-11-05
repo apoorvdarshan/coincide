@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[path = "github_engine.rs"]
+mod github_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
 #[path = "organization_api.rs"]
@@ -42,6 +44,7 @@ struct Running {
 pub struct Engine {
     pub store: Store,
     idle_sleep: idle_sleep::IdleSleep,
+    github: github_engine::GithubState,
     runs: HashMap<String, Running>,
     pub revision: u64,
     pub requested_open: Option<String>,
@@ -82,6 +85,7 @@ impl Engine {
         Self {
             store,
             idle_sleep,
+            github: github_engine::GithubState::discover(),
             runs: HashMap::new(),
             revision: 0,
             requested_open: None,
@@ -127,6 +131,9 @@ impl Engine {
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
+        if github_engine::METHODS.contains(&method) {
+            return self.github_command(method, p);
+        }
         if organization_api::METHODS.contains(&method) {
             return self.organization_command(method, p);
         }
@@ -346,6 +353,8 @@ impl Engine {
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
+                #[cfg(unix)]
+                methods.extend_from_slice(github_engine::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))

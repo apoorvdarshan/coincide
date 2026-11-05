@@ -295,6 +295,17 @@ impl GithubService {
         method: &str,
         params: &Value,
     ) -> Result<Value> {
+        self.start_with_guard(thread_id, stored_root, method, params, ())
+    }
+    /// The guard owns Engine background activity until the worker actually exits.
+    pub(crate) fn start_with_guard<G: Send + 'static>(
+        &mut self,
+        thread_id: &str,
+        stored_root: &Path,
+        method: &str,
+        params: &Value,
+        activity: G,
+    ) -> Result<Value> {
         uuid::Uuid::parse_str(thread_id)?;
         ensure!(
             params["threadId"].as_str() == Some(thread_id),
@@ -372,6 +383,7 @@ impl GithubService {
         std::thread::Builder::new()
             .name("github-read".into())
             .spawn(move || {
+                let _activity = activity;
                 let result = (|| {
                     let bytes = runner.capture(
                         &worker_root.path,
