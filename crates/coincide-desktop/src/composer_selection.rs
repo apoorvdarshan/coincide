@@ -2,6 +2,7 @@
 //! a provider or discovers/authenticates models. Explicit Apply and acknowledged
 //! standalone mode commands use the same validated selection endpoint.
 use super::*;
+use anyhow::Context as _;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -11,6 +12,7 @@ struct SelectionDraft {
     interaction: Value,
     proposed_access: Value,
     proposed_interaction: Value,
+    proposed_effort: Value,
     provider: String,
     account: Value,
     custom: String,
@@ -26,6 +28,7 @@ impl SelectionDraft {
             interaction: thread["interactionMode"].clone(),
             proposed_access: mode_or_default(&thread["accessMode"], "approval"),
             proposed_interaction: mode_or_default(&thread["interactionMode"], "build"),
+            proposed_effort: selection["effort"].clone(),
             provider: text(selection, "provider"),
             account: selection["accountID"].clone(),
             custom: if model == "default" {
@@ -37,7 +40,8 @@ impl SelectionDraft {
         }
     }
     fn has_edits(&self) -> bool {
-        self.proposed_access != mode_or_default(&self.access, "approval")
+        self.proposed_effort != self.original["effort"]
+            || self.proposed_access != mode_or_default(&self.access, "approval")
             || self.proposed_interaction != mode_or_default(&self.interaction, "build")
             || self.provider != text(&self.original, "provider")
             || self.account != self.original["accountID"]
@@ -78,7 +82,7 @@ impl SelectionDraft {
         );
         Ok(
             json!({"threadId":thread["id"],"provider":self.provider,"model":model,"accountId":self.account,
-            "effort":self.original["effort"],"speed":self.original["speed"],
+            "effort":self.proposed_effort,"speed":self.original["speed"],
             "accessMode":self.proposed_access,
             "interactionMode":self.proposed_interaction}),
         )
@@ -132,6 +136,116 @@ fn mode_problem(draft: &SelectionDraft, provider: Option<&Value>) -> Option<Stri
         );
     }
     None
+}
+fn saved_effort_scope(draft: &SelectionDraft, thread: &Value) -> bool {
+    draft.original == thread["selection"]
+        && draft.access == thread["accessMode"]
+        && draft.interaction == thread["interactionMode"]
+        && draft.provider == text(&thread["selection"], "provider")
+        && draft.account == thread["selection"]["accountID"]
+        && (if draft.use_custom {
+            draft.custom.as_str()
+        } else {
+            "default"
+        }) == thread["selection"]["modelID"].as_str().unwrap_or("default")
+}
+fn effort_choices(
+    draft: &SelectionDraft,
+    thread: &Value,
+    provider: Option<&Value>,
+) -> Result<Vec<String>> {
+    anyhow::ensure!(
+        saved_effort_scope(draft, thread),
+        "Apply the provider/account/model first, then refresh capabilities before choosing effort. Existing effort was retained"
+    );
+    anyhow::ensure!(
+        draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
+        "Choose an explicit Codex model before effort options"
+    );
+    let capability = provider
+        .filter(|p| p["provider"] == "codex")
+        .map(|p| &p["effort"])
+        .context("Effort capabilities are unavailable")?;
+    anyhow::ensure!(
+        draft.provider == "codex"
+            && capability["supported"] == true
+            && capability["provenance"] == "provider_model_list"
+            && capability["requiresExplicitModel"] == true,
+        "{}",
+        capability["reason"]
+            .as_str()
+            .unwrap_or("Refresh the current model catalog to choose effort")
+    );
+    let values = capability["choices"]
+        .as_array()
+        .context("Effort choices are invalid; refresh capabilities")?;
+    anyhow::ensure!(values.len() <= 64, "Effort choices exceed their bound");
+    let mut choices = Vec::new();
+    for value in values {
+        let value = value
+            .as_str()
+            .context("Effort choices are invalid; refresh capabilities")?;
+        anyhow::ensure!(
+            !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control),
+            "Effort choice is invalid; refresh capabilities"
+        );
+        if !choices.iter().any(|choice| choice == value) {
+            choices.push(value.to_owned());
+        }
+    }
+    Ok(choices)
+}
+fn effort_problem(
+    draft: &SelectionDraft,
+    thread: &Value,
+    provider: Option<&Value>,
+) -> Option<String> {
+    if draft.proposed_effort.is_null() {
+        return None;
+    }
+    match effort_choices(draft,thread,provider) {
+        Ok(choices) if draft.proposed_effort.as_str().is_some_and(|value|choices.iter().any(|choice|choice==value))=>None,
+        Ok(_)=>Some("Proposed effort is not supported by the current saved model; choose a reported choice or explicitly clear it".into()),
+        Err(error)=>Some(error.to_string()),
+    }
+}
+fn repair_clear_params(
+    draft: &SelectionDraft,
+    thread: &Value,
+    capabilities: &Value,
+    running: bool,
+) -> Result<Value> {
+    anyhow::ensure!(
+        !running
+            && capabilities["provenance"] == "static_runtime_contract"
+            && capabilities["repairClearAvailable"] == true
+            && capabilities["locked"].as_bool().is_some(),
+        "Clearing saved effort is not available in the current conversation state"
+    );
+    anyhow::ensure!(
+        !thread["selection"]["effort"].is_null()
+            && saved_effort_scope(draft, thread)
+            && draft.proposed_access == mode_or_default(&draft.access, "approval")
+            && draft.proposed_interaction == mode_or_default(&draft.interaction, "build"),
+        "Apply or discard other selection edits before clearing saved effort"
+    );
+    Ok(json!({"threadId":thread["id"],"effort":null}))
+}
+fn selection_response(
+    engine: &mut coincide_core::api::Engine,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
+    let response = engine.dispatch(json!({"method":method,"params":params}));
+    if let Some(error) = response.get("error") {
+        anyhow::bail!(
+            "{}",
+            error["message"]
+                .as_str()
+                .unwrap_or("Selection request failed")
+        );
+    }
+    Ok(response["result"].clone())
 }
 fn command_params(
     thread: &Value,
@@ -437,11 +551,24 @@ impl Coincide {
         let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
             return;
         };
-        match call(
-            &self.engine,
-            "agent.selection.capabilities",
-            json!({"threadId":id}),
-        ) {
+        let expected=self.selected.as_ref().map(|thread| json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}));
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let current = engine.store.thread(&id)?;
+            anyhow::ensure!(
+                expected
+                    == Some(
+                        json!({"selection":current["selection"],"accessMode":current["accessMode"],"interactionMode":current["interactionMode"]})
+                    ),
+                "Saved selection changed; reload before refreshing capabilities"
+            );
+            selection_response(
+                &mut engine,
+                "agent.selection.capabilities",
+                json!({"threadId":id}),
+            )
+        })();
+        match result {
             Ok(capabilities) => {
                 self.selection_ui.capabilities = capabilities;
                 self.selection_ui.error.clear();
@@ -489,31 +616,140 @@ impl Coincide {
         }
         self.refresh_selection_capabilities(cx);
     }
-    fn apply_selection_draft(&mut self, cx: &mut Context<Self>) {
-        let result = (|| -> Result<Value> {
+    fn choose_effort(
+        &mut self,
+        expected_id: &str,
+        expected_selection: &Value,
+        value: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<()> {
             let thread = self
                 .selected
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Select a conversation first"))?;
-            if let Some(reason) = capability_lock(
-                &self.selection_ui.capabilities,
-                self.running.contains(&text(thread, "id")),
-            ) {
+                .context("Select a conversation first")?;
+            let id = text(thread, "id");
+            anyhow::ensure!(
+                id == expected_id && thread["selection"] == *expected_selection,
+                "Effort choice belongs to a previous selection; pending values retained"
+            );
+            if let Some(reason) =
+                capability_lock(&self.selection_ui.capabilities, self.running.contains(&id))
+            {
                 anyhow::bail!(reason);
             }
             let draft = self
                 .selection_ui
                 .drafts
-                .get(&text(thread, "id"))
-                .ok_or_else(|| anyhow::anyhow!("Selection draft unavailable"))?;
+                .get(&id)
+                .context("Selection draft unavailable")?;
             let provider = self.selection_ui.capabilities["providers"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
+            let choices = effort_choices(draft, thread, provider)?;
+            anyhow::ensure!(
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|value| choices.iter().any(|choice| choice == value)),
+                "Effort choice is unknown or stale; pending values retained"
+            );
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.edit_selection(|draft| draft.proposed_effort = value, cx),
+            Err(error) => {
+                self.status = format!("Effort was not changed: {error}");
+                cx.notify();
+            }
+        }
+    }
+    fn clear_saved_effort(
+        &mut self,
+        expected_id: &str,
+        expected_selection: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<Value> {
+            let thread = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let id = text(thread, "id");
+            anyhow::ensure!(
+                id == expected_id && thread["selection"] == *expected_selection,
+                "Effort repair belongs to a previous selection; current draft retained"
+            );
+            let draft = self
+                .selection_ui
+                .drafts
+                .get(&id)
+                .context("Selection draft unavailable")?;
+            anyhow::ensure!(
+                saved_effort_scope(draft, thread),
+                "Saved selection changed; pending choices were retained"
+            );
+            let mut engine = try_state(&self.engine)?;
+            let current = engine.store.thread(&id)?;
+            let capabilities = selection_response(
+                &mut engine,
+                "agent.selection.capabilities",
+                json!({"threadId":id}),
+            )?;
+            let params =
+                repair_clear_params(draft, &current, &capabilities, self.running.contains(&id))?;
+            selection_response(&mut engine, "agent.select", params)
+        })();
+        match result {
+            Ok(mut thread) => {
+                self.preserve_pending_draft(&mut thread);
+                let id = text(&thread, "id");
+                let mut saved = SelectionDraft::from_thread(&thread);
+                if let Some(previous) = self.selection_ui.drafts.get(&id) {
+                    saved.custom = previous.custom.clone();
+                }
+                self.selection_ui.drafts.insert(id, saved);
+                self.selected = Some(thread);
+                self.selection_ui.context = None;
+                self.status="Saved effort explicitly cleared. Other selection fields, message draft and references were retained. No message was sent.".into();
+            }
+            Err(error) => self.status = format!("Saved effort was not cleared: {error}"),
+        }
+        cx.notify();
+    }
+    fn apply_selection_draft(&mut self, cx: &mut Context<Self>) {
+        let result = (|| -> Result<Value> {
+            let thread = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let id = text(thread, "id");
+            let draft = self
+                .selection_ui
+                .drafts
+                .get(&id)
+                .context("Selection draft unavailable")?;
+            let mut engine = try_state(&self.engine)?;
+            let current = engine.store.thread(&id)?;
+            let params = draft.params(&current)?;
+            let capabilities = selection_response(
+                &mut engine,
+                "agent.selection.capabilities",
+                json!({"threadId":id}),
+            )?;
+            if let Some(reason) = capability_lock(&capabilities, self.running.contains(&id)) {
+                anyhow::bail!(reason);
+            }
+            let provider = capabilities["providers"]
                 .as_array()
                 .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
             if let Some(reason) = mode_problem(draft, provider) {
                 anyhow::bail!(reason);
             }
-            let params = draft.params(thread)?;
-            call(&self.engine, "agent.select", params)
+            if let Some(reason) = effort_problem(draft, &current, provider) {
+                anyhow::bail!(reason);
+            }
+            selection_response(&mut engine, "agent.select", params)
         })();
         match result {
             Ok(mut thread) => {
@@ -528,7 +764,10 @@ impl Coincide {
                 self.selection_ui.context = None;
                 self.status = "Selection saved. Custom model availability is checked by the provider when used.".into();
             }
-            Err(error) => self.status = format!("Selection was not changed: {error}"),
+            Err(error) => {
+                self.selection_ui.context = None;
+                self.status = format!("Selection was not changed: {error}");
+            }
         }
         cx.notify();
     }
@@ -838,9 +1077,79 @@ impl Coincide {
                 .as_array()
                 .is_some_and(|models| models.iter().any(|model| model["id"] == "default"))
         });
-        let effort_reason = provider
-            .and_then(|p| p["effort"]["reason"].as_str())
-            .unwrap_or("Reasoning effort support is unavailable.");
+        let draft_effort_problem = effort_problem(draft, thread, provider);
+        let proposed_effort_label = if draft.proposed_effort.is_null() {
+            "Provider default".to_owned()
+        } else {
+            draft
+                .proposed_effort
+                .as_str()
+                .unwrap_or("Unsupported stored choice (retained)")
+                .to_owned()
+        };
+        let mut effort_panel = div().flex().flex_col().gap_1().child(
+            div()
+                .text_sm()
+                .child(format!("Proposed effort: {proposed_effort_label}")),
+        );
+        match effort_choices(draft, thread, provider) {
+            Ok(choices) => {
+                let source_id = text(thread, "id");
+                let source_selection = thread["selection"].clone();
+                let default_id = source_id.clone();
+                let default_selection = source_selection.clone();
+                let mut row = div().flex().flex_wrap().gap_2().child(
+                    Button::new("selection-effort-default")
+                        .label("Provider default effort (clear explicit choice)")
+                        .when(draft.proposed_effort.is_null(), |button| button.primary())
+                        .disabled(disabled)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.choose_effort(&default_id, &default_selection, Value::Null, cx)
+                        })),
+                );
+                for choice in choices {
+                    let source_id = source_id.clone();
+                    let source_selection = source_selection.clone();
+                    row = row.child(
+                        Button::new(SharedString::from(format!("selection-effort-{choice}")))
+                            .label(choice.clone())
+                            .when(
+                                draft.proposed_effort.as_str() == Some(choice.as_str()),
+                                |button| button.primary(),
+                            )
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.choose_effort(&source_id, &source_selection, json!(choice), cx)
+                            })),
+                    );
+                }
+                effort_panel = effort_panel.child(row);
+                if let Some(default) =
+                    provider.and_then(|p| p["effort"]["reportedDefault"].as_str())
+                {
+                    effort_panel = effort_panel.child(div().text_xs().child(format!(
+                        "Provider-reported default: {default}. No effort is selected automatically."
+                    )));
+                }
+            }
+            Err(error) => {
+                effort_panel = effort_panel.child(div().text_xs().child(error.to_string()))
+            }
+        }
+        if self.selection_ui.capabilities["repairClearAvailable"] == true {
+            let repair_problem = repair_clear_params(
+                draft,
+                thread,
+                &self.selection_ui.capabilities,
+                self.running.contains(&text(thread, "id")),
+            )
+            .err();
+            let source_id = text(thread, "id");
+            let source_selection = thread["selection"].clone();
+            effort_panel=effort_panel.child(Button::new("selection-effort-repair-clear").label("Clear saved effort only")
+                .disabled(repair_problem.is_some()).on_click(cx.listener(move|this,_,_,cx|this.clear_saved_effort(&source_id,&source_selection,cx))))
+                .child(div().text_xs().child(repair_problem.map(|e|e.to_string()).unwrap_or_else(||"Clears only the saved effort. Other choices are checked separately. No message is sent.".into())));
+        }
         let speed_reason = provider
             .and_then(|p| p["speed"]["reason"].as_str())
             .unwrap_or("Speed support is unavailable.");
@@ -882,6 +1191,7 @@ impl Coincide {
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
             .child(accounts)
             .child(modes)
+            .child(effort_panel)
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
@@ -889,10 +1199,10 @@ impl Coincide {
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=true,cx))))
                 .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
             .child(div().text_xs().child(if draft.use_custom { "Custom IDs are unverified unless listed in the provider-reported catalog below. Model access and authentication are not verified." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
-            .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
+            .child(div().text_xs().child(format!("{speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some())
+                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -1455,5 +1765,141 @@ mod tests {
             )
             .is_err()
         );
+    }
+    fn effort_provider() -> Value {
+        json!({"provider":"codex","effort":{"supported":true,"choices":["low","high"],"reportedDefault":"low","requiresExplicitModel":true,"provenance":"provider_model_list"}})
+    }
+    #[::core::prelude::v1::test]
+    fn effort_draft_preserves_raw_saved_value_for_mode_changes_and_explicit_clear() {
+        let mut thread = command_thread("message draft");
+        thread["selection"]["effort"] = json!("high");
+        thread["draftContext"] = json!([{"kind":"quote","text":"exact reference"}]);
+        thread["rustDraftImages"] = json!([{"id":"image"}]);
+        let original = thread.clone();
+        let mut draft = SelectionDraft::from_thread(&thread);
+        assert_eq!(draft.proposed_effort, "high");
+        assert!(!draft.has_edits());
+        draft.proposed_interaction = json!("plan");
+        let params = draft.params(&thread).unwrap();
+        assert_eq!(params["effort"], "high");
+        assert_eq!(params["model"], thread["selection"]["modelID"]);
+        assert_eq!(params["accessMode"], thread["accessMode"]);
+        draft.proposed_effort = Value::Null;
+        assert!(draft.has_edits());
+        assert!(
+            draft
+                .params(&thread)
+                .unwrap()
+                .get("effort")
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(thread, original);
+        let mut unknown = thread.clone();
+        unknown["selection"]["effort"] = json!({"unrecognized":"retained"});
+        assert_eq!(
+            SelectionDraft::from_thread(&unknown)
+                .params(&unknown)
+                .unwrap()["effort"],
+            unknown["selection"]["effort"]
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn effort_choices_bind_exact_saved_provider_account_model_and_reject_stale_snapshot() {
+        let thread = command_thread("draft");
+        let draft = SelectionDraft::from_thread(&thread);
+        let provider = effort_provider();
+        assert_eq!(
+            effort_choices(&draft, &thread, Some(&provider)).unwrap(),
+            vec!["low", "high"]
+        );
+        let mut proposed = draft.clone();
+        proposed.custom = "different-model".into();
+        assert!(effort_choices(&proposed, &thread, Some(&provider)).is_err());
+        let mut proposed = draft.clone();
+        proposed.account = json!("default");
+        assert!(effort_choices(&proposed, &thread, Some(&provider)).is_err());
+        let mut proposed = draft.clone();
+        proposed.provider = "claude".into();
+        assert!(effort_choices(&proposed, &thread, Some(&provider)).is_err());
+        let mut changed = thread.clone();
+        changed["selection"]["effort"] = json!("high");
+        assert!(effort_choices(&draft, &changed, Some(&provider)).is_err());
+        assert!(draft.params(&changed).is_err());
+        assert!(draft.proposed_effort.is_null());
+        let mut default_thread = thread.clone();
+        default_thread["selection"]["modelID"] = json!("default");
+        assert!(
+            effort_choices(
+                &SelectionDraft::from_thread(&default_thread),
+                &default_thread,
+                Some(&provider)
+            )
+            .is_err()
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn unsupported_unknown_or_catalog_only_effort_metadata_never_enables_a_choice() {
+        let thread = command_thread("draft");
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_effort = json!("invented");
+        assert!(effort_problem(&draft, &thread, Some(&effort_provider())).is_some());
+        for field in [
+            "supported",
+            "provenance",
+            "requiresExplicitModel",
+            "choices",
+        ] {
+            let mut provider = effort_provider();
+            provider["effort"].as_object_mut().unwrap().remove(field);
+            provider["reportedEfforts"] = json!(["invented"]);
+            assert!(effort_choices(&draft, &thread, Some(&provider)).is_err());
+        }
+        let mut provider = effort_provider();
+        provider["effort"]["choices"] = json!(["high", false]);
+        assert!(effort_choices(&draft, &thread, Some(&provider)).is_err());
+        assert_eq!(draft.proposed_effort, "invented");
+    }
+    #[::core::prelude::v1::test]
+    fn reported_default_is_metadata_not_an_implicit_effort_selection() {
+        let thread = command_thread("draft");
+        let draft = SelectionDraft::from_thread(&thread);
+        let provider = effort_provider();
+        assert_eq!(provider["effort"]["reportedDefault"], "low");
+        assert!(effort_choices(&draft, &thread, Some(&provider)).is_ok());
+        assert!(draft.proposed_effort.is_null());
+        assert!(draft.params(&thread).unwrap()["effort"].is_null());
+    }
+    #[::core::prelude::v1::test]
+    fn effort_repair_is_minimal_and_available_only_for_explicit_clear_without_other_edits() {
+        let mut thread = command_thread("exact draft");
+        thread["selection"]["effort"] = json!("high");
+        thread["selection"]["accountID"] = json!("default");
+        let original = thread.clone();
+        let draft = SelectionDraft::from_thread(&thread);
+        let caps = json!({"provenance":"static_runtime_contract","locked":true,"repairClearAvailable":true});
+        assert_eq!(
+            repair_clear_params(&draft, &thread, &caps, false).unwrap(),
+            json!({"threadId":"thread","effort":null})
+        );
+        assert_eq!(thread, original);
+        assert!(repair_clear_params(&draft, &thread, &caps, true).is_err());
+        for field in ["repairClearAvailable", "provenance", "locked"] {
+            let mut bad = caps.clone();
+            bad.as_object_mut().unwrap().remove(field);
+            assert!(repair_clear_params(&draft, &thread, &bad, false).is_err());
+        }
+        let mut changed = draft.clone();
+        changed.custom = "another-model".into();
+        assert!(repair_clear_params(&changed, &thread, &caps, false).is_err());
+        let mut changed = draft.clone();
+        changed.proposed_interaction = json!("plan");
+        assert!(repair_clear_params(&changed, &thread, &caps, false).is_err());
+        let mut changed = draft.clone();
+        changed.account = Value::Null;
+        assert!(repair_clear_params(&changed, &thread, &caps, false).is_err());
+        let mut changed_thread = thread.clone();
+        changed_thread["selection"]["effort"] = Value::Null;
+        assert!(repair_clear_params(&draft, &changed_thread, &caps, false).is_err());
     }
 }
