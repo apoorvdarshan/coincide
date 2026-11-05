@@ -1311,7 +1311,7 @@ impl MacParentWatch {
         let queue = unsafe { libc::kqueue() };
         ensure!(queue >= 0, "Cannot register parent observer");
         let watch = Self { queue, binding };
-        let mut event = libc::kevent {
+        let event = libc::kevent {
             ident: pid as usize,
             filter: libc::EVFILT_PROC,
             flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT,
@@ -1321,16 +1321,8 @@ impl MacParentWatch {
         };
         // SAFETY: event has the kevent ABI, with no returned event buffer requested.
         ensure!(
-            unsafe {
-                libc::kevent(
-                    queue,
-                    &mut event,
-                    1,
-                    std::ptr::null_mut(),
-                    0,
-                    std::ptr::null(),
-                )
-            } == 0,
+            unsafe { libc::kevent(queue, &event, 1, std::ptr::null_mut(), 0, std::ptr::null(),) }
+                == 0,
             "Cannot observe exact parent exit"
         );
         ensure!(
