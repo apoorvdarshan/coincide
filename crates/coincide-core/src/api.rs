@@ -50,6 +50,8 @@ mod session_import_api;
 #[path = "shutdown_owner.rs"]
 mod shutdown_owner;
 pub use shutdown_owner::CoreOwnerShutdownStatus;
+#[path = "steering_api.rs"]
+mod steering_api;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
 #[path = "thread_defaults.rs"]
@@ -125,6 +127,7 @@ pub struct Engine {
     pub schedule_error: Option<String>,
     unsaved_threads: HashMap<String, Value>,
     pending_usage: HashMap<String, agent::usage_capture::Record>,
+    steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
 }
 impl Engine {
@@ -194,6 +197,7 @@ impl Engine {
             schedule_error: None,
             unsaved_threads: HashMap::new(),
             pending_usage: HashMap::new(),
+            steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
         }
     }
@@ -467,7 +471,7 @@ impl Engine {
                 "threads.create",
                 "threads.patch",
                 "threads.fork", "threads.edit-branch",
-                "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send",
+                "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status"
@@ -622,6 +626,7 @@ impl Engine {
                 Ok(json!({"answered":true}))
             }
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
+            "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
@@ -1303,6 +1308,7 @@ impl Engine {
         }
     }
     pub fn poll(&mut self) {
+        self.poll_steering();
         self.provider_workers_status();
         self.computer_use_expire();
         if self.model_catalog.poll() {
@@ -1333,6 +1339,10 @@ impl Engine {
             if self.runs[&id].events.is_empty() {
                 continue;
             }
+            // A worker publishes steering ACK before Finished. Recheck after
+            // receiving terminal events so accepted input precedes seen-count
+            // advancement and cannot be recapped into the next turn twice.
+            self.poll_steering();
             let mut v = if let Some(v) = self.unsaved_threads.get(&id) {
                 v.clone()
             } else {

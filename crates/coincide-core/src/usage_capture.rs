@@ -56,6 +56,9 @@ impl Capture {
         self.early_usage.clear();
         true
     }
+    pub(crate) fn identity(&self) -> Option<(&str, &str)> {
+        Some((&self.thread.as_ref()?.0, &self.turn.as_ref()?.0))
+    }
     pub(crate) fn owns_thread(&self, params: &Value) -> bool {
         self.thread.is_some() && SourceId::parse(&params["threadId"]) == self.thread
     }
@@ -127,6 +130,11 @@ impl TurnContext {
             thread: json!({"threadID":thread["id"],"projectID":thread["projectID"],"selection":thread["selection"]}),
             started: chrono::Utc::now().to_rfc3339(),
         }
+    }
+    pub(crate) fn matches(&self, thread: &Value) -> bool {
+        self.thread["threadID"] == thread["id"]
+            && self.thread["projectID"] == thread["projectID"]
+            && self.thread["selection"] == thread["selection"]
     }
     pub(crate) fn finish(self, snapshot: Snapshot) -> Record {
         let mut usage = json!({});
