@@ -208,10 +208,11 @@ impl Terminal {
         let marks = if self.term.mode().contains(TermMode::ALT_SCREEN) {
             vec![]
         } else {
-            self.shell_anchors.prompts.iter().filter_map(|position|{
-                let (row,col)=if position.col>=cols{(position.row+1,0)}else{(position.row,position.col)};
-                (row<history+self.term.screen_lines()).then(||json!({"line":row as i32-history as i32,"col":col,"displayOffset":history.saturating_sub(row)}))
-            }).collect::<Vec<_>>()
+            self.shell_anchors.prompts.iter()
+                .map(|position|if position.col>=cols {(position.row+1,0)}else{(position.row,position.col)})
+                .filter(|(row,_)|*row<history+self.term.screen_lines())
+                .map(|(row,col)|json!({"line":row as i32-history as i32,"col":col,"displayOffset":history.saturating_sub(row)}))
+                .collect::<Vec<_>>()
         };
         Ok(json!({"revision":self.revision,"marks":marks}))
     }
