@@ -1459,6 +1459,7 @@ impl Coincide {
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_composer_selection(window, cx);
+        self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
         if self

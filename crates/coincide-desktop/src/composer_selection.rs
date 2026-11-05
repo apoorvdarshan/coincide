@@ -72,6 +72,32 @@ pub(super) struct ComposerSelection {
     capabilities: Value,
     accounts: Value,
     error: String,
+    catalog: Value,
+    catalog_request: Option<CatalogRequest>,
+    catalog_last_poll: Option<Instant>,
+}
+#[derive(Clone, Debug)]
+struct CatalogRequest {
+    request_id: String,
+    provider: String,
+    account_id: String,
+}
+fn default_account_id(raw: &Value) -> Option<&str> {
+    match raw {
+        Value::Null => Some("default"),
+        Value::String(id) if id.is_empty() || id == "default" => Some("default"),
+        Value::String(id) => Some(id),
+        _ => None,
+    }
+}
+fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
+    value["requestId"].as_str() == Some(request.request_id.as_str())
+        && value["provider"].as_str() == Some(request.provider.as_str())
+        && value["accountID"].as_str() == Some(request.account_id.as_str())
+        && matches!(
+            value["state"].as_str(),
+            Some("loading" | "ready" | "failed" | "unsupported")
+        )
 }
 fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
     if running {
@@ -255,6 +281,149 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn refresh_model_catalog(&mut self, cx: &mut Context<Self>) {
+        if self.selection_ui.catalog_request.is_some() {
+            return;
+        }
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        if capability_lock(
+            &self.selection_ui.capabilities,
+            self.running.contains(&text(thread, "id")),
+        )
+        .is_some()
+        {
+            return;
+        }
+        let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
+            return;
+        };
+        let Some(provider) = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .and_then(|providers| providers.iter().find(|p| p["provider"] == draft.provider))
+        else {
+            return;
+        };
+        if provider["modelDiscovery"]["supported"] != true
+            || account_problem(provider, &draft.account, &self.selection_ui.accounts).is_some()
+        {
+            return;
+        }
+        let provider = draft.provider.clone();
+        let account_id = default_account_id(&draft.account)
+            .unwrap_or("default")
+            .to_owned();
+        match call(
+            &self.engine,
+            "agent.models.refresh",
+            json!({"provider":provider,"accountId":draft.account}),
+        ) {
+            Ok(value) => {
+                let request = CatalogRequest {
+                    request_id: text(&value, "requestId"),
+                    provider,
+                    account_id,
+                };
+                if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
+                    self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
+                } else {
+                    self.selection_ui.catalog = value;
+                    self.selection_ui.catalog_request = Some(request);
+                    self.selection_ui.catalog_last_poll = None;
+                }
+            }
+            Err(error) => {
+                self.selection_ui.catalog = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")})
+            }
+        }
+        cx.notify();
+    }
+    pub(super) fn poll_selection_catalog(&mut self, cx: &mut Context<Self>) {
+        let Some(request) = self.selection_ui.catalog_request.clone() else {
+            return;
+        };
+        if self
+            .selection_ui
+            .catalog_last_poll
+            .is_some_and(|last| last.elapsed() < Duration::from_millis(200))
+        {
+            return;
+        }
+        self.selection_ui.catalog_last_poll = Some(Instant::now());
+        match call(
+            &self.engine,
+            "agent.models.status",
+            json!({"requestId":request.request_id}),
+        ) {
+            Ok(value) if catalog_response_matches(&value, &request) => {
+                let done = value["state"] != "loading";
+                self.selection_ui.catalog = value;
+                if done {
+                    self.selection_ui.catalog_request = None;
+                }
+            }
+            Ok(_) => {
+                self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Catalog scope or response changed; refresh explicitly to retry"});
+                self.selection_ui.catalog_request = None;
+            }
+            Err(error) if engine_busy(&error) => return,
+            Err(error) => {
+                self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":format!("Catalog status unavailable: {error}")});
+                self.selection_ui.catalog_request = None;
+            }
+        }
+        cx.notify();
+    }
+    fn select_catalog_model(
+        &mut self,
+        thread_id: &str,
+        request_id: &str,
+        model: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"] == thread_id)
+        else {
+            return;
+        };
+        if capability_lock(
+            &self.selection_ui.capabilities,
+            self.running.contains(thread_id),
+        )
+        .is_some()
+        {
+            return;
+        }
+        let Some(draft) = self.selection_ui.drafts.get(thread_id) else {
+            return;
+        };
+        let catalog = &self.selection_ui.catalog;
+        if draft.original != thread["selection"]
+            || catalog["state"] != "ready"
+            || catalog["provenance"] != "provider_model_list"
+            || catalog["requestId"].as_str() != Some(request_id)
+            || catalog["provider"].as_str() != Some(draft.provider.as_str())
+            || catalog["accountID"].as_str() != default_account_id(&draft.account)
+            || !catalog["models"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["id"] == model))
+        {
+            return;
+        }
+        self.edit_selection(
+            |draft| {
+                draft.custom = model.clone();
+                draft.use_custom = true;
+            },
+            cx,
+        );
+        self.model_input
+            .update(cx, |input, cx| input.set_value(model, window, cx));
+    }
     pub(super) fn composer_selection_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = &self.selected else {
             return div().into_any_element();
@@ -349,7 +518,7 @@ impl Coincide {
                 .child(Button::new("selection-model-custom").label("Custom model ID").when(draft.use_custom,|button|button.primary()).disabled(disabled || provider.is_none_or(|p|p["customModel"]["supported"] != true))
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=true,cx))))
                 .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
-            .child(div().text_xs().child(if draft.use_custom { "Custom model ID is unverified. No model discovery or authentication check has run." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
+            .child(div().text_xs().child(if draft.use_custom { "Custom IDs are unverified unless listed in the provider-reported catalog below. Model access and authentication are not verified." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
             .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
@@ -380,6 +549,88 @@ impl Coincide {
         }
         if !self.selection_ui.error.is_empty() {
             pane = pane.child(div().text_sm().child(self.selection_ui.error.clone()));
+        }
+        let discovery_supported =
+            provider.is_some_and(|provider| provider["modelDiscovery"]["supported"] == true);
+        let discovery_reason = provider
+            .and_then(|provider| provider["modelDiscovery"]["reason"].as_str())
+            .unwrap_or("Model discovery is unavailable for this provider.");
+        pane = pane.child(
+            Button::new("selection-model-refresh")
+                .label("Refresh provider model catalog")
+                .disabled(
+                    disabled
+                        || !discovery_supported
+                        || self.selection_ui.catalog_request.is_some()
+                        || provider.is_some_and(|provider| {
+                            account_problem(provider, &draft.account, &self.selection_ui.accounts)
+                                .is_some()
+                        }),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
+        );
+        pane=pane.child(div().text_xs().child(if discovery_supported {"Catalog refresh explicitly starts the provider's read-only discovery process. It sends no prompt and does not change selection."}else{discovery_reason}));
+        let catalog = &self.selection_ui.catalog;
+        let same_scope = catalog["provider"].as_str() == Some(draft.provider.as_str())
+            && catalog["accountID"].as_str() == default_account_id(&draft.account);
+        if !same_scope && self.selection_ui.catalog_request.is_some() {
+            pane = pane.child(
+                div()
+                    .text_sm()
+                    .child("A previously requested provider catalog is still loading."),
+            );
+        }
+        if same_scope
+            && matches!(catalog["state"].as_str(), Some("failed" | "unsupported"))
+            && !catalog["error"].is_null()
+        {
+            pane = pane.child(div().text_sm().child(text(catalog, "error")));
+        } else if same_scope && catalog["state"] == "loading" {
+            pane = pane.child(div().text_sm().child("Loading provider model catalog…"));
+        } else if same_scope && catalog["state"] == "ready" {
+            pane=pane.child(div().text_xs().child("Provider-reported catalog. Authentication and actual model access are not verified. Reported effort/speed metadata does not enable runtime options."));
+            let mut models = div()
+                .id("selection-discovered-models")
+                .max_h(px(160.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_1();
+            if let Some(rows) = catalog["models"].as_array() {
+                for model in rows.iter().take(200) {
+                    let id = text(model, "id");
+                    if id.is_empty() {
+                        continue;
+                    }
+                    let name = text(model, "displayName");
+                    let target = text(thread, "id");
+                    let request_id = text(catalog, "requestId");
+                    models = models.child(
+                        Button::new(SharedString::from(format!("selection-catalog-model-{id}")))
+                            .label(format!("{name} · {id}"))
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.select_catalog_model(
+                                    &target,
+                                    &request_id,
+                                    id.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    );
+                }
+                if rows.is_empty() {
+                    models = models.child(div().child("The provider reported no models."));
+                }
+                if rows.len() > 200 {
+                    models =
+                        models.child(div().child(
+                            "Showing the first 200 models. Custom model IDs remain available.",
+                        ));
+                }
+            }
+            pane = pane.child(models);
         }
         pane.into_any_element()
     }
@@ -472,5 +723,30 @@ mod tests {
         );
         assert!(account_problem(&configured, &json!("a"), &json!({})).is_some());
         assert!(account_problem(&configured, &Value::Null, &Value::Null).is_some());
+    }
+    #[::core::prelude::v1::test]
+    fn catalog_results_are_scoped_and_metadata_never_changes_selection() {
+        let request = CatalogRequest {
+            request_id: "request".into(),
+            provider: "codex".into(),
+            account_id: "default".into(),
+        };
+        let mut result = json!({"requestId":"request","provider":"codex","accountID":"default","state":"ready","models":[{"id":"reported","reportedEfforts":["high"]}]});
+        assert!(catalog_response_matches(&result, &request));
+        result["accountID"] = json!("other");
+        assert!(!catalog_response_matches(&result, &request));
+        result["accountID"] = json!("default");
+        result["provider"] = json!("claude");
+        assert!(!catalog_response_matches(&result, &request));
+        result["provider"] = json!("codex");
+        result["requestId"] = json!("old");
+        assert!(!catalog_response_matches(&result, &request));
+        let thread = thread(json!({"provider":"codex","modelID":"default"}));
+        assert_eq!(
+            SelectionDraft::from_thread(&thread)
+                .params(&thread)
+                .unwrap()["model"],
+            "default"
+        );
     }
 }
