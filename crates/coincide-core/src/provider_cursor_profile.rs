@@ -21,15 +21,21 @@ pub(super) struct Profile {
 }
 impl Profile {
     pub fn prepare(directory: &Path, session: Option<&str>) -> Result<Self> {
-        // Resolve identity before any private profile creation/copy. Explicit
-        // credentials retain precedence; implicit login never changes usage policy.
-        let authentication = auth::Authentication::resolve()?;
         let source = source_directory()?;
-        let mut profile = Self::prepare_from(directory, &source, session)?;
-        profile.authentication = authentication;
-        Ok(profile)
+        Self::prepare_with_auth(directory, &source, session, auth::Authentication::resolve)
     }
+    #[cfg(test)]
     fn prepare_from(directory: &Path, source: &Path, session: Option<&str>) -> Result<Self> {
+        Self::prepare_with_auth(directory, source, session, |_| {
+            Ok(auth::Authentication::inherited())
+        })
+    }
+    fn prepare_with_auth(
+        directory: &Path,
+        source: &Path,
+        session: Option<&str>,
+        resolve: impl FnOnce(Option<u64>) -> Result<auth::Authentication>,
+    ) -> Result<Self> {
         ensure!(
             directory.is_absolute() && source.is_absolute(),
             "Cursor profile paths must be absolute"
@@ -41,6 +47,17 @@ impl Profile {
             !directory.starts_with(&source) && !source.starts_with(&directory),
             "Cursor private profile must be separate from the original profile"
         );
+        // One bounded source snapshot fixes both model and routing selection.
+        // Validate identity/routing before creating or mutating a private profile.
+        let (mut config, selected_team) = source_config(&source)?;
+        let authentication = resolve(selected_team)?;
+        if let Some(team) = selected_team {
+            ensure!(
+                authentication.reused_stored_login(),
+                "Cursor selected team cannot be inherited without the existing stored CLI login"
+            );
+            config["authInfo"] = json!({"activeTeamId": team});
+        }
         if !directory.exists() {
             fs::create_dir_all(&directory)?;
             private_permissions(&directory, 0o700)?;
@@ -82,26 +99,6 @@ impl Profile {
         {
             lock.try_lock()
                 .context("Cursor private profile is already in use")?;
-        }
-        let mut config = json!({});
-        let path = source.join("cli-config.json");
-        if path.exists() {
-            let value: Value = serde_json::from_slice(&read_bounded(&path, 1024 * 1024)?)
-                .context("Cursor model settings are invalid JSON")?;
-            ensure!(value.is_object(), "Cursor model settings must be an object");
-            for key in [
-                "model",
-                "selectedModel",
-                "modelParameters",
-                "hasChangedDefaultModel",
-                "maxMode",
-                "maxModeAutoEnabled",
-                "modelSelectionHistory",
-            ] {
-                if let Some(value) = value.get(key) {
-                    config[key] = value.clone();
-                }
-            }
         }
         // Global/project allowlists and unrestricted defaults are deliberately
         // excluded; every new process starts with approval-only defaults.
@@ -227,7 +224,7 @@ impl Profile {
             directory,
             default_model,
             _lock: lock,
-            authentication: auth::Authentication::inherited(),
+            authentication,
         })
     }
     pub fn environment(&self) -> Vec<(OsString, OsString)> {
@@ -246,6 +243,56 @@ impl Profile {
         self.authentication.append_environment(&mut environment);
         environment
     }
+}
+fn source_config(source: &Path) -> Result<(Value, Option<u64>)> {
+    let mut config = json!({});
+    let path = source.join("cli-config.json");
+    if !path.exists() {
+        return Ok((config, None));
+    }
+    let value: Value = serde_json::from_slice(&read_bounded(&path, 1024 * 1024)?)
+        .context("Cursor model settings are invalid JSON")?;
+    ensure!(value.is_object(), "Cursor model settings must be an object");
+    let selected_team = match value.get("authInfo") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(info)) => match info.get("activeTeamId") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(number)) => {
+                const JS_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+                let team = number
+                    .as_u64()
+                    .filter(|n| *n > 0 && *n <= JS_SAFE_INTEGER)
+                    .or_else(|| {
+                        number
+                            .as_f64()
+                            .filter(|n| {
+                                n.is_finite()
+                                    && *n >= 1.0
+                                    && *n <= JS_SAFE_INTEGER as f64
+                                    && n.fract() == 0.0
+                            })
+                            .map(|n| n as u64)
+                    });
+                Some(team.context("Cursor selected team routing is invalid")?)
+            }
+            Some(_) => bail!("Cursor selected team routing is invalid"),
+        },
+        Some(_) => bail!("Cursor selected team routing is invalid"),
+    };
+    for key in [
+        "model",
+        "selectedModel",
+        "modelParameters",
+        "hasChangedDefaultModel",
+        "maxMode",
+        "maxModeAutoEnabled",
+        "modelSelectionHistory",
+    ] {
+        if let Some(value) = value.get(key) {
+            config[key] = value.clone();
+        }
+    }
+    Ok((config, selected_team))
 }
 fn source_directory() -> Result<PathBuf> {
     for name in ["CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
@@ -522,6 +569,96 @@ mod tests {
         );
         assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), config);
         assert_eq!(fs::read(source.join("auth.json")).unwrap(), original_auth);
+    }
+    #[test]
+    fn stored_login_preserves_only_explicit_safe_team_header_selection() {
+        for team in [1, 42, 9_007_199_254_740_991u64] {
+            let (dir, source, _) = source();
+            let original = serde_json::to_vec(&json!({"selectedModel":{"modelId":"user-model"},
+                "authInfo":{"activeTeamId":team,"teamId":999,"email":"synthetic@example.invalid","teamName":"private synthetic name","unknown":{"keep":true}},
+                "unknown":{"unchanged":true}})).unwrap();
+            fs::write(source.join("cli-config.json"), &original).unwrap();
+            let target = dir.path().join("private");
+            let profile = Profile::prepare_with_auth(&target, &source, None, |selected| {
+                assert_eq!(selected, Some(team));
+                auth::Authentication::synthetic(b"synthetic-stored-login".to_vec())
+            })
+            .unwrap();
+            let private: Value =
+                serde_json::from_slice(&fs::read(target.join("cli-config.json")).unwrap()).unwrap();
+            // The installed CLI converts ONLY this field into x-cursor-team-id.
+            // Cached teamId/display metadata must never become routing input.
+            assert_eq!(private["authInfo"], json!({"activeTeamId":team}));
+            assert_eq!(profile.default_model.as_deref(), Some("user-model"));
+            assert_eq!(private["permissions"], json!({"allow":[],"deny":[]}));
+            assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), original);
+        }
+    }
+    #[test]
+    fn absent_or_null_team_never_promotes_cached_team_metadata_to_header() {
+        for info in [
+            Value::Null,
+            json!({}),
+            json!({"teamId":42}),
+            json!({"activeTeamId":null,"teamId":42}),
+        ] {
+            let (dir, source, _) = source();
+            let original = serde_json::to_vec(&json!({"authInfo":info})).unwrap();
+            fs::write(source.join("cli-config.json"), &original).unwrap();
+            let target = dir.path().join("private");
+            let _profile = Profile::prepare_with_auth(&target, &source, None, |selected| {
+                assert_eq!(selected, None);
+                Ok(auth::Authentication::inherited())
+            })
+            .unwrap();
+            let private: Value =
+                serde_json::from_slice(&fs::read(target.join("cli-config.json")).unwrap()).unwrap();
+            assert!(private.get("authInfo").is_none());
+            assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), original);
+        }
+    }
+    #[test]
+    fn invalid_or_unsafe_selected_team_fails_before_identity_read_or_profile_write() {
+        for selected in [
+            json!(0),
+            json!(-1),
+            json!(1.5),
+            json!(9_007_199_254_740_992u64),
+            json!(u64::MAX),
+            json!("42"),
+            json!(true),
+            json!({}),
+            json!([]),
+        ] {
+            let (dir, source, _) = source();
+            let original =
+                serde_json::to_vec(&json!({"authInfo":{"activeTeamId":selected}})).unwrap();
+            fs::write(source.join("cli-config.json"), &original).unwrap();
+            let target = dir.path().join("private");
+            assert!(
+                Profile::prepare_with_auth(&target, &source, None, |_| panic!(
+                    "invalid routing must not invoke identity resolver"
+                ))
+                .is_err()
+            );
+            assert!(!target.exists());
+            assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), original);
+        }
+    }
+    #[test]
+    fn selected_team_requires_stored_login_provenance_before_any_private_write() {
+        let (dir, source, _) = source();
+        let original = br#"{"authInfo":{"activeTeamId":42,"teamId":42}}"#;
+        fs::write(source.join("cli-config.json"), original).unwrap();
+        let target = dir.path().join("private");
+        assert!(
+            Profile::prepare_with_auth(&target, &source, None, |_| Ok(
+                auth::Authentication::inherited()
+            ))
+            .is_err()
+        );
+        assert!(!target.exists());
+        assert_eq!(fs::read(source.join("cli-config.json")).unwrap(), original);
     }
     #[test]
     fn snapshot_preserves_native_id_blobs_unknown_metadata_and_original_permissions() {
