@@ -3,6 +3,7 @@
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
 
+use crate::browser_settings::{ProfileCatalog, ProfileChoice, ProfileRequest, ProfileSnapshot};
 use crate::credentials::{FillJob, deliver_fill};
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
@@ -14,6 +15,10 @@ use coincide_core::browser_protocol::{
 use coincide_core::credentials::{Failure, PageBinding};
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
+#[cfg(target_os = "macos")]
+use objc2::{MainThreadMarker, rc::Retained};
+#[cfg(target_os = "macos")]
+use objc2_web_kit::{WKWebViewConfiguration, WKWebsiteDataStore};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -30,7 +35,7 @@ use std::{
 };
 use uuid::Uuid;
 #[cfg(target_os = "macos")]
-use wry::WebViewBuilderExtDarwin;
+use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos};
 
 struct Tab {
     id: String,
@@ -102,13 +107,14 @@ pub struct BrowserController {
     replies: VecDeque<BrowserReply>,
     events: Receiver<NativeEvent>,
     sender: SyncSender<NativeEvent>,
-    context: wry::WebContext,
+    contexts: HashMap<String, wry::WebContext>,
+    profiles: ProfileCatalog,
+    #[cfg(target_os = "macos")]
+    private_stores: HashMap<String, Retained<WKWebsiteDataStore>>,
     downloads: Rc<RefCell<DownloadRegistry>>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
-    #[cfg(target_os = "macos")]
-    profile_id: [u8; 16],
 }
 
 impl BrowserController {
@@ -148,6 +154,11 @@ impl BrowserController {
                 *id.as_bytes()
             }
         };
+        #[cfg(target_os = "macos")]
+        let default_id = Some(Uuid::from_bytes(profile_id));
+        #[cfg(not(target_os = "macos"))]
+        let default_id = None;
+        let profiles = ProfileCatalog::open(profile_dir.clone(), default_id)?;
         let (sender, events) = mpsc::sync_channel(512);
         Ok(Self {
             tabs: HashMap::new(),
@@ -156,15 +167,16 @@ impl BrowserController {
             replies: VecDeque::new(),
             events,
             sender,
-            context: wry::WebContext::new(Some(profile_dir.join("web-context"))),
+            contexts: HashMap::new(),
+            profiles,
+            #[cfg(target_os = "macos")]
+            private_stores: HashMap::new(),
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(
                 profile_dir.join("downloads"),
             )?)),
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
-            #[cfg(target_os = "macos")]
-            profile_id,
         })
     }
 
@@ -418,7 +430,30 @@ impl BrowserController {
         let navigation = Arc::new(AtomicU64::new(0));
         let navigation_handler = navigation.clone();
         let load_navigation = navigation.clone();
-        let builder = wry::WebViewBuilder::new_with_web_context(&mut self.context)
+        let profile = self.profiles.selected(thread);
+        let profile_key = profile.key(thread);
+        if let ProfileChoice::Persistent(id) = &profile {
+            ensure!(
+                persistent_profiles_available()
+                    || self
+                        .profiles
+                        .profiles
+                        .iter()
+                        .any(|p| p.id == *id && p.is_default),
+                "Multiple persistent profiles require a native named-store backend (macOS 14 or later)"
+            );
+        }
+        if !self.contexts.contains_key(&profile_key) {
+            let directory = self.profiles.storage_directory(&profile)?;
+            self.contexts
+                .insert(profile_key.clone(), wry::WebContext::new(directory));
+        }
+        let context = self
+            .contexts
+            .get_mut(&profile_key)
+            .context("Browser profile context unavailable")?;
+        let builder = wry::WebViewBuilder::new_with_web_context(context)
+            .with_incognito(matches!(profile, ProfileChoice::Private))
             .with_url(url)
             .with_devtools(false)
             .with_autoplay(false)
@@ -505,7 +540,24 @@ impl BrowserController {
                 wry::NewWindowResponse::Deny
             });
         #[cfg(target_os = "macos")]
-        let builder = builder.with_data_store_identifier(self.profile_id);
+        let builder = match &profile {
+            ProfileChoice::Persistent(id) => builder.with_data_store_identifier(*id.as_bytes()),
+            ProfileChoice::Private => {
+                let mtm = MainThreadMarker::new()
+                    .context("Private browser store requires the native UI thread")?;
+                // Wry's ordinary incognito option creates a separate store per
+                // view. Retain one native ephemeral store for this thread.
+                let store = self
+                    .private_stores
+                    .entry(profile_key.clone())
+                    .or_insert_with(|| unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) });
+                let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
+                unsafe {
+                    configuration.setWebsiteDataStore(store);
+                }
+                builder.with_webview_configuration(configuration)
+            }
+        };
         let view = WebView::build(builder, window, cx)?;
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
@@ -752,6 +804,52 @@ impl BrowserController {
         }
         changed
     }
+    /// Native settings only: metadata contains no page/credential contents.
+    pub fn profile_snapshot(&self, thread: &str) -> ProfileSnapshot {
+        let mut snapshot = self
+            .profiles
+            .snapshot(thread, self.tabs.get(thread).map_or(0, Vec::len));
+        snapshot.persistent_profiles_available = persistent_profiles_available();
+        snapshot
+    }
+    /// Apply only requests from the parent's CURRENT selected thread. Never
+    /// close tabs implicitly or attach a Swift/imported website store.
+    pub fn apply_profile_request(
+        &mut self,
+        current_thread: &str,
+        request: ProfileRequest,
+    ) -> Result<()> {
+        if let crate::browser_settings::ProfileOperation::Select(ProfileChoice::Persistent(id)) =
+            &request.operation
+        {
+            ensure!(
+                persistent_profiles_available()
+                    || self
+                        .profiles
+                        .profiles
+                        .iter()
+                        .any(|p| p.id == *id && p.is_default),
+                "Multiple persistent profiles require macOS 14 or later"
+            );
+        }
+        let old = self.profiles.selected(current_thread);
+        let switching = matches!(
+            &request.operation,
+            crate::browser_settings::ProfileOperation::Select(_)
+        );
+        self.profiles.apply(
+            current_thread,
+            request,
+            self.tabs.get(current_thread).map_or(0, Vec::len),
+        )?;
+        if switching && old == ProfileChoice::Private {
+            self.contexts.remove(&old.key(current_thread));
+            #[cfg(target_os = "macos")]
+            self.private_stores.remove(&old.key(current_thread));
+        }
+        Ok(())
+    }
+
     /// Native parent hook only. Do not register this capability as an agent action.
     pub fn credential_fill_available(&self) -> bool {
         credential_bridge::credential_fill_available()
@@ -848,6 +946,7 @@ impl BrowserController {
             "dialogs",
             "native-key-events",
             "screenshots",
+            "passkeys",
         ];
         if cfg!(windows) {
             unsupported.push("upload");
@@ -859,6 +958,18 @@ impl BrowserController {
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
             "nativePasswordManagerAvailable":native_password_manager,
             "passwordManagerRequiresNativeApproval":true})
+    }
+}
+
+fn persistent_profiles_available() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let available: bool = objc2::msg_send![objc2::class!(WKWebsiteDataStore), respondsToSelector: objc2::sel!(dataStoreForIdentifier:)];
+        available
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
     }
 }
 
