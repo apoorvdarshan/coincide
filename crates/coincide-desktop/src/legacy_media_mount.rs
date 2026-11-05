@@ -311,7 +311,7 @@ impl Coincide {
             }
             Err(error) => {
                 self.media.status = format!(
-                    "Recovery is saved, but parent acknowledgment is pending: {error}. Retry saved acknowledgments."
+                    "Recovery is saved, but parent acknowledgment is pending: {error:?}. Retry saved acknowledgments."
                 )
             }
         }
@@ -389,7 +389,7 @@ impl Coincide {
                 } else {
                     self.media.status=match self.media.owner.take_ownership(*receipt_id,receipt.clone()) {
                         Ok(())=>"Saving the recovery receipt. The panel still owns it until storage confirms success.".into(),
-                        Err(error)=>format!("Recovery receipt remains retained: {error}. Retry this same receipt when ready."),
+                        Err(error)=>format!("Recovery receipt remains retained: {error:?}. Retry this same receipt when ready."),
                     };
                 }
                 cx.notify();
@@ -405,7 +405,7 @@ impl Coincide {
                 Ok(_) => self.acknowledge_media_ownership(outcome.receipt_id, cx),
                 Err(error) => {
                     self.media.status = format!(
-                        "Recovery was not durably saved: {error}. Receipt and images remain retained; retry the same handoff explicitly."
+                        "Recovery was not durably saved: {error:?}. Receipt and images remain retained; retry the same handoff explicitly."
                     );
                     cx.notify();
                 }
