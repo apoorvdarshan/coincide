@@ -9,6 +9,8 @@ mod browser;
 mod browser_settings;
 mod command_palette;
 mod composer_attachments;
+mod composer_context_mount;
+mod composer_context_view;
 mod composer_selection;
 mod computer_use;
 mod computer_use_mount;
@@ -2828,6 +2830,21 @@ impl Coincide {
         if self.workspace_open || self.session_import_open {
             return;
         }
+        if let Some(thread) = &self.selected {
+            let context = thread.get("draftContext").unwrap_or(&Value::Null);
+            if let Err(error) = coincide_core::composer_context::validate(context) {
+                self.status = format!("Attached references were retained: {error}");
+                cx.notify();
+                return;
+            }
+            if self.running.contains(&text(thread, "id"))
+                && coincide_core::composer_context::has_context(context)
+            {
+                self.status = "Queued messages do not yet support references. Send after the current turn finishes, or remove the references explicitly.".into();
+                cx.notify();
+                return;
+            }
+        }
         if self
             .selected
             .as_ref()
@@ -2858,6 +2875,9 @@ impl Coincide {
                     self.status = "Agent running · approval required for changes".into();
                     if let Some(thread) = self.selected.as_mut() {
                         thread["draft"] = json!("");
+                        if thread.get("draftContext").is_some() {
+                            thread["draftContext"] = json!([]);
+                        }
                     }
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
@@ -3006,6 +3026,15 @@ impl Coincide {
                                 )
                             },
                         ))
+                        .when(kind == "assistant", |header| {
+                            let source = source_id.clone();
+                            let item = item_id.clone();
+                            header.child(Button::new(SharedString::from(format!("quote-message-{source_id}-{item_id}")))
+                                .accessibility_id(SharedString::from(format!("quote-message-{source_id}-{item_id}")))
+                                .label("Quote message").ghost().compact().disabled(copy_empty)
+                                .tooltip("Attach the complete reply as reference material (up to 16,000 bytes)")
+                                .on_click(cx.listener(move |this, _, _, cx| this.quote_message(&source, &item, cx))))
+                        })
                         .child({
                             let source = source_id.clone();
                             let item = item_id.clone();
@@ -3025,6 +3054,7 @@ impl Coincide {
                             ))
                         }),
                 )
+                .when_some(self.transcript_context_pane(&item["context"]), |view, context| view.child(context))
                 .when(collapsible, |view| {
                     let source = source_id.clone();
                     let item = item_id.clone();
@@ -3798,6 +3828,10 @@ impl Render for Coincide {
                                         .border_1()
                                         .border_color(self.color(0x29303d))
                                         .child(self.composer_selection_pane(cx))
+                                        .when_some(
+                                            self.composer_context_pane(cx),
+                                            |view, context| view.child(context),
+                                        )
                                         .when_some(queue_pane, |view, queue| view.child(queue))
                                         .when_some(draft_images, |view, images| view.child(images))
                                         .child({
