@@ -84,27 +84,7 @@ pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<Upl
             metadata.len() <= remaining,
             "Upload exceeds the 4 MiB combined limit"
         );
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 65536];
-        loop {
-            work.check()?;
-            let limit = chunk
-                .len()
-                .min((remaining + 1 - bytes.len() as u64) as usize);
-            if limit == 0 {
-                break;
-            }
-            let count = file.read(&mut chunk[..limit])?;
-            if count == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..count]);
-        }
-        work.check()?;
-        ensure!(
-            bytes.len() as u64 <= remaining,
-            "Upload exceeds the 4 MiB combined limit"
-        );
+        let bytes = read_bounded(&mut file, remaining, work)?;
         remaining -= bytes.len() as u64;
         let name = path
             .file_name()
@@ -138,6 +118,31 @@ pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<Upl
         });
     }
     Ok(result)
+}
+
+fn read_bounded(reader: &mut impl Read, remaining: u64, work: &UploadWork) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 65536];
+    loop {
+        work.check()?;
+        let limit = chunk
+            .len()
+            .min((remaining + 1 - bytes.len() as u64) as usize);
+        if limit == 0 {
+            break;
+        }
+        let count = reader.read(&mut chunk[..limit])?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    work.check()?;
+    ensure!(
+        bytes.len() as u64 <= remaining,
+        "Upload exceeds the 4 MiB combined limit"
+    );
+    Ok(bytes)
 }
 
 /// Cancellation is cooperative between filesystem operations. Blocked kernel I/O
@@ -182,5 +187,44 @@ impl UploadSlots {
 impl Drop for UploadPermit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cancellation_during_read_discards_bytes_and_stops_next_read() {
+        struct CancellingReader {
+            work: UploadWork,
+            reads: usize,
+        }
+        impl Read for CancellingReader {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                bytes[0] = 42;
+                self.work.cancel();
+                Ok(1)
+            }
+        }
+        let work = UploadWork::new(Duration::from_secs(10));
+        let mut reader = CancellingReader {
+            work: work.clone(),
+            reads: 0,
+        };
+        assert!(
+            read_bounded(&mut reader, 1024, &work)
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+        assert_eq!(reader.reads, 1);
+    }
+    #[test]
+    fn growing_reader_is_bounded_by_remaining_plus_one() {
+        let work = UploadWork::new(Duration::from_secs(10));
+        let mut reader = std::io::Cursor::new(vec![42u8; 100]);
+        assert!(read_bounded(&mut reader, 3, &work).is_err());
+        assert_eq!(reader.position(), 4);
     }
 }
