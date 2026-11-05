@@ -201,3 +201,47 @@ fn recovery_lock_rejects_edits_without_touching_pending_or_persisted_state() {
     assert_eq!(engine.unsaved_threads[&id], json!({"fixture":"pending"}));
     assert_eq!(engine.revision, revision);
 }
+
+#[test]
+fn catalog_routes_reject_account_path_and_turn_options_without_mutation_or_launch() {
+    let (_dir, mut engine, id) = fixture();
+    let before = engine.store.thread(&id).unwrap();
+    let revision = engine.revision;
+    for params in [
+        json!({"provider":"codex","accountId":"named"}),
+        json!({"provider":"codex","executable":"/untrusted"}),
+        json!({"provider":"codex","effort":null}),
+        json!({"provider":"claude","threadId":id}),
+    ] {
+        assert!(engine.execute("agent.models.refresh", &params).is_err());
+        assert_eq!(engine.revision, revision);
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        assert!(engine.runs.is_empty());
+    }
+    let refresh = engine
+        .execute(
+            "agent.models.refresh",
+            &json!({"provider":"cursor","accountId":"default"}),
+        )
+        .unwrap();
+    assert_eq!(refresh["state"], "unsupported");
+    assert_eq!(refresh["accountID"], "default");
+    assert_eq!(refresh["models"], json!([]));
+    let status = engine
+        .execute(
+            "agent.models.status",
+            &json!({"requestId":refresh["requestId"]}),
+        )
+        .unwrap();
+    assert_eq!(status, refresh);
+    assert_eq!(engine.store.thread(&id).unwrap(), before);
+    assert!(engine.runs.is_empty());
+    assert!(
+        engine
+            .execute(
+                "agent.models.status",
+                &json!({"requestId":refresh["requestId"],"executable":"/untrusted"})
+            )
+            .is_err()
+    );
+}

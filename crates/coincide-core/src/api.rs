@@ -46,6 +46,7 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    model_catalog: crate::model_catalog::ModelCatalog,
     pub store: Store,
     idle_sleep: idle_sleep::IdleSleep,
     github: github_engine::GithubState,
@@ -98,6 +99,7 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            model_catalog: crate::model_catalog::ModelCatalog::default(),
             store,
             idle_sleep,
             notification_events,
@@ -380,7 +382,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities"
+                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status"
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
@@ -470,6 +472,24 @@ impl Engine {
                 self.store.save(&branch)?;
                 self.revision+=1;
                 Ok(branch)
+            }
+            "agent.models.refresh" => {
+                let provider = crate::model_catalog::refresh_provider(p)?;
+                let executable = if crate::model_catalog::supported(provider) {
+                    let variable = if provider == "codex" { "COINCIDE_CODEX_EXECUTABLE" } else { "COINCIDE_CLAUDE_EXECUTABLE" };
+                    std::env::var_os(variable).map(PathBuf::from).or_else(|| {
+                        self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
+                            .find(|entry| entry["provider"] == provider)?["executable"].as_str().map(PathBuf::from)
+                    })
+                } else { None };
+                let result = self.model_catalog.refresh(provider, executable)?;
+                self.revision += 1;
+                Ok(result)
+            }
+            "agent.models.status" => {
+                let id = crate::model_catalog::status_id(p)?;
+                if self.model_catalog.poll() { self.revision += 1; }
+                self.model_catalog.status(id)
             }
             "agent.selection.capabilities" => {
                 let mut result = crate::composer_selection::capabilities();
@@ -1075,6 +1095,7 @@ impl Engine {
             .context("Choose a project working directory first")
     }
     pub fn poll(&mut self) {
+        if self.model_catalog.poll() { self.revision += 1; }
         self.workspace_pending
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
         self.workspace_results

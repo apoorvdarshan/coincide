@@ -10,6 +10,8 @@ pub fn capabilities() -> Value {
             "accountPolicy":if id == "antigravity" {"configured_antigravity"} else {"default_only"},
             "models":[{"id":"default","displayName":"Provider default","availability":"provider_resolved"}],
             "customModel":{"supported":true,"availability":"unverified"},
+            "modelDiscovery":{"supported":crate::model_catalog::supported(id.as_str().unwrap_or("")),
+                "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
             "effort":{"supported":false,"reason":"This runtime does not apply reasoning effort."},
             "speed":{"supported":false,"reason":"This runtime does not apply speed selections."},
             "accessModes":["approval"],"interactionModes":["build"]})
