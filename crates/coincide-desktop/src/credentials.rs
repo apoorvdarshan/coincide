@@ -136,25 +136,51 @@ pub struct FillJob {
 pub struct FillPermit {
     deadline: Instant,
     cancelled: Arc<AtomicBool>,
+    scope: Arc<AtomicBool>,
 }
 impl FillPermit {
     pub fn is_valid(&self) -> bool {
-        Instant::now() < self.deadline && !self.cancelled.load(Ordering::Acquire)
+        Instant::now() < self.deadline
+            && !self.cancelled.load(Ordering::Acquire)
+            && !self.scope.load(Ordering::Acquire)
     }
 }
+#[derive(Clone)]
 pub struct QueuedSink {
     jobs: SyncSender<FillJob>,
+    scope: Arc<AtomicBool>,
+}
+impl QueuedSink {
+    pub fn new_scope(&self) -> Self {
+        Self {
+            jobs: self.jobs.clone(),
+            scope: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn revoke(&self) {
+        self.scope.store(true, Ordering::Release);
+    }
 }
 pub fn private_fill_channel() -> (QueuedSink, Receiver<FillJob>) {
     let (jobs, receiver) = mpsc::sync_channel(1);
-    (QueuedSink { jobs }, receiver)
+    (
+        QueuedSink {
+            jobs,
+            scope: Arc::new(AtomicBool::new(false)),
+        },
+        receiver,
+    )
 }
 impl PrivateFillSink for QueuedSink {
     fn fill(&mut self, binding: &PageBinding, secret: &Secret) -> Result<(), Failure> {
+        if self.scope.load(Ordering::Acquire) {
+            return Err(Failure::StalePage);
+        }
         let (reply, receiver) = mpsc::sync_channel(1);
         let permit = FillPermit {
             deadline: Instant::now() + Duration::from_secs(9),
             cancelled: Arc::new(AtomicBool::new(false)),
+            scope: self.scope.clone(),
         };
         self.jobs
             .try_send(FillJob {
@@ -322,6 +348,7 @@ mod tests {
                     Instant::now() + Duration::from_secs(9)
                 },
                 cancelled: Arc::new(AtomicBool::new(false)),
+                scope: Arc::new(AtomicBool::new(false)),
             };
             let job = FillJob {
                 binding,
@@ -364,5 +391,34 @@ mod tests {
                 Err(Failure::ApprovalRequired)
             );
         }
+    }
+    #[test]
+    fn scope_revocation_invalidates_a_dispatched_permit() {
+        let (mut sink, jobs) = private_fill_channel();
+        let revoker = sink.clone();
+        let prompt = prompt();
+        let decision = NativeDecision {
+            id: prompt.id,
+            allow: true,
+        };
+        let worker = std::thread::spawn(move || {
+            complete_approval(
+                &Vault::new(coincide_core::credentials::Manager::Bitwarden, Fixture),
+                prompt,
+                decision,
+                &page(),
+                &mut sink,
+            )
+        });
+        let job = jobs.recv_timeout(Duration::from_secs(2)).unwrap();
+        revoker.revoke();
+        assert!(!job.permit.is_valid());
+        let mut hook = Hook {
+            page: page(),
+            called: false,
+        };
+        deliver_fill(job, &mut hook);
+        assert_eq!(worker.join().unwrap(), Err(Failure::FillFailed));
+        assert!(!hook.called);
     }
 }

@@ -49,3 +49,47 @@ Coordinator validation requested:
 Native approval accessibility/keyboard and actual browser fill acceptance remain
 pending after main/browser owners integrate the hooks. Never advertise this module
 as a working browser fill capability until that acceptance succeeds.
+
+## Native manager/account panel
+
+`credential_settings.rs` now supplies `CredentialSettings` and filesystem-only
+`installed_sources()`. Construct the panel once and retain its returned private
+job receiver. CLI account reads begin only after a native manager click. 1Password
+accounts are selected from `op account list` metadata and every subsequent command
+is explicitly scoped with `--account`; Bitwarden exposes its current CLI account
+without switching/logging in/out. Selection remains session-local and is never a
+stored approval. BW list output internally includes full vault records; only
+metadata is retained/displayed, and individual `get item`/TOTP commands cannot run
+while filling is unavailable. This is not a claim that CLI listing is secret-free.
+
+Parent main owner registers both `mod credentials;` and `mod credential_settings;`.
+Suggested constructor flow (in existing native UI setup):
+
+```rust
+let (panel, credential_jobs) = credential_settings::CredentialSettings::new(
+    credential_settings::installed_sources(),
+);
+let credential_panel = cx.new(|_| panel);
+```
+
+On every existing UI tick, before displaying/polling the panel, obtain the selected
+thread's native page through `browser.credential_page(thread, cx)` (or None without
+a selected thread). Set page and capability on the entity, then poll it:
+
+```rust
+credential_panel.update(cx, |panel, cx| {
+    panel.set_page(page, browser_fill_available, cx);
+    panel.poll(cx);
+});
+// Browser owner implements this with explicit selected-thread ownership.
+browser.drain_credential_fills(thread, &credential_jobs, cx);
+```
+
+Read `browser_fill_available` from `browser.credential_fill_available()`; current
+Wry backends return false. Under that value login rows remain metadata-only and
+approval/individual-secret retrieval are disabled. Do not override the capability
+for a demo. Main displays `credential_panel.clone()` in its settings/browser panel.
+Set page None before removing/closing the workflow and on loss of selected thread.
+Revocable sink scopes invalidate dispatched permits when manager, account, page or
+backend capability changes, or the workflow drops. Browser hooks still check the
+permit and original document at mutation time.
