@@ -12,6 +12,7 @@ pub(super) enum Failure {
     Unavailable,
     ClosedOrStale,
     InvalidCookie,
+    UnsupportedSameSiteNone,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Status {
@@ -44,6 +45,21 @@ struct BlockOwner {
     // Fields drop in declaration order: lease release precedes receipt publication.
     _lease: NativeLease,
     _released: Released,
+}
+fn validate_policy(requested: SameSite, actual: Option<&str>) -> Result<(), Failure> {
+    let expected = match requested {
+        SameSite::Unspecified => None,
+        SameSite::None => Some("none"),
+        SameSite::Lax => Some("lax"),
+        SameSite::Strict => Some("strict"),
+    };
+    if actual == expected {
+        Ok(())
+    } else if requested == SameSite::None {
+        Err(Failure::UnsupportedSameSiteNone)
+    } else {
+        Err(Failure::InvalidCookie)
+    }
 }
 #[cfg(target_os = "macos")]
 mod native {
@@ -110,13 +126,18 @@ mod native {
                 properties.insert(NSHTTPCookieSameSitePolicy, &*NSString::from_str(policy));
             }
             let properties: &NSDictionary<NSHTTPCookiePropertyKey, AnyObject> = &properties;
-            let cookie =
-                NSHTTPCookie::cookieWithProperties(properties).ok_or(Failure::InvalidCookie)?;
+            let cookie = NSHTTPCookie::cookieWithProperties(properties).ok_or(
+                if input.same_site() == SameSite::None {
+                    Failure::UnsupportedSameSiteNone
+                } else {
+                    Failure::InvalidCookie
+                },
+            )?;
             // Foundation may reject/normalize unsupported policy. Never silently
             // drop SameSite=None or import a weaker cookie than the reviewed one.
             let actual = cookie.sameSitePolicy().map(|policy| policy.to_string());
-            if actual.as_deref() != policy
-                || cookie.isSecure() != input.secure()
+            validate_policy(input.same_site(), actual.as_deref())?;
+            if cookie.isSecure() != input.secure()
                 || cookie.isHTTPOnly() != input.http_only()
                 || cookie.name().to_string() != input.name()
                 || cookie.value().to_string() != input.value()
@@ -255,5 +276,21 @@ mod tests {
         drop(callback);
         assert_eq!(receipt.status(), Status::DispatchedUnknown);
         assert_eq!(callbacks.pending(), 1);
+    }
+    #[test]
+    fn unsupported_none_policy_is_an_explicit_refusal_not_a_downgrade() {
+        assert_eq!(
+            validate_policy(SameSite::None, None),
+            Err(Failure::UnsupportedSameSiteNone)
+        );
+        assert_eq!(
+            validate_policy(SameSite::None, Some("lax")),
+            Err(Failure::UnsupportedSameSiteNone)
+        );
+        assert_eq!(validate_policy(SameSite::None, Some("none")), Ok(()));
+        assert_eq!(
+            validate_policy(SameSite::Lax, Some("strict")),
+            Err(Failure::InvalidCookie)
+        );
     }
 }

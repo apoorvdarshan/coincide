@@ -12,7 +12,7 @@ use uuid::Uuid;
 const MAX_SOURCE: u64 = 16 * 1024 * 1024;
 const MAX_ROWS: usize = 1000;
 const MAX_VALUES: usize = 1024 * 1024;
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "Retain cleanup-pending custody until explicit cleanup succeeds"]
 pub enum Failure {
     SourceUnavailable,
     SourceChanged,
@@ -21,6 +21,7 @@ pub enum Failure {
     LimitExceeded,
     InvalidSelection,
     StaleContext,
+    CleanupPending(Box<CleanupCustody>),
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -32,7 +33,13 @@ impl std::fmt::Display for Failure {
             Self::LimitExceeded => "Cookie snapshot exceeds import limits",
             Self::InvalidSelection => "Choose only reviewed cookie hosts",
             Self::StaleContext => "Browser import context changed",
+            Self::CleanupPending(_) => "Private cookie snapshot cleanup is pending",
         })
+    }
+}
+impl std::fmt::Debug for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 impl std::error::Error for Failure {}
@@ -206,19 +213,75 @@ fn source_bytes(path: &Path) -> Result<(Vec<u8>, SourceIdentity)> {
 }
 // Only this task-created private directory is removed. Source paths are never
 // passed to SQLite, including readonly opens that might touch WAL/SHM files.
-struct PrivateCopy {
+/// Private cleanup ownership, never serialized or path-bearing in diagnostics.
+/// Parent MUST retain this record on its worker owner until retry returns true.
+#[must_use = "Retain this owner until retry confirms cleanup"]
+pub struct CleanupCustody {
+    id: Uuid,
     directory: PathBuf,
     database: PathBuf,
+    directory_identity: Option<SourceIdentity>,
+    connection: Option<Connection>,
+    original_error: Option<Box<Failure>>,
 }
-impl PrivateCopy {
+type PrivateCopy = CleanupCustody;
+impl CleanupCustody {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn original_error(&self) -> Option<&Failure> {
+        self.original_error.as_deref()
+    }
+    /// Off UI only. No source paths are retained here. Never retry insertion.
+    pub fn retry(&mut self) -> bool {
+        self.cleanup_with(|path| fs::remove_dir_all(path))
+    }
+    fn cleanup_with(&mut self, mut remove: impl FnMut(&Path) -> std::io::Result<()>) -> bool {
+        if let Some(connection) = self.connection.take() {
+            if let Err((connection, _)) = connection.close() {
+                self.connection = Some(connection);
+                return false;
+            }
+        }
+        match fs::symlink_metadata(&self.directory) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) => return false,
+            Ok(metadata) => {
+                let Some(expected) = self.directory_identity.as_ref() else {
+                    return false;
+                };
+                let actual = identity(&metadata);
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || actual.device != expected.device
+                    || actual.inode != expected.inode
+                {
+                    return false;
+                }
+            }
+        }
+        if remove(&self.directory).is_err() {
+            return false;
+        }
+        matches!(fs::symlink_metadata(&self.directory),Err(error) if error.kind()==std::io::ErrorKind::NotFound)
+    }
+    fn finish<T>(
+        mut self,
+        result: Result<T>,
+        remove: impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<T> {
+        if self.cleanup_with(remove) {
+            return result;
+        }
+        self.original_error = result.err().map(Box::new);
+        Err(Failure::CleanupPending(Box::new(self)))
+    }
     fn create(bytes: &[u8]) -> Result<Self> {
-        // This first sink is macOS-only. Do not create plaintext snapshots on
-        // platforms without this module's private-directory permission contract.
         if !cfg!(unix) {
             return Err(Failure::SourceUnavailable);
         }
-        let directory =
-            std::env::temp_dir().join(format!("coincide-cookie-snapshot-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let directory = std::env::temp_dir().join(format!("coincide-cookie-snapshot-{id}"));
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -228,27 +291,34 @@ impl PrivateCopy {
         builder
             .create(&directory)
             .map_err(|_| Failure::SourceUnavailable)?;
-        let copy = Self {
+        let mut copy = Self {
+            id,
             database: directory.join("snapshot.sqlite"),
             directory,
+            directory_identity: None,
+            connection: None,
+            original_error: None,
         };
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+        let result = (|| {
+            copy.directory_identity = Some(identity(
+                &fs::symlink_metadata(&copy.directory).map_err(|_| Failure::SourceUnavailable)?,
+            ));
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(&copy.database)
+                .map_err(|_| Failure::SourceUnavailable)?;
+            std::io::Write::write_all(&mut file, bytes).map_err(|_| Failure::SourceUnavailable)
+        })();
+        match result {
+            Ok(()) => Ok(copy),
+            Err(error) => copy.finish(Err(error), |path| fs::remove_dir_all(path)),
         }
-        let mut file = options
-            .open(&copy.database)
-            .map_err(|_| Failure::SourceUnavailable)?;
-        std::io::Write::write_all(&mut file, bytes).map_err(|_| Failure::SourceUnavailable)?;
-        Ok(copy)
-    }
-}
-impl Drop for PrivateCopy {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 fn valid_cookie(c: &Cookie) -> bool {
@@ -277,16 +347,46 @@ impl Plan {
     /// Off UI only. Closed-file snapshot, not a live-browser consistency claim.
     /// Source bytes are read with no-follow; SQLite opens ONLY our private copy.
     pub fn read(source: NativeSource, now: i64) -> Result<Self> {
+        Self::read_with_cleanup(source, now, |path| fs::remove_dir_all(path))
+    }
+    fn read_with_cleanup(
+        source: NativeSource,
+        now: i64,
+        remove: impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<Self> {
         let (bytes, identity) = source_bytes(&source.path)?;
         let before = Sha256::digest(&bytes).into();
-        let copy = PrivateCopy::create(&bytes)?;
-        let db = Connection::open_with_flags(
-            &copy.database,
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )
-        .map_err(|_| Failure::InvalidSnapshot)?;
+        let mut copy = PrivateCopy::create(&bytes)?;
+        let result = (|| {
+            let db = Connection::open_with_flags(
+                &copy.database,
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                    | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            )
+            .map_err(|_| Failure::InvalidSnapshot)?;
+            copy.connection = Some(db);
+            let (cookies, preview) = Self::decode_copy(
+                copy.connection.as_ref().ok_or(Failure::InvalidSnapshot)?,
+                now,
+            )?;
+            let (after, after_identity) = source_bytes(&source.path)?;
+            if bytes != after || identity != after_identity {
+                return Err(Failure::SourceChanged);
+            }
+            Ok(Self {
+                source,
+                identity,
+                fingerprint: before,
+                cookies,
+                preview,
+            })
+        })();
+        // Even decode/source-validation failures explicitly close SQLite first.
+        // A close or deletion failure returns its exact private cleanup owner.
+        copy.finish(result, remove)
+    }
+    fn decode_copy(db: &Connection, now: i64) -> Result<(Vec<Cookie>, Preview)> {
         db.busy_timeout(std::time::Duration::ZERO)
             .map_err(|_| Failure::InvalidSnapshot)?;
         db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; BEGIN;")
@@ -427,16 +527,9 @@ impl Plan {
         drop(statement);
         db.execute_batch("COMMIT")
             .map_err(|_| Failure::InvalidSnapshot)?;
-        let (after, after_identity) = source_bytes(&source.path)?;
-        if bytes != after || identity != after_identity {
-            return Err(Failure::SourceChanged);
-        }
-        Ok(Self {
-            source,
-            identity,
-            fingerprint: before,
+        Ok((
             cookies,
-            preview: Preview {
+            Preview {
                 hosts: hosts
                     .into_iter()
                     .map(|(host, cookies)| HostCount { host, cookies })
@@ -444,7 +537,7 @@ impl Plan {
                 expired,
                 unsupported,
             },
-        })
+        ))
     }
     pub fn preview(&self) -> &Preview {
         &self.preview
@@ -599,7 +692,8 @@ mod tests {
         );
         assert_eq!(fs::metadata(&copy.database).unwrap().mode() & 0o777, 0o600);
         let directory = copy.directory.clone();
-        drop(copy);
+        let mut copy = copy;
+        assert!(copy.retry());
         assert!(!directory.exists());
     }
     #[test]
@@ -704,5 +798,72 @@ mod tests {
             Plan::read(NativeSource::from_native_choice(path), 100),
             Err(Failure::InvalidSnapshot)
         ));
+    }
+    #[test]
+    fn successful_decode_cannot_escape_before_explicit_cleanup_and_custody_retry() {
+        let (_root, path) = fixture();
+        let original = fs::read(&path).unwrap();
+        let error =
+            Plan::read_with_cleanup(NativeSource::from_native_choice(path.clone()), 100, |_| {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            })
+            .err()
+            .unwrap();
+        let message = format!("{error:?}: {error}");
+        let Failure::CleanupPending(mut custody) = error else {
+            panic!("cleanup custody missing")
+        };
+        assert!(
+            custody.connection.is_none(),
+            "SQLite must be explicitly closed before deletion"
+        );
+        assert!(custody.database.is_file());
+        assert!(custody.original_error().is_none());
+        assert!(!message.contains(custody.directory.to_str().unwrap()));
+        assert!(!message.contains("synthetic-private-value"));
+        let id = custody.id();
+        assert_eq!(custody.id(), id);
+        assert!(custody.retry());
+        assert!(!custody.directory.exists());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+    #[test]
+    fn decode_failure_retains_original_error_and_exact_cleanup_owner() {
+        let (_root, path) = fixture();
+        fs::write(&path, b"synthetic private invalid SQLite").unwrap();
+        let error =
+            Plan::read_with_cleanup(NativeSource::from_native_choice(path), 100, |_| Ok(()))
+                .err()
+                .unwrap();
+        let Failure::CleanupPending(mut custody) = error else {
+            panic!("no-op deletion must not count as cleanup")
+        };
+        assert!(matches!(
+            custody.original_error(),
+            Some(Failure::InvalidSnapshot)
+        ));
+        assert!(custody.connection.is_none());
+        assert!(custody.database.exists());
+        assert!(custody.retry());
+        assert!(
+            custody.retry(),
+            "cleanup retry is idempotent once absence is verified"
+        );
+    }
+    #[test]
+    fn cleanup_refuses_replaced_directory_without_deleting_unowned_files() {
+        let (_root, path) = fixture();
+        let mut copy = PrivateCopy::create(&fs::read(path).unwrap()).unwrap();
+        let owned = copy.directory.with_extension("retained");
+        fs::rename(&copy.directory, &owned).unwrap();
+        fs::create_dir(&copy.directory).unwrap();
+        let unowned = copy.directory.join("must-not-delete");
+        fs::write(&unowned, b"synthetic unchanged").unwrap();
+        assert!(!copy.retry());
+        assert_eq!(fs::read(&unowned).unwrap(), b"synthetic unchanged");
+        fs::remove_file(unowned).unwrap();
+        fs::remove_dir(&copy.directory).unwrap();
+        fs::rename(owned, &copy.directory).unwrap();
+        assert!(copy.retry());
     }
 }
