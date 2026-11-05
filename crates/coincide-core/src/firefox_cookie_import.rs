@@ -303,6 +303,22 @@ impl CleanupCustody {
             copy.directory_identity = Some(identity(
                 &fs::symlink_metadata(&copy.directory).map_err(|_| Failure::SourceUnavailable)?,
             ));
+            // SQLite NOFOLLOW rejects symlinks in ANY path component. macOS
+            // temp roots commonly use /var or /tmp aliases. Resolve only our
+            // newly created private directory, then verify its owned inode.
+            let physical =
+                fs::canonicalize(&copy.directory).map_err(|_| Failure::SourceUnavailable)?;
+            let actual =
+                identity(&fs::symlink_metadata(&physical).map_err(|_| Failure::SourceUnavailable)?);
+            let expected = copy
+                .directory_identity
+                .as_ref()
+                .ok_or(Failure::SourceUnavailable)?;
+            if actual.device != expected.device || actual.inode != expected.inode {
+                return Err(Failure::SourceChanged);
+            }
+            copy.directory = physical;
+            copy.database = copy.directory.join("snapshot.sqlite");
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
@@ -865,5 +881,26 @@ mod tests {
         fs::remove_dir(&copy.directory).unwrap();
         fs::rename(owned, &copy.directory).unwrap();
         assert!(copy.retry());
+    }
+    #[test]
+    fn private_copy_uses_physical_owned_path_for_sqlite_nofollow() {
+        let (_root, path) = fixture();
+        let mut copy = PrivateCopy::create(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(copy.database.canonicalize().unwrap(), copy.database);
+        let connection = Connection::open_with_flags(
+            &copy.database,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM moz_cookies", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        copy.connection = Some(connection);
+        let directory = copy.directory.clone();
+        assert!(copy.retry());
+        assert!(!directory.exists());
     }
 }
