@@ -13,6 +13,7 @@ struct SelectionDraft {
     proposed_access: Value,
     proposed_interaction: Value,
     proposed_effort: Value,
+    proposed_speed: Value,
     provider: String,
     account: Value,
     custom: String,
@@ -29,6 +30,7 @@ impl SelectionDraft {
             proposed_access: mode_or_default(&thread["accessMode"], "approval"),
             proposed_interaction: mode_or_default(&thread["interactionMode"], "build"),
             proposed_effort: selection["effort"].clone(),
+            proposed_speed: selection["speed"].clone(),
             provider: text(selection, "provider"),
             account: selection["accountID"].clone(),
             custom: if model == "default" {
@@ -41,6 +43,7 @@ impl SelectionDraft {
     }
     fn has_edits(&self) -> bool {
         self.proposed_effort != self.original["effort"]
+            || self.proposed_speed != self.original["speed"]
             || self.proposed_access != mode_or_default(&self.access, "approval")
             || self.proposed_interaction != mode_or_default(&self.interaction, "build")
             || self.provider != text(&self.original, "provider")
@@ -82,7 +85,7 @@ impl SelectionDraft {
         );
         Ok(
             json!({"threadId":thread["id"],"provider":self.provider,"model":model,"accountId":self.account,
-            "effort":self.proposed_effort,"speed":self.original["speed"],
+            "effort":self.proposed_effort,"speed":self.proposed_speed,
             "accessMode":self.proposed_access,
             "interactionMode":self.proposed_interaction}),
         )
@@ -208,6 +211,167 @@ fn effort_problem(
         Err(error)=>Some(error.to_string()),
     }
 }
+#[derive(Clone, Debug, PartialEq)]
+struct SpeedChoice {
+    id: String,
+    name: String,
+    detail: Option<String>,
+}
+fn speed_choices(
+    draft: &SelectionDraft,
+    thread: &Value,
+    provider: Option<&Value>,
+) -> Result<Vec<SpeedChoice>> {
+    anyhow::ensure!(
+        saved_effort_scope(draft, thread),
+        "Apply or discard provider/account/model edits, then refresh capabilities before choosing speed. Existing speed was retained"
+    );
+    let provider = provider.context("Speed capabilities are unavailable")?;
+    let capability = &provider["speed"];
+    anyhow::ensure!(
+        draft.provider == "codex"
+            && provider["provider"] == "codex"
+            && capability["supported"] == true
+            && capability["provenance"] == "provider_model_list"
+            && capability["requiresExplicitModel"] == true
+            && capability.get("standard").is_some_and(Value::is_null),
+        "{}",
+        capability["reason"]
+            .as_str()
+            .unwrap_or("Refresh the current model catalog to choose speed")
+    );
+    anyhow::ensure!(
+        draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
+        "Choose an explicit Codex model before speed options"
+    );
+    let rows = capability["choices"]
+        .as_array()
+        .context("Speed choices are invalid; refresh capabilities")?;
+    anyhow::ensure!(rows.len() <= 32, "Speed choices exceed their bound");
+    let mut choices: Vec<SpeedChoice> = Vec::new();
+    for row in rows {
+        let id = row["id"].as_str().context("Speed choice ID is invalid")?;
+        let name = row["name"]
+            .as_str()
+            .context("Speed choice name is invalid")?;
+        anyhow::ensure!(
+            !id.is_empty()
+                && id != "default"
+                && id.len() <= 128
+                && id.trim() == id
+                && !id.chars().any(char::is_control)
+                && !name.is_empty()
+                && name.len() <= 256
+                && !name.chars().any(char::is_control),
+            "Speed choice is invalid; refresh capabilities"
+        );
+        let detail = match &row["detail"] {
+            Value::Null => None,
+            Value::String(value) if value.len() <= 2048 && !value.chars().any(char::is_control) => {
+                Some(value.clone())
+            }
+            _ => anyhow::bail!("Speed detail is invalid; refresh capabilities"),
+        };
+        if !choices.iter().any(|choice| choice.id == id) {
+            choices.push(SpeedChoice {
+                id: id.into(),
+                name: name.into(),
+                detail,
+            });
+        }
+    }
+    Ok(choices)
+}
+fn speed_problem(
+    draft: &SelectionDraft,
+    thread: &Value,
+    provider: Option<&Value>,
+) -> Option<String> {
+    if draft.proposed_speed.is_null() {
+        return None;
+    }
+    match speed_choices(draft,thread,provider) {
+        Ok(choices) if draft.proposed_speed.as_str().is_some_and(|id|choices.iter().any(|choice|choice.id==id))=>None,
+        Ok(_)=>Some("Proposed speed is unsupported by the current saved model; choose a reported tier or explicitly clear it".into()),
+        Err(error)=>Some(error.to_string()),
+    }
+}
+fn validate_speed_choice(
+    draft: &SelectionDraft,
+    thread: &Value,
+    capabilities: &Value,
+    running: bool,
+    expected_id: &str,
+    expected_selection: &Value,
+    value: &Value,
+) -> Result<()> {
+    anyhow::ensure!(
+        thread["id"].as_str() == Some(expected_id) && thread["selection"] == *expected_selection,
+        "Speed choice belongs to a previous selection; pending values retained"
+    );
+    if let Some(reason) = capability_lock(capabilities, running) {
+        anyhow::bail!(reason);
+    }
+    let provider = capabilities["providers"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
+    let choices = speed_choices(draft, thread, provider)?;
+    anyhow::ensure!(
+        value.is_null()
+            || value
+                .as_str()
+                .is_some_and(|id| choices.iter().any(|choice| choice.id == id)),
+        "Speed choice is unknown or stale; pending values retained"
+    );
+    Ok(())
+}
+#[derive(Clone, Copy)]
+enum SpeedRepair {
+    Speed,
+    Both,
+}
+fn speed_repair_params(
+    draft: &SelectionDraft,
+    thread: &Value,
+    capabilities: &Value,
+    running: bool,
+    repair: SpeedRepair,
+) -> Result<Value> {
+    let flag = match repair {
+        SpeedRepair::Speed => "repairSpeedClearAvailable",
+        SpeedRepair::Both => "repairOptionsClearAvailable",
+    };
+    anyhow::ensure!(
+        !running
+            && capabilities["provenance"] == "static_runtime_contract"
+            && capabilities[flag] == true
+            && capabilities["locked"].as_bool().is_some(),
+        "Clearing saved options is unavailable in the current conversation state"
+    );
+    anyhow::ensure!(
+        saved_effort_scope(draft, thread)
+            && !thread["selection"]["speed"].is_null()
+            && draft.proposed_access == mode_or_default(&draft.access, "approval")
+            && draft.proposed_interaction == mode_or_default(&draft.interaction, "build"),
+        "Apply or discard other selection edits before clearing saved options"
+    );
+    match repair {
+        SpeedRepair::Speed => {
+            anyhow::ensure!(
+                draft.proposed_effort == draft.original["effort"],
+                "Discard pending effort edits before clearing only saved speed"
+            );
+            Ok(json!({"threadId":thread["id"],"speed":null}))
+        }
+        SpeedRepair::Both => {
+            anyhow::ensure!(
+                !thread["selection"]["effort"].is_null(),
+                "Combined clear requires both saved options"
+            );
+            Ok(json!({"threadId":thread["id"],"effort":null,"speed":null}))
+        }
+    }
+}
 fn repair_clear_params(
     draft: &SelectionDraft,
     thread: &Value,
@@ -223,6 +387,7 @@ fn repair_clear_params(
     );
     anyhow::ensure!(
         !thread["selection"]["effort"].is_null()
+            && draft.proposed_speed == draft.original["speed"]
             && saved_effort_scope(draft, thread)
             && draft.proposed_access == mode_or_default(&draft.access, "approval")
             && draft.proposed_interaction == mode_or_default(&draft.interaction, "build"),
@@ -663,6 +828,43 @@ impl Coincide {
             }
         }
     }
+    fn choose_speed(
+        &mut self,
+        expected_id: &str,
+        expected_selection: &Value,
+        value: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<()> {
+            let thread = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let id = text(thread, "id");
+            let draft = self
+                .selection_ui
+                .drafts
+                .get(&id)
+                .context("Selection draft unavailable")?;
+            validate_speed_choice(
+                draft,
+                thread,
+                &self.selection_ui.capabilities,
+                self.running.contains(&id),
+                expected_id,
+                expected_selection,
+                &value,
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.edit_selection(|draft| draft.proposed_speed = value, cx),
+            Err(error) => {
+                self.status = format!("Speed was not changed: {error}");
+                cx.notify();
+            }
+        }
+    }
     fn clear_saved_effort(
         &mut self,
         expected_id: &str,
@@ -716,6 +918,65 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn clear_saved_speed_options(
+        &mut self,
+        expected_id: &str,
+        expected_selection: &Value,
+        repair: SpeedRepair,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<Value> {
+            let thread = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let id = text(thread, "id");
+            anyhow::ensure!(
+                id == expected_id && thread["selection"] == *expected_selection,
+                "Option repair belongs to a previous selection; current draft retained"
+            );
+            let draft = self
+                .selection_ui
+                .drafts
+                .get(&id)
+                .context("Selection draft unavailable")?;
+            anyhow::ensure!(
+                saved_effort_scope(draft, thread),
+                "Saved selection changed; pending choices were retained"
+            );
+            let mut engine = try_state(&self.engine)?;
+            let current = engine.store.thread(&id)?;
+            let capabilities = selection_response(
+                &mut engine,
+                "agent.selection.capabilities",
+                json!({"threadId":id}),
+            )?;
+            let params = speed_repair_params(
+                draft,
+                &current,
+                &capabilities,
+                self.running.contains(&id),
+                repair,
+            )?;
+            selection_response(&mut engine, "agent.select", params)
+        })();
+        match result {
+            Ok(mut thread) => {
+                self.preserve_pending_draft(&mut thread);
+                let id = text(&thread, "id");
+                let mut saved = SelectionDraft::from_thread(&thread);
+                if let Some(previous) = self.selection_ui.drafts.get(&id) {
+                    saved.custom = previous.custom.clone();
+                }
+                self.selection_ui.drafts.insert(id, saved);
+                self.selected = Some(thread);
+                self.selection_ui.context = None;
+                self.status=match repair {SpeedRepair::Speed=>"Saved speed explicitly cleared to Standard. Other selection fields, message draft and references were retained. No message was sent.",SpeedRepair::Both=>"Saved effort and speed explicitly cleared. Other selection fields, message draft and references were retained. No message was sent."}.into();
+            }
+            Err(error) => self.status = format!("Saved options were not cleared: {error}"),
+        }
+        cx.notify();
+    }
     fn apply_selection_draft(&mut self, cx: &mut Context<Self>) {
         let result = (|| -> Result<Value> {
             let thread = self
@@ -746,6 +1007,9 @@ impl Coincide {
                 anyhow::bail!(reason);
             }
             if let Some(reason) = effort_problem(draft, &current, provider) {
+                anyhow::bail!(reason);
+            }
+            if let Some(reason) = speed_problem(draft, &current, provider) {
                 anyhow::bail!(reason);
             }
             selection_response(&mut engine, "agent.select", params)
@@ -1149,9 +1413,110 @@ impl Coincide {
                 .disabled(repair_problem.is_some()).on_click(cx.listener(move|this,_,_,cx|this.clear_saved_effort(&source_id,&source_selection,cx))))
                 .child(div().text_xs().child(repair_problem.map(|e|e.to_string()).unwrap_or_else(||"Clears only the saved effort. Other choices are checked separately. No message is sent.".into())));
         }
-        let speed_reason = provider
-            .and_then(|p| p["speed"]["reason"].as_str())
-            .unwrap_or("Speed support is unavailable.");
+        let draft_speed_problem = speed_problem(draft, thread, provider);
+        let speed_label = if draft.proposed_speed.is_null() {
+            "Standard".to_owned()
+        } else {
+            draft
+                .proposed_speed
+                .as_str()
+                .unwrap_or("Unsupported stored choice (retained)")
+                .to_owned()
+        };
+        let mut speed_panel = div().flex().flex_col().gap_1().child(
+            div()
+                .text_sm()
+                .child(format!("Proposed speed: {speed_label}")),
+        );
+        match speed_choices(draft, thread, provider) {
+            Ok(choices) => {
+                let source_id = text(thread, "id");
+                let source_selection = thread["selection"].clone();
+                let default_id = source_id.clone();
+                let default_selection = source_selection.clone();
+                speed_panel = speed_panel.child(
+                    Button::new("selection-speed-standard")
+                        .label("Standard speed (clear explicit tier)")
+                        .when(draft.proposed_speed.is_null(), |button| button.primary())
+                        .disabled(disabled)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.choose_speed(&default_id, &default_selection, Value::Null, cx)
+                        })),
+                );
+                for choice in choices {
+                    let id = choice.id.clone();
+                    let source_id = source_id.clone();
+                    let source_selection = source_selection.clone();
+                    speed_panel = speed_panel.child(
+                        Button::new(SharedString::from(format!("selection-speed-{id}")))
+                            .label(choice.name)
+                            .when(
+                                draft.proposed_speed.as_str() == Some(id.as_str()),
+                                |button| button.primary(),
+                            )
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.choose_speed(&source_id, &source_selection, json!(id), cx)
+                            })),
+                    );
+                    if let Some(detail) = choice.detail {
+                        speed_panel = speed_panel.child(div().text_xs().child(detail));
+                    }
+                }
+                speed_panel = speed_panel.child(div().text_xs().child("These are provider-reported service tiers. Apply changes the selection without sending a message. Standard explicitly clears a retained faster tier when needed."));
+            }
+            Err(error) => speed_panel = speed_panel.child(div().text_xs().child(error.to_string())),
+        }
+        for (repair, flag, button_id, label, explanation) in [
+            (
+                SpeedRepair::Speed,
+                "repairSpeedClearAvailable",
+                "selection-speed-repair-clear",
+                "Clear saved speed only",
+                "Clears only saved speed to Standard; effort and other choices are retained. No message is sent.",
+            ),
+            (
+                SpeedRepair::Both,
+                "repairOptionsClearAvailable",
+                "selection-options-repair-clear",
+                "Clear saved effort and speed only",
+                "Explicitly clears both saved effort and speed. Other selection fields, draft and references are retained. No message is sent.",
+            ),
+        ] {
+            if self.selection_ui.capabilities[flag] == true {
+                let problem = speed_repair_params(
+                    draft,
+                    thread,
+                    &self.selection_ui.capabilities,
+                    self.running.contains(&text(thread, "id")),
+                    repair,
+                )
+                .err();
+                let source_id = text(thread, "id");
+                let source_selection = thread["selection"].clone();
+                speed_panel = speed_panel
+                    .child(
+                        Button::new(button_id)
+                            .label(label)
+                            .disabled(problem.is_some())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.clear_saved_speed_options(
+                                    &source_id,
+                                    &source_selection,
+                                    repair,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        div().text_xs().child(
+                            problem
+                                .map(|error| error.to_string())
+                                .unwrap_or_else(|| explanation.into()),
+                        ),
+                    );
+            }
+        }
         let mut accounts = div()
             .flex()
             .flex_wrap()
@@ -1191,6 +1556,7 @@ impl Coincide {
             .child(accounts)
             .child(modes)
             .child(effort_panel)
+            .child(speed_panel)
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
@@ -1198,10 +1564,9 @@ impl Coincide {
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=true,cx))))
                 .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
             .child(div().text_xs().child(if draft.use_custom { "Custom IDs are unverified unless listed in the provider-reported catalog below. Model access and authentication are not verified." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
-            .child(div().text_xs().child(format!("{speed_reason} Saved values are never silently removed.")))
             .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some())
+                .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some() || draft_speed_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
                 .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
@@ -1215,6 +1580,9 @@ impl Coincide {
             pane = pane.child(div().text_sm().child(reason));
         }
         if let Some(reason) = draft_account_problem {
+            pane = pane.child(div().text_sm().child(reason));
+        }
+        if let Some(reason) = draft_speed_problem {
             pane = pane.child(div().text_sm().child(reason));
         }
         if let Some(reason) = lock {
@@ -1271,7 +1639,7 @@ impl Coincide {
         } else if same_scope && catalog["state"] == "loading" {
             pane = pane.child(div().text_sm().child("Loading provider model catalog…"));
         } else if same_scope && catalog["state"] == "ready" {
-            pane=pane.child(div().text_xs().child("Provider-reported catalog. Authentication and actual model access are not verified. Reported effort/speed metadata does not enable runtime options."));
+            pane=pane.child(div().text_xs().child("Provider-reported catalog. Authentication and actual model access are not verified. Effort and speed choices require refreshed capabilities for the exact saved model."));
             let mut models = div()
                 .id("selection-discovered-models")
                 .max_h(px(160.))
@@ -1896,5 +2264,240 @@ mod tests {
         let mut changed_thread = thread.clone();
         changed_thread["selection"]["effort"] = Value::Null;
         assert!(repair_clear_params(&draft, &changed_thread, &caps, false).is_err());
+    }
+    fn speed_provider() -> Value {
+        json!({"provider":"codex","speed":{"supported":true,"requiresExplicitModel":true,"provenance":"provider_model_list","standard":null,"choices":[{"id":"priority","name":"Fast","detail":"Provider-reported detail"},{"id":"ultrafast","name":"Ultra","detail":null}]}})
+    }
+    #[::core::prelude::v1::test]
+    fn speed_draft_roundtrips_exact_raw_values_and_preserves_effort_on_mode_changes() {
+        for raw in [Value::Null, json!("priority"), json!({"future":true})] {
+            let mut thread = command_thread("exact café\n");
+            thread["selection"]["speed"] = raw.clone();
+            thread["selection"]["effort"] = json!("high");
+            let mut draft = SelectionDraft::from_thread(&thread);
+            assert!(!draft.has_edits());
+            draft.proposed_interaction = json!("plan");
+            let params = draft.params(&thread).unwrap();
+            assert_eq!(params["speed"], raw);
+            assert_eq!(params["effort"], "high");
+            assert_eq!(thread["draft"], "exact café\n");
+            draft.proposed_speed = Value::Null;
+            assert_eq!(draft.params(&thread).unwrap()["speed"], Value::Null);
+        }
+        let thread = command_thread("draft");
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.proposed_speed = json!("priority");
+        assert!(draft.has_edits());
+        assert_eq!(draft.params(&thread).unwrap()["speed"], "priority");
+    }
+    #[::core::prelude::v1::test]
+    fn speed_choices_require_exact_saved_scope_and_reject_stale_modes_or_selection() {
+        let thread = command_thread("draft");
+        let draft = SelectionDraft::from_thread(&thread);
+        let provider = speed_provider();
+        assert_eq!(
+            speed_choices(&draft, &thread, Some(&provider)).unwrap()[0].id,
+            "priority"
+        );
+        let caps = json!({"provenance":"static_runtime_contract","locked":false,"providers":[provider.clone()]});
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                false,
+                "thread",
+                &thread["selection"],
+                &json!("priority")
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                false,
+                "old-thread",
+                &thread["selection"],
+                &json!("priority")
+            )
+            .is_err()
+        );
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                false,
+                "thread",
+                &json!({}),
+                &json!("priority")
+            )
+            .is_err()
+        );
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                true,
+                "thread",
+                &thread["selection"],
+                &json!("priority")
+            )
+            .is_err()
+        );
+        assert!(
+            validate_speed_choice(
+                &draft,
+                &thread,
+                &caps,
+                false,
+                "thread",
+                &thread["selection"],
+                &json!("invented")
+            )
+            .is_err()
+        );
+        for field in ["provider", "account", "model"] {
+            let mut changed = draft.clone();
+            match field {
+                "provider" => changed.provider = "claude".into(),
+                "account" => changed.account = json!("default"),
+                _ => changed.custom = "other".into(),
+            };
+            assert!(speed_choices(&changed, &thread, Some(&provider)).is_err());
+        }
+        for field in ["accessMode", "interactionMode"] {
+            let mut changed = thread.clone();
+            changed[field] = json!("changed");
+            assert!(speed_choices(&draft, &changed, Some(&provider)).is_err());
+        }
+        let mut stale = thread.clone();
+        stale["selection"]["speed"] = json!("priority");
+        assert!(speed_choices(&draft, &stale, Some(&provider)).is_err());
+        assert!(draft.params(&stale).is_err());
+        let mut default = thread.clone();
+        default["selection"]["modelID"] = json!("default");
+        assert!(
+            speed_choices(
+                &SelectionDraft::from_thread(&default),
+                &default,
+                Some(&provider)
+            )
+            .is_err()
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn raw_reported_speeds_or_malformed_capabilities_never_enable_speed_choices() {
+        let thread = command_thread("draft");
+        let draft = SelectionDraft::from_thread(&thread);
+        for field in [
+            "supported",
+            "provenance",
+            "requiresExplicitModel",
+            "standard",
+            "choices",
+        ] {
+            let mut provider = speed_provider();
+            provider["speed"].as_object_mut().unwrap().remove(field);
+            provider["reportedSpeeds"] = json!([{"id":"invented"}]);
+            assert!(speed_choices(&draft, &thread, Some(&provider)).is_err());
+        }
+        for choices in [
+            json!([{"id":"default","name":"Standard"}]),
+            json!([{"id":"priority","name":false}]),
+            json!([{"id":"priority","name":"Fast","detail":false}]),
+            json!([{"id":" priority ","name":"Fast"}]),
+        ] {
+            let mut provider = speed_provider();
+            provider["speed"]["choices"] = choices;
+            assert!(speed_choices(&draft, &thread, Some(&provider)).is_err());
+        }
+        let mut provider = speed_provider();
+        provider["provider"] = json!("claude");
+        assert!(speed_choices(&draft, &thread, Some(&provider)).is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn speed_problem_accepts_only_reported_tiers_or_explicit_standard_without_automatic_choice() {
+        let thread = command_thread("draft");
+        let mut draft = SelectionDraft::from_thread(&thread);
+        let provider = speed_provider();
+        assert!(speed_choices(&draft, &thread, Some(&provider)).is_ok());
+        assert!(draft.proposed_speed.is_null());
+        draft.proposed_speed = json!("priority");
+        assert!(speed_problem(&draft, &thread, Some(&provider)).is_none());
+        for raw in [json!("default"), json!("fast"), json!(false)] {
+            draft.proposed_speed = raw;
+            assert!(speed_problem(&draft, &thread, Some(&provider)).is_some());
+        }
+        draft.proposed_speed = Value::Null;
+        assert!(speed_problem(&draft, &thread, None).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn speed_only_repair_is_minimal_locked_safe_and_does_not_discard_pending_effort() {
+        let mut thread = command_thread("draft");
+        thread["selection"]["speed"] = json!("priority");
+        let original = thread.clone();
+        let draft = SelectionDraft::from_thread(&thread);
+        let caps = json!({"provenance":"static_runtime_contract","locked":true,"repairSpeedClearAvailable":true});
+        assert_eq!(
+            speed_repair_params(&draft, &thread, &caps, false, SpeedRepair::Speed).unwrap(),
+            json!({"threadId":"thread","speed":null})
+        );
+        assert_eq!(thread, original);
+        assert!(speed_repair_params(&draft, &thread, &caps, true, SpeedRepair::Speed).is_err());
+        for field in ["provenance", "locked", "repairSpeedClearAvailable"] {
+            let mut bad = caps.clone();
+            bad.as_object_mut().unwrap().remove(field);
+            assert!(speed_repair_params(&draft, &thread, &bad, false, SpeedRepair::Speed).is_err());
+        }
+        let mut pending = draft.clone();
+        pending.proposed_effort = json!("high");
+        assert!(speed_repair_params(&pending, &thread, &caps, false, SpeedRepair::Speed).is_err());
+        let mut pending = draft.clone();
+        pending.proposed_interaction = json!("plan");
+        assert!(speed_repair_params(&pending, &thread, &caps, false, SpeedRepair::Speed).is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn combined_repair_requires_its_own_flag_and_both_saved_options_and_preserves_other_drafts() {
+        let mut thread = command_thread("exact draft");
+        thread["selection"]["speed"] = json!("priority");
+        thread["selection"]["effort"] = json!("high");
+        thread["draftContext"] = json!([{"future":true}]);
+        thread["rustDraftImages"] = json!([{"future":true}]);
+        let original = thread.clone();
+        let draft = SelectionDraft::from_thread(&thread);
+        let caps = json!({"provenance":"static_runtime_contract","locked":true,"repairOptionsClearAvailable":true});
+        assert_eq!(
+            speed_repair_params(&draft, &thread, &caps, false, SpeedRepair::Both).unwrap(),
+            json!({"threadId":"thread","effort":null,"speed":null})
+        );
+        assert_eq!(thread, original);
+        assert!(speed_repair_params(&draft, &thread, &caps, false, SpeedRepair::Speed).is_err());
+        assert!(repair_clear_params(&draft, &thread, &caps, false).is_err());
+        let mut pending = draft.clone();
+        pending.custom = "different".into();
+        assert!(speed_repair_params(&pending, &thread, &caps, false, SpeedRepair::Both).is_err());
+        let mut pending = draft.clone();
+        pending.proposed_access = json!("approval");
+        assert!(speed_repair_params(&pending, &thread, &caps, false, SpeedRepair::Both).is_err());
+        let mut missing = thread.clone();
+        missing["selection"]["effort"] = Value::Null;
+        assert!(
+            speed_repair_params(
+                &SelectionDraft::from_thread(&missing),
+                &missing,
+                &caps,
+                false,
+                SpeedRepair::Both
+            )
+            .is_err()
+        );
+        let effort_caps = json!({"provenance":"static_runtime_contract","locked":true,"repairClearAvailable":true});
+        let mut pending = draft.clone();
+        pending.proposed_speed = Value::Null;
+        assert!(repair_clear_params(&pending, &thread, &effort_caps, false).is_err());
     }
 }
