@@ -249,6 +249,23 @@ impl Engine {
                     terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
                 } else {terminal.snapshot()}
             },
+            "terminal.scroll"=>{
+                // Reject misspelled fields and invalid deltas before changing the
+                // viewport. Revision is required even for absolute/no-op moves.
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all="camelCase",deny_unknown_fields)]
+                struct Request {
+                    terminal_id:String,
+                    revision:u64,
+                    scroll:crate::terminal::TerminalScroll,
+                }
+                let request:Request=serde_json::from_value(p.clone())?;
+                let terminal=&mut self.terminals.get_mut(&request.terminal_id).context("Terminal not found")?.1;
+                let changed=terminal.scroll_checked(request.revision,request.scroll)?;
+                let frame=terminal.snapshot()?;
+                if changed {self.revision+=1;}
+                Ok(json!({"changed":changed,"frame":frame}))
+            }
             "terminal.selection"=>{
                 let revision=p["revision"].as_u64().context("Missing terminal revision")?;
                 let start:crate::terminal::TerminalPoint=serde_json::from_value(p["start"].clone())?;
@@ -267,7 +284,7 @@ impl Engine {
                 json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => Ok(json!([
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
