@@ -3,6 +3,7 @@ use crate::credentials::{
     ApprovalPrompt, ApprovalView, FillJob, NativeDecision, QueuedSink, complete_approval,
     private_fill_channel,
 };
+use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use coincide_core::credentials::{
     CliCommand, Failure, Login, Manager, PageBinding, Status, Vault, VaultCommand,
 };
@@ -150,6 +151,7 @@ pub struct CredentialSettings {
     epoch: Arc<AtomicU64>,
     thread: Option<String>,
     busy: bool,
+    workers: WorkerOwner,
     client: Option<Client>,
     logins: Vec<Login>,
     approval: Option<PendingApproval>,
@@ -175,6 +177,7 @@ impl CredentialSettings {
                 epoch: Arc::new(AtomicU64::new(0)),
                 thread: None,
                 busy: false,
+                workers: WorkerOwner::default(),
                 client: None,
                 logins: vec![],
                 approval: None,
@@ -203,6 +206,9 @@ impl CredentialSettings {
         fill_available: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.workers.closed() {
+            return;
+        }
         if self.page != page || self.fill_available != fill_available {
             self.invalidate();
             self.page = page;
@@ -219,6 +225,9 @@ impl CredentialSettings {
         fill_available: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.workers.closed() {
+            return;
+        }
         if self.thread != thread {
             self.invalidate();
             self.thread = thread;
@@ -236,7 +245,7 @@ impl CredentialSettings {
         cx.notify();
     }
     fn connect(&mut self, source: usize, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         let Some(selected) = self.sources.get(source).cloned() else {
@@ -250,13 +259,21 @@ impl CredentialSettings {
         self.status = "Reading account metadata…".into();
         let sender = self.sender.clone();
         let revision = self.revision;
-        std::thread::spawn(move || {
-            let _ = sender.send(Update::Accounts(revision, accounts(&selected)));
-        });
+        if !self.workers.spawn(move |admission| {
+            let result = if admission.allowed() {
+                accounts(&selected)
+            } else {
+                Err(Failure::StalePage)
+            };
+            let _ = sender.send(Update::Accounts(revision, result));
+        }) {
+            self.busy = false;
+            self.status = "Credential worker could not start.".into();
+        }
         cx.notify();
     }
     fn load_account(&mut self, account: usize, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || !self.workers.can_start() {
             return;
         }
         let Some(source) = self
@@ -290,19 +307,32 @@ impl CredentialSettings {
         ));
         let sender = self.sender.clone();
         let revision = self.revision;
-        std::thread::spawn(move || {
-            let result = client.status().and_then(|status| match status {
+        if !self.workers.spawn(move |admission| {
+            let result = if admission.allowed() {
+                client.status()
+            } else {
+                Err(Failure::StalePage)
+            }
+            .and_then(|status| match status {
                 Status::Ready | Status::UnlocksOnUse => {
                     client.logins(&page).map(|items| (status, items))
                 }
                 _ => Err(Failure::Locked),
             });
             let _ = sender.send(Update::Logins(revision, client, result));
-        });
+        }) {
+            self.busy = false;
+            self.status = "Credential worker could not start.".into();
+        }
         cx.notify();
     }
     fn request_approval(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.busy || !self.fill_available || self.approval.is_some() || self.client.is_none() {
+        if !self.workers.can_start()
+            || self.busy
+            || !self.fill_available
+            || self.approval.is_some()
+            || self.client.is_none()
+        {
             return;
         }
         let (Some(page), Some(item)) = (self.page.clone(), self.logins.get(index).cloned()) else {
@@ -318,7 +348,37 @@ impl CredentialSettings {
         });
         cx.notify();
     }
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.invalidate();
+            self.page = None;
+            self.thread = None;
+            self.fill_available = false;
+            self.accounts.clear();
+        }
+        self.discard_shutdown_updates();
+    }
+    fn discard_shutdown_updates(&mut self) {
+        for update in self.updates.try_iter() {
+            drop(update);
+        }
+    }
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        if self.workers.closed() {
+            self.discard_shutdown_updates();
+        }
+        let status = self.workers.status();
+        if self.workers.closed() {
+            self.discard_shutdown_updates();
+        }
+        status
+    }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_shutdown_updates();
+            return;
+        }
         while let Ok(update) = self.updates.try_recv() {
             // Only one metadata/fill worker runs at once. A page change can
             // invalidate its result but must still release the busy state.
@@ -366,6 +426,9 @@ impl CredentialSettings {
             }
             cx.notify();
         }
+        if !self.workers.can_start() {
+            return;
+        }
         let decision = self
             .approval
             .as_ref()
@@ -395,11 +458,17 @@ impl CredentialSettings {
             let revision = self.revision;
             self.busy = true;
             self.status = "Processing native approval…".into();
-            std::thread::spawn(move || {
-                let result =
-                    complete_approval(&client, pending.prompt, decision, &page, &mut scope);
+            if !self.workers.spawn(move |admission| {
+                let result = if admission.allowed() {
+                    complete_approval(&client, pending.prompt, decision, &page, &mut scope)
+                } else {
+                    Err(Failure::StalePage)
+                };
                 let _ = sender.send(Update::Filled(revision, result));
-            });
+            }) {
+                self.busy = false;
+                self.status = "Credential worker could not start.".into();
+            }
             cx.notify();
         } else if self
             .approval
@@ -414,6 +483,7 @@ impl CredentialSettings {
 }
 impl Drop for CredentialSettings {
     fn drop(&mut self) {
+        self.workers.close();
         self.epoch.fetch_add(1, Ordering::AcqRel);
         if let Some(scope) = self.active_scope.take() {
             scope.revoke();
@@ -455,7 +525,7 @@ impl Render for CredentialSettings {
                             ""
                         }
                     ))
-                    .disabled(self.busy)
+                    .disabled(self.busy || self.workers.closed())
                     .on_click(cx.listener(move |this, _, _, cx| this.connect(index, cx))),
             );
         }
@@ -650,5 +720,61 @@ mod revocation_tests {
             Err(Failure::StalePage)
         );
         assert!(runner.0.lock().unwrap().is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn shutdown_revokes_epoch_discards_private_updates_and_retains_worker_until_join() {
+        let (mut settings, _jobs) = CredentialSettings::new(vec![]);
+        let runner = Arc::new(NeverGet(Mutex::new(vec![])));
+        let scoped = AccountCommand {
+            source: CredentialSource {
+                manager: Manager::Bitwarden,
+                command: runner.clone(),
+            },
+            account: "synthetic".into(),
+            epoch: settings.epoch.clone(),
+            expected_epoch: settings.revision,
+        };
+        let sender = settings.sender.clone();
+        let revision = settings.revision;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        assert!(settings.workers.spawn(move |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            assert!(
+                sender
+                    .send(Update::Accounts(
+                        revision,
+                        Ok(vec![Account {
+                            id: "private-id".into(),
+                            label: "private-label".into()
+                        }]),
+                    ))
+                    .is_ok()
+            );
+        }));
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        settings.request_shutdown();
+        settings.request_shutdown();
+        assert_eq!(settings.shutdown_status().unjoined, 1);
+        assert_eq!(
+            scoped.run(&["get", "item", "synthetic"]),
+            Err(Failure::StalePage)
+        );
+        assert!(runner.0.lock().unwrap().is_empty());
+        release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = settings.shutdown_status();
+            if status.unjoined == 0 {
+                assert_eq!(status.returned, 1);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(settings.accounts.is_empty());
+        assert!(settings.logins.is_empty());
+        assert!(settings.updates.try_recv().is_err());
     }
 }

@@ -2,6 +2,7 @@
 //! Entity<SessionImportPanel>, call set_project on destination changes, render it,
 //! and subscribe to SessionImportEvent::Imported to select the persisted thread.
 //! Every API call runs on a single background worker, never on the GPUI thread.
+use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::base::Disableable;
@@ -140,6 +141,23 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
     }
 }
 
+fn run_admitted(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    action: Action,
+    admission: &crate::worker_owner::Admission,
+) -> Result<Outcome> {
+    run(
+        &mut |method, params| {
+            ensure!(admission.allowed(), "Session import admissions are closed");
+            api(method, params)
+        },
+        action,
+    )
+}
+fn finish_choice(workers: &mut WorkerOwner, expected: u64, current: u64) -> bool {
+    workers.finish_picker() && expected == current
+}
+
 pub enum SessionImportEvent {
     Imported { thread_id: String },
 }
@@ -149,12 +167,13 @@ pub struct SessionImportPanel {
     project: Option<String>,
     generation: u64,
     busy: bool,
+    workers: WorkerOwner,
     choosing: bool,
     preview: Option<Preview>,
     notice: String,
     tx: mpsc::Sender<(u64, Result<Outcome>)>,
     rx: mpsc::Receiver<(u64, Result<Outcome>)>,
-    _poll: Task<()>,
+    _poll: Option<Task<()>>,
 }
 impl EventEmitter<SessionImportEvent> for SessionImportPanel {}
 impl SessionImportPanel {
@@ -176,18 +195,19 @@ impl SessionImportPanel {
             project: None,
             generation: 0,
             busy: false,
+            workers: WorkerOwner::default(),
             choosing: false,
             preview: None,
             notice: "Choose a CLI provider and a session JSONL file.".into(),
             tx,
             rx,
-            _poll: poll,
+            _poll: Some(poll),
         }
     }
     /// Capture destination at preview time; never silently import into a newly
     /// selected project. An in-flight import still emits its actual persisted ID.
     pub fn set_project(&mut self, project: Option<String>, cx: &mut Context<Self>) {
-        if self.project == project {
+        if self.workers.closed() || self.project == project {
             return;
         }
         self.project = project;
@@ -198,7 +218,7 @@ impl SessionImportPanel {
         cx.notify();
     }
     fn provider(&mut self, provider: &str, cx: &mut Context<Self>) {
-        if self.busy || self.choosing || self.provider == provider {
+        if self.workers.closed() || self.busy || self.choosing || self.provider == provider {
             return;
         }
         self.provider = provider.into();
@@ -208,7 +228,7 @@ impl SessionImportPanel {
         cx.notify();
     }
     fn choose(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.choosing {
+        if self.busy || self.choosing || !self.workers.begin_picker() {
             return;
         }
         self.choosing = true;
@@ -232,7 +252,7 @@ impl SessionImportPanel {
             let result: Result<_> = async { Ok(picker.await??) }.await;
             let _ = this.update(cx, |this, cx| {
                 this.choosing = false;
-                if generation != this.generation {
+                if !finish_choice(&mut this.workers, generation, this.generation) {
                     cx.notify();
                     return;
                 }
@@ -256,7 +276,7 @@ impl SessionImportPanel {
         .detach();
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
-        if self.busy || self.choosing {
+        if self.busy || self.choosing || !self.workers.can_start() {
             return;
         }
         self.busy = true;
@@ -269,13 +289,49 @@ impl SessionImportPanel {
         let generation = self.generation;
         let engine = self.engine.clone();
         // Worker owns every Engine lock and source parse. GPUI polls only a channel.
-        std::thread::spawn(move || {
-            let result = run(&mut |method, params| call(&engine, method, params), action);
+        if !self.workers.spawn(move |admission| {
+            let result = run_admitted(
+                &mut |method, params| call(&engine, method, params),
+                action,
+                &admission,
+            );
             let _ = tx.send((generation, result));
-        });
+        }) {
+            self.busy = false;
+            self.notice = "Session import worker could not start.".into();
+        }
         cx.notify();
     }
+    pub fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.generation = self.generation.wrapping_add(1);
+            self.preview = None;
+            drop(self._poll.take());
+        }
+        self.discard_results();
+    }
+    fn discard_results(&mut self) {
+        for result in self.rx.try_iter() {
+            drop(result);
+            self.busy = false;
+        }
+    }
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        let status = self.workers.status();
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        status
+    }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_results();
+            return;
+        }
         let Ok((generation, result)) = self.rx.try_recv() else {
             return;
         };
@@ -305,9 +361,14 @@ impl SessionImportPanel {
         cx.notify();
     }
 }
+impl Drop for SessionImportPanel {
+    fn drop(&mut self) {
+        self.request_shutdown();
+    }
+}
 impl Render for SessionImportPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let disabled = self.busy || self.choosing;
+        let disabled = self.busy || self.choosing || self.workers.closed();
         let mut pane = div().id("session-import-panel").size_full().flex().flex_col().gap_2().p_3()
             .child("Import CLI session")
             .child("Choose a provider explicitly. Only text is shown; unsupported records stay in the preserved original.")
@@ -555,5 +616,43 @@ mod fixture_tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+    #[::core::prelude::v1::test]
+    fn closed_import_owner_rejects_late_picker_and_worker_api_dispatch() {
+        let mut workers = WorkerOwner::default();
+        assert!(workers.begin_picker());
+        workers.close();
+        assert_eq!(workers.status().pending_pickers, 1);
+        assert!(!finish_choice(&mut workers, 4, 4));
+        assert_eq!(workers.status().pending_pickers, 0);
+        let mut workers = WorkerOwner::default();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        assert!(workers.spawn(move |admission| {
+            ready_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            let action = Action::Preview(Selection {
+                path: PathBuf::from("/synthetic/session.jsonl"),
+                provider: "codex".into(),
+                project: None,
+            });
+            let result = run_admitted(
+                &mut |_, _| panic!("closed worker must not touch Engine or source"),
+                action,
+                &admission,
+            );
+            result_tx.send(result.is_err()).unwrap();
+        }));
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        workers.close();
+        release_tx.send(()).unwrap();
+        assert!(result_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while workers.status().unjoined != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(workers.status().returned, 1);
     }
 }
