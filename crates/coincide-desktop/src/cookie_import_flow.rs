@@ -68,6 +68,26 @@ enum Completion {
     Parsed(u64, std::result::Result<Plan, String>),
     Approved(u64, std::result::Result<PreparedImport, String>),
 }
+// UI metadata only. Cookie values, source paths and native custody never enter
+// this publication key; actual workflow authority remains in the owned fields.
+#[derive(PartialEq, Eq)]
+struct PreviewPresentation {
+    hosts: Vec<(String, usize)>,
+    expired: usize,
+    unsupported: usize,
+}
+#[derive(Default, PartialEq, Eq)]
+struct Presentation {
+    busy: bool,
+    closed: bool,
+    context_available: bool,
+    named_store_available: bool,
+    preview: Option<PreviewPresentation>,
+    selected: BTreeSet<String>,
+    page: usize,
+    cleanup: usize,
+    status: ImportStatus,
+}
 #[derive(Default)]
 pub(crate) struct Flow {
     workers: WorkerOwner,
@@ -85,6 +105,8 @@ pub(crate) struct Flow {
     destination: Option<Uuid>,
     creation_acknowledged: bool,
     marker_acknowledged: bool,
+    published: Presentation,
+    presentation_dirty: bool,
     pub(crate) status: ImportStatus,
 }
 fn now() -> i64 {
@@ -171,6 +193,9 @@ impl Flow {
             .ok()
             .and_then(|mut mailbox| mailbox.take());
         if let Some(completion) = completion {
+            // Dispatch may have rendered busy=true and completed between panel
+            // polls, even if its final metadata equals the last publication.
+            self.presentation_dirty |= self.busy;
             self.busy = false;
             match completion {
                 Completion::Parsed(generation, result) => match result {
@@ -199,6 +224,36 @@ impl Flow {
         {
             self.cleanup_workers.close();
         }
+    }
+    pub(crate) fn take_presentation_changed(&mut self) -> bool {
+        let next = Presentation {
+            busy: self.busy,
+            closed: self.workers.closed(),
+            context_available: self.context.is_some(),
+            named_store_available: self
+                .context
+                .as_ref()
+                .is_some_and(|context| context.snapshot.persistent_profiles_available),
+            preview: self.plan.as_ref().map(|plan| {
+                let preview = plan.preview();
+                PreviewPresentation {
+                    hosts: preview
+                        .hosts
+                        .iter()
+                        .map(|host| (host.host.clone(), host.cookies))
+                        .collect(),
+                    expired: preview.expired,
+                    unsupported: preview.unsupported,
+                }
+            }),
+            selected: self.selected.clone(),
+            page: self.page,
+            cleanup: self.cleanup_count(),
+            status: self.status.clone(),
+        };
+        let changed = std::mem::take(&mut self.presentation_dirty) || self.published != next;
+        self.published = next;
+        changed
     }
     fn current(&self, generation: u64) -> bool {
         !self.workers.closed()
@@ -591,6 +646,82 @@ mod tests {
         let plan = Plan::read(NativeSource::from_native_choice(path.clone()), 1).unwrap();
         fs::remove_file(path).unwrap();
         plan
+    }
+    #[::core::prelude::v1::test]
+    fn typed_parse_completion_and_error_publish_once_without_another_ui_action() {
+        let mut flow = Flow::default();
+        flow.set_snapshot(Some(snapshot()));
+        let generation = flow.context.as_ref().unwrap().generation;
+        flow.busy = true;
+        assert!(flow.take_presentation_changed());
+        assert!(!flow.take_presentation_changed());
+        *flow.mailbox.lock().unwrap() = Some(Completion::Parsed(generation, Ok(synthetic_plan())));
+        // A non-UI shutdown-status observer may poll first; it must not consume
+        // the presentation event that the actual panel poll will publish.
+        flow.poll();
+        assert!(flow.plan.is_some());
+        assert!(!flow.busy);
+        assert!(flow.take_presentation_changed());
+        flow.poll();
+        assert!(!flow.take_presentation_changed());
+        // Identical preview metadata may complete between two panel polls;
+        // dispatch's own redraw must still be followed by an enabled redraw.
+        flow.busy = true;
+        *flow.mailbox.lock().unwrap() = Some(Completion::Parsed(generation, Ok(synthetic_plan())));
+        flow.poll();
+        assert!(flow.take_presentation_changed());
+        assert!(!flow.take_presentation_changed());
+        flow.busy = true;
+        assert!(flow.take_presentation_changed());
+        *flow.mailbox.lock().unwrap() = Some(Completion::Parsed(
+            generation,
+            Err("Synthetic source changed; nothing imported".into()),
+        ));
+        flow.poll();
+        assert!(!flow.busy);
+        assert_eq!(
+            flow.status.message,
+            "Synthetic source changed; nothing imported"
+        );
+        assert!(flow.take_presentation_changed());
+        flow.poll();
+        assert!(!flow.take_presentation_changed());
+        assert_eq!(flow.context.as_ref().unwrap().generation, generation);
+        assert!(flow.context.as_ref().unwrap().valid());
+        assert!(!flow.workers.closed());
+        assert!(flow.reserve.is_none() && flow.prepared.is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn cleanup_count_uncertainty_and_recovery_publish_once_even_after_close() {
+        let mut flow = Flow::default();
+        flow.close();
+        assert!(flow.take_presentation_changed());
+        assert!(!flow.take_presentation_changed());
+        // Exercise the real conservative cleanup-count path: an unavailable
+        // registry must show owned/unknown cleanup rather than disappear.
+        let cleanup = flow.cleanup.clone();
+        assert!(
+            std::thread::spawn(move || {
+                let _held = cleanup.lock().unwrap();
+                panic!("Synthetic cleanup registry poison");
+            })
+            .join()
+            .is_err()
+        );
+        assert_eq!(flow.cleanup_count(), 1);
+        flow.poll();
+        assert!(flow.take_presentation_changed());
+        flow.poll();
+        assert!(!flow.take_presentation_changed());
+        // No cleanup ACK or native work is fabricated: the underlying registry
+        // is actually empty, and restoring access makes its true count visible.
+        flow.cleanup.clear_poison();
+        assert_eq!(flow.cleanup_count(), 0);
+        flow.poll();
+        assert!(flow.take_presentation_changed());
+        flow.poll();
+        assert!(!flow.take_presentation_changed());
+        assert!(flow.workers.closed());
     }
     #[::core::prelude::v1::test]
     fn close_reopen_before_poll_discards_typed_late_preview_and_reservation() {

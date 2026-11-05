@@ -916,6 +916,11 @@ impl BrowserSettings {
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
         self.cookie_flow.poll();
+        // Worker completion and cleanup custody can change without any input or
+        // profile snapshot change. Publish only actual UI-state transitions.
+        if self.cookie_flow.take_presentation_changed() {
+            cx.notify();
+        }
         self.workers.poll();
         if self.workers.closed() {
             self.discard_shutdown_results();
