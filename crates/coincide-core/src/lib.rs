@@ -44,3 +44,7 @@ pub mod model_catalog;
 pub mod github_threads;
 
 pub mod updater_install;
+
+pub mod computer_use;
+
+pub mod legacy_media_recovery;

@@ -13,6 +13,7 @@ path = "src/main.rs"
 default = []
 native-notifications = ["dep:objc2-user-notifications"]
 native-microphone = []
+native-computer-use = []
 
 [dependencies]
 coincide-core = { path = "../coincide-core" }
