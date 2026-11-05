@@ -554,7 +554,8 @@ impl Coincide {
             provider.is_some_and(|provider| provider["modelDiscovery"]["supported"] == true);
         let discovery_reason = provider
             .and_then(|provider| provider["modelDiscovery"]["reason"].as_str())
-            .unwrap_or("Model discovery is unavailable for this provider.");
+            .unwrap_or("Model discovery is unavailable for this provider.")
+            .to_owned();
         pane = pane.child(
             Button::new("selection-model-refresh")
                 .label("Refresh provider model catalog")
@@ -569,7 +570,7 @@ impl Coincide {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
         );
-        pane=pane.child(div().text_xs().child(if discovery_supported {"Catalog refresh explicitly starts the provider's read-only discovery process. It sends no prompt and does not change selection."}else{discovery_reason}));
+        pane=pane.child(div().text_xs().child(if discovery_supported {"Catalog refresh explicitly starts the provider's read-only discovery process. It sends no prompt and does not change selection.".to_owned()}else{discovery_reason}));
         let catalog = &self.selection_ui.catalog;
         let same_scope = catalog["provider"].as_str() == Some(draft.provider.as_str())
             && catalog["accountID"].as_str() == default_account_id(&draft.account);
