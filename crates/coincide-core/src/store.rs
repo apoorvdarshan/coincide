@@ -22,6 +22,8 @@ pub struct ThreadSummary {
     pub project_id: String,
     pub archived: bool,
     pub pinned: bool,
+    #[serde(default)]
+    pub snoozed_until: Option<f64>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -83,7 +85,7 @@ impl Store {
                     r.get(0)
                 })?;
             ensure!(
-                version == "1" || version == "2",
+                matches!(version.as_str(), "1" | "2" | "3"),
                 "Unsupported Coincide database version: {version}"
             );
             version
@@ -93,13 +95,13 @@ impl Store {
             "0".to_owned()
         };
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        if version != "2" {
+        if version != "2" && version != "3" {
             let tx = db.transaction()?;
             tx.execute_batch("CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS original_files(path TEXT PRIMARY KEY, data BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK(json_valid(document)));
                 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(thread_id UNINDEXED, title, body);
-                CREATE TABLE IF NOT EXISTS thread_summaries(id TEXT PRIMARY KEY COLLATE NOCASE, title TEXT NOT NULL, project_id TEXT NOT NULL, archived INTEGER NOT NULL, pinned INTEGER NOT NULL, updated_at REAL NOT NULL, search_body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS thread_summaries(id TEXT PRIMARY KEY COLLATE NOCASE, title TEXT NOT NULL, project_id TEXT NOT NULL, archived INTEGER NOT NULL, pinned INTEGER NOT NULL, updated_at REAL NOT NULL, search_body TEXT NOT NULL, snoozed_until REAL);
                 CREATE INDEX IF NOT EXISTS thread_summaries_order ON thread_summaries(archived,pinned DESC,updated_at DESC);
                 CREATE INDEX IF NOT EXISTS thread_summaries_project ON thread_summaries(project_id);
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(thread_id UNINDEXED, body, tokenize='trigram case_sensitive 1');
@@ -127,7 +129,33 @@ impl Store {
             // Capture import identity once; runtime checks no longer scan every
             // original transcript BLOB to decide whether a session is imported.
             tx.execute("INSERT INTO imported_threads(id) SELECT json_extract(CAST(data AS TEXT),'$.id') FROM original_files WHERE path LIKE 'threads/%.json' AND json_valid(CAST(data AS TEXT)) AND json_type(CAST(data AS TEXT),'$.id')='text'",[])?;
-            tx.execute("INSERT INTO metadata(key,value) VALUES ('schema','2') ON CONFLICT(key) DO UPDATE SET value='2'",[])?;
+            tx.execute("INSERT INTO metadata(key,value) VALUES ('schema','3') ON CONFLICT(key) DO UPDATE SET value='3'",[])?;
+            tx.commit()?;
+        }
+        if version == "2" {
+            let tx = db.transaction()?;
+            tx.execute(
+                "ALTER TABLE thread_summaries ADD COLUMN snoozed_until REAL",
+                [],
+            )?;
+            {
+                let mut stmt = tx.prepare("SELECT id,document FROM threads")?;
+                let rows =
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                for row in rows {
+                    let (id, document) = row?;
+                    let value: Value = serde_json::from_str(&document)?;
+                    ensure!(
+                        validate_thread(&value)? == id,
+                        "Thread row ID differs from its document"
+                    );
+                    tx.execute(
+                        "UPDATE thread_summaries SET snoozed_until=?2 WHERE id=?1",
+                        params![id, snooze_timestamp(&value["snoozedUntil"])],
+                    )?;
+                }
+            }
+            tx.execute("UPDATE metadata SET value='3' WHERE key='schema'", [])?;
             tx.commit()?;
         }
         #[cfg(unix)]
@@ -240,7 +268,7 @@ impl Store {
             " AND instr(search_body,?2)>0"
         };
         let sql = format!(
-            "SELECT id,title,project_id,archived,pinned FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
+            "SELECT id,title,project_id,archived,pinned,snoozed_until FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
         let mut stmt = self.db.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
@@ -250,6 +278,7 @@ impl Store {
                 project_id: r.get(2)?,
                 archived: r.get(3)?,
                 pinned: r.get(4)?,
+                snoozed_until: r.get(5)?,
             })
         };
         let result = if query.is_empty() {
@@ -522,13 +551,20 @@ fn validate_patch(patch: &serde_json::Map<String, Value>) -> Result<()> {
             "title" | "draft" => ensure!(value.is_string(), "{key} must be text"),
             "isPinned" | "isArchived" => ensure!(value.is_boolean(), "{key} must be boolean"),
             "snoozedUntil" => ensure!(
-                value.is_null() || value.is_number() || value.is_string(),
+                value.is_null() || snooze_timestamp(value).is_some(),
                 "Invalid snooze date"
             ),
             _ => bail!("Unsupported thread patch field: {key}"),
         }
     }
     Ok(())
+}
+fn snooze_timestamp(value: &Value) -> Option<f64> {
+    value.as_f64().filter(|n| n.is_finite()).or_else(|| {
+        chrono::DateTime::parse_from_rfc3339(value.as_str()?)
+            .ok()
+            .map(|date| date.timestamp_millis() as f64 / 1000.0 - 978307200.0)
+    })
 }
 fn cache_thread(db: &Connection, v: &Value, reindex: bool) -> Result<()> {
     let id = validate_thread(v)?;
@@ -543,14 +579,14 @@ fn cache_thread(db: &Connection, v: &Value, reindex: bool) -> Result<()> {
     };
     if reindex {
         let body = search_text(v).to_lowercase();
-        db.execute("INSERT INTO thread_summaries(id,title,project_id,archived,pinned,updated_at,search_body) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET title=excluded.title,project_id=excluded.project_id,archived=excluded.archived,pinned=excluded.pinned,updated_at=excluded.updated_at,search_body=excluded.search_body",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated,body])?;
+        db.execute("INSERT INTO thread_summaries(id,title,project_id,archived,pinned,updated_at,search_body,snoozed_until) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET title=excluded.title,project_id=excluded.project_id,archived=excluded.archived,pinned=excluded.pinned,updated_at=excluded.updated_at,search_body=excluded.search_body,snoozed_until=excluded.snoozed_until",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated,body,snooze_timestamp(&v["snoozedUntil"])])?;
         db.execute("DELETE FROM search_trigram WHERE thread_id=?1", [id])?;
         db.execute(
             "INSERT INTO search_trigram(thread_id,body) VALUES (?1,?2)",
             params![id, body],
         )?;
     } else {
-        db.execute("UPDATE thread_summaries SET title=?2,project_id=?3,archived=?4,pinned=?5,updated_at=?6 WHERE id=?1",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated])?;
+        db.execute("UPDATE thread_summaries SET title=?2,project_id=?3,archived=?4,pinned=?5,updated_at=?6,snoozed_until=?7 WHERE id=?1",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated,snooze_timestamp(&v["snoozedUntil"])])?;
     }
     Ok(())
 }
@@ -873,5 +909,59 @@ mod tests {
                 .unwrap(),
             "{}"
         );
+    }
+    #[test]
+    fn snooze_cache_migrates_v2_and_tracks_patches_without_transcript_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v2.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        store.save(&json!({"id":ID,"title":"Snoozed","items":[],"snoozedUntil":"2026-01-01T00:00:01Z","future":42})).unwrap();
+        store.db.execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema';").unwrap();
+        let original = store.thread(ID).unwrap();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(
+            store.summaries("", false).unwrap()[0].snoozed_until,
+            Some(788918401.0)
+        );
+        assert_eq!(store.thread(ID).unwrap(), original);
+        assert!(
+            store
+                .patch_thread(ID, &json!({"snoozedUntil":"not a date"}))
+                .is_err()
+        );
+        store
+            .patch_thread(ID, &json!({"snoozedUntil":123.0}))
+            .unwrap();
+        assert_eq!(
+            store.summaries("", false).unwrap()[0].snoozed_until,
+            Some(123.0)
+        );
+        store
+            .patch_thread(ID, &json!({"snoozedUntil":null}))
+            .unwrap();
+        store.db.execute("DROP TABLE threads", []).unwrap();
+        assert_eq!(store.summaries("", false).unwrap()[0].snoozed_until, None);
+    }
+    #[test]
+    fn failed_v2_migration_rolls_back_snooze_column_and_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid-v2.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .save(&json!({"id":ID,"title":"Preserve","items":[]}))
+            .unwrap();
+        store.db.execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema'; UPDATE threads SET document='{}';").unwrap();
+        drop(store);
+        assert!(Store::open(&path).is_err());
+        let db = Connection::open(&path).unwrap();
+        assert_eq!(
+            db.query_row("SELECT value FROM metadata WHERE key='schema'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "2"
+        );
+        assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('thread_summaries') WHERE name='snoozed_until'",[],|r|r.get::<_,u32>(0)).unwrap(),0);
     }
 }

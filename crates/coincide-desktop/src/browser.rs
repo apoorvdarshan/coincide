@@ -2,8 +2,8 @@
 //! callbacks return bounded payloads without holding an engine mutex.
 use anyhow::{Context, Result, ensure};
 use coincide_core::browser_protocol::{
-    BrowserAction, BrowserReply, BrowserRequest, DownloadRegistry, allow_native_navigation,
-    script_for_request, validate_url,
+    BrowserAction, BrowserConsole, BrowserReply, BrowserRequest, CONSOLE_SCRIPT, DownloadRegistry,
+    allow_native_navigation, script_for_request, validate_url,
 };
 use gpui_kit::{App, AppContext, Entity, Window};
 use gpui_webview::WebView;
@@ -15,6 +15,7 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::mpsc::{self, Receiver, SyncSender},
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 #[cfg(target_os = "macos")]
@@ -26,10 +27,25 @@ struct Tab {
     title: String,
     url: String,
     loading: bool,
+    console: Rc<RefCell<BrowserConsole>>,
+}
+struct PendingWait {
+    request: BrowserRequest,
+    tab: String,
+    started: Instant,
+    deadline: Instant,
+    next_probe: Instant,
+    in_flight: bool,
 }
 enum NativeEvent {
     DownloadsChanged,
     Reply(BrowserReply),
+    WaitReply {
+        id: String,
+        thread: String,
+        tab: String,
+        result: Value,
+    },
     Title {
         thread: String,
         tab: String,
@@ -56,6 +72,7 @@ pub struct BrowserController {
     sender: SyncSender<NativeEvent>,
     context: wry::WebContext,
     downloads: Rc<RefCell<DownloadRegistry>>,
+    waits: HashMap<String, PendingWait>,
     #[cfg(target_os = "macos")]
     profile_id: [u8; 16],
 }
@@ -109,6 +126,7 @@ impl BrowserController {
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(
                 profile_dir.join("downloads"),
             )?)),
+            waits: HashMap::new(),
             #[cfg(target_os = "macos")]
             profile_id,
         })
@@ -189,6 +207,28 @@ impl BrowserController {
             .and_then(|tabs| tabs.iter().position(|tab| tab.id == target))
             .context("No such tab in this thread")?;
         match &request.action {
+            BrowserAction::Console { clear } => Ok(Some(
+                self.tabs[thread][index].console.borrow_mut().read(*clear),
+            )),
+            BrowserAction::WaitFor { timeout, .. } => {
+                ensure!(
+                    self.waits.len() < 32,
+                    "At most 32 browser waits may be active"
+                );
+                let now = Instant::now();
+                self.waits.insert(
+                    request.id.clone(),
+                    PendingWait {
+                        tab: target,
+                        started: now,
+                        deadline: now + Duration::from_secs(*timeout),
+                        next_probe: now,
+                        in_flight: false,
+                        request,
+                    },
+                );
+                Ok(None)
+            }
             BrowserAction::SelectTab => {
                 self.active.insert(thread.clone(), target);
                 if self.visible.as_deref() == Some(thread) {
@@ -230,13 +270,7 @@ impl BrowserController {
                     .read(cx)
                     .raw()
                     .evaluate_script_with_callback(&source, move |payload| {
-                        let result = if payload.len() > 1024 * 1024 {
-                            json!({"error":"Browser result exceeds 1 MiB"})
-                        } else {
-                            serde_json::from_str(&payload).unwrap_or_else(
-                                |_| json!({"error":"Browser returned invalid JSON"}),
-                            )
-                        };
+                        let result = parse_script_result(&payload);
                         let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
                             id: id.clone(),
                             thread_id: thread_id.clone(),
@@ -280,11 +314,19 @@ impl BrowserController {
         let completed_thread = thread.to_owned();
         let completed_tab = id.clone();
         let completed_sender = self.sender.clone();
+        let console = Rc::new(RefCell::new(BrowserConsole::default()));
+        let console_handler = console.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
             .with_devtools(false)
             .with_autoplay(false)
             .with_clipboard(false)
+            .with_initialization_script_for_main_only(CONSOLE_SCRIPT, false)
+            .with_ipc_handler(move |message| {
+                console_handler
+                    .borrow_mut()
+                    .receive(message.body(), &message.uri().to_string());
+            })
             .with_navigation_handler(|url| allow_native_navigation(&url))
             .with_download_started_handler(move |url, destination| {
                 // Wry 0.53 registers GTK callbacks on the shared context without
@@ -354,6 +396,7 @@ impl BrowserController {
             title: "New tab".into(),
             url: url.into(),
             loading: url != "about:blank",
+            console,
         });
         self.active.insert(thread.into(), id.clone());
         // New background tabs must not steal another thread's browser pane.
@@ -364,11 +407,33 @@ impl BrowserController {
 
     pub fn poll(&mut self, window: &mut Window, cx: &mut App) -> bool {
         let events = self.events.try_iter().take(512).collect::<Vec<_>>();
-        let changed = !events.is_empty();
+        let mut changed = !events.is_empty();
         for event in events {
             match event {
                 NativeEvent::DownloadsChanged => {}
                 NativeEvent::Reply(reply) => self.replies.push_back(reply),
+                NativeEvent::WaitReply {
+                    id,
+                    thread,
+                    tab,
+                    result,
+                } => {
+                    if let Some(wait) = self.waits.get_mut(&id) {
+                        if wait.request.thread_id != thread || wait.tab != tab {
+                            continue;
+                        }
+                        wait.in_flight = false;
+                        if Instant::now() >= wait.deadline {
+                            let wait = self.waits.remove(&id).expect("existing wait");
+                            self.finish_wait(wait, json!({"found":false,"error":"Timed out waiting for the browser condition"}));
+                        } else if result.get("error").is_some() || result["found"] == true {
+                            let wait = self.waits.remove(&id).expect("existing wait");
+                            self.finish_wait(wait, result);
+                        } else {
+                            wait.next_probe = Instant::now() + Duration::from_millis(250);
+                        }
+                    }
+                }
                 NativeEvent::Title { thread, tab, title } => {
                     if let Some(tab) = self
                         .tabs
@@ -397,6 +462,79 @@ impl BrowserController {
                     let _ = self.create_tab(&thread, &url, window, cx);
                 }
             }
+        }
+        changed |= self.poll_waits(cx);
+        changed
+    }
+
+    fn finish_wait(&mut self, wait: PendingWait, mut result: Value) {
+        if let Some(object) = result.as_object_mut() {
+            object.insert(
+                "waited".into(),
+                json!((wait.started.elapsed().as_secs_f64() * 10.0).round() / 10.0),
+            );
+            object.insert("tab".into(), json!(wait.tab));
+        }
+        self.replies.push_back(BrowserReply {
+            id: wait.request.id,
+            thread_id: wait.request.thread_id,
+            result,
+        });
+    }
+
+    fn poll_waits(&mut self, cx: &App) -> bool {
+        let mut changed = false;
+        for (id, mut wait) in std::mem::take(&mut self.waits) {
+            let now = Instant::now();
+            if now >= wait.deadline {
+                self.finish_wait(
+                    wait,
+                    json!({"found":false,"error":"Timed out waiting for the browser condition"}),
+                );
+                changed = true;
+                continue;
+            }
+            let tab = self
+                .tabs
+                .get(&wait.request.thread_id)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == wait.tab));
+            let Some(tab) = tab else {
+                self.finish_wait(
+                    wait,
+                    json!({"found":false,"error":"Browser tab closed while waiting"}),
+                );
+                changed = true;
+                continue;
+            };
+            if !wait.in_flight && now >= wait.next_probe {
+                let source = script_for_request(&wait.request)
+                    .and_then(|script| script.context("Unsupported wait operation"));
+                let result = source.and_then(|source| {
+                    let sender = self.sender.clone();
+                    let id = id.clone();
+                    let thread = wait.request.thread_id.clone();
+                    let tab_id = wait.tab.clone();
+                    tab.view
+                        .read(cx)
+                        .raw()
+                        .evaluate_script_with_callback(&source, move |payload| {
+                            let _ = sender.try_send(NativeEvent::WaitReply {
+                                id: id.clone(),
+                                thread: thread.clone(),
+                                tab: tab_id.clone(),
+                                result: parse_script_result(&payload),
+                            });
+                        })
+                        .map_err(Into::into)
+                });
+                if let Err(error) = result {
+                    self.finish_wait(wait, json!({"error":error.to_string()}));
+                    changed = true;
+                    continue;
+                }
+                wait.in_flight = true;
+            }
+            self.waits.insert(id, wait);
         }
         changed
     }
@@ -430,5 +568,15 @@ impl BrowserController {
     pub fn tab_list(&self, thread: &str) -> Value {
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":tab.title,"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":["download-progress","download-cancel","download-resume","blob-downloads","upload","cross-origin-frame-actions","password-manager","dialogs","native-key-events","screenshots"]})
+    }
+}
+
+fn parse_script_result(payload: &str) -> Value {
+    if payload.len() > 1024 * 1024 {
+        return json!({"error":"Browser result exceeds 1 MiB"});
+    }
+    match serde_json::from_str::<Value>(payload) {
+        Ok(value) if value.is_object() => value,
+        _ => json!({"error":"Browser returned invalid JSON"}),
     }
 }

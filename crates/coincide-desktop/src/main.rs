@@ -1,5 +1,6 @@
 use anyhow::Result;
 mod browser;
+mod navigation;
 mod queue;
 mod settings;
 use browser::BrowserController;
@@ -151,6 +152,12 @@ struct Coincide {
     threads: Vec<ThreadSummary>,
     projects: Vec<Value>,
     selected_project: Option<String>,
+    collapsed_projects: std::collections::HashSet<String>,
+    show_snoozed: bool,
+    navigation_last_clock: Instant,
+    rename_target: Option<String>,
+    rename_input: Entity<InputState>,
+    archive_confirmation: Option<String>,
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
@@ -196,6 +203,8 @@ impl Coincide {
         });
         let schedule_minutes = cx.new(|cx| InputState::new(window, cx).placeholder("Minutes"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
+        let rename_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
         let project_path =
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
@@ -208,6 +217,9 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let subscriptions = vec![
+            cx.subscribe(&rename_input, |this, _, event, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) { this.save_rename(cx); }
+            }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { shift: false, .. })
                     && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
@@ -303,6 +315,12 @@ impl Coincide {
             threads,
             projects,
             selected_project: None,
+            collapsed_projects: Default::default(),
+            show_snoozed: false,
+            navigation_last_clock: Instant::now(),
+            rename_target: None,
+            rename_input,
+            archive_confirmation: None,
             project_picker_open: false,
             project_path,
             selected: None,
@@ -632,6 +650,8 @@ impl Coincide {
                 self.expanded.clear();
                 self.selected = Some(v);
                 self.settings_open = false;
+                self.rename_target = None;
+                self.archive_confirmation = None;
                 self.pending_requests.clear();
                 let visible = self.browser_panels.contains(id).then_some(id);
                 if let Some(browser) = &mut self.browser {
@@ -959,6 +979,10 @@ impl Coincide {
             return;
         }
         self.apply_appearance(window, cx);
+        if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {
+            self.navigation_last_clock = Instant::now();
+            cx.notify();
+        }
         self.poll_browser(window, cx);
         self.poll_terminal(cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
@@ -1707,6 +1731,7 @@ impl Coincide {
             body
         };
         let label = format!("{} {}", kind, text(item, "provider"));
+        let action_excerpt: String = text(item, "text").chars().take(72).collect();
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
@@ -1724,6 +1749,9 @@ impl Coincide {
             })
             .collect::<Vec<_>>();
         let card = div()
+            .id(SharedString::from(format!(
+                "message-row-{source_id}-{item_id}"
+            )))
             .min_w_0()
             .flex_1()
             .max_w(relative(0.92))
@@ -1739,10 +1767,25 @@ impl Coincide {
                     .child(label),
             )
             .when(collapsible, |view| {
+                let source = source_id.clone();
+                let item = item_id.clone();
                 view.child(
-                    Button::new(("expand", index))
+                    Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                        .accessibility_id(SharedString::from(format!(
+                            "expand-{source_id}-{item_id}"
+                        )))
                         .label(if expanded { "Collapse" } else { "Expand" })
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source)
+                            else {
+                                return;
+                            };
+                            let Some(index) = thread["items"]
+                                .as_array()
+                                .and_then(|items| items.iter().position(|v| v["id"] == item))
+                            else {
+                                return;
+                            };
                             if !this.expanded.remove(&index) {
                                 this.expanded.insert(index);
                             }
@@ -1752,14 +1795,17 @@ impl Coincide {
                 )
             })
             .child(
-                TextView::markdown(("message", index), shown)
-                    .text_size(px(self.conversation_font_size()))
-                    .when(
-                        kind == "assistant"
-                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                                == "newYork",
-                        |view| view.font_family(settings::reply_font()),
-                    ),
+                TextView::markdown(
+                    SharedString::from(format!("message-body-{source_id}-{item_id}")),
+                    shown,
+                )
+                .text_size(px(self.conversation_font_size()))
+                .when(
+                    kind == "assistant"
+                        && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                            == "newYork",
+                    |view| view.font_family(settings::reply_font()),
+                ),
             )
             .when(!previews.is_empty(), |view| {
                 view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
@@ -1767,21 +1813,55 @@ impl Coincide {
             .when(kind == "user", |view| {
                 let source = source_id.clone();
                 let item = item_id.clone();
-                view.child(div().mt_2().child(
-                    Button::new(("edit-message-branch", index))
+                view.child(
+                    div().mt_2().child(
+                        Button::new(SharedString::from(format!(
+                            "edit-message-branch-{source_id}-{item_id}"
+                        )))
+                        .accessibility_id(SharedString::from(format!(
+                            "edit-message-branch-{source_id}-{item_id}"
+                        )))
+                        .accessibility_label(SharedString::from(format!(
+                            "Edit message in new branch: {action_excerpt}"
+                        )))
                         .label("Edit in new branch")
                         .disabled(source_running)
-                        .tooltip(if source_running { "Stop the current turn before editing an earlier message" } else { "Create a separate conversation with this message restored as a draft" })
-                        .on_click(cx.listener(move |this, _, window, cx| this.branch_from_item(&source, &item, true, window, cx)))
-                ))
+                        .tooltip(if source_running {
+                            "Stop the current turn before editing an earlier message"
+                        } else {
+                            "Create a separate conversation with this message restored as a draft"
+                        })
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.branch_from_item(&source, &item, true, window, cx)
+                            },
+                        )),
+                    ),
+                )
             })
             .when(kind == "assistant" && settled, |view| {
-                view.child(div().mt_2().child(
-                    Button::new(("fork-message-turn", index))
+                view.child(
+                    div().mt_2().child(
+                        Button::new(SharedString::from(format!(
+                            "fork-message-turn-{source_id}-{item_id}"
+                        )))
+                        .accessibility_id(SharedString::from(format!(
+                            "fork-message-turn-{source_id}-{item_id}"
+                        )))
+                        .accessibility_label(SharedString::from(format!(
+                            "Fork through response: {action_excerpt}"
+                        )))
                         .label("Fork through this turn")
-                        .tooltip("Copy settled conversation through this turn into a separate branch")
-                        .on_click(cx.listener(move |this, _, window, cx| this.branch_from_item(&source_id, &item_id, false, window, cx)))
-                ))
+                        .tooltip(
+                            "Copy settled conversation through this turn into a separate branch",
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.branch_from_item(&source_id, &item_id, false, window, cx)
+                            },
+                        )),
+                    ),
+                )
             });
         div()
             .flex()
@@ -2247,6 +2327,15 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .selected
+            .as_ref()
+            .is_none_or(|thread| thread["id"] != source)
+        {
+            self.status = "Conversation changed. Select the message again before branching.".into();
+            cx.notify();
+            return;
+        }
         let method = if edit {
             "threads.edit-branch"
         } else {
@@ -2307,129 +2396,7 @@ impl Render for Coincide {
             .as_ref()
             .map(|v| text(v, "id"))
             .unwrap_or_default();
-        let project_label = self
-            .selected_project
-            .as_ref()
-            .and_then(|id| self.projects.iter().find(|p| p["id"] == id.as_str()))
-            .map(|p| text(p, "name"))
-            .unwrap_or_else(|| "All projects".into());
-        let sidebar = div()
-            .flex()
-            .flex_col()
-            .w(px(280.))
-            .h_full()
-            .bg(self.color(0x151922))
-            .border_r_1()
-            .border_color(self.color(0x29303d))
-            .p_3()
-            .gap_3()
-            .child(div().text_xl().child("Coincide"))
-            .child(
-                Button::new("settings")
-                    .label("Settings")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.settings_open = !this.settings_open;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("new")
-                    .label("New conversation")
-                    .on_click(cx.listener(|this, _, window, cx| this.new_thread(window, cx))),
-            )
-            .child(
-                Button::new("projects-toggle")
-                    .label(format!("Project: {project_label}"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.project_picker_open = !this.project_picker_open;
-                        cx.notify();
-                    })),
-            )
-            .when(self.project_picker_open, |view| {
-                view.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(Button::new("projects-all").label("All projects").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.selected_project = None;
-                                cx.notify();
-                            }),
-                        ))
-                        .child(
-                            div()
-                                .id("project-picker")
-                                .max_h(px(180.))
-                                .overflow_y_scroll()
-                                .children(self.projects.iter().map(|project| {
-                                    let id = text(project, "id");
-                                    Button::new(SharedString::from(format!("project-{id}")))
-                                        .label(text(project, "name"))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.selected_project = Some(id.clone());
-                                            cx.notify();
-                                        }))
-                                })),
-                        )
-                        .child(Input::new(&self.project_path))
-                        .child(
-                            Button::new("project-add")
-                                .label("Add existing folder")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_project(window, cx)),
-                                ),
-                        ),
-                )
-            })
-            .child(Input::new(&self.search))
-            .child(
-                Button::new("archived")
-                    .label(if self.show_archived {
-                        "Hide archived"
-                    } else {
-                        "Show archived"
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_archived = !this.show_archived;
-                        this.refresh(cx);
-                    })),
-            )
-            .child(
-                div().id("threads").flex_1().overflow_y_scroll().children(
-                    self.threads
-                        .iter()
-                        .filter(|thread| {
-                            self.selected_project
-                                .as_ref()
-                                .is_none_or(|id| &thread.project_id == id)
-                        })
-                        .map(|thread| {
-                            let id = thread.id.clone();
-                            div()
-                                .id(SharedString::from(id.clone()))
-                                .p_3()
-                                .rounded_md()
-                                .cursor_pointer()
-                                .bg(if id == selected_id {
-                                    self.color(0x2b3549)
-                                } else {
-                                    self.color(0x151922)
-                                })
-                                .when(id == selected_id, |row| {
-                                    row.border_l_2().border_color(self.color(0x98b1d4))
-                                })
-                                .child(format!(
-                                    "{}{}",
-                                    if thread.pinned { "★ " } else { "" },
-                                    thread.title
-                                ))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.select(&id, window, cx)
-                                }))
-                        }),
-                ),
-            );
+        let sidebar = self.navigation_sidebar(&selected_id, cx);
         let title = self
             .selected
             .as_ref()
@@ -2518,10 +2485,36 @@ impl Render for Coincide {
                             .child(Button::new("pin").label("Pin / unpin").on_click(
                                 cx.listener(|this, _, _, cx| this.toggle("isPinned", cx)),
                             ))
-                            .child(Button::new("archive").label("Archive / restore").on_click(
-                                cx.listener(|this, _, _, cx| this.toggle("isArchived", cx)),
-                            )),
+                            .child(
+                                Button::new("rename-thread")
+                                    .label("Rename")
+                                    .disabled(self.selected.is_none())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.begin_rename(window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("archive")
+                                    .label(
+                                        if self
+                                            .selected
+                                            .as_ref()
+                                            .is_some_and(|v| v["isArchived"] == true)
+                                        {
+                                            "Restore"
+                                        } else {
+                                            "Archive"
+                                        },
+                                    )
+                                    .disabled(self.selected.is_none())
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.request_archive(cx)),
+                                    ),
+                            ),
                     )
+                    .when_some(self.thread_management(cx), |view, management| {
+                        view.child(management)
+                    })
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when(self.terminal_id.is_some(), |view| {

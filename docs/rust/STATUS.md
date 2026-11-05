@@ -91,7 +91,18 @@ Checkpoint `cdbeb48` passed every applicable GitHub check. The next parallel bat
 passes 142 portable tests, strict core clippy and both Mac/Linux desktop builds.
 Native WebKit checks verified nested frames, editing/select/click, sensitive-field
 refusal, scrolling, cross-origin refusal and stale ancestor handles. Native settings
-Light/Paper changes persisted and survived restart. This batch still needs its own CI.
+Light/Paper changes persisted and survived restart. Native queue pause/resume and
+settled-turn forks passed. macOS CI exposed reverse-DNS blocking in the synthetic
+OpenCode HTTP fixture; checkpoint `49d6ba0` removes that lookup and passes the full
+Rust GitHub workflow. Legacy Swift CI is still pending.
+
+The next navigation/browser batch passes 147 portable tests, strict core clippy and
+Mac/Linux desktop builds. Native checks verified isolated console capture/clear,
+selector/text/frame waits and tab-close cancellation, selected-element reads and
+pagination. Native projectless filtering/collapse, rename, snooze/unsnooze,
+archive confirmation/restore and edit-message branching passed. Stable thread/item
+accessibility IDs replace recycled transcript action IDs. These additions still
+need their own pushed checkpoint and CI.
 
 CI now uses sparse Rust checkouts and compiler-aware cache fallbacks across lockfile
 changes. Rust-only files are excluded from Swift's change classifier; changes to that
@@ -115,6 +126,9 @@ Implemented foundations are deliberately narrower than full feature groups:
   Progress/cancel/resume, blob downloads and persistent history remain. Same-origin
   nested frames have expiring handles; read/click/input/type/scroll reject stale
   ancestors. Native srcdoc navigation works while public navigation stays HTTP(S).
+  Console captures bounded primitive-only diagnostics with per-tab clearing. Native
+  nonblocking waits support selectors/text/same-origin frames with bounded timeouts;
+  closing a tab cancels its waits. Reads report truncation and invalid pages.
 - Terminal has real PTYs, native create/select/close tabs and a styled desktop grid. API clients can request
   paged RGB/style/cursor snapshots (at most ten rows); plain polling stays lightweight.
   The desktop assembles coherent revision-matched pages, capped at 40 visible rows.
@@ -130,7 +144,11 @@ Implemented foundations are deliberately narrower than full feature groups:
   authorize Rust execution; imported thread execution still requires a fork.
   Native creation currently exposes once/interval; richer recurrence editing and
   complete legacy scheduling UI parity remain.
-- Project selection and existing-folder registration are in the preview. Bounded
+- Grouped project navigation includes an explicit projectless filter, collapse,
+  rename, snooze/unsnooze and archive confirmation/restore. Snooze dates are cached
+  transactionally in schema 3; filtering avoids decoding entire transcripts.
+  Collapse/filter preferences remain session-local; multi-select and undo remain.
+  Project selection and existing-folder registration are in the preview. Bounded
   background Git status/diff, file listing and text-file reads are available through
   API/CLI; Git mutations, worktree/checkpoint UI and provider context injection remain.
 - Images import asynchronously through API/CLI or a native file picker. PNG/JPEG/

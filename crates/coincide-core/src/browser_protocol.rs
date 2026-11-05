@@ -52,6 +52,18 @@ pub enum BrowserAction {
         by: Option<i32>,
     },
     Frames,
+    Console {
+        #[serde(default)]
+        clear: bool,
+    },
+    WaitFor {
+        #[serde(default)]
+        selector: Option<String>,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default = "default_wait_timeout")]
+        timeout: u64,
+    },
     Back,
     Forward,
     Reload,
@@ -75,6 +87,9 @@ pub enum ScrollEdge {
 }
 fn first_page() -> usize {
     1
+}
+fn default_wait_timeout() -> u64 {
+    10
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -105,6 +120,7 @@ impl BrowserRequest {
                         | BrowserAction::Input { .. }
                         | BrowserAction::Type { .. }
                         | BrowserAction::Scroll { .. }
+                        | BrowserAction::WaitFor { .. }
                 ),
                 "This action cannot target a frame"
             );
@@ -120,6 +136,29 @@ impl BrowserRequest {
                 }
             }
             BrowserAction::Click { selector } => validate_selector(selector)?,
+            BrowserAction::WaitFor {
+                selector,
+                text,
+                timeout,
+            } => {
+                ensure!(
+                    (1..=20).contains(timeout),
+                    "Wait timeout must be between 1 and 20 seconds"
+                );
+                ensure!(
+                    selector.is_some() || text.is_some(),
+                    "Wait requires a selector or text"
+                );
+                if let Some(selector) = selector {
+                    validate_selector(selector)?;
+                }
+                if let Some(text) = text {
+                    ensure!(
+                        !text.is_empty() && text.len() <= 20000,
+                        "Wait text must contain 1–20000 bytes"
+                    );
+                }
+            }
             BrowserAction::Input { selector, text }
             | BrowserAction::Type { selector, text, .. } => {
                 validate_selector(selector)?;
@@ -177,6 +216,83 @@ fn validate_selector(selector: &str) -> Result<()> {
     );
     Ok(())
 }
+
+/// One tab's console. IPC input is untrusted page data and can only append a
+/// bounded diagnostic entry; it never invokes native operations or reads files.
+#[derive(Default)]
+pub struct BrowserConsole {
+    entries: std::collections::VecDeque<Value>,
+    dropped: u64,
+}
+impl BrowserConsole {
+    pub fn receive(&mut self, body: &str, origin: &str) -> bool {
+        if body.len() > 16384 {
+            return false;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            return false;
+        };
+        if value["kind"] != "coincide-console-v1" {
+            return false;
+        }
+        let (Some(level), Some(text)) = (value["level"].as_str(), value["text"].as_str()) else {
+            return false;
+        };
+        if !matches!(
+            level,
+            "log" | "info" | "warn" | "error" | "debug" | "unhandledrejection"
+        ) {
+            return false;
+        }
+        let url = Url::parse(origin)
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https" | "about"))
+            .map(|mut url| {
+                let _ = url.set_username("");
+                let _ = url.set_password(None);
+                url.to_string().chars().take(8192).collect::<String>()
+            });
+        if self.entries.len() >= 200 {
+            self.entries.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.entries.push_back(serde_json::json!({"level":level,"text":text.chars().take(2000).collect::<String>(),"url":url}));
+        true
+    }
+
+    pub fn read(&mut self, clear: bool) -> Value {
+        let result = serde_json::json!({"entries":self.entries,"dropped":self.dropped,"untrusted":true,
+            "limitations":["Primitive console arguments only; object contents are omitted","Linux attributes iframe console URLs to the main page","Logs remain until cleared or the tab closes"]});
+        if clear {
+            self.entries.clear();
+            self.dropped = 0;
+        }
+        result
+    }
+}
+
+pub const CONSOLE_SCRIPT: &str = r#"
+(() => {
+  const post = window.ipc?.postMessage?.bind(window.ipc);
+  if (!post) return;
+  const primitive = value => {
+    const kind=typeof value;
+    if (kind==='string') return value.slice(0,2000);
+    if (value===null) return 'null';
+    if (['number','boolean','undefined','bigint'].includes(kind)) return String(value).slice(0,2000);
+    return '[object]';
+  };
+  const emit = (level,args) => {
+    try {post(JSON.stringify({kind:'coincide-console-v1',level,text:args.slice(0,20).map(primitive).join(' ').slice(0,2000)}));} catch (_) {}
+  };
+  for (const level of ['log','info','warn','error','debug']) {
+    const original=console[level];
+    console[level]=function(...args) {emit(level,args);return Reflect.apply(original,this,args);};
+  }
+  window.addEventListener('error',event=>emit('error',[event.message,event.filename,event.lineno]));
+  window.addEventListener('unhandledrejection',event=>emit('unhandledrejection',[event.reason]));
+})();
+"#;
 
 /// Native download callbacks do not provide an ID on macOS. Permit only one
 /// accepted transfer per (thread, tab, URL), and account for callbacks from
@@ -507,6 +623,9 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
             serde_json::json!({"kind":"scroll","selector":selector,"to":to,"by":by})
         }
         BrowserAction::Frames => serde_json::json!({"kind":"frames"}),
+        BrowserAction::WaitFor { selector, text, .. } => {
+            serde_json::json!({"kind":"wait-for","selector":selector,"text":text})
+        }
         BrowserAction::Back => return Ok(Some("history.back(); ({dispatched:true})".into())),
         BrowserAction::Forward => return Ok(Some("history.forward(); ({dispatched:true})".into())),
         BrowserAction::Reload => return Ok(Some("location.reload(); ({dispatched:true})".into())),
@@ -576,12 +695,24 @@ try {
     if (all.length !== 1) throw new Error(all.length ? 'Selector matches multiple elements' : 'Element not found');
     return all[0];
   };
+  if (request.kind==='wait-for') {
+    let selectorFound=true;
+    if (request.selector) {
+      const target=doc.querySelector(request.selector);
+      selectorFound=!!target && visible(target);
+    }
+    const textFound=!request.text || (doc.body?.innerText || '').slice(0,2000000).includes(request.text);
+    return {found:selectorFound && textFound,selectorFound,textFound,frame:frameId};
+  }
   if (request.kind === 'read') {
     const scope = request.selector ? choose(request.selector) : doc.body;
     if (!scope) return {url:safeUrl(doc.location.href),title:doc.title,loading:doc.readyState !== 'complete',text:'',elements:[]};
     const pageSize=20000;
     // innerText does not expose input values. Never read .value, cookies or storage.
-    const full=(scope.innerText || '').slice(0,2000000);
+    const raw=scope.innerText || '';
+    const full=raw.slice(0,2000000);
+    const pages=Math.max(1,Math.ceil(full.length/pageSize));
+    if (request.page>pages) return {error:'Requested page is beyond available text',page:request.page,pages,truncated:raw.length>full.length};
     const selectorFor = element => {
       if (element.id && doc.querySelectorAll('#'+CSS.escape(element.id)).length === 1) return '#'+CSS.escape(element.id);
       const parts=[];
@@ -592,12 +723,13 @@ try {
       }
       return parts.join(' > ');
     };
-    const elements=Array.from(scope.querySelectorAll('a,button,input,textarea,select,[contenteditable=true],[role=button]'))
-      .filter(visible).slice(0,200).map(e=>({selector:selectorFor(e),tag:e.tagName.toLowerCase(),
+    const interactive='a,button,input,textarea,select,[contenteditable=true],[role=button]';
+    const candidates=(scope.matches?.(interactive)?[scope]:[]).concat(Array.from(scope.querySelectorAll(interactive))).filter(visible);
+    const elements=candidates.slice(0,200).map(e=>({selector:selectorFor(e),tag:e.tagName.toLowerCase(),
         label:(e.getAttribute('aria-label') || e.getAttribute('placeholder') || (e.tagName==='INPUT' ? '' : e.innerText) || '').slice(0,300),
         type:e.getAttribute('type') || '',disabled:!!e.disabled,sensitive:sensitive(e)}));
     return {url:safeUrl(doc.location.href),title:doc.title,loading:doc.readyState!=='complete',frame:frameId,
-      page:request.page,pages:Math.max(1,Math.ceil(full.length/pageSize)),
+      page:request.page,pages,truncated:raw.length>full.length,elementsTruncated:candidates.length>200,
       text:full.slice((request.page-1)*pageSize,request.page*pageSize),elements};
   }
   if (request.kind==='scroll') {
@@ -661,6 +793,91 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn console_only_accepts_bounded_diagnostics_and_strips_url_credentials() {
+        let mut console = BrowserConsole::default();
+        assert!(!console.receive("not-json", "https://example.test"));
+        assert!(!console.receive(
+            r#"{"kind":"native-command","action":"delete"}"#,
+            "https://example.test"
+        ));
+        assert!(!console.receive(&"x".repeat(16385), "https://example.test"));
+        assert!(!console.receive(
+            r#"{"kind":"coincide-console-v1","level":"other","text":"bad"}"#,
+            "https://example.test"
+        ));
+        assert!(!console.receive(
+            r#"{"kind":"coincide-console-v1","level":"log","text":{"private":"object"}}"#,
+            "https://example.test"
+        ));
+        assert!(console.receive(&serde_json::json!({"kind":"coincide-console-v1","level":"warn","text":"界".repeat(2100)}).to_string(),"https://user:secret@example.test/frame"));
+        let result = console.read(false);
+        assert_eq!(result["entries"][0]["url"], "https://example.test/frame");
+        assert_eq!(
+            result["entries"][0]["text"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            2000
+        );
+        assert_eq!(result["untrusted"], true);
+    }
+
+    #[test]
+    fn console_ring_keeps_latest_two_hundred_and_clear_returns_then_removes_them() {
+        let mut console = BrowserConsole::default();
+        for index in 0..205 {
+            console.receive(&serde_json::json!({"kind":"coincide-console-v1","level":"log","text":index.to_string()}).to_string(),"data:text/plain,private");
+        }
+        let result = console.read(true);
+        assert_eq!(result["entries"].as_array().unwrap().len(), 200);
+        assert_eq!(result["entries"][0]["text"], "5");
+        assert_eq!(result["entries"][199]["text"], "204");
+        assert!(result["entries"][0]["url"].is_null());
+        assert_eq!(result["dropped"], 5);
+        assert_eq!(console.read(false)["entries"], serde_json::json!([]));
+        assert_eq!(console.read(false)["dropped"], 0);
+    }
+
+    #[test]
+    fn wait_conditions_are_required_and_bounded_by_the_engine_deadline() {
+        let thread = uuid::Uuid::new_v4().to_string();
+        let make = |params: Value| {
+            let mut value =
+                serde_json::json!({"id":"wait-test","threadId":thread,"action":"wait-for"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(params.as_object().unwrap().clone());
+            serde_json::from_value::<BrowserRequest>(value).unwrap()
+        };
+        assert!(
+            make(serde_json::json!({"selector":"#ready","frame":"frame-test"}))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            make(serde_json::json!({"text":"ready","timeout":20}))
+                .validate()
+                .is_ok()
+        );
+        for params in [
+            serde_json::json!({}),
+            serde_json::json!({"text":""}),
+            serde_json::json!({"selector":""}),
+            serde_json::json!({"text":"x".repeat(20001)}),
+            serde_json::json!({"text":"ready","timeout":0}),
+            serde_json::json!({"text":"ready","timeout":21}),
+        ] {
+            assert!(make(params).validate().is_err());
+        }
+        assert!(
+            make(serde_json::json!({"selector":"#ready","text":"Ready","timeout":1}))
+                .validate()
+                .is_ok()
+        );
+    }
     #[test]
     fn native_srcdoc_frames_are_allowed_without_opening_arbitrary_url_schemes() {
         for address in ["about:blank", "about:srcdoc", "https://example.test/frame"] {

@@ -14,6 +14,9 @@ const controls=`<label>Text<input id="text" value="initial" oninput="document.qu
 <label>Choice<select id="choice" onchange="document.querySelector('#choice-result').textContent='Choice change event: '+this.value"><option value="first">First</option><option value="second">Second</option></select></label><p id="choice-result">No choice change event</p>
 <div id="editor" contenteditable="true" aria-label="Rich editor"><strong>Initial rich text</strong></div>
 <button id="click" onclick="document.querySelector('#result').textContent='Clicked'">Click fixture button</button>
+<button id="start-wait" onclick="setTimeout(()=>{const marker=document.createElement('p');marker.id='wait-ready';marker.textContent='Delayed fixture ready';document.body.append(marker)},700)">Start delayed marker</button>
+<button id="console-log" onclick="console.log('Fixture primitive log',42,true,{get privateValue(){document.querySelector('#getter-state').textContent='Getter invoked';return 'private-object-value'}});console.warn('Fixture warning')">Emit fixture console</button>
+<p id="getter-state">Getter not invoked</p>
 <p id="result">Waiting</p><div id="spacer"></div><p id="bottom">Bottom marker</p>`;
 if (location.search.includes('child=1')) {
   document.title='Cross-origin fixture child';
@@ -39,6 +42,7 @@ if (location.search.includes('child=1')) {
   navigate.textContent='Navigate same-origin child';
   navigate.onclick=()=>child.srcdoc='<title>Replacement child</title><h1>Replacement marker</h1>'+controls;
   document.body.prepend(navigate);
+  const pagination=document.createElement('div');pagination.id='pagination';pagination.textContent='Page-one marker '+('x'.repeat(20100))+' Page-two marker';document.body.append(pagination);
 }
 </script>
 </html>
