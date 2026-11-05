@@ -38,6 +38,12 @@ impl SelectionDraft {
                 && thread["interactionMode"] == self.interaction,
             "Saved selection changed; reload the selection draft before applying"
         );
+        if self.use_custom {
+            anyhow::ensure!(
+                self.custom.len() <= 512 && !self.custom.chars().any(char::is_control),
+                "Custom model ID must be at most 512 bytes without control characters"
+            );
+        }
         let model = if self.use_custom {
             self.custom.trim()
         } else {
@@ -311,6 +317,7 @@ impl Coincide {
                 .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
             .child(div().text_xs().child(if draft.use_custom { "Custom model ID is unverified. No model discovery or authentication check has run." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
             .child(div().text_xs().child(format!("{effort_reason} {speed_reason} Saved values are never silently removed.")))
+            .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("selection-apply").label("Apply selection").disabled(disabled || !known_provider)
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
@@ -321,7 +328,7 @@ impl Coincide {
                         this.bots_open=false;this.notifications_open=false;this.transcription_open=false;this.credentials_open=false;
                         this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
                     }))))
-            .child(div().text_xs().child("Access: approval · Interaction: build. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
+            .child(div().text_xs().child("This runtime supports approval access and build interaction only. Changing a provider keeps the draft model and account until you explicitly choose replacements."));
         if let Some(reason) = lock {
             pane = pane.child(div().text_sm().child(reason));
         }
@@ -386,7 +393,7 @@ mod tests {
         assert_eq!(params["speed"], "fast");
         assert_eq!(params["accessMode"], "approval");
         assert_eq!(params["interactionMode"], "build");
-        for model in ["", "-flag", "a\nb", &"x".repeat(513)] {
+        for model in ["", "-flag", "a\nb", "\nmodel", "model\t", &"x".repeat(513)] {
             draft.custom = model.into();
             assert!(draft.params(&thread).is_err());
         }
