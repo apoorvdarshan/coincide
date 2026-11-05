@@ -144,6 +144,21 @@ impl Terminal {
         self.writer.try_send(text.as_bytes().to_vec())?;
         Ok(())
     }
+    /// Structured input uses the latest parsed modes without a UI read/write
+    /// round trip. Accepted means one complete message queued, not shell delivery.
+    pub fn input(&mut self, input: TerminalInput) -> Result<Value> {
+        self.poll()?;
+        let bytes = encode_input(input, self.input_modes())?;
+        let len = bytes.len();
+        self.writer.try_send(bytes)?;
+        Ok(json!({"accepted":true,"observedRevision":self.revision,"encodedBytes":len}))
+    }
+    fn input_modes(&self) -> InputModes {
+        InputModes {
+            application_cursor: self.term.mode().contains(TermMode::APP_CURSOR),
+            bracketed_paste: self.term.mode().contains(TermMode::BRACKETED_PASTE),
+        }
+    }
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         check_size(rows, cols)?;
         self.master.resize(PtySize {
@@ -223,7 +238,7 @@ impl Terminal {
         }
         let exited = self.child.try_wait()?.map(|s| s.exit_code());
         Ok(
-            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport()}),
+            json!({"title":self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),"lines":lines,"rows":self.term.screen_lines(),"cols":self.term.columns(),"revision":self.revision,"exitCode":exited,"viewport":self.viewport(),"modes":self.input_modes()}),
         )
     }
     /// At most ten styled viewport rows per response. Cursor coordinates remain
@@ -313,7 +328,7 @@ impl Terminal {
             "revision": self.revision, "exitCode": exited,
             "grid": grid, "cursor": cursor, "truncated": truncated,
             "rowOffset": row_offset, "rowCount": row_count,
-            "viewport": self.viewport(),
+            "viewport": self.viewport(), "modes": self.input_modes(),
             "nextRowOffset": (row_offset + row_count < rows).then_some(row_offset + row_count),
         }))
     }
@@ -362,6 +377,139 @@ impl Terminal {
             })
         })
     }
+}
+
+/// Native text commits, clipboard pastes and terminal keys are distinct. Raw
+/// terminal.write remains available for callers intentionally sending VT bytes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum TerminalInput {
+    Text {
+        text: String,
+    },
+    Paste {
+        text: String,
+    },
+    Key {
+        key: String,
+        #[serde(default)]
+        modifiers: KeyModifiers,
+    },
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyModifiers {
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub control: bool,
+}
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InputModes {
+    application_cursor: bool,
+    bracketed_paste: bool,
+}
+const MAX_INPUT_BYTES: usize = 32 * 1024;
+fn encode_input(input: TerminalInput, modes: InputModes) -> Result<Vec<u8>> {
+    let encoded = match input {
+        TerminalInput::Text { text } | TerminalInput::Paste { text }
+            if text.len() > MAX_INPUT_BYTES =>
+        {
+            anyhow::bail!("Terminal input exceeds 32 KiB");
+        }
+        TerminalInput::Text { text } => {
+            check_structured_text(&text)?;
+            text
+        }
+        TerminalInput::Paste { text } => {
+            check_structured_text(&text)?;
+            if modes.bracketed_paste {
+                ensure!(
+                    text.len() <= MAX_INPUT_BYTES - 12,
+                    "Encoded terminal paste exceeds 32 KiB"
+                );
+                format!("\x1b[200~{text}\x1b[201~")
+            } else {
+                text
+            }
+        }
+        TerminalInput::Key { key, modifiers: m } => encode_key(&key, m, modes.application_cursor)?,
+    };
+    ensure!(
+        encoded.len() <= MAX_INPUT_BYTES,
+        "Encoded terminal input exceeds 32 KiB"
+    );
+    Ok(encoded.into_bytes())
+}
+fn check_structured_text(text: &str) -> Result<()> {
+    ensure!(
+        !text
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\r' | '\n')),
+        "Structured terminal text contains control framing; use raw write for VT bytes"
+    );
+    Ok(())
+}
+fn encode_key(key: &str, m: KeyModifiers, application: bool) -> Result<String> {
+    let modifier = 1 + u8::from(m.shift) + 2 * u8::from(m.alt) + 4 * u8::from(m.control);
+    if m.control && key.len() == 1 {
+        let byte = key.as_bytes()[0].to_ascii_uppercase();
+        ensure!(
+            (b'@'..=b'_').contains(&byte),
+            "Unsupported terminal control key"
+        );
+        return Ok(format!(
+            "{}{}",
+            if m.alt { "\x1b" } else { "" },
+            (byte - 64) as char
+        ));
+    }
+    let result = match key {
+        "up" | "down" | "left" | "right" | "home" | "end" => {
+            let suffix = match key {
+                "up" => 'A',
+                "down" => 'B',
+                "right" => 'C',
+                "left" => 'D',
+                "home" => 'H',
+                _ => 'F',
+            };
+            if modifier != 1 {
+                format!("\x1b[1;{modifier}{suffix}")
+            } else {
+                format!("\x1b{}{suffix}", if application { "O" } else { "[" })
+            }
+        }
+        "pageUp" | "pageDown" | "insert" | "delete" => {
+            let code = match key {
+                "pageUp" => 5,
+                "pageDown" => 6,
+                "insert" => 2,
+                _ => 3,
+            };
+            if modifier == 1 {
+                format!("\x1b[{code}~")
+            } else {
+                format!("\x1b[{code};{modifier}~")
+            }
+        }
+        "enter" | "backspace" | "tab" | "escape" => {
+            ensure!(!m.control, "Unsupported terminal key modifier");
+            let base = match key {
+                "enter" => "\r",
+                "backspace" => "\x7f",
+                "tab" if m.shift => "\x1b[Z",
+                "tab" => "\t",
+                _ => "\x1b",
+            };
+            format!("{}{base}", if m.alt { "\x1b" } else { "" })
+        }
+        _ => anyhow::bail!("Unsupported terminal key; commit characters with text input"),
+    };
+    Ok(result)
 }
 
 /// Serializable integration hook for wheel/page/history controls. Scroll events
@@ -680,5 +828,199 @@ mod tests {
         assert_eq!(v["rows"], 30);
         assert_eq!(v["cols"], 100);
         assert!(terminal.resize(0, 0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod structured_input_tests {
+    use super::*;
+    fn key(key: &str, modifiers: KeyModifiers) -> TerminalInput {
+        TerminalInput::Key {
+            key: key.into(),
+            modifiers,
+        }
+    }
+    #[test]
+    fn normal_application_and_modified_cursor_keys_have_exact_bytes() {
+        let normal = InputModes::default();
+        let app = InputModes {
+            application_cursor: true,
+            ..normal
+        };
+        for (name, suffix) in [
+            ("up", "A"),
+            ("down", "B"),
+            ("right", "C"),
+            ("left", "D"),
+            ("home", "H"),
+            ("end", "F"),
+        ] {
+            assert_eq!(
+                encode_input(key(name, Default::default()), normal).unwrap(),
+                format!("\x1b[{suffix}").into_bytes()
+            );
+            assert_eq!(
+                encode_input(key(name, Default::default()), app).unwrap(),
+                format!("\x1bO{suffix}").into_bytes()
+            );
+            assert_eq!(
+                encode_input(
+                    key(
+                        name,
+                        KeyModifiers {
+                            shift: true,
+                            control: true,
+                            alt: false
+                        }
+                    ),
+                    app
+                )
+                .unwrap(),
+                format!("\x1b[1;6{suffix}").into_bytes()
+            );
+        }
+        assert_eq!(
+            encode_input(
+                key(
+                    "c",
+                    KeyModifiers {
+                        control: true,
+                        ..Default::default()
+                    }
+                ),
+                app
+            )
+            .unwrap(),
+            b"\x03"
+        );
+        assert_eq!(
+            encode_input(
+                key(
+                    "pageUp",
+                    KeyModifiers {
+                        alt: true,
+                        ..Default::default()
+                    }
+                ),
+                app
+            )
+            .unwrap(),
+            b"\x1b[5;3~"
+        );
+        assert!(encode_input(key("a", Default::default()), normal).is_err());
+        assert!(
+            encode_input(
+                key(
+                    "enter",
+                    KeyModifiers {
+                        control: true,
+                        ..Default::default()
+                    }
+                ),
+                normal
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn paste_and_text_preserve_unicode_and_newlines_without_generated_enter() {
+        let modes = InputModes {
+            bracketed_paste: true,
+            ..Default::default()
+        };
+        let text = "界e\u{301}\r\n\t";
+        assert_eq!(
+            encode_input(TerminalInput::Paste { text: text.into() }, modes).unwrap(),
+            format!("\x1b[200~{text}\x1b[201~").into_bytes()
+        );
+        assert_eq!(
+            encode_input(TerminalInput::Text { text: text.into() }, modes).unwrap(),
+            text.as_bytes()
+        );
+        assert_eq!(
+            encode_input(
+                TerminalInput::Paste { text: text.into() },
+                Default::default()
+            )
+            .unwrap(),
+            text.as_bytes()
+        );
+    }
+    #[test]
+    fn framing_controls_and_encoded_oversize_fail_before_queueing() {
+        for text in ["\x1b[201~", "\0", "\x03", "\x7f", "\u{85}", "\u{9b}201~"] {
+            assert!(
+                encode_input(
+                    TerminalInput::Text { text: text.into() },
+                    Default::default()
+                )
+                .is_err()
+            );
+            assert!(
+                encode_input(
+                    TerminalInput::Paste { text: text.into() },
+                    Default::default()
+                )
+                .is_err()
+            );
+        }
+        let modes = InputModes {
+            bracketed_paste: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            encode_input(
+                TerminalInput::Paste {
+                    text: "a".repeat(MAX_INPUT_BYTES - 12)
+                },
+                modes
+            )
+            .unwrap()
+            .len(),
+            MAX_INPUT_BYTES
+        );
+        assert!(
+            encode_input(
+                TerminalInput::Paste {
+                    text: "a".repeat(MAX_INPUT_BYTES - 11)
+                },
+                modes
+            )
+            .is_err()
+        );
+        assert!(
+            encode_input(
+                TerminalInput::Text {
+                    text: "a".repeat(MAX_INPUT_BYTES + 1)
+                },
+                modes
+            )
+            .is_err()
+        );
+        assert_eq!(
+            encode_input(
+                TerminalInput::Text {
+                    text: "a".repeat(MAX_INPUT_BYTES)
+                },
+                modes
+            )
+            .unwrap()
+            .len(),
+            MAX_INPUT_BYTES
+        );
+    }
+    #[test]
+    fn structured_enum_and_nested_modifiers_reject_unknown_or_wrong_fields() {
+        for value in [
+            json!({"kind":"unknown"}),
+            json!({"kind":"text"}),
+            json!({"kind":"text","text":1}),
+            json!({"kind":"paste","text":"x","revision":1}),
+            json!({"kind":"key","key":"up","modifiers":{"platform":true}}),
+            json!({"kind":"key","key":"up","modifiers":{"control":1}}),
+        ] {
+            assert!(serde_json::from_value::<TerminalInput>(value).is_err());
+        }
+        assert!(serde_json::from_value::<TerminalInput>(json!({"kind":"key","key":"up"})).is_ok());
     }
 }

@@ -4,7 +4,7 @@
 //! No shell, PowerShell, Unix tools, environment mutation, or control IPC needed.
 #![cfg(windows)]
 
-use coincide_core::terminal::{Terminal, TerminalPoint, TerminalScroll};
+use coincide_core::terminal::{Terminal, TerminalInput, TerminalPoint, TerminalScroll};
 use serde_json::{Value, json};
 use std::{
     ffi::c_void,
@@ -30,8 +30,8 @@ fn configure_console() {
     // Only the task-created child calls these APIs on its own ConPTY console.
     // Raw input prevents echo/canonical buffering from corrupting phase barriers.
     for (kind, clear, set) in [
-        (-10_i32, 0x0001 | 0x0002 | 0x0004, 0), // stdin: processed/line/echo off
-        (-11_i32, 0, 0x0001 | 0x0004),          // stdout: processed + VT output
+        (-10_i32, 0x0001 | 0x0002 | 0x0004, 0x0200), // stdin: raw + VT input
+        (-11_i32, 0, 0x0001 | 0x0004),               // stdout: processed + VT output
     ] {
         unsafe {
             let handle = GetStdHandle(kind as u32);
@@ -80,9 +80,29 @@ fn phased_child() -> ! {
     emit("\x1b[?1049h\x1b[2J\x1b[HALTERNATE");
     expect_input(b'm');
     emit("\x1b[?1049l");
+    expect_input(b'i');
+    emit("\x1b[?1h\x1b[?2004h\r\nINPUT READY");
+    let expected = expected_input();
+    let mut received = vec![0; expected.len()];
+    std::io::stdin().read_exact(&mut received).unwrap();
+    assert_eq!(
+        received, expected,
+        "Mode-aware input bytes changed in ConPTY"
+    );
+    emit("\x1b[?1l\x1b[?2004l\r\nINPUT OK");
+    let mut normal = [0; 7];
+    std::io::stdin().read_exact(&mut normal).unwrap();
+    assert_eq!(&normal, b"\x1b[Atail");
+    emit("\r\nNORMAL OK");
     expect_input(b'q');
     // Avoid libtest's summary adding unrelated PTY output after the final phase.
     std::process::exit(0);
+}
+
+fn expected_input() -> Vec<u8> {
+    "\x1bOA\x1b[200~paste\x1b[201~界e\u{301}"
+        .as_bytes()
+        .to_vec()
 }
 
 fn wait_frame(
@@ -222,7 +242,81 @@ fn windows_native_pty_scroll_copy_and_alternate_screen() {
             .is_err()
     );
     assert_eq!(restored["viewport"]["atBottom"], true);
+    terminal.write("i").unwrap();
+    let input_ready = wait_frame(&mut terminal, "input modes enabled", |frame| {
+        frame["modes"]["applicationCursor"] == true
+            && frame["modes"]["bracketedPaste"] == true
+            && frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line == "INPUT READY")
+    });
+    assert_eq!(
+        terminal.styled_snapshot(0, 6).unwrap()["modes"],
+        input_ready["modes"]
+    );
+    for input in [
+        TerminalInput::Text {
+            text: "\x03".into(),
+        },
+        TerminalInput::Paste {
+            text: "\x1b[201~".into(),
+        },
+        TerminalInput::Paste {
+            text: "a".repeat(32757),
+        },
+    ] {
+        assert!(terminal.input(input).is_err());
+    }
+    let up = || TerminalInput::Key {
+        key: "up".into(),
+        modifiers: Default::default(),
+    };
+    assert_eq!(terminal.input(up()).unwrap()["encodedBytes"], 3);
+    assert_eq!(
+        terminal
+            .input(TerminalInput::Paste {
+                text: "paste".into()
+            })
+            .unwrap()["encodedBytes"],
+        17
+    );
+    assert_eq!(
+        terminal
+            .input(TerminalInput::Text {
+                text: "界e\u{301}".into()
+            })
+            .unwrap()["encodedBytes"],
+        6
+    );
+    let disabled = wait_frame(&mut terminal, "input receipt and modes disabled", |frame| {
+        frame["modes"]["applicationCursor"] == false
+            && frame["modes"]["bracketedPaste"] == false
+            && frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line == "INPUT OK")
+    });
+    assert!(disabled["revision"].as_u64() > input_ready["revision"].as_u64());
+    terminal.input(up()).unwrap();
+    assert_eq!(
+        terminal
+            .input(TerminalInput::Paste {
+                text: "tail".into()
+            })
+            .unwrap()["encodedBytes"],
+        4
+    );
+    let completed = wait_frame(&mut terminal, "normal input receipt", |frame| {
+        frame["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line == "NORMAL OK")
+    });
     terminal.write("q").unwrap();
     let exited = wait_frame(&mut terminal, "child exit", |frame| frame["exitCode"] == 0);
-    assert_eq!(exited["lines"], live["lines"]);
+    assert_eq!(exited["lines"], completed["lines"]);
 }

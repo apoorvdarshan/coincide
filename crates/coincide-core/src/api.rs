@@ -335,6 +335,17 @@ impl Engine {
                 let terminal=&mut self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1;
                 Ok(json!({"text":terminal.copy_selection(revision,start,end)?,"revision":revision}))
             }
+            "terminal.input"=>{
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all="camelCase",deny_unknown_fields)]
+                struct Request {terminal_id:String,input:crate::terminal::TerminalInput}
+                let request:Request=serde_json::from_value(p.clone())?;
+                let terminal=&mut self.terminals.get_mut(&request.terminal_id).context("Terminal not found")?.1;
+                let before=terminal.revision;
+                let result=terminal.input(request.input);
+                if terminal.revision!=before {self.revision+=1;}
+                result
+            }
             "terminal.write"=>{self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.write(required(p,"text")?)?;Ok(json!({"accepted":true}))}
             "terminal.resize"=>{
                 let rows=u16::try_from(p["rows"].as_u64().context("Missing rows")?)?;
@@ -347,7 +358,7 @@ impl Engine {
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
