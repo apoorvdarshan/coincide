@@ -424,13 +424,22 @@ pub enum CallbackShutdown {
     Unknown,
 }
 /// Rust owner join is distinct from native callback-queue cleanup acceptance.
-/// There is deliberately no Ready method while backend cleanup lacks an ACK.
+/// Native release stays unknown while backend cleanup lacks an ACK; ordinary
+/// process exit has its separate, narrower owner-join predicate.
 #[derive(Clone, Debug)]
 pub struct ShutdownStatus {
     pub requested: bool,
     pub worker: WorkerThreadStatus,
     pub native_callbacks: CallbackShutdown,
     pub spawn_error: Option<String>,
+}
+impl ShutdownStatus {
+    /// Process exit only, after controller destruction and actual Rust join.
+    /// Late permission/audio callbacks own only isolated native state, never
+    /// Engine/Store authority. This does not certify native release for updater.
+    pub fn ordinary_exit_ready(&self) -> bool {
+        self.requested && self.worker == WorkerThreadStatus::Returned && self.spawn_error.is_none()
+    }
 }
 struct Connection {
     shared: Arc<Shared>,
@@ -1119,6 +1128,7 @@ mod tests {
             connection.shutdown_status().native_callbacks,
             CallbackShutdown::Unknown
         );
+        assert!(!connection.shutdown_status().ordinary_exit_ready());
         drop_release_tx.send(()).unwrap();
         tls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(
@@ -1128,6 +1138,7 @@ mod tests {
         tls_release_tx.send(()).unwrap();
         let status = wait_join(&connection);
         assert_eq!(status.worker, WorkerThreadStatus::Returned);
+        assert!(status.ordinary_exit_ready());
         assert_eq!(
             status.native_callbacks,
             CallbackShutdown::Unknown,

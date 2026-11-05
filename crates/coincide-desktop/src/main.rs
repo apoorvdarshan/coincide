@@ -22,6 +22,7 @@ mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
 mod microphone_settings;
+mod native_quit;
 mod navigation;
 mod notification_runtime;
 mod notification_settings;
@@ -29,9 +30,11 @@ mod notifications;
 mod presentation;
 mod provider_settings;
 mod queue;
+mod quit_mount;
 mod scheduling;
 mod session_import;
 mod settings;
+mod shutdown_runtime;
 mod terminal_selection;
 mod terminal_workspace;
 mod transcript;
@@ -290,6 +293,13 @@ fn find_row(thread: &Value, thread_id: &str, item_id: &str) -> Option<usize> {
 }
 struct Coincide {
     engine: SharedEngine,
+    control_owner: Arc<Mutex<control::Server>>,
+    quit_runtime: Option<shutdown_runtime::Runtime>,
+    quit_runtime_error: Option<String>,
+    quit_frame_seen: bool,
+    native_quit: Option<native_quit::NativeQuit>,
+    native_quit_observed: bool,
+    quit_issued: bool,
     command_palette: Entity<command_palette::CommandPalette>,
     transcript_find: Entity<transcript_find::TranscriptFind>,
     find_thread: Option<String>,
@@ -382,6 +392,8 @@ struct Coincide {
     image_previews: std::collections::HashMap<String, ImagePreview>,
     image_preview_order: std::collections::VecDeque<String>,
     image_validations_running: usize,
+    image_validation_tasks: Vec<Task<()>>,
+    navigation_tasks: Vec<Task<()>>,
     image_waiting_rows: std::collections::HashSet<(String, usize)>,
     image_assets: Entity<RetainAllImageCache>,
     image_asset_order: std::collections::VecDeque<std::path::PathBuf>,
@@ -598,11 +610,18 @@ impl Coincide {
     }
     fn new(
         engine: SharedEngine,
+        control_owner: Arc<Mutex<control::Server>>,
         profile_dir: std::path::PathBuf,
         media_config: coincide_core::legacy_media_service::ServiceConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        #[cfg(target_os = "macos")]
+        let native_quit = Some(
+            native_quit::install().expect("Install native quit custody before accepting input"),
+        );
+        #[cfg(not(target_os = "macos"))]
+        let native_quit = None;
         let (computer_use_mount, computer_use_status) =
             match computer_use_mount::Mount::new(window, cx) {
                 Ok(mount) => (Some(mount), String::new()),
@@ -612,6 +631,12 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                // Keep the global drain owner and its recovery controls alive.
+                // Closing this window cannot bypass the broader quit fence.
+                if this.media.shutdown_requested {
+                    cx.notify();
+                    return false;
+                }
                 let drafts_saved = this.flush_pending_drafts();
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
@@ -749,6 +774,7 @@ impl Coincide {
                 this.sync_transcription_binding(cx);
             }),
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
+                if this.media.shutdown_requested { return; }
                 match event {
                     bot_settings::BotSettingsEvent::Saved { bot_id } => {
                         this.settings_status = format!("Bot {bot_id} saved. Changes apply to new conversations.");
@@ -762,9 +788,10 @@ impl Coincide {
                         let open = cx.background_executor().spawn(async move {
                             coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                         });
-                        cx.spawn_in(window, async move |this, cx| {
+                        let completion = cx.spawn_in(window, async move |this, cx| {
                             let result = open.await;
                             let _ = this.update_in(cx, |this, window, cx| {
+                                if this.media.shutdown_requested { return; }
                                 this.refresh(cx);
                                 match result {
                                     Ok(_) => {
@@ -785,7 +812,8 @@ impl Coincide {
                                 }
                                 cx.notify();
                             });
-                        }).detach();
+                        });
+                        this.navigation_tasks.push(completion);
                     }
                 }
                 cx.notify();
@@ -794,6 +822,7 @@ impl Coincide {
                 &session_import_panel,
                 window,
                 |this, _, event, window, cx| {
+                    if this.media.shutdown_requested { return; }
                     let session_import::SessionImportEvent::Imported { thread_id } = event;
                     this.session_import_open = false;
                     this.workspace_open = false;
@@ -806,9 +835,10 @@ impl Coincide {
                     let open = cx.background_executor().spawn(async move {
                         coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                     });
-                    cx.spawn_in(window, async move |this, cx| {
+                    let completion = cx.spawn_in(window, async move |this, cx| {
                         let result = open.await;
                         let _ = this.update_in(cx, |this, window, cx| {
+                            if this.media.shutdown_requested { return; }
                             this.refresh(cx);
                             match result {
                                 Ok(_) => {
@@ -819,7 +849,8 @@ impl Coincide {
                             }
                             cx.notify();
                         });
-                    }).detach();
+                    });
+                    this.navigation_tasks.push(completion);
                     cx.notify();
                 },
             ),
@@ -898,6 +929,13 @@ impl Coincide {
         });
         let mut this = Self {
             engine,
+            control_owner,
+            quit_runtime: None,
+            quit_runtime_error: None,
+            quit_frame_seen: false,
+            native_quit,
+            native_quit_observed: false,
+            quit_issued: false,
             command_palette,
             transcript_find,
             find_thread: None,
@@ -989,6 +1027,8 @@ impl Coincide {
             image_previews: Default::default(),
             image_preview_order: Default::default(),
             image_validations_running: 0,
+            image_validation_tasks: Vec::new(),
+            navigation_tasks: Vec::new(),
             image_waiting_rows: Default::default(),
             image_assets: RetainAllImageCache::new(cx),
             image_asset_order: Default::default(),
@@ -1050,10 +1090,10 @@ impl Coincide {
             mount.poll(&self.engine, cx);
         }
     }
-    fn computer_use_shutdown_ready(&self) -> bool {
+    fn computer_use_shutdown_ready(&mut self) -> bool {
         self.computer_use_mount
-            .as_ref()
-            .is_none_or(|mount| mount.shutdown_accounted())
+            .as_mut()
+            .is_none_or(|mount| mount.shutdown_status().ready())
     }
     fn computer_use_settings_visible(&self) -> bool {
         self.settings_open
@@ -2101,6 +2141,16 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.image_validation_tasks.retain(|task| !task.is_ready());
+        self.navigation_tasks.retain(|task| !task.is_ready());
+        if self
+            .native_quit
+            .as_ref()
+            .is_some_and(|guard| guard.take_requested())
+        {
+            self.native_quit_observed = true;
+            self.media.shutdown_requested = true;
+        }
         // Persistence must precede either close path, including API app.quit.
         let drafts_saved = self.flush_pending_drafts();
         self.sync_media_context(cx);
@@ -2108,15 +2158,18 @@ impl Coincide {
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
-        if self.media.close_requested || self.media.shutdown_requested {
+        if self.media.shutdown_requested {
+            if self.poll_global_quit(window, cx) {
+                self.finish_normal_quit(cx);
+            }
+            cx.notify();
+            return;
+        }
+        if self.media.close_requested {
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
             if drafts_saved && self.media_shutdown_ready(cx) && self.computer_use_shutdown_ready() {
-                if self.media.shutdown_requested {
-                    cx.quit();
-                } else {
-                    window.remove_window();
-                }
+                window.remove_window();
             } else if !drafts_saved {
                 self.status =
                     "Closing is waiting for drafts to save. Failed saves require Retry save."
@@ -2627,7 +2680,7 @@ impl Coincide {
                 stored.prepare_in(&root).map(|_| stored.path)
             });
             let completed_key = key.clone();
-            cx.spawn(async move |this, cx| {
+            let completion = cx.spawn(async move |this, cx| {
                 let result = validation.await;
                 let _ = this.update(cx, |this, cx| {
                     this.image_validations_running =
@@ -2656,8 +2709,8 @@ impl Coincide {
                     }
                     cx.notify();
                 });
-            })
-            .detach();
+            });
+            self.image_validation_tasks.push(completion);
         }
         self.image_preview_order.retain(|previous| previous != &key);
         self.image_preview_order.push_back(key.clone());
@@ -3195,6 +3248,31 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.media.shutdown_requested {
+            self.quit_frame_seen = true;
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .p_6()
+                .gap_3()
+                .bg(self.color(0x10141c))
+                .text_color(self.color(0xe4e9f2))
+                .child("Finishing background work and saving before quitting…")
+                .child(self.status.clone())
+                .when(!self.pending_drafts.is_empty(), |view| {
+                    view.child(Button::new("quit-retry-save").label("Retry save").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            draft_close::retry_failed(&mut this.pending_drafts);
+                            this.flush_pending_drafts();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .when(!self.media_shutdown_ready(cx), |view| {
+                    view.child(self.media_settings_pane(cx))
+                });
+        }
         self.sync_media_context(cx);
         self.sync_terminal_workspace(window, cx);
         let open = self
@@ -3842,7 +3920,13 @@ fn main() -> Result<()> {
         expected_data_directory: media_data,
     };
     let engine = Arc::new(Mutex::new(Engine::new(store)));
-    let _server = control::serve(data.join("control.sock"), engine.clone())?;
+    let control_owner = Arc::new(Mutex::new(control::serve(
+        data.join("control.sock"),
+        engine.clone(),
+    )?));
+    // Retain the control owner across ordinary window closure. Final Drop is
+    // outside GPUI after the explicit quit driver observed its actual join.
+    let _control_lifetime = control_owner.clone();
     #[cfg(target_os = "linux")]
     let application = gpui_kit::platform::linux(WindowingModes::X11);
     #[cfg(not(target_os = "linux"))]
@@ -3865,6 +3949,7 @@ fn main() -> Result<()> {
                     cx.new(|cx| {
                         Coincide::new(
                             engine,
+                            control_owner,
                             data.join("browser-profile"),
                             media_config,
                             window,

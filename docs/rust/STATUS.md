@@ -48,7 +48,44 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [ ] Real-account acceptance, full test parity and data cutover rehearsal.
 - [ ] Remove superseded Swift/C++ desktop implementation and build tooling.
 
-## Current parallel checkpoint (2026-11-05)
+## Overnight checkpoint (2026-11-05)
+
+Work is coordinated in this conversation with built-in subagents. The earlier
+headless restriction was explicitly lifted for isolated acceptance; the original
+Swift app and user data remain untouched. No ASUS or SSH validation is used.
+
+- The real Mac native Quit fixture passed: three unsaved CmdQ requests were
+  vetoed; the synthetic draft was persisted and verified before the one-use quit
+  permit; a final CmdQ exited the fixture gracefully. This is guard acceptance,
+  separate from the complete application's shutdown acceptance.
+- Developer ID signed CLI fixtures exercised actual dynamic running-code trust:
+  four cases and 36 checks passed, including wrong roles, ad-hoc code, wrong team,
+  and PID/start mismatches. Updater entry, installation and rollback remain open;
+  the desktop helper launcher remains unavailable.
+- Explicit SQLite close tests passed, including a real busy-close failure that
+  retains the same connection. Historical media's write-ahead ownership and
+  fault-injection suite passed all 28 tests; unknown outcomes remain retained.
+- The combined feature desktop check passed. The desktop suite passed 314 tests,
+  including staged shutdown, actual worker joins/TLS teardown, and terminal UI
+  transport closure. The full feature core suite also passed (391 unit tests,
+  one existing ignored fixture, plus the integration targets).
+  The final parent-mount delta passed 280 desktop unit tests, and strict feature
+  core Clippy passed after removing a redundant media-ingestion closure.
+- The native terminal IME handoff and same-pane accent fixtures passed; browser
+  Deny/Allow-once/fill/shielding, profile isolation, Find and quiet terminal resize
+  have scoped native evidence. Metadata chooser interaction and broader browser,
+  transcript and terminal acceptance remain open.
+
+The parent normal-quit mount is undergoing final review and isolated whole-app
+acceptance. It freezes new work, retains recovery controls, drains owned workers
+off the UI thread, stops the control transport and explicitly closes the Store
+before requesting native exit. It does not grant updater consent or establish
+crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
+unmounted transport dead-code failures; no strict desktop success is claimed.
+The last verified remote checkpoint is 79cd0e4; newer local results do not stand
+in for CI on the next pushed commit.
+
+## Earlier parallel checkpoint (2026-11-05)
 
 Overall verified macOS parity remains approximately 30%. Windows/Linux feature
 parity and existing-macOS UI/UX matching remain open acceptance milestones.

@@ -49,6 +49,23 @@ impl CoreOwnerShutdownStatus {
     }
 }
 impl Engine {
+    /// Native owner calls this off the UI thread only after native/UI owners
+    /// and control transport have drained too. Core guards cannot certify those
+    /// external owners; this method adds no API route or automatic retry.
+    pub fn close_store_after_core_shutdown(&mut self) -> Result<()> {
+        ensure!(
+            self.admissions_frozen(),
+            "Store close requires frozen admissions"
+        );
+        if self.store.is_closed() {
+            return Ok(());
+        }
+        ensure!(
+            self.poll_core_owner_shutdown()?.rust_owners_drained(),
+            "Core owners are not drained"
+        );
+        self.store.close_for_shutdown()
+    }
     /// Native owner-only irreversible closure. Every cancellation remains a
     /// request; callers retain and poll this Engine until actual acknowledgments.
     pub fn request_core_owner_shutdown(&mut self) -> Result<()> {
@@ -71,6 +88,7 @@ impl Engine {
             self.admissions_frozen(),
             "Core drain requires frozen admissions"
         );
+        ensure!(!self.store.is_closed(), "Store is closed");
         // Recovery, admitted completions and cancellation must continue after
         // admission closure. Engine.poll never restarts frozen dispatch.
         self.poll();
@@ -104,6 +122,7 @@ mod tests {
         store.save(&thread).unwrap();
         let mut engine = Engine::fixture(store);
         assert!(engine.poll_core_owner_shutdown().is_err());
+        assert!(engine.close_store_after_core_shutdown().is_err());
         engine.request_core_owner_shutdown().unwrap();
         engine.request_core_owner_shutdown().unwrap();
         assert!(
@@ -122,5 +141,9 @@ mod tests {
         );
         let reply = engine.dispatch(json!({"method":"thread.create","params":{}}));
         assert_eq!(reply["error"]["message"], "Engine admissions are frozen");
+        engine.close_store_after_core_shutdown().unwrap();
+        assert!(engine.store.is_closed());
+        engine.close_store_after_core_shutdown().unwrap();
+        assert!(engine.poll_core_owner_shutdown().is_err());
     }
 }

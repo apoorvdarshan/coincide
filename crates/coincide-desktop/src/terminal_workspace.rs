@@ -20,7 +20,11 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender},
+    },
     time::{Duration, Instant},
 };
 
@@ -577,11 +581,18 @@ fn send(tx: &SyncSender<Update>, update: Update) -> bool {
     tx.send(update).is_ok()
 }
 
-fn worker(engine: SharedEngine, thread: String, rx: Receiver<Command>, tx: SyncSender<Update>) {
+fn worker(
+    engine: SharedEngine,
+    thread: String,
+    rx: Receiver<Command>,
+    tx: SyncSender<Update>,
+    stop: Arc<AtomicBool>,
+) {
     run_worker(
         thread,
         rx,
         tx,
+        &stop,
         // This serialized worker is off the UI thread. Wait for Engine ownership
         // rather than dropping a keystroke/list/create during normal contention.
         |method, params| coincide_core::api::call(&engine, method, params),
@@ -596,9 +607,13 @@ fn run_worker(
     thread: String,
     rx: Receiver<Command>,
     tx: SyncSender<Update>,
+    stop: &AtomicBool,
     mut call: impl FnMut(&str, Value) -> Result<Value>,
     mut read: impl FnMut(&str) -> Result<Option<Value>>,
 ) {
+    if stop.load(Ordering::Acquire) {
+        return;
+    }
     let list = call("terminal.list", json!({"threadId":thread})).and_then(|v| {
         v.as_array()
             .cloned()
@@ -611,7 +626,14 @@ fn run_worker(
     let mut visible = HashSet::new();
     let mut last = Instant::now();
     loop {
-        match rx.recv_timeout(Duration::from_millis(30)) {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        let command = rx.recv_timeout(Duration::from_millis(30));
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        match command {
             Ok(Command::Adopt(key, id)) => {
                 bound.insert(
                     key,
@@ -748,6 +770,8 @@ pub struct TerminalWorkspace {
     notice: String,
     visible: bool,
     watch_dirty: bool,
+    stopping: Arc<AtomicBool>,
+    completion: coincide_core::agent::WorkerCompletion,
     _poll: Task<()>,
 }
 impl TerminalWorkspace {
@@ -760,7 +784,11 @@ impl TerminalWorkspace {
         let (tx, commands) = mpsc::sync_channel(64);
         let (updates, rx) = mpsc::sync_channel(32);
         let worker_thread = thread_id.clone();
-        std::thread::spawn(move || worker(engine, worker_thread, commands, updates));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let stop = stopping.clone();
+        let worker =
+            std::thread::spawn(move || worker(engine, worker_thread, commands, updates, stop));
+        let completion = coincide_core::agent::WorkerCompletion::observe(worker);
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -785,8 +813,22 @@ impl TerminalWorkspace {
             notice: String::new(),
             visible: true,
             watch_dirty: false,
+            stopping,
+            completion,
             _poll: poll,
         }
+    }
+    /// Stops only this UI transport. Engine owns the actual PTY children and IO.
+    pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
+        self.stopping.store(true, Ordering::Release);
+        self.set_visible(false, cx);
+        for _ in self.rx.try_iter().take(32) {}
+    }
+    pub fn shutdown_status(&mut self) -> coincide_core::agent::WorkerThreadStatus {
+        // Release a publisher blocked by the bounded mailbox without applying
+        // old frames, copy commands or input callbacks during shutdown.
+        for _ in self.rx.try_iter().take(32) {}
+        self.completion.status()
     }
     /// Parent must not rebind this entity to another thread. Cache one entity per
     /// thread; old queued input can only address that entity's original PTYs.
@@ -812,6 +854,7 @@ impl TerminalWorkspace {
     }
     /// Parent calls false when hiding a cached entity, true when mounting it.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let visible = visible && !self.stopping.load(Ordering::Acquire);
         if !visible {
             self.revoke_inputs(cx);
         }
@@ -820,6 +863,9 @@ impl TerminalWorkspace {
         cx.notify();
     }
     fn watch(&mut self) {
+        if self.stopping.load(Ordering::Acquire) {
+            return;
+        }
         let ids = if self.visible { self.ids() } else { vec![] };
         self.watch_dirty = self.tx.try_send(Command::Watch(ids)).is_err();
     }
@@ -843,6 +889,9 @@ impl TerminalWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.stopping.load(Ordering::Acquire) {
+            return;
+        }
         if self.panes.len() >= MAX_PANES {
             self.notice = "At most 32 terminal panes".into();
             cx.notify();
@@ -873,6 +922,9 @@ impl TerminalWorkspace {
         cx.notify();
     }
     fn act(&mut self, key: PaneId, action: Action, cx: &mut Context<Self>) -> bool {
+        if self.stopping.load(Ordering::Acquire) {
+            return false;
+        }
         let Some(pane) = self.panes.get_mut(&key) else {
             return false;
         };
@@ -947,6 +999,10 @@ impl TerminalWorkspace {
         self.watch();
     }
     fn drain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.stopping.load(Ordering::Acquire) {
+            for _ in self.rx.try_iter().take(32) {}
+            return;
+        }
         let mut changed = false;
         for _ in 0..64 {
             let Ok(update) = self.rx.try_recv() else {
@@ -1328,6 +1384,9 @@ impl TerminalWorkspace {
         }
     }
     fn copy(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        if self.stopping.load(Ordering::Acquire) {
+            return;
+        }
         let Some(pane) = self.panes.get_mut(&key) else {
             return;
         };
@@ -1765,6 +1824,13 @@ impl TerminalWorkspace {
         }
     }
 }
+impl Drop for TerminalWorkspace {
+    fn drop(&mut self) {
+        // This transport owns no shell. Receiver destruction releases blocked
+        // bounded publishers; the background observer retains its actual join.
+        self.stopping.store(true, Ordering::Release);
+    }
+}
 impl Render for TerminalWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.visible && window.is_window_active() {
@@ -1940,6 +2006,53 @@ mod tests {
     use coincide_core::terminal::selected_text;
     use std::sync::{Arc, Mutex};
 
+    #[::core::prelude::v1::test]
+    fn stopping_ui_worker_releases_bounded_publisher_and_discards_queued_create() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let (commands, rx) = mpsc::sync_channel(2);
+        let (tx, updates) = mpsc::sync_channel(1);
+        tx.send(Update::Listed(Ok(vec![]))).unwrap();
+        commands.send(Command::Create(1)).unwrap();
+        let (entered, started) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let log = calls.clone();
+        let worker = std::thread::spawn(move || {
+            run_worker(
+                "synthetic".into(),
+                rx,
+                tx,
+                &stopping,
+                move |method, _| {
+                    log.lock().unwrap().push(method.to_owned());
+                    entered.send(()).unwrap();
+                    wait.recv().unwrap();
+                    Ok(json!([]))
+                },
+                |_| unreachable!(),
+            );
+        });
+        let completion = coincide_core::agent::WorkerCompletion::observe(worker);
+        started.recv_timeout(Duration::from_secs(3)).unwrap();
+        stop.store(true, Ordering::Release);
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while completion.status() == coincide_core::agent::WorkerThreadStatus::Running {
+            for _ in updates.try_iter() {}
+            assert!(
+                Instant::now() < deadline,
+                "terminal transport failed to join"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            completion.status(),
+            coincide_core::agent::WorkerThreadStatus::Returned
+        );
+        assert_eq!(*calls.lock().unwrap(), ["terminal.list"]);
+    }
+
     fn leaves(layout: &Layout) -> Vec<PaneId> {
         let mut out = vec![];
         layout.panes(&mut out);
@@ -2101,6 +2214,7 @@ mod tests {
                     "thread-A".into(),
                     commands,
                     updates,
+                    &AtomicBool::new(false),
                     move |method, params| {
                         calls
                             .lock()
@@ -2256,7 +2370,13 @@ mod tests {
         let shared = engine.clone();
         let handle = std::thread::spawn(move || {
             started.send(()).unwrap();
-            worker(shared, "fixture-thread".into(), rx, tx);
+            worker(
+                shared,
+                "fixture-thread".into(),
+                rx,
+                tx,
+                Arc::new(AtomicBool::new(false)),
+            );
         });
         ready.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(matches!(

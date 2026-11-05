@@ -111,6 +111,18 @@ pub struct BridgeShutdownStatus {
     pub native_callbacks_unconfirmed: bool,
 }
 impl BridgeShutdownStatus {
+    /// Process exit only. Late OS callbacks hold channel senders/scalars, not
+    /// Engine/Store authority. Already-submitted notification delivery can remain
+    /// uncertain; preserve that observation and strict native-release readiness.
+    pub fn ordinary_exit_ready(&self) -> bool {
+        self.requested
+            && self.bridge_joined
+            && !self.bridge_join_failed
+            && self.stopped
+            && self.native_worker_joined
+            && self.claims_outstanding == 0
+            && self.reconciliation_error.is_none()
+    }
     pub fn ready(&self) -> bool {
         self.requested
             && self.bridge_joined
@@ -786,6 +798,16 @@ impl NotificationSettingsPanel {
     pub fn bridge_handle(&self) -> Option<BridgeHandle> {
         self.bridge.as_ref().map(Bridge::handle)
     }
+    pub fn ordinary_exit_ready(&self) -> bool {
+        // None is only failed bridge-thread creation: native startup runs inside
+        // that thread. An existing bridge still needs its actual joined proof.
+        self.bridge.as_ref().is_none_or(|bridge| {
+            bridge
+                .handle
+                .try_shutdown_status()
+                .is_some_and(|s| s.ordinary_exit_ready())
+        })
+    }
     pub fn update_activity(&self, activity: DesktopActivity) -> bool {
         self.bridge
             .as_ref()
@@ -825,6 +847,29 @@ mod tests {
     use super::*;
     use crate::notifications::{Backend, Payload};
     use coincide_core::platform_host::notifications::{Alert, AlertKind};
+    #[::core::prelude::v1::test]
+    fn ordinary_exit_preserves_uncertain_native_delivery_and_requires_actual_owners() {
+        let mut status = BridgeShutdownStatus {
+            requested: true,
+            bridge_joined: true,
+            bridge_join_failed: false,
+            stopped: true,
+            native_worker_joined: true,
+            claims_outstanding: 0,
+            reconciliation_error: None,
+            native_callbacks_unconfirmed: true,
+        };
+        assert!(status.ordinary_exit_ready());
+        assert!(!status.ready(), "native release remains unverified");
+        status.claims_outstanding = 1;
+        assert!(!status.ordinary_exit_ready());
+        status.claims_outstanding = 0;
+        status.bridge_joined = false;
+        assert!(!status.ordinary_exit_ready());
+        status.bridge_joined = true;
+        status.bridge_join_failed = true;
+        assert!(!status.ordinary_exit_ready());
+    }
     #[derive(Default)]
     struct EngineState {
         enabled: bool,

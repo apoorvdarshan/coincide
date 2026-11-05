@@ -651,7 +651,7 @@ fn materialize_internal(
             references.push(result);
             continue;
         }
-        let ingested = (|| -> Result<StoredImage> {
+        let ingested = {
             let name = original
                 .candidate
                 .relative_path
@@ -666,7 +666,7 @@ fn materialize_internal(
             } else {
                 attachments::ingest_image_bytes(data_directory, &bytes, &name)
             }
-        })();
+        };
         match ingested {
             Err(error) => {
                 result.reference.status = Status::IoError;
@@ -867,12 +867,8 @@ mod tests {
         changed["items"][0]["text"] = json!("edited");
         assert!(!plan.matches_thread(&changed).unwrap());
         assert_eq!(fs::read_dir(data.join("attachments")).unwrap().count(), 1);
-        assert_eq!(
-            fs::read_dir(data.join("clipboard-staging"))
-                .unwrap()
-                .count(),
-            0
-        );
+        let staging = data.join("clipboard-staging");
+        assert!(!staging.exists() || fs::read_dir(staging).unwrap().count() == 0);
     }
     #[test]
     fn partial_batch_returns_success_identity_when_later_source_changes() {
