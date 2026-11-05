@@ -88,11 +88,6 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
     let Some(session_id) = identity else {
         bail!("not a Codex rollout")
     };
-    let has_messages = records.iter().any(|r| {
-        r["type"] == "response_item"
-            && r["payload"]["type"] == "message"
-            && matches!(r["payload"]["role"].as_str(), Some("user" | "assistant"))
-    });
     let mut preview = SessionPreview {
         original: bytes.to_vec(),
         session_id,
@@ -103,6 +98,9 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
         shortened_text: false,
     };
     let mut seen = HashSet::new();
+    // Only pair adjacent logical messages from opposite encodings. Repeated text
+    // within one encoding is a real turn, not a global deduplication key.
+    let mut previous: Option<(String, String, bool)> = None;
     for record in records {
         let p = &record["payload"];
         let (role, text, external_id) = match (record["type"].as_str(), p["type"].as_str()) {
@@ -131,6 +129,12 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                         preview.messages.truncate(starts[index]);
                     }
                 }
+                seen = preview
+                    .messages
+                    .iter()
+                    .filter_map(|m| m.external_id.clone())
+                    .collect();
+                previous = None;
                 continue;
             }
             (Some("response_item"), Some("message")) => {
@@ -158,9 +162,7 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                 }
                 (role.to_owned(), texts.join("\n"), id)
             }
-            (Some("event_msg"), Some(kind @ ("user_message" | "agent_message")))
-                if !has_messages =>
-            {
+            (Some("event_msg"), Some(kind @ ("user_message" | "agent_message"))) => {
                 let Some(text) = p["message"].as_str() else {
                     preview.omitted_records += 1;
                     continue;
@@ -176,7 +178,6 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                     None,
                 )
             }
-            (Some("event_msg"), Some("user_message" | "agent_message")) => continue,
             _ => {
                 preview.omitted_records += 1;
                 continue;
@@ -185,6 +186,22 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
         if text.is_empty() {
             continue;
         }
+        let is_event = record["type"] == "event_msg";
+        if previous
+            .as_ref()
+            .is_some_and(|(old_role, old_text, old_event)| {
+                old_role == &role && old_text == &text && *old_event != is_event
+            })
+        {
+            if !is_event {
+                if let Some(last) = preview.messages.last_mut() {
+                    last.external_id = external_id;
+                }
+            }
+            previous = None;
+            continue;
+        }
+        previous = Some((role.clone(), text.clone(), is_event));
         let shortened = text.chars().count() > MAX_TEXT;
         preview.shortened_text |= shortened;
         preview.messages.push(ImportedMessage {
