@@ -19,6 +19,8 @@ mod antigravity_api;
 mod github_engine;
 #[path = "idle_sleep.rs"]
 mod idle_sleep;
+#[path = "notification_events.rs"]
+pub mod notification_events;
 #[path = "organization_api.rs"]
 mod organization_api;
 #[path = "session_import_api.rs"]
@@ -45,6 +47,7 @@ pub struct Engine {
     pub store: Store,
     idle_sleep: idle_sleep::IdleSleep,
     github: github_engine::GithubState,
+    notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
     pub revision: u64,
     pub requested_open: Option<String>,
@@ -82,9 +85,11 @@ impl Engine {
             let _ = discovery_tx.try_send(("provider-discovery".into(), json!(report)));
         });
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
+        let notification_events = notification_events::Outbox::new(&store);
         Self {
             store,
             idle_sleep,
+            notification_events,
             github: github_engine::GithubState::discover(),
             runs: HashMap::new(),
             revision: 0,
@@ -141,6 +146,7 @@ impl Engine {
             return self.workspace_command(method, p);
         }
         match method {
+            "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
             "cli.sessions.preview" => {
                 ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
@@ -337,7 +343,7 @@ impl Engine {
             "app.capabilities" => {
                 let mut methods = vec![
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.scroll", "terminal.selection", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list",
@@ -475,7 +481,9 @@ impl Engine {
                     ensure!(!values.is_empty() && values.iter().all(|v|v.as_str().is_some_and(|s| !s.trim().is_empty() && s.len()<=65536)), "Provide nonempty text answers");
                 }
                 run.session.reply(frame["id"].clone(),json!({"answers":answers}))?;
-                run.pending.remove(key); self.revision += 1;
+                run.pending.remove(key);
+                self.notification_events.cancel_request(required(p,"threadId")?,key);
+                self.revision += 1;
                 Ok(json!({"answered":true}))
             }
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
@@ -483,6 +491,7 @@ impl Engine {
             "agent.stop" => {
                 let run=self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
                 run.cancelled=true;run.session.stop();
+                self.notification_events.cancel_requests(required(p,"threadId")?);
                 self.enabled_queues.remove(required(p,"threadId")?);
                 Ok(json!({"requested":true}))
             }
@@ -512,6 +521,7 @@ impl Engine {
                     .session
                     .reply(frame["id"].clone(), json!({"decision":decision}))?;
                 running.pending.remove(key);
+                self.notification_events.cancel_request(required(p,"threadId")?,key);
                 self.revision += 1;
                 Ok(json!({"answered":true}))
             }
@@ -1134,6 +1144,7 @@ impl Engine {
             let events = std::mem::take(&mut self.runs.get_mut(&id).unwrap().events);
             let mut finished = false;
             let mut failure = None;
+            let mut completion_alert = None;
             let transcript_start = self.runs[&id].transcript_start;
             for event in events {
                 match event {
@@ -1143,11 +1154,15 @@ impl Engine {
                     Event::Finished => {
                         finished = true;
                         append(&mut v, "notice", "Turn ended", None);
+                        if completion_alert.is_none() {
+                            completion_alert = v["items"].as_array().and_then(|items|items.last()).cloned().map(|item|(crate::platform_host::notifications::AlertKind::Completed,item));
+                        }
                     }
                     Event::Failed(error) => {
                         finished = true;
                         failure = Some(error.clone());
                         append(&mut v, "error", &error, None);
+                        completion_alert = v["items"].as_array().and_then(|items|items.last()).cloned().map(|item|(crate::platform_host::notifications::AlertKind::Failed,item));
                     }
                     Event::Frame(frame) => {
                         let method = frame["method"].as_str().unwrap_or("");
@@ -1188,21 +1203,19 @@ impl Engine {
                             | "item/fileChange/requestApproval"
                             | "item/tool/requestUserInput" => {
                                 let key = frame["id"].to_string();
-                                append(
-                                    &mut v,
-                                    if method == "item/tool/requestUserInput" {
-                                        "question"
-                                    } else {
-                                        "approval"
-                                    },
-                                    &p.to_string(),
-                                    Some(&key),
-                                );
+                                let kind = if method == "item/tool/requestUserInput" {"question"} else {"approval"};
+                                let previous = v["items"].as_array().unwrap().iter().skip(transcript_start).find(|item| item["externalID"] == key && item["kind"] == kind).cloned();
+                                let item = if let Some(item) = previous { item } else {
+                                    append(&mut v,kind,&p.to_string(),Some(&key));
+                                    v["items"].as_array().unwrap().last().unwrap().clone()
+                                };
+                                self.notification_events.stage(&v,&item,if kind == "question" {crate::platform_host::notifications::AlertKind::Question} else {crate::platform_host::notifications::AlertKind::Approval},Some(key.clone()));
                                 self.runs.get_mut(&id).unwrap().pending.insert(key, frame);
                             }
                             "provider/requestCancelled" => {
                                 let key = p["id"].to_string();
                                 self.runs.get_mut(&id).unwrap().pending.remove(&key);
+                                self.notification_events.cancel_request(&id,&key);
                                 for item in v["items"]
                                     .as_array_mut()
                                     .unwrap()
@@ -1321,6 +1334,13 @@ impl Engine {
                     }
                 }
             }
+            if finished {
+                self.notification_events.cancel_requests(&id);
+                if !self.runs[&id].cancelled && self.runs[&id].persistence_error.is_none()
+                    && let Some((kind,item)) = completion_alert {
+                        self.notification_events.stage(&v,&item,kind,None);
+                    }
+            }
             if let Err(error) = self.store.save(&v) {
                 let message = format!("Transcript could not be saved: {error}");
                 self.enabled_queues.remove(&id);
@@ -1331,6 +1351,7 @@ impl Engine {
                 self.schedule_error = Some(message);
             } else {
                 self.unsaved_threads.remove(&id);
+                self.notification_events.persisted(&v);
             }
             self.revision += 1;
             if finished
@@ -1352,8 +1373,12 @@ impl Engine {
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);
             self.schedule_last_poll = Instant::now();
-            self.unsaved_threads
-                .retain(|_, thread| self.store.save(thread).is_err());
+            self.unsaved_threads.retain(|_, thread| {
+                if self.store.save(thread).is_err() { true } else {
+                    self.notification_events.persisted(thread);
+                    false
+                }
+            });
             match self.poll_schedules(resumed) {
                 Ok(()) => {
                     self.schedule_error = if !self.unsaved_threads.is_empty() {
