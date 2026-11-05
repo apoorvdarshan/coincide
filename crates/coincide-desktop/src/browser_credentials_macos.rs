@@ -15,6 +15,7 @@
 //! A filled website necessarily owns its DOM values. This is not protection from
 //! a hostile destination exfiltrating its own fields. Native browser capture must
 //! separately suppress/redact credential-bearing page output after approved fill.
+use super::super::shutdown::{NativeLease, NativeLifetimes};
 use crate::credentials::FillPermit;
 use block2::RcBlock;
 use coincide_core::credentials::{Failure, PageBinding};
@@ -69,13 +70,28 @@ fn runtime_supported() -> bool {
 pub struct NativeCredentialTarget {
     view: Retained<WKWebView>,
     navigation: Arc<AtomicU64>,
+    lifetimes: Option<NativeLifetimes>,
+    // Declaration order matters: view is released before this target lease.
+    _view_lease: Option<NativeLease>,
 }
 impl NativeCredentialTarget {
     pub fn new(view: &wry::WebView, navigation: Arc<AtomicU64>) -> Option<Self> {
         (runtime_supported() && MainThreadMarker::new().is_some()).then(|| Self {
             view: view.webview().into_super(),
             navigation,
+            lifetimes: None,
+            _view_lease: None,
         })
+    }
+    /// Browser owner attaches accounting immediately after native construction.
+    /// Cloning this target clones both its Retained view and counted lease.
+    pub(in super::super) fn with_lifetimes(mut self, lifetimes: NativeLifetimes) -> Self {
+        // Never transfer an already tracked native owner to another registry.
+        if self.lifetimes.is_none() {
+            self._view_lease = Some(lifetimes.target());
+            self.lifetimes = Some(lifetimes);
+        }
+        self
     }
     fn matches(&self, binding: &PageBinding) -> bool {
         if self.navigation.load(Ordering::Acquire) != binding.navigation {
@@ -139,7 +155,9 @@ impl NativeCredentialTarget {
             password.to_owned(),
             totp.map(str::to_owned),
         ))));
+        let probe_lease = self.lifetimes.as_ref().map(NativeLifetimes::block);
         let callback = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
+            let _held_probe = &probe_lease;
             let Some((slot, completion, username, password, totp)) = pending.borrow_mut().take()
             else {
                 return;
@@ -170,7 +188,9 @@ impl NativeCredentialTarget {
                 ("totp", totp.as_deref().unwrap_or("")),
             ]);
             let completion = Rc::new(RefCell::new(Some((slot, completion))));
+            let mutation_lease = target.lifetimes.as_ref().map(NativeLifetimes::block);
             let finished = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
+                let _held_mutation = &mutation_lease;
                 if let Some((_slot, completion)) = completion.borrow_mut().take() {
                     completion(if boolean_reply(value, error) {
                         Ok(())

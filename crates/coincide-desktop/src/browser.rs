@@ -1058,6 +1058,7 @@ impl BrowserController {
                     tab.view.read(cx).raw(),
                     tab.navigation.clone(),
                 )
+                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()))
             });
             let mut sink = credential_bridge::BrowserCredentialSink::new(|tab: &str| {
                 self.credential_page(thread, cx)
