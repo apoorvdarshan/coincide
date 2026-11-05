@@ -647,15 +647,20 @@ impl Store {
         Ok(())
     }
 
-    pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
+    pub(crate) fn prepare_new_thread(&self, project_id: &str) -> Result<Value> {
         self.connection()?;
         let id = Uuid::new_v4().to_string().to_uppercase();
         let now = swift_timestamp();
-        let v = json!({"id":id,"projectID":project_id,"title":"New conversation","createdAt":now,"updatedAt":now,
+        Ok(
+            json!({"id":id,"projectID":project_id,"title":"New conversation","createdAt":now,"updatedAt":now,
             "selection":{"provider":"claude","modelID":"default"},"accessMode":"approval","interactionMode":"build",
-            "items":[],"sessions":{},"isPinned":false,"isArchived":false,"draft":""});
-        self.save(&v)?;
-        Ok(v)
+            "items":[],"sessions":{},"isPinned":false,"isArchived":false,"draft":""}),
+        )
+    }
+    pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
+        let thread = self.prepare_new_thread(project_id)?;
+        self.save(&thread)?;
+        Ok(thread)
     }
 
     pub fn is_imported(&self, id: &str) -> Result<bool> {
