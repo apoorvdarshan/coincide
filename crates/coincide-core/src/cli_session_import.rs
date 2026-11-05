@@ -1,7 +1,7 @@
 //! Pure bounded CLI-session text previews. Original bytes are retained verbatim.
 //! This intentionally creates no executable session or store entry. The caller must
 //! capture source bytes and keep imported conversations read-only until explicitly forked.
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -156,10 +156,10 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                     continue;
                 };
                 let id = p["id"].as_str().map(str::to_owned);
-                if let Some(id) = &id {
-                    if !seen.insert(id.clone()) {
-                        continue;
-                    }
+                if let Some(id) = &id
+                    && !seen.insert(id.clone())
+                {
+                    continue;
                 }
                 let Some(blocks) = p["content"].as_array() else {
                     preview.omitted_records += 1;
@@ -170,11 +170,10 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                     if matches!(
                         block["type"].as_str(),
                         Some("input_text" | "output_text" | "text")
-                    ) {
-                        if let Some(text) = block["text"].as_str() {
-                            texts.push(text);
-                            continue;
-                        }
+                    ) && let Some(text) = block["text"].as_str()
+                    {
+                        texts.push(text);
+                        continue;
                     }
                     preview.omitted_records += 1;
                 }
@@ -211,10 +210,8 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
                 old_role == &role && old_text == &text && *old_event != is_event
             })
         {
-            if !is_event {
-                if let Some(last) = preview.messages.last_mut() {
-                    last.external_id = external_id;
-                }
+            if !is_event && let Some(last) = preview.messages.last_mut() {
+                last.external_id = external_id;
             }
             previous = None;
             continue;
@@ -335,11 +332,11 @@ pub fn preview_claude(bytes: &[u8]) -> Result<SessionPreview> {
         } else if let Some(blocks) = message["content"].as_array() {
             let mut texts = Vec::new();
             for block in blocks {
-                if block["type"] == "text" {
-                    if let Some(text) = block["text"].as_str() {
-                        texts.push(text);
-                        continue;
-                    }
+                if block["type"] == "text"
+                    && let Some(text) = block["text"].as_str()
+                {
+                    texts.push(text);
+                    continue;
                 }
                 omitted += 1;
             }
