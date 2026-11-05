@@ -1,3 +1,4 @@
+mod worker_owner;
 use anyhow::Result;
 mod assets;
 mod bot_settings;

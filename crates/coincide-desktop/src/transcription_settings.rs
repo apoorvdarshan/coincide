@@ -1,5 +1,6 @@
 //! Native, explicit local-WAV transcription. Parent owns composer insertion;
 //! this module never sends a message, captures audio, downloads or discovers tools.
+use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use coincide_core::dictation::local::{LocalError, LocalWhisper};
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render,
@@ -134,6 +135,7 @@ struct Workflow {
     generation: u64,
     binding: Option<ComposerBinding>,
     running: Option<Uuid>,
+    workers: WorkerOwner,
     backend: Arc<dyn Backend>,
     sender: Sender<Finished>,
     results: Receiver<Finished>,
@@ -154,6 +156,7 @@ impl Workflow {
                 generation: 0,
                 binding: None,
                 running: None,
+                workers: WorkerOwner::default(),
                 backend,
                 sender,
                 results,
@@ -166,6 +169,9 @@ impl Workflow {
         self.generation = self.generation.wrapping_add(1);
     }
     fn set_binding(&mut self, binding: Option<ComposerBinding>) -> bool {
+        if self.workers.closed() {
+            return false;
+        }
         if self.binding == binding {
             return false;
         }
@@ -174,7 +180,7 @@ impl Workflow {
         true
     }
     fn start(&mut self, configuration: Configuration) -> bool {
-        if self.running.is_some() {
+        if self.running.is_some() || !self.workers.can_start() {
             return false;
         }
         let Some(binding) = self.binding.clone() else {
@@ -186,18 +192,54 @@ impl Workflow {
         let generation = self.generation;
         let backend = self.backend.clone();
         let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let result = backend.transcribe(configuration);
+        if !self.workers.spawn(move |admission| {
+            let result = if admission.allowed() {
+                backend.transcribe(configuration)
+            } else {
+                Err(Failure::Unavailable)
+            };
             let _ = sender.send(Finished {
                 job,
                 generation,
                 binding,
                 result,
             });
-        });
+        }) {
+            self.running = None;
+            return false;
+        }
         true
     }
+    fn request_shutdown(&mut self) {
+        if self.workers.close() {
+            self.invalidate();
+            self.binding = None;
+        }
+        self.discard_results();
+    }
+    fn discard_results(&mut self) {
+        for result in self.results.try_iter() {
+            if self.running == Some(result.job) {
+                self.running = None;
+            }
+        }
+    }
+    fn shutdown_status(&mut self) -> ShutdownStatus {
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        let status = self.workers.status();
+        if self.workers.closed() {
+            self.discard_results();
+        }
+        status
+    }
     fn poll(&mut self) -> Option<Completion> {
+        self.workers.poll();
+        if self.workers.closed() {
+            self.discard_results();
+            return None;
+        }
         let result = self.results.try_recv().ok()?;
         if self.running != Some(result.job) {
             return Some(Completion::Stale);
@@ -220,7 +262,8 @@ impl Workflow {
         }
     }
     fn accepts(&self, event: &TextReady, current: &ComposerBinding) -> bool {
-        event.generation == self.generation
+        !self.workers.closed()
+            && event.generation == self.generation
             && event.binding == *current
             && self.binding.as_ref() == Some(current)
     }
@@ -283,7 +326,7 @@ impl TranscriptionSettings {
         u64,
         Option<crate::microphone_settings::LocalRecordingConfig>,
     ) {
-        let configuration = if self.picker {
+        let configuration = if self.picker || self.workflow.workers.closed() {
             None
         } else {
             self.executable
@@ -300,6 +343,15 @@ impl TranscriptionSettings {
                 )
         };
         (self.workflow.generation, configuration)
+    }
+    pub fn request_shutdown(&mut self) {
+        self.workflow.request_shutdown();
+        self.executable = None;
+        self.model = None;
+        self.wav = None;
+    }
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        self.workflow.shutdown_status()
     }
     pub fn accepts_text(&self, event: &TextReady, current: &ComposerBinding) -> bool {
         self.workflow.accepts(event, current)
@@ -322,7 +374,7 @@ impl TranscriptionSettings {
         }
     }
     fn choose(&mut self, kind: FileKind, cx: &mut Context<Self>) {
-        if self.picker || self.workflow.running.is_some() {
+        if self.picker || self.workflow.running.is_some() || !self.workflow.workers.begin_picker() {
             return;
         }
         self.workflow.invalidate();
@@ -343,6 +395,7 @@ impl TranscriptionSettings {
             let paths: anyhow::Result<_> = async { Ok(picker.await??) }.await;
             let _ = this.update(cx, |this, cx| {
                 this.picker = false;
+                if !this.workflow.workers.finish_picker() { cx.notify(); return; }
                 if this.workflow.generation != generation { this.status = "File choice discarded because the composer/settings changed.".into(); cx.notify(); return; }
                 match paths {
                     Ok(Some(paths)) if paths.len() == 1 && paths[0].is_absolute() => {
@@ -359,6 +412,9 @@ impl TranscriptionSettings {
         cx.notify();
     }
     fn transcribe(&mut self, cx: &mut Context<Self>) {
+        if self.workflow.workers.closed() {
+            return;
+        }
         if self.picker || !cfg!(any(target_os = "macos", target_os = "linux")) {
             return;
         }
@@ -392,9 +448,14 @@ fn file_label(path: &Option<PathBuf>, empty: &str) -> String {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| empty.into())
 }
+impl Drop for Workflow {
+    fn drop(&mut self) {
+        self.request_shutdown();
+    }
+}
 impl Render for TranscriptionSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.picker || self.workflow.running.is_some();
+        let busy = self.picker || self.workflow.running.is_some() || self.workflow.workers.closed();
         let mut panel = div().flex().flex_col().gap_2().p_4().child("Local file transcription")
             .child("Requires a configured whisper.cpp CLI, compatible local model, and 16 kHz mono 16-bit PCM WAV. No microphone capture or automatic sending.");
         for (kind, id, label) in [
@@ -592,5 +653,74 @@ mod tests {
         assert!(!workflow.accepts(&event, &binding(2)));
         workflow.invalidate();
         assert!(!workflow.accepts(&event, &binding(1)));
+    }
+    struct ShutdownTls {
+        entered: Sender<()>,
+        release: Receiver<()>,
+    }
+    impl Drop for ShutdownTls {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! { static SHUTDOWN_TLS:std::cell::RefCell<Option<ShutdownTls>>=const { std::cell::RefCell::new(None) }; }
+    struct ShutdownBackend {
+        entered: Sender<()>,
+        release: Mutex<Receiver<()>>,
+        tls_entered: Sender<()>,
+        tls_release: Mutex<Option<Receiver<()>>>,
+    }
+    impl Backend for ShutdownBackend {
+        fn transcribe(&self, _: Configuration) -> Result<String, Failure> {
+            SHUTDOWN_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(ShutdownTls {
+                    entered: self.tls_entered.clone(),
+                    release: self.tls_release.lock().unwrap().take().unwrap(),
+                })
+            });
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok("synthetic private transcript".into())
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn shutdown_discards_transcript_and_waits_for_actual_tls_join() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (tls_tx, tls_rx) = mpsc::channel();
+        let (tls_release_tx, tls_release_rx) = mpsc::channel();
+        let backend = Arc::new(ShutdownBackend {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+            tls_entered: tls_tx,
+            tls_release: Mutex::new(Some(tls_release_rx)),
+        });
+        let (mut workflow, events) = Workflow::new(backend);
+        workflow.set_binding(Some(binding(1)));
+        assert!(workflow.start(configuration()));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let old = TextReady {
+            generation: workflow.generation,
+            binding: binding(1),
+            text: "previously queued private text".into(),
+        };
+        workflow.request_shutdown();
+        assert!(!workflow.accepts(&old, &binding(1)));
+        assert!(!workflow.start(configuration()));
+        release_tx.send(()).unwrap();
+        tls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(workflow.shutdown_status().unjoined, 1);
+        assert!(workflow.running.is_none());
+        assert!(events.try_recv().is_err());
+        assert!(workflow.results.try_recv().is_err());
+        tls_release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while workflow.shutdown_status().unjoined != 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(workflow.shutdown_status().returned, 1);
+        assert!(events.try_recv().is_err());
     }
 }
