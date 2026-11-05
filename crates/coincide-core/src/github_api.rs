@@ -39,11 +39,16 @@ impl GhRunner {
         })
     }
     #[cfg(not(unix))]
-    fn capture(&self, _: &Path, _: &[String], _: &AtomicBool) -> Result<Vec<u8>> {
+    pub(crate) fn capture(&self, _: &Path, _: &[String], _: &AtomicBool) -> Result<Vec<u8>> {
         bail!("gh reads unavailable on this platform until bounded process cleanup is implemented")
     }
     #[cfg(unix)]
-    fn capture(&self, root: &Path, args: &[String], cancelled: &AtomicBool) -> Result<Vec<u8>> {
+    pub(crate) fn capture(
+        &self,
+        root: &Path,
+        args: &[String],
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<u8>> {
         use std::{
             io::Read,
             os::{fd::AsRawFd, unix::process::CommandExt},
