@@ -6,6 +6,8 @@ use coincide_core::terminal::Terminal;
 use serde_json::Value;
 use std::{
     fs,
+    io::Write,
+    os::unix::ffi::OsStrExt,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -25,6 +27,11 @@ fn run(shell: &str) {
     fs::create_dir(&own).unwrap();
     let home = fs::canonicalize(home).unwrap();
     fs::create_dir(home.join("sub dir #?% 界")).unwrap();
+    if shell.ends_with("bash") {
+        let gate = std::ffi::CString::new(home.join("prompt-gate").as_os_str().as_bytes()).unwrap();
+        // Only this private TEMP HOME is addressed; no shell/profile is launched here.
+        assert_eq!(unsafe { libc::mkfifo(gate.as_ptr(), 0o600) }, 0);
+    }
     fs::write(
         home.join(".bash_profile"),
         r#"printf 'profile>' >> "$HOME/load-order"
@@ -36,10 +43,19 @@ fn run(shell: &str) {
         home.join(".bashrc"),
         r#"printf 'rc>' >> "$HOME/load-order"
 PS1='$ '
+_fixture_prompts=0
+_fixture_prompt() {
+  _fixture_prompts=$(( _fixture_prompts + 1 ))
+  printf 'user>' >> "$HOME/load-order"
+  # Hold every prompt after the old readiness predicate has become true, but
+  # before Readline prepares the tty and renders PS1. Release is not PTY input.
+  IFS= read -r _fixture_release < "$HOME/prompt-gate"
+  PS1='$ \[\e]2;fixture-prompt-'"$_fixture_prompts"'\a\]'
+}
 if (( BASH_VERSINFO[0] >= 4 )); then
-  PROMPT_COMMAND=('printf "user>" >> "$HOME/load-order"')
+  PROMPT_COMMAND=(_fixture_prompt)
 else
-  PROMPT_COMMAND='printf "user>" >> "$HOME/load-order"'
+  PROMPT_COMMAND='_fixture_prompt'
 fi
 "#,
     )
@@ -52,7 +68,15 @@ fi
         (".zprofile", "printf 'profile>' >> \"$HOME/load-order\"\n"),
         (
             ".zshrc",
-            "printf 'rc>' >> \"$HOME/load-order\"\nPS1=$'first\\n$ '\n",
+            r#"printf 'rc>' >> "$HOME/load-order"
+PS1=$'first\n$ '
+_fixture_prompts=0
+_fixture_prompt() {
+  _fixture_prompts=$(( _fixture_prompts + 1 ))
+  PS1=$'first\n$ %{\e]2;fixture-prompt-'${_fixture_prompts}$'\a%}'
+}
+precmd_functions+=(_fixture_prompt)
+"#,
         ),
         (".zlogin", "printf 'login>' >> \"$HOME/load-order\"\n"),
     ] {
@@ -123,6 +147,43 @@ fn wait(terminal: &mut Terminal, predicate: impl Fn(&Value) -> bool) -> Value {
         thread::sleep(Duration::from_millis(10));
     }
 }
+// A fresh receipt is rendered at the END of the actual PS1, after Readline/ZLE
+// has prepared the tty. Shell OSC A/D/cwd and user hooks run earlier and are not
+// input-readiness signals. A numbered title cannot reuse the preceding prompt.
+fn wait_for_prompt(terminal: &mut Terminal, home: &std::path::Path, shell: &str, number: usize) {
+    let title = format!("fixture-prompt-{number}");
+    if shell.ends_with("bash") {
+        let blocked = wait(terminal, |frame| {
+            frame["shell"]["hasMarks"] == true
+                && frame["shell"]["cwd"]["path"].is_string()
+                && fs::read_to_string(home.join("load-order"))
+                    .unwrap_or_default()
+                    .matches("user>")
+                    .count()
+                    == number
+        });
+        // Deterministically exercise the exact failing readiness window: the
+        // shim metadata AND original user hook are observed, PS1 is still absent.
+        assert_ne!(blocked["title"], title);
+        if number == 1 {
+            assert!(
+                blocked["lines"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|line| line != "$")
+            );
+        }
+        fs::OpenOptions::new()
+            .write(true)
+            .open(home.join("prompt-gate"))
+            .unwrap()
+            .write_all(b"render-prompt\n")
+            .unwrap();
+    }
+    wait(terminal, |frame| frame["title"] == title);
+}
+
 #[test]
 #[ignore = "invoked only by the outer tests with TEMP HOME/ZDOTDIR"]
 fn isolated_shell_fixture_child() {
@@ -149,6 +210,7 @@ fn isolated_shell_fixture_child() {
         assert!(order.starts_with("profile>rc>user>"), "{order}");
         assert!(!order.contains("WRONG"));
     }
+    wait_for_prompt(&mut terminal, &home, &shell, 1);
     let command = "printf 'fixture-one\\nfixture-two\\n'; false";
     terminal.write(&format!("{command}\r")).unwrap();
     wait(&mut terminal, |frame| {
@@ -171,6 +233,7 @@ fn isolated_shell_fixture_child() {
         );
         thread::sleep(Duration::from_millis(10));
     }
+    wait_for_prompt(&mut terminal, &home, &shell, 2);
     let cd = "cd \"$HOME/sub dir #?% 界\"";
     // Capture the exact emitter bytes as well as the parsed PTY metadata. This
     // distinguishes bash 3.2 octet encoding from readline's wide-cell padding.
@@ -205,6 +268,7 @@ fn isolated_shell_fixture_child() {
     });
     assert_eq!(changed["shell"]["cwd"]["trusted"], false);
     assert_eq!(changed["shell"]["exitStatus"], 0);
+    wait_for_prompt(&mut terminal, &home, &shell, 3);
     terminal.write("exit\r").unwrap();
     wait(&mut terminal, |frame| frame["exitCode"] == 0);
 }
