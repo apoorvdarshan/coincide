@@ -265,34 +265,47 @@ mod tests {
         }
     }
     #[test]
-    fn admitted_failed_refresh_revokes_proof_without_falling_back() {
+    fn admitted_refresh_revokes_proof_for_failed_or_unsupported_catalog() {
         let (_dir, mut catalog, path, selection) = fixture();
         let proof = catalog
             .codex_effort_proof(&selection, &path)
             .unwrap()
             .unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let worker_ran = ran.clone();
         let request = catalog
             .refresh_bound(
                 "codex",
                 Some(EffortExecutable::read(&path).unwrap()),
-                |_| Err("synthetic catalog failure".into()),
+                move |_| {
+                    worker_ran.store(true, Ordering::Release);
+                    Err("synthetic catalog failure".into())
+                },
             )
             .unwrap();
         assert!(proof.validate(&selection).is_err());
         assert!(catalog.codex_effort_proof(&selection, &path).is_err());
+        // Windows deliberately does not launch this discovery worker; its
+        // terminal response is Unsupported, which must revoke old proof too.
+        let expected = if supported("codex") {
+            "failed"
+        } else {
+            "unsupported"
+        };
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             catalog.poll();
             if catalog
                 .status(request["requestId"].as_str().unwrap())
                 .unwrap()["state"]
-                == "failed"
+                == expected
             {
                 break;
             }
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
+        assert_eq!(ran.load(Ordering::Acquire), supported("codex"));
         assert!(catalog.codex_effort_proof(&selection, &path).is_err());
         assert!(proof.validate(&selection).is_err());
         while catalog.shutdown_status().running != 0 {
