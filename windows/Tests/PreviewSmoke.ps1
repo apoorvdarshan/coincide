@@ -49,8 +49,38 @@ public static class CoincideSmokeWindow {
         }
     }
 
-    private static SafeFileHandle PinPreparedEntry(string path,bool directory,uint share,long maximum) {
-        var handle=CreateFile(path,directory?0x81u:0x80000080u,share,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
+    [StructLayout(LayoutKind.Sequential)] private struct AclSizeInfo { public uint count,used,free; }
+    [DllImport("advapi32.dll")] private static extern uint GetSecurityInfo(SafeFileHandle handle,uint type,uint requested,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
+    [DllImport("advapi32.dll",SetLastError=true)] private static extern bool GetAclInformation(IntPtr acl,out AclSizeInfo info,uint size,uint kind);
+    [DllImport("advapi32.dll",SetLastError=true)] private static extern bool GetAce(IntPtr acl,uint index,out IntPtr ace);
+    [DllImport("advapi32.dll")] private static extern bool IsValidAcl(IntPtr acl);
+    [DllImport("advapi32.dll")] private static extern bool IsValidSid(IntPtr sid);
+    private static void RequirePrivatePreparedAcl(SafeFileHandle handle) {
+        IntPtr owner,group,dacl,sacl,descriptor;
+        var status=GetSecurityInfo(handle,1,5,out owner,out group,out dacl,out sacl,out descriptor);
+        try {
+            if(status!=0||descriptor==IntPtr.Zero||owner==IntPtr.Zero||dacl==IntPtr.Zero||!IsValidSid(owner)||!IsValidAcl(dacl))
+                throw new InvalidOperationException("Prepared host metadata has an unavailable or invalid private ACL");
+            var current=System.Security.Principal.WindowsIdentity.GetCurrent().User;
+            AclSizeInfo info;IntPtr ace;
+            if(current==null||!current.Equals(new System.Security.Principal.SecurityIdentifier(owner))||
+                !GetAclInformation(dacl,out info,(uint)Marshal.SizeOf(typeof(AclSizeInfo)),2)||info.count!=1||
+                info.used<24||info.used>(uint)(ushort)Marshal.ReadInt16(dacl,2)||!GetAce(dacl,0,out ace)||ace==IntPtr.Zero)
+                throw new InvalidOperationException("Prepared host metadata is not private to the current user");
+            var offset=ace.ToInt64()-dacl.ToInt64();
+            if(offset<8||offset>info.used-16||Marshal.ReadByte(ace)!=0||(Marshal.ReadByte(ace,1)&0x10)!=0)
+                throw new InvalidOperationException("Prepared host metadata requires one explicit current-user Allow ACE");
+            var size=(uint)(ushort)Marshal.ReadInt16(ace,2);
+            if(size<16||size>info.used-offset)
+                throw new InvalidOperationException("Prepared host metadata contains a malformed ACE");
+            var sid=IntPtr.Add(ace,8);var sidSize=8+4*(uint)Marshal.ReadByte(sid,1);
+            if(Marshal.ReadByte(sid)!=1||sidSize!=size-8||!IsValidSid(sid)||!current.Equals(new System.Security.Principal.SecurityIdentifier(sid)))
+                throw new InvalidOperationException("Prepared host metadata is not private to the current user");
+        }finally{if(descriptor!=IntPtr.Zero)LocalFree(descriptor);}
+    }
+
+    private static SafeFileHandle PinPreparedEntry(string path,bool directory,uint share,long maximum,bool readControl=false) {
+        var handle=CreateFile(path,directory?(0x81u|(readControl?0x20000u:0u)):0x80000080u,share,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
         FileInfo info;
         if(handle.IsInvalid||!GetFileInformationByHandle(handle,out info)||(info.attributes&0x400)!=0||((info.attributes&0x10)!=0)!=directory||(!directory&&(info.links!=1||(((ulong)info.sizeHigh<<32)|info.sizeLow)>(ulong)maximum))) {
             handle.Dispose();throw new InvalidOperationException("Prepared hosted data contains an unavailable, linked or oversized entry");
@@ -69,7 +99,6 @@ public static class CoincideSmokeWindow {
                 throw new InvalidOperationException("Prepared hosted data must be one physical TEMP child with a fresh fixture GUID name");
             pins.Add(PinPreparedEntry(requested,true,3,0));
             if(!String.Equals(PhysicalDirectory(requested),requested,StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("Prepared hosted data cannot resolve through an alias or reparse point");
-            var owner=System.Security.Principal.WindowsIdentity.GetCurrent().User;
             var count=0;
             foreach(var entry in System.IO.Directory.EnumerateFileSystemEntries(requested)) {
                 if(++count>2)throw new InvalidOperationException("Prepared hosted data is not an empty owned fixture");
@@ -84,11 +113,8 @@ public static class CoincideSmokeWindow {
                 if(stream.Length!=expected.Length)throw new InvalidOperationException("Prepared hosted marker is invalid");
                 for(var i=0;i<expected.Length;++i)if(stream.ReadByte()!=expected[i])throw new InvalidOperationException("Prepared hosted marker is invalid");
             }
-            var ledger=System.IO.Path.Combine(requested,"agent-host-windows");pins.Add(PinPreparedEntry(ledger,true,3,0));
-            var security=System.IO.Directory.GetAccessControl(ledger);var rules=security.GetAccessRules(true,true,typeof(System.Security.Principal.SecurityIdentifier));
-            if(!owner.Equals(security.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)))||rules.Count!=1||
-                !owner.Equals(rules[0].IdentityReference)||((System.Security.AccessControl.FileSystemAccessRule)rules[0]).AccessControlType!=System.Security.AccessControl.AccessControlType.Allow)
-                throw new InvalidOperationException("Prepared host metadata is not private to the current user");
+            var ledger=System.IO.Path.Combine(requested,"agent-host-windows");var ledgerPin=PinPreparedEntry(ledger,true,3,0,true);pins.Add(ledgerPin);
+            RequirePrivatePreparedAcl(ledgerPin);
             count=0;var foundLock=false;
             foreach(var entry in System.IO.Directory.EnumerateFileSystemEntries(ledger)) {
                 if(++count>2)throw new InvalidOperationException("Prepared private host folder has unknown files");

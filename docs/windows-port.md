@@ -16,7 +16,8 @@ with real recognition and remaining voice parity still unverified. These decisio
 - [x] Native panel foundation: **19 panels / 499 checks**; browser path portability separately checked with real long/8.3 paths.
 - [ ] Background queue/recovery robustness: latest full-app crash test stops before the crash because queue delivery becomes uncertain; its original ID/text remain saved. An earlier candidate passed the six crash/relaunch checks, which does not establish the latest case fixed.
 - [x] Instruction Git-root correction: **80 native checks** pass with both normal and real 8.3 TEMP paths; nested/junction/forged-root refusal remains covered.
-- [ ] Exact-revision Windows CI for the corrected source. The previous foundation run failed the now-corrected folder validation.
+- [ ] Exact-revision Windows CI. The latest UI step stopped before app launch on a PowerShell 7 helper API mismatch; the Win32 compatibility fix and dual-runtime preflight are awaiting CI.
+- [ ] Further physical validation: the ASUS Windows peer is offline. The last baseline comparison result has not been retrieved.
 - [ ] Initial-marker/missing-host-generation owner recovery and the remaining feature/platform acceptance listed below.
 - [ ] Signed packaging, updates and distribution acceptance. No public release is authorized.
 
