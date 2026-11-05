@@ -14,6 +14,16 @@ fn fixture(
     resume: Option<&str>,
     model: Option<&str>,
 ) -> (tempfile::TempDir, Session) {
+    fixture_with_prompt(source, provider, resume, model, "fixture prompt")
+}
+
+fn fixture_with_prompt(
+    source: &str,
+    provider: Provider,
+    resume: Option<&str>,
+    model: Option<&str>,
+    prompt: &str,
+) -> (tempfile::TempDir, Session) {
     let dir = tempfile::tempdir().unwrap();
     let executable = dir.path().join("fixture");
     fs::write(&executable, format!("#!/usr/bin/env python3\nimport json,sys,os\ndef read():\n return json.loads(sys.stdin.readline())\ndef write(value):\n print(json.dumps(value),flush=True)\n{source}")).unwrap();
@@ -24,7 +34,7 @@ fn fixture(
             executable,
             cwd: dir.path().into(),
             session: resume.map(str::to_owned),
-            prompt: "fixture prompt".into(),
+            prompt: prompt.into(),
             model: model.map(str::to_owned),
         },
     );
@@ -36,6 +46,144 @@ fn receive(session: &Session) -> Event {
         .events
         .recv_timeout(Duration::from_secs(5))
         .expect("fixture timed out")
+}
+
+const HUNG_INPUT_FIXTURE: &str = r#"
+open('pid','w').write(str(os.getpid()))
+if sys.argv[1:] == ['app-server']:
+ r=read();write({'id':r['id'],'result':{}})
+ assert read()['method']=='initialized'
+ r=read();assert r['method']=='thread/start'
+ write({'id':r['id'],'result':{'thread':{'id':'hung-codex'}}})
+elif '--input-format' in sys.argv:
+ r=read();write({'type':'control_response','response':{'subtype':'success','request_id':r['request_id']}})
+else:
+ r=read();write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{}}})
+ r=read();assert r['method']=='session/new'
+ write({'id':r['id'],'result':{'sessionId':'hung-acp'}})
+# Confirm the large prompt is entering the pipe, then deliberately stop reading.
+assert sys.stdin.buffer.read(1)==b'{'
+open('blocked-input','w').write('yes')
+import time;time.sleep(30)
+"#;
+
+fn await_blocked_input(directory: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !directory.join("blocked-input").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "fixture did not receive prompt bytes"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn assert_reaped(directory: &std::path::Path) {
+    let pid = fs::read_to_string(directory.join("pid")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let alive = std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        if !alive {
+            return;
+        }
+        assert!(Instant::now() < deadline, "provider process was not reaped");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn cancellation_remains_responsive_when_each_provider_blocks_a_large_stdin_write() {
+    let prompt = "x".repeat(2 * 1024 * 1024);
+    for provider in [
+        Provider::Codex,
+        Provider::Claude,
+        Provider::AcpV1 {
+            arguments: vec!["fixture-acp".into()],
+        },
+    ] {
+        let (directory, session) =
+            fixture_with_prompt(HUNG_INPUT_FIXTURE, provider, None, None, &prompt);
+        await_blocked_input(directory.path());
+        let started = Instant::now();
+        session.stop();
+        loop {
+            match receive(&session) {
+                Event::Finished => break,
+                Event::Failed(error) => panic!("explicit cancellation failed: {error}"),
+                _ => {}
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "Stop waited for a blocked pipe write"
+        );
+        assert_reaped(directory.path());
+    }
+}
+
+#[test]
+fn blocked_stdin_has_a_deadline_and_reports_failure_without_explicit_stop() {
+    let (directory, session) = fixture_with_prompt(
+        HUNG_INPUT_FIXTURE,
+        Provider::Claude,
+        None,
+        None,
+        &"x".repeat(2 * 1024 * 1024),
+    );
+    await_blocked_input(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(14);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "blocked write never timed out");
+        match session
+            .events
+            .recv_timeout(remaining)
+            .expect("blocked write never timed out")
+        {
+            Event::Failed(error) => {
+                assert!(error.contains("stdin write timed out"), "{error}");
+                break;
+            }
+            Event::Finished => panic!("a write deadline must fail, not finish successfully"),
+            _ => {}
+        }
+    }
+    assert_reaped(directory.path());
+}
+
+#[test]
+fn a_success_frame_cannot_hide_a_failed_prompt_write() {
+    let source = r#"
+open('pid','w').write(str(os.getpid()))
+r=read();write({'type':'control_response','response':{'subtype':'success','request_id':r['request_id']}})
+os.close(0)
+write({'type':'result','subtype':'success','is_error':False,'result':'premature success'})
+import time;time.sleep(30)
+"#;
+    let (directory, session) = fixture_with_prompt(
+        source,
+        Provider::Claude,
+        None,
+        None,
+        &"x".repeat(2 * 1024 * 1024),
+    );
+    loop {
+        match receive(&session) {
+            Event::Failed(error) => {
+                assert!(error.contains("stdin"), "{error}");
+                break;
+            }
+            Event::Finished => panic!("provider completion hid a broken stdin pipe"),
+            _ => {}
+        }
+    }
+    assert_reaped(directory.path());
 }
 
 #[test]

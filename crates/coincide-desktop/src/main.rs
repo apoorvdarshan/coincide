@@ -25,6 +25,9 @@ struct Coincide {
     engine: SharedEngine,
     revision: u64,
     running: Vec<String>,
+    pending_requests: Vec<Value>,
+    pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
+    pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     _poll: Task<()>,
     terminal_id: Option<String>,
     terminal_text: String,
@@ -33,6 +36,10 @@ struct Coincide {
     transcript_count: usize,
     expanded: std::collections::HashSet<usize>,
     threads: Vec<ThreadSummary>,
+    projects: Vec<Value>,
+    selected_project: Option<String>,
+    project_picker_open: bool,
+    project_path: Entity<InputState>,
     selected: Option<Value>,
     composer: Entity<TextareaState>,
     search: Entity<InputState>,
@@ -55,6 +62,8 @@ impl Coincide {
     ) -> Self {
         let composer = cx.new(|cx| TextareaState::new(window, cx).placeholder("Write a message…"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
+        let project_path =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
         let (browser, browser_error) = match BrowserController::new(profile_dir) {
@@ -91,6 +100,10 @@ impl Coincide {
         let threads = call(&engine, "threads.list", json!({}))
             .and_then(|v| Ok(serde_json::from_value(v)?))
             .unwrap_or_default();
+        let projects = call(&engine, "projects.list", json!({}))
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -108,6 +121,9 @@ impl Coincide {
             engine,
             revision: 0,
             running: Vec::new(),
+            pending_requests: Vec::new(),
+            pending_inputs: Default::default(),
+            pending_choices: Default::default(),
             _poll: poll,
             terminal_id: None,
             terminal_text: String::new(),
@@ -116,6 +132,10 @@ impl Coincide {
             transcript_count: 0,
             expanded: Default::default(),
             threads,
+            projects,
+            selected_project: None,
+            project_picker_open: false,
+            project_path,
             selected: None,
             composer,
             search,
@@ -397,6 +417,9 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
+            self.projects = projects.as_array().cloned().unwrap_or_default();
+        }
         match call(&self.engine,"threads.list",json!({"query":self.search.read(cx).value().to_string(),"includeArchived":self.show_archived})).and_then(|v|Ok(serde_json::from_value(v)?)) {
             Ok(threads) => self.threads = threads,
             Err(e) => self.status = format!("Unable to load conversations: {e}"),
@@ -411,6 +434,7 @@ impl Coincide {
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
                 self.selected = Some(v);
+                self.pending_requests.clear();
                 let visible = self.browser_panels.contains(id).then_some(id);
                 if let Some(browser) = &mut self.browser {
                     browser.set_thread_visible(visible, cx);
@@ -437,20 +461,44 @@ impl Coincide {
     }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self
-            .selected
-            .as_ref()
-            .map(|v| text(v, "projectID"))
+            .selected_project
+            .clone()
+            .or_else(|| self.selected.as_ref().map(|v| text(v, "projectID")))
             .unwrap_or_else(|| "00000000-0000-0000-0000-000000000000".into());
+        let cwd = self
+            .projects
+            .iter()
+            .find(|p| p["id"] == project)
+            .and_then(|p| p["path"].as_str())
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
         match call(
             &self.engine,
             "threads.create",
-            json!({"projectId":project,"cwd":std::env::current_dir().ok()}),
+            json!({"projectId":project,"cwd":cwd}),
         ) {
             Ok(v) => {
                 self.refresh(cx);
                 self.select(&text(&v, "id"), window, cx);
             }
             Err(e) => self.status = e.to_string(),
+        }
+    }
+    fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.project_path.read(cx).value().to_string();
+        match call(&self.engine, "projects.create", json!({"path":path.trim()})) {
+            Ok(project) => {
+                self.selected_project = Some(text(&project, "id"));
+                self.project_path
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.status = format!("Selected project {}", text(&project, "name"));
+                self.refresh(cx);
+            }
+            Err(error) => {
+                self.status = format!("Project could not be added: {error}");
+                cx.notify();
+            }
         }
     }
     fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -517,6 +565,293 @@ impl Coincide {
                 self.refresh(cx);
             }
         }
+        self.refresh_pending(window, cx);
+    }
+    fn refresh_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        let requests = if self.running.contains(&thread) {
+            match call(&self.engine, "agent.pending", json!({"threadId":thread})) {
+                Ok(value) => value.as_array().cloned().unwrap_or_default(),
+                Err(error) => {
+                    let status = format!("Unable to load agent requests: {error}");
+                    if self.status != status {
+                        self.status = status;
+                        cx.notify();
+                    }
+                    return;
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let live: std::collections::HashSet<_> =
+            requests.iter().map(|r| text(r, "requestId")).collect();
+        self.pending_inputs
+            .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
+        self.pending_choices
+            .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
+        for request in &requests {
+            let request_id = text(request, "requestId");
+            for question in request["params"]["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let key = (thread.clone(), request_id.clone(), text(question, "id"));
+                self.pending_inputs.entry(key).or_insert_with(|| {
+                    cx.new(|cx| {
+                        let mut input =
+                            InputState::new(window, cx).placeholder("Write your answer");
+                        if question["isSecret"] == true {
+                            input.set_masked(true, window, cx);
+                        }
+                        input
+                    })
+                });
+            }
+        }
+        if self.pending_requests != requests {
+            self.pending_requests = requests;
+            cx.notify();
+        }
+    }
+    fn respond_pending(&mut self, request_id: &str, decision: &str, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        self.finish_pending(
+            &thread,
+            request_id,
+            "agent.respond",
+            json!({"threadId":thread,"requestId":request_id,"decision":decision}),
+            cx,
+        );
+    }
+    fn answer_pending(&mut self, request_id: &str, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        let Some(request) = self
+            .pending_requests
+            .iter()
+            .find(|r| r["requestId"] == request_id)
+        else {
+            return;
+        };
+        let Some(questions) = request["params"]["questions"].as_array() else {
+            return;
+        };
+        let mut answers = serde_json::Map::new();
+        for question in questions {
+            let id = text(question, "id");
+            let key = (thread.clone(), request_id.to_owned(), id.clone());
+            let freeform = self
+                .pending_inputs
+                .get(&key)
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_default();
+            let values = if freeform.trim().is_empty() {
+                self.pending_choices.get(&key).cloned().unwrap_or_default()
+            } else {
+                vec![freeform]
+            };
+            if values.is_empty() {
+                self.status = "Answer every question before submitting.".into();
+                cx.notify();
+                return;
+            }
+            answers.insert(id, json!({"answers":values}));
+        }
+        self.finish_pending(
+            &thread,
+            request_id,
+            "agent.answer",
+            json!({"threadId":thread,"requestId":request_id,"answers":answers}),
+            cx,
+        );
+    }
+    fn finish_pending(
+        &mut self,
+        thread: &str,
+        request_id: &str,
+        method: &str,
+        params: Value,
+        cx: &mut Context<Self>,
+    ) {
+        match call(&self.engine, method, params) {
+            Ok(_) => {
+                self.pending_requests
+                    .retain(|r| r["requestId"] != request_id);
+                self.pending_inputs
+                    .retain(|(owner, id, _), _| owner != thread || id != request_id);
+                self.pending_choices
+                    .retain(|(owner, id, _), _| owner != thread || id != request_id);
+                self.status = "Response sent to the agent.".into();
+            }
+            Err(error) => self.status = format!("Response was not sent: {error}"),
+        }
+        cx.notify();
+    }
+    fn pending_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.pending_requests.is_empty() {
+            return None;
+        }
+        let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
+        let mut cards = Vec::new();
+        for request in &self.pending_requests {
+            let request_id = text(request, "requestId");
+            let card = div()
+                .flex()
+                .flex_col()
+                .h(px(260.))
+                .flex_shrink_0()
+                .gap_2()
+                .p_3()
+                .rounded_md()
+                .bg(rgb(0x253046));
+            let mut body = div()
+                .id(SharedString::from(format!("pending-body-{request_id}")))
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap_2()
+                .overflow_y_scroll();
+            let actions;
+            if request["method"] == "item/tool/requestUserInput" {
+                body = body.child(div().font_semibold().child("The agent needs your answer"));
+                for (index, question) in request["params"]["questions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                {
+                    let key = (thread.clone(), request_id.clone(), text(question, "id"));
+                    body = body
+                        .child(div().text_sm().child(text(question, "header")))
+                        .child(div().child(text(question, "question")));
+                    let multiple = question["multiSelect"] == true;
+                    let mut options = div().flex().flex_col().gap_1();
+                    for (option_index, option) in question["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .enumerate()
+                    {
+                        let label = text(option, "label");
+                        let chosen = self
+                            .pending_choices
+                            .get(&key)
+                            .is_some_and(|choices| choices.contains(&label));
+                        let key = key.clone();
+                        let button_label = format!("{}{}", if chosen { "✓ " } else { "" }, label);
+                        options =
+                            options
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "answer-{request_id}-{index}-{option_index}"
+                                    )))
+                                    .label(button_label)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let choices =
+                                            this.pending_choices.entry(key.clone()).or_default();
+                                        if multiple {
+                                            if choices.contains(&label) {
+                                                choices.retain(|v| v != &label);
+                                            } else {
+                                                choices.push(label.clone());
+                                            }
+                                        } else {
+                                            *choices = vec![label.clone()];
+                                        }
+                                        if let Some(input) = this.pending_inputs.get(&key) {
+                                            input.update(cx, |input, cx| {
+                                                input.set_value("", window, cx)
+                                            });
+                                        }
+                                        cx.notify();
+                                    })),
+                                )
+                                .child(div().text_sm().child(text(option, "description")));
+                    }
+                    body = body.child(options);
+                    if let Some(input) = self.pending_inputs.get(&key) {
+                        body = body
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child("Or write an answer; this replaces selected options."),
+                            )
+                            .child(Input::new(input));
+                    }
+                }
+                let id = request_id.clone();
+                actions = div().flex_shrink_0().child(
+                    Button::new(SharedString::from(format!("submit-{request_id}")))
+                        .label("Submit answers")
+                        .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
+                );
+            } else {
+                body = body.child(div().font_semibold().child("Approval required"));
+                let mut details = request["params"].clone();
+                if let Some(object) = details.as_object_mut() {
+                    object.remove("providerFrame");
+                }
+                body = body
+                    .child(div().text_sm().child(text(request, "method")))
+                    .child(TextView::markdown(
+                        SharedString::from(format!("approval-details-{request_id}")),
+                        format!(
+                            "```json\n{}\n```",
+                            serde_json::to_string_pretty(&details).unwrap_or_default()
+                        ),
+                    ));
+                let offered = request["params"]["availableDecisions"].as_array();
+                let mut buttons = div().flex().flex_wrap().flex_shrink_0().gap_2();
+                for (decision, label) in [
+                    ("accept", "Allow once"),
+                    ("decline", "Decline"),
+                    ("cancel", "Cancel request"),
+                ] {
+                    if offered.is_some_and(|options| !options.iter().any(|v| v == decision)) {
+                        continue;
+                    }
+                    let id = request_id.clone();
+                    buttons = buttons.child(
+                        Button::new(SharedString::from(format!(
+                            "decision-{request_id}-{decision}"
+                        )))
+                        .label(label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.respond_pending(&id, decision, cx)
+                        })),
+                    );
+                }
+                actions = div().flex_shrink_0().child(buttons);
+            }
+            // Only the request details scroll. Decisions stay in a separate
+            // footer, reachable even when questions/options exceed the pane.
+            cards.push(card.child(body).child(actions));
+        }
+        Some(
+            div()
+                .id("pending-agent-requests")
+                .flex()
+                .flex_col()
+                .gap_2()
+                .max_h(px(340.))
+                .flex_shrink_0()
+                .overflow_y_scroll()
+                .p_3()
+                .child(div().text_sm().child(format!(
+                    "{} pending request(s)",
+                    self.pending_requests.len()
+                )))
+                .children(cards)
+                .into_any_element(),
+        )
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {
@@ -702,6 +1037,12 @@ impl Render for Coincide {
             .as_ref()
             .map(|v| text(v, "id"))
             .unwrap_or_default();
+        let project_label = self
+            .selected_project
+            .as_ref()
+            .and_then(|id| self.projects.iter().find(|p| p["id"] == id.as_str()))
+            .map(|p| text(p, "name"))
+            .unwrap_or_else(|| "All projects".into());
         let sidebar = div()
             .flex()
             .flex_col()
@@ -718,6 +1059,51 @@ impl Render for Coincide {
                     .label("New conversation")
                     .on_click(cx.listener(|this, _, window, cx| this.new_thread(window, cx))),
             )
+            .child(
+                Button::new("projects-toggle")
+                    .label(format!("Project: {project_label}"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.project_picker_open = !this.project_picker_open;
+                        cx.notify();
+                    })),
+            )
+            .when(self.project_picker_open, |view| {
+                view.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(Button::new("projects-all").label("All projects").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.selected_project = None;
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .id("project-picker")
+                                .max_h(px(180.))
+                                .overflow_y_scroll()
+                                .children(self.projects.iter().map(|project| {
+                                    let id = text(project, "id");
+                                    Button::new(SharedString::from(format!("project-{id}")))
+                                        .label(text(project, "name"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.selected_project = Some(id.clone());
+                                            cx.notify();
+                                        }))
+                                })),
+                        )
+                        .child(Input::new(&self.project_path))
+                        .child(
+                            Button::new("project-add")
+                                .label("Add existing folder")
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.add_project(window, cx)),
+                                ),
+                        ),
+                )
+            })
             .child(Input::new(&self.search))
             .child(
                 Button::new("archived")
@@ -731,29 +1117,38 @@ impl Render for Coincide {
                         this.refresh(cx);
                     })),
             )
-            .child(div().id("threads").flex_1().overflow_y_scroll().children(
-                self.threads.iter().map(|thread| {
-                    let id = thread.id.clone();
-                    div()
-                        .id(SharedString::from(id.clone()))
-                        .p_3()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .bg(if id == selected_id {
-                            rgb(0x2b3549)
-                        } else {
-                            rgb(0x151922)
+            .child(
+                div().id("threads").flex_1().overflow_y_scroll().children(
+                    self.threads
+                        .iter()
+                        .filter(|thread| {
+                            self.selected_project
+                                .as_ref()
+                                .is_none_or(|id| &thread.project_id == id)
                         })
-                        .child(format!(
-                            "{}{}",
-                            if thread.pinned { "★ " } else { "" },
-                            thread.title
-                        ))
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.select(&id, window, cx)),
-                        )
-                }),
-            ));
+                        .map(|thread| {
+                            let id = thread.id.clone();
+                            div()
+                                .id(SharedString::from(id.clone()))
+                                .p_3()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .bg(if id == selected_id {
+                                    rgb(0x2b3549)
+                                } else {
+                                    rgb(0x151922)
+                                })
+                                .child(format!(
+                                    "{}{}",
+                                    if thread.pinned { "★ " } else { "" },
+                                    thread.title
+                                ))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.select(&id, window, cx)
+                                }))
+                        }),
+                ),
+            );
         let title = self
             .selected
             .as_ref()
@@ -766,6 +1161,7 @@ impl Render for Coincide {
         .flex_1()
         .min_h_0();
         let browser_pane = self.browser_pane(cx);
+        let pending_pane = self.pending_pane(cx);
         div()
             .flex()
             .size_full()
@@ -813,6 +1209,7 @@ impl Render for Coincide {
                             )),
                     )
                     .child(transcript)
+                    .when_some(pending_pane, |view, pane| view.child(pane))
                     .when(self.terminal_id.is_some(), |view| {
                         view.child(
                             div()

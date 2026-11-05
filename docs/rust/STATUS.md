@@ -45,7 +45,7 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Verified so far
 
-2026-11-05 checkpoint: approximately 15% of the macOS replacement is verified.
+2026-11-05 checkpoint: approximately 18% of the macOS replacement is verified.
 This remains a planning estimate; the broad acceptance groups above stay unchecked
 until their complete behavior is accepted. Mac is the first release target; Linux
 currently supplies additional build/test capacity and portability feedback.
@@ -66,8 +66,19 @@ The Mac preview's native WebKit browser passed manual API/CLI checks against a l
 fixture: navigation, reading, text entry, clicking, password-input refusal, hidden
 page access, and cross-thread tab isolation. Visual inspection caught and corrected
 a toolbar overlap; the address field follows navigation. API controls also changed
-the selected provider and persisted drafts. The accessibility tree currently exposes
-only window controls; full keyboard/accessibility acceptance is still outstanding.
+the selected provider and persisted drafts. Subsequent native accessibility actions
+verified Allow once, selecting a question option and Submit answers against a local
+provider fixture, with the completed result read back through the API. Request action
+footers remain visible while long details scroll. Buttons and inputs appear in the
+accessibility tree after initialization; full keyboard/accessibility acceptance is
+still outstanding.
+
+The next portable batch passes 56 tests, including cancellation while all three
+provider transports block on large stdin writes, write deadlines, schedule claim
+and recovery transitions, separate Rust approval for imported schedules, and project
+file/Git inspection. Strict core clippy and Mac compilation pass. The previous
+checkpoint `b99c3a2` also passed every applicable GitHub check (Mac/Linux/Windows
+core checks, Mac GPUI build and existing Swift CI).
 
 Implemented foundations are deliberately narrower than full feature groups:
 
@@ -81,8 +92,13 @@ Implemented foundations are deliberately narrower than full feature groups:
   running Swift conversation's control bindings.
 - Claude and generic ACP protocol adapters have fixture coverage. ACP is not exposed
   as a named provider until its launch/account/mode integration is implemented.
-- Scheduling has validated persisted models and recurrence calculations only;
-  nothing executes schedules and there is no approval UI yet.
+- Scheduling has validated persisted models, recurrence calculations, CRUD APIs,
+  durable claims, explicit approval transitions and restart recovery. Imported Swift
+  approvals cannot authorize Rust execution. Nothing executes schedules yet and
+  there is no schedule approval UI; API replies explicitly report execution unavailable.
+- Project selection and existing-folder registration are in the preview. Bounded
+  background Git status/diff, file listing and text-file reads are available through
+  API/CLI; Git mutations, worktree/checkpoint UI and provider context injection remain.
 - Transcripts use a virtualized list, but selectable text/media parity is unfinished.
 
 ## Data boundaries

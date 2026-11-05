@@ -32,9 +32,14 @@ pub struct Engine {
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
+    workspace_pending: HashMap<String, (String, Instant)>,
+    workspace_results: HashMap<String, Value>,
+    workspace_tx: std::sync::mpsc::SyncSender<(String, Value)>,
+    workspace_rx: std::sync::mpsc::Receiver<(String, Value)>,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
+        let (workspace_tx, workspace_rx) = std::sync::mpsc::sync_channel(32);
         Self {
             store,
             runs: HashMap::new(),
@@ -47,6 +52,10 @@ impl Engine {
             browser_requests: VecDeque::new(),
             browser_pending: HashMap::new(),
             browser_results: HashMap::new(),
+            workspace_pending: HashMap::new(),
+            workspace_results: HashMap::new(),
+            workspace_tx,
+            workspace_rx,
         }
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
@@ -59,6 +68,59 @@ impl Engine {
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         match method {
+            "schedules.list"=> {
+                let tasks=crate::schedule_service::ScheduleService::new(&mut self.store).list()?;
+                Ok(json!({"tasks":tasks.into_iter().filter(|task|p["threadId"].as_str().is_none_or(|id|task["threadID"]==id)).collect::<Vec<_>>(),"executionAvailable":false}))
+            }
+            "schedules.create"=> {
+                let task=crate::schedule_service::ScheduleService::new(&mut self.store).create(&p["task"],chrono::Utc::now())?;
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+            }
+            "schedules.patch"=> {
+                let task=crate::schedule_service::ScheduleService::new(&mut self.store).patch(required(p,"scheduleId")?,&p["patch"],chrono::Utc::now())?;
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+            }
+            "schedules.pause" | "schedules.resume"=> {
+                let task=crate::schedule_service::ScheduleService::new(&mut self.store).set_paused(required(p,"scheduleId")?,method=="schedules.pause",chrono::Utc::now())?;
+                self.revision+=1;Ok(json!({"task":task,"executionAvailable":false}))
+            }
+            "schedules.delete"=> {
+                let removed=crate::schedule_service::ScheduleService::new(&mut self.store).delete(required(p,"scheduleId")?)?;
+                self.revision+=1;Ok(json!({"removed":removed}))
+            }
+            "git.status" | "git.diff" | "files.list" | "files.read" => {
+                ensure!(self.workspace_pending.len()<32,"Too many workspace operations; collect results first");
+                let thread=required(p,"threadId")?;
+                let cwd=self.working_directory(&self.store.thread(thread)?)?;
+                let id=Uuid::new_v4().to_string();
+                self.workspace_pending.insert(id.clone(),(thread.into(),Instant::now()));
+                let tx=self.workspace_tx.clone();let params=p.clone();let operation=id.clone();let method=method.to_owned();
+                std::thread::spawn(move || {
+                    let result=(||->Result<Value>{
+                        match method.as_str() {
+                            "git.status"=>crate::workspace::status(&cwd),
+                            "git.diff"=>crate::workspace::diff(&cwd,params["path"].as_str(),params["staged"].as_bool().unwrap_or(false)),
+                            "files.list"=>crate::workspace::files(&cwd,params["query"].as_str().unwrap_or(""),params["limit"].as_u64().unwrap_or(200) as usize),
+                            "files.read"=>crate::workspace::read_file(&cwd,required(&params,"path")?,params["lineOffset"].as_u64().unwrap_or(0) as usize,params["lineLimit"].as_u64().unwrap_or(200) as usize),
+                            _=>unreachable!(),
+                        }
+                    })().unwrap_or_else(|e|json!({"error":e.to_string()}));
+                    let _=tx.try_send((operation,result));
+                });
+                Ok(json!({"operationId":id}))
+            }
+            "workspace.result"=>{
+                let id=required(p,"operationId")?;
+                let (owner,started)=self.workspace_pending.get(id).context("Workspace operation not found")?;
+                ensure!(owner==required(p,"threadId")?,"Workspace operation belongs to another thread");
+                if let Some(result)=self.workspace_results.remove(id) {
+                    self.workspace_pending.remove(id);return Ok(json!({"ready":true,"result":result}));
+                }
+                if started.elapsed()>Duration::from_secs(20) {
+                    self.workspace_pending.remove(id);return Ok(json!({"ready":true,"result":{"error":"Workspace operation timed out"}}));
+                }
+                Ok(json!({"ready":false}))
+            }
             "browser.request"=>{
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
@@ -111,7 +173,8 @@ impl Engine {
             ),
             "app.capabilities" => Ok(json!([
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.write", "terminal.resize", "terminal.close",
-                "app.capabilities", "browser.request", "browser.result",
+                "app.capabilities", "browser.request", "browser.result", "git.status", "git.diff", "files.list", "files.read", "workspace.result",
+                "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete",
                 "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
                 "threads.list",
                 "threads.read",
@@ -386,6 +449,16 @@ impl Engine {
             .context("Choose a project working directory first")
     }
     pub fn poll(&mut self) {
+        self.workspace_pending
+            .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
+        self.workspace_results
+            .retain(|id, _| self.workspace_pending.contains_key(id));
+        for (id, result) in self.workspace_rx.try_iter() {
+            if self.workspace_pending.contains_key(&id) {
+                self.workspace_results.insert(id, result);
+                self.revision += 1;
+            }
+        }
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
             .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));

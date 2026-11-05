@@ -120,6 +120,7 @@ pub(super) fn run(
     let mut mapper = Mapper::default();
     let started = Instant::now();
     let mut stopping: Option<Instant> = None;
+    let mut completed = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -154,6 +155,14 @@ pub(super) fn run(
                 }
                 Control::Reply { .. } => {}
             }
+        }
+        if completed {
+            if stopping.is_some() || transport.is_flushed()? {
+                events.send(Event::Finished)?;
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+            continue;
         }
         if stopping.is_some_and(|at| at.elapsed() >= Duration::from_secs(2)) {
             events.send(Event::Finished)?;
@@ -305,8 +314,7 @@ pub(super) fn run(
                     result["stopReason"].is_string(),
                     "ACP prompt response has no stop reason; asynchronous ACP v2 is not supported by this adapter"
                 );
-                events.send(Event::Finished)?;
-                return Ok(());
+                completed = true;
             }
             _ => unreachable!(),
         }

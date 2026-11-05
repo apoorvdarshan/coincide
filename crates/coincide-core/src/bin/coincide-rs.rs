@@ -36,6 +36,36 @@ fn main() -> Result<()> {
         "status" => ("app.status", json!({})),
         "capabilities" => ("app.capabilities", json!({})),
         "projects" => ("projects.list", json!({})),
+        "git-status" | "git-diff" | "files" | "file" => {
+            let mut params = json!({"threadId":argument(1)?});
+            let method = match cmd {
+                "git-status" => "git.status",
+                "git-diff" => {
+                    params["path"] = json!(args.get(2));
+                    "git.diff"
+                }
+                "files" => {
+                    params["query"] = json!(args.get(2));
+                    "files.list"
+                }
+                _ => {
+                    params["path"] = json!(argument(2)?);
+                    params["lineOffset"] = json!(
+                        args.get(3)
+                            .map(|s| s.parse::<u64>())
+                            .transpose()?
+                            .unwrap_or(0)
+                    );
+                    "files.read"
+                }
+            };
+            return operation(
+                &data.join("control.sock"),
+                method,
+                params,
+                "workspace.result",
+            );
+        }
         "threads" => (
             "threads.list",
             json!({"query":args.get(1).map(String::as_str).unwrap_or(""),"includeArchived":true}),
@@ -126,7 +156,7 @@ fn main() -> Result<()> {
         }
         "help" => {
             println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
+                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | threads [search] | read ID | open ID | quit\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
             );
             return Ok(());
         }
@@ -136,6 +166,44 @@ fn main() -> Result<()> {
         &data.join("control.sock"),
         &json!({"id":1,"method":method,"params":params}),
     )?)
+}
+fn operation(
+    socket: &std::path::Path,
+    method: &str,
+    params: Value,
+    result_method: &str,
+) -> Result<()> {
+    let thread = params["threadId"].clone();
+    let reply = control::request(socket, &json!({"id":1,"method":method,"params":params}))?;
+    if reply.get("error").is_some() {
+        return output(reply);
+    }
+    let id = reply["result"]["operationId"]
+        .as_str()
+        .context("Missing operation ID")?;
+    let started = std::time::Instant::now();
+    loop {
+        let reply = control::request(
+            socket,
+            &json!({"id":1,"method":result_method,"params":{"threadId":thread,"operationId":id}}),
+        )?;
+        if reply.get("error").is_some() {
+            return output(reply);
+        }
+        if reply["result"]["ready"] == true {
+            let result = &reply["result"]["result"];
+            return output(if let Some(error) = result.get("error") {
+                json!({"id":1,"error":{"message":error}})
+            } else {
+                json!({"id":1,"result":result})
+            });
+        }
+        anyhow::ensure!(
+            started.elapsed() < std::time::Duration::from_secs(35),
+            "Operation timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 fn output(response: Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&response)?);

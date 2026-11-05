@@ -111,76 +111,20 @@ impl Drop for OwnedChild {
         let _ = self.0.wait();
     }
 }
-fn write_frame(writer: &mut impl Write, value: &Value) -> Result<()> {
-    serde_json::to_writer(&mut *writer, value)?;
-    writer.write_all(b"\n")?;
-    writer.flush()?;
-    Ok(())
-}
 fn request(id: u64, method: &str, params: Value) -> Value {
     json!({"id":id,"method":method,"params":params})
 }
 
 fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> Result<()> {
-    ensure!(
-        launch.cwd.is_dir(),
-        "Agent working directory does not exist"
-    );
-    let mut command = Command::new(&launch.executable);
-    transport::isolate_environment(&mut command);
-    let mut child = OwnedChild::spawn(
-        command
-            .arg("app-server")
-            .current_dir(&launch.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped()),
-    )
-    .context("Unable to launch Codex app-server")?;
-    let mut stdin = child.0.stdin.take().context("Missing stdin")?;
-    let stdout = child.0.stdout.take().context("Missing stdout")?;
-    // Drain stderr without ever logging provider output or allowing an unbounded buffer.
-    if let Some(stderr) = child.0.stderr.take() {
-        thread::spawn(move || {
-            let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
-        });
-    }
-    let (tx, rx) = mpsc::sync_channel(256);
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        loop {
-            let mut line = Vec::new();
-            match reader
-                .by_ref()
-                .take(4 * 1024 * 1024 + 1)
-                .read_until(b'\n', &mut line)
-            {
-                Ok(0) => break,
-                Ok(n) if n <= 4 * 1024 * 1024 => {
-                    if tx
-                        .send(serde_json::from_slice::<Value>(&line).map_err(|e| e.to_string()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                _ => {
-                    let _ = tx.send(Err("Invalid or oversized provider frame".into()));
-                    break;
-                }
-            }
-        }
-    });
-    write_frame(
-        &mut stdin,
-        &request(
-            1,
-            "initialize",
-            json!({"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}),
-        ),
-    )?;
+    let mut transport = transport::Transport::spawn(&launch, &["app-server".into()], &[])?;
+    transport.write(&request(
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}),
+    ))?;
     let started = Instant::now();
     let mut stage = 1;
+    let mut completed = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -189,66 +133,67 @@ fn run(launch: Launch, commands: Receiver<Control>, events: &Sender<Event>) -> R
                     return Ok(());
                 }
                 Control::Reply { id, result } => {
-                    write_frame(&mut stdin, &json!({"id":id,"result":result}))?
+                    transport.write(&json!({"id":id,"result":result}))?
                 }
             }
+        }
+        if completed {
+            if transport.is_flushed()? {
+                events.send(Event::Finished)?;
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+            continue;
         }
         if stage < 4 && started.elapsed() > Duration::from_secs(120) {
             bail!("Codex startup timed out");
         }
-        match rx.recv_timeout(Duration::from_millis(30)) {
-            Ok(Ok(frame)) => {
-                if frame.get("error").is_some() && frame.get("id").is_some() {
-                    bail!("Codex rejected request: {}", frame["error"]);
-                }
-                if frame["id"].as_u64() == Some(stage) && frame.get("result").is_some() {
-                    match stage {
-                        1 => {
-                            write_frame(&mut stdin, &json!({"method":"initialized"}))?;
-                            let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
-                            if let Some(model) = &launch.model {
-                                params["model"] = json!(model);
-                            }
-                            let method = if let Some(session) = &launch.session {
-                                params["threadId"] = json!(session);
-                                params["excludeTurns"] = json!(true);
-                                "thread/resume"
-                            } else {
-                                "thread/start"
-                            };
-                            write_frame(&mut stdin, &request(2, method, params))?;
-                        }
-                        2 => {
-                            let id = frame["result"]["thread"]["id"]
-                                .as_str()
-                                .context("Codex returned no thread ID")?;
-                            events.send(Event::Session(id.into()))?;
-                            write_frame(
-                                &mut stdin,
-                                &request(3, "turn/start", turn_params(id, &launch)),
-                            )?;
-                        }
-                        _ => {}
-                    }
-                    stage += 1;
-                } else if frame["method"] == "turn/completed" {
-                    if frame["params"]["turn"]["status"] == "failed" {
-                        bail!("Codex turn failed: {}", frame["params"]["turn"]["error"]);
-                    }
-                    events.send(Event::Finished)?;
-                    return Ok(());
-                } else {
-                    events.send(Event::Frame(frame))?;
-                }
+        if let Some(frame) = transport.next()? {
+            if frame.get("error").is_some() && frame.get("id").is_some() {
+                bail!("Codex rejected request: {}", frame["error"]);
             }
-            Ok(Err(error)) => bail!("{error}"),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("Codex disconnected before completing the turn")
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(status) = child.0.try_wait()? {
-                    bail!("Codex exited before completing the turn: {status}");
+            if frame["id"].as_u64() == Some(stage) && frame.get("result").is_some() {
+                match stage {
+                    1 => {
+                        transport.write(&json!({"method":"initialized"}))?;
+                        let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
+                        if let Some(model) = &launch.model {
+                            params["model"] = json!(model);
+                        }
+                        let method = if let Some(session) = &launch.session {
+                            params["threadId"] = json!(session);
+                            params["excludeTurns"] = json!(true);
+                            "thread/resume"
+                        } else {
+                            "thread/start"
+                        };
+                        transport.write(&request(2, method, params))?;
+                    }
+                    2 => {
+                        let id = frame["result"]["thread"]["id"]
+                            .as_str()
+                            .context("Codex returned no thread ID")?;
+                        events.send(Event::Session(id.into()))?;
+                        transport.write(&request(3, "turn/start", turn_params(id, &launch)))?;
+                    }
+                    _ => {}
                 }
+                stage += 1;
+            } else if frame["method"] == "turn/completed" {
+                ensure!(stage >= 3, "Codex completed a turn before it was started");
+                if frame["params"]["turn"]["status"] == "failed" {
+                    bail!("Codex turn failed: {}", frame["params"]["turn"]["error"]);
+                }
+                ensure!(
+                    matches!(
+                        frame["params"]["turn"]["status"].as_str(),
+                        Some("completed" | "interrupted")
+                    ),
+                    "Codex returned an invalid turn completion status"
+                );
+                completed = true;
+            } else {
+                events.send(Event::Frame(frame))?;
             }
         }
     }

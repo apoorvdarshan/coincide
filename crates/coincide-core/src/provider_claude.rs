@@ -276,6 +276,7 @@ pub(super) fn run(
     let result_item_id = format!("claude-result:{}", uuid::Uuid::new_v4());
     let started = Instant::now();
     let mut stopping: Option<Instant> = None;
+    let mut completed = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -307,6 +308,14 @@ pub(super) fn run(
                 }
                 Control::Reply { .. } => {}
             }
+        }
+        if completed {
+            if stopping.is_some() || transport.is_flushed()? {
+                events.send(Event::Finished)?;
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+            continue;
         }
         if stopping.is_some_and(|at| at.elapsed() >= Duration::from_secs(2)) {
             events.send(Event::Finished)?;
@@ -443,8 +452,7 @@ pub(super) fn run(
                         delta(events, &result_item_id, text, false)?;
                     }
                 }
-                events.send(Event::Finished)?;
-                return Ok(());
+                completed = true;
             }
             _ => mapper.map(&frame, events)?,
         }
