@@ -245,3 +245,27 @@ fn catalog_routes_reject_account_path_and_turn_options_without_mutation_or_launc
             .is_err()
     );
 }
+
+#[test]
+fn antigravity_launch_copy_resolves_default_aliases_without_rewriting_stored_selection() {
+    let (_dir, mut engine, id) = fixture();
+    let named = "11111111-1111-4111-8111-111111111111";
+    engine.store.save_document("rust-antigravity.json", &json!({"version":1,
+        "riskAcknowledgement":{"key":"provider:antigravity-account-risk","accepted":true},
+        "accounts":{"default":{"auth":"login","name":"Synthetic default"},(named):{"auth":"login","name":"Synthetic named"}}})).unwrap();
+    for alias in [Value::Null, json!(""), json!("default"), json!(named)] {
+        let mut thread = engine.store.thread(&id).unwrap();
+        thread["selection"] =
+            json!({"provider":"antigravity","modelID":"fixture-exact","accountID":alias});
+        engine.store.save(&thread).unwrap();
+        let revision = engine.revision;
+        crate::composer_selection::validate_thread(&thread).unwrap();
+        let launch = crate::composer_selection::launch_selection(&thread["selection"]).unwrap();
+        let (account, _) = engine.antigravity_selection(&launch).unwrap();
+        assert_eq!(account, if alias == named { named } else { "default" });
+        assert_eq!(launch["modelID"], "fixture-exact");
+        assert_eq!(engine.store.thread(&id).unwrap(), thread);
+        assert_eq!(engine.revision, revision);
+        assert!(engine.runs.is_empty());
+    }
+}
