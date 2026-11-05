@@ -492,13 +492,13 @@ impl Updater {
                     .expect("deadline signal wait");
                 if !*done {
                     drop(done);
-                    if let Ok(mut inner) = watch_inner.lock() {
-                        if inner.active.as_ref().is_some_and(|a| a.id == id) {
-                            watch_context.reason.store(2, Ordering::SeqCst);
-                            let waker = finish(&mut inner, id, State::TimedOut);
-                            drop(inner);
-                            wake(waker);
-                        }
+                    if let Ok(mut inner) = watch_inner.lock()
+                        && inner.active.as_ref().is_some_and(|a| a.id == id)
+                    {
+                        watch_context.reason.store(2, Ordering::SeqCst);
+                        let waker = finish(&mut inner, id, State::TimedOut);
+                        drop(inner);
+                        wake(waker);
                     }
                 }
             })
@@ -780,15 +780,14 @@ impl Write for BoundedWriter<'_> {
         gate.map_err(std::io::Error::other)?;
         let size = self.target.write(bytes)?;
         self.written += size as u64;
-        if let Some((inner, id, total)) = self.progress {
-            if let Ok(mut state) = inner.lock() {
-                if state.active.as_ref().is_some_and(|a| a.id == id) {
-                    state.state = State::Downloading {
-                        received: self.written,
-                        total,
-                    };
-                }
-            }
+        if let Some((inner, id, total)) = self.progress
+            && let Ok(mut state) = inner.lock()
+            && state.active.as_ref().is_some_and(|a| a.id == id)
+        {
+            state.state = State::Downloading {
+                received: self.written,
+                total,
+            };
         }
         Ok(size)
     }
@@ -1140,20 +1139,21 @@ impl Transport for UreqTransport {
                 let remaining = policy.maximum_bytes.saturating_sub(received);
                 let limit = remaining.min(buffer.len() as u64) as usize;
                 // A one-byte probe detects over-limit chunked bodies without emitting that byte.
-                let count = reader.read(&mut buffer[..limit.max(1)]).map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::TimedOut
-                        || error
-                            .get_ref()
-                            .and_then(|inner| inner.downcast_ref::<ureq::Error>())
-                            .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)))
-                    {
-                        context
-                            .reason
-                            .compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst)
-                            .ok();
-                    }
-                    error
-                })?;
+                let count = reader
+                    .read(&mut buffer[..limit.max(1)])
+                    .inspect_err(|error| {
+                        if error.kind() == std::io::ErrorKind::TimedOut
+                            || error
+                                .get_ref()
+                                .and_then(|inner| inner.downcast_ref::<ureq::Error>())
+                                .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)))
+                        {
+                            context
+                                .reason
+                                .compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst)
+                                .ok();
+                        }
+                    })?;
                 if count == 0 {
                     break;
                 }
