@@ -304,7 +304,9 @@ fn full_width_terminal_cursor_reports_insertion_boundary_after_last_cell() {
 #[test]
 fn scrollback_navigation_copies_history_and_invalidates_old_coordinates() {
     use coincide_core::terminal::TerminalScroll;
-    let mut fixture = Fixture::new(3, 8, &["\x1b[2J\x1b[Ha\r\nb\r\nc\r\nd\r\ne\r\nf"]);
+    // A fresh grid needs no erase: ED 2 pushes even its blank cursor row
+    // into history, which would add a row unrelated to this scroll fixture.
+    let mut fixture = Fixture::new(3, 8, &["a\r\nb\r\nc\r\nd\r\ne\r\nf"]);
     let live = fixture.snapshot(0);
     assert_eq!(live["lines"], json!(["d", "e", "f"]));
     assert_eq!(live["viewport"]["historySize"], 3);
