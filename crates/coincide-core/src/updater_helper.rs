@@ -557,6 +557,52 @@ pub fn serve(
     Ok(HelperOutcome::Finished(outcome))
 }
 
+/// Validate the descriptor itself, never a /proc path or caller-supplied label.
+#[cfg(unix)]
+fn validate_anonymous_pipe(fd: i32) -> Result<()> {
+    let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
+    ensure!(
+        unsafe { libc::fstat(fd, info.as_mut_ptr()) } == 0,
+        "Pipe stat failed"
+    );
+    let info = unsafe { info.assume_init() };
+    ensure!(
+        info.st_mode & libc::S_IFMT == libc::S_IFIFO && info.st_uid == unsafe { libc::geteuid() },
+        "Owned FIFO descriptor required"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        // Linux anonymous pipes retain the initial inode link count (1), and
+        // both kinds report S_IFIFO. The kernel distinguishes them by pipefs:
+        // linux v6.12 fs/pipe.c get_pipe_inode/fifo_open/pipefs_init_fs_context;
+        // include/uapi/linux/magic.h defines PIPEFS_MAGIC. An unlinked named
+        // FIFO still belongs to its original filesystem, not internal pipefs.
+        let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        ensure!(
+            unsafe { libc::fstatfs(fd, filesystem.as_mut_ptr()) } == 0,
+            "Pipe filesystem stat failed"
+        );
+        let filesystem = unsafe { filesystem.assume_init() };
+        ensure!(
+            filesystem.f_type == 0x5049_5045,
+            "Anonymous pipefs descriptor required"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ensure!(info.st_nlink == 0, "Anonymous pipe descriptor required");
+        #[cfg(target_os = "macos")]
+        // XNU bsd/kern/sys_pipe.c pipe_stat leaves device/link count zero.
+        // A named FIFO unlinked after opening also has zero links, but retains
+        // its filesystem device. Do not treat unlink as proof of anonymity.
+        ensure!(
+            info.st_dev == 0,
+            "Anonymous Darwin pipe descriptor required"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 pub struct PipeChannel {
     input: std::fs::File,
@@ -569,18 +615,7 @@ impl PipeChannel {
     pub fn from_stdio() -> Result<Self> {
         use std::os::fd::FromRawFd;
         fn duplicate(fd: i32) -> Result<std::fs::File> {
-            let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-            ensure!(
-                unsafe { libc::fstat(fd, info.as_mut_ptr()) } == 0,
-                "Helper pipe stat failed"
-            );
-            let info = unsafe { info.assume_init() };
-            ensure!(
-                info.st_mode & libc::S_IFMT == libc::S_IFIFO
-                    && info.st_nlink == 0
-                    && info.st_uid == unsafe { libc::geteuid() },
-                "Private anonymous helper pipes required"
-            );
+            validate_anonymous_pipe(fd).context("Private anonymous helper pipes required")?;
             let copied = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
             ensure!(copied >= 0, "Cannot duplicate helper pipe");
             let file = unsafe { std::fs::File::from_raw_fd(copied) };
@@ -700,18 +735,7 @@ impl ParentPipeChannel {
         );
         for file in [&input, &output] {
             let fd = file.as_raw_fd();
-            let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-            ensure!(
-                unsafe { libc::fstat(fd, info.as_mut_ptr()) } == 0,
-                "Parent pipe stat failed"
-            );
-            let info = unsafe { info.assume_init() };
-            ensure!(
-                info.st_mode & libc::S_IFMT == libc::S_IFIFO
-                    && info.st_nlink == 0
-                    && info.st_uid == unsafe { libc::geteuid() },
-                "Private anonymous parent pipes required"
-            );
+            validate_anonymous_pipe(fd).context("Private anonymous parent pipes required")?;
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             ensure!(
                 flags >= 0
@@ -2637,6 +2661,88 @@ mod tests {
         (read, write)
     }
     #[test]
+    fn anonymous_pipe_validation_preserves_parent_cloexec_and_nonblocking() {
+        use std::os::fd::AsRawFd;
+        let (input, _writer) = pipes();
+        let (_reader, output) = pipes();
+        validate_anonymous_pipe(input.as_raw_fd()).unwrap();
+        validate_anonymous_pipe(output.as_raw_fd()).unwrap();
+        for file in [&input, &output] {
+            let fd = file.as_raw_fd();
+            let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert!(descriptor_flags >= 0 && status_flags >= 0);
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags & !libc::FD_CLOEXEC) },
+                0
+            );
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFL, status_flags & !libc::O_NONBLOCK) },
+                0
+            );
+        }
+        let parent =
+            ParentPipeChannel::from_anonymous_files(input, output, Duration::from_secs(1)).unwrap();
+        for file in [&parent.pipes.input, &parent.pipes.output] {
+            let fd = file.as_raw_fd();
+            let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert!(descriptor_flags >= 0 && status_flags >= 0);
+            assert_ne!(descriptor_flags & libc::FD_CLOEXEC, 0);
+            assert_ne!(status_flags & libc::O_NONBLOCK, 0);
+        }
+    }
+
+    #[test]
+    fn anonymous_pipe_validation_rejects_named_fifo_even_after_unlink() {
+        use std::{
+            ffi::CString,
+            os::{
+                fd::AsRawFd,
+                unix::{
+                    ffi::OsStrExt,
+                    fs::{MetadataExt, OpenOptionsExt},
+                },
+            },
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("named-fifo.fixture");
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let fifo = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        assert_eq!(fifo.metadata().unwrap().nlink(), 1);
+        for unlinked in [false, true] {
+            if unlinked {
+                fs::remove_file(&path).unwrap();
+                assert_eq!(fifo.metadata().unwrap().nlink(), 0);
+            }
+            assert!(validate_anonymous_pipe(fifo.as_raw_fd()).is_err());
+            let (_reader, output) = pipes();
+            assert!(
+                ParentPipeChannel::from_anonymous_files(
+                    fifo.try_clone().unwrap(),
+                    output,
+                    Duration::from_secs(1)
+                )
+                .is_err()
+            );
+            let (input, _writer) = pipes();
+            assert!(
+                ParentPipeChannel::from_anonymous_files(
+                    input,
+                    fifo.try_clone().unwrap(),
+                    Duration::from_secs(1)
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn parent_pipe_adapter_roundtrips_existing_helper_protocol() {
         let (parent_input, helper_output) = pipes();
         let (helper_input, parent_output) = pipes();
@@ -2724,11 +2830,13 @@ mod tests {
     }
     #[test]
     fn parent_pipe_constructor_and_length_reject_regular_files_and_oversized_frames() {
+        use std::os::fd::AsRawFd;
         let directory = tempfile::Builder::new()
             .permissions(fs::Permissions::from_mode(0o700))
             .tempdir()
             .unwrap();
         let file = File::create(directory.path().join("not-a-pipe.fixture")).unwrap();
+        assert!(validate_anonymous_pipe(file.as_raw_fd()).is_err());
         let (_read, output) = pipes();
         assert!(
             ParentPipeChannel::from_anonymous_files(file, output, Duration::from_secs(1)).is_err()
