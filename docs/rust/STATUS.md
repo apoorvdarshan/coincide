@@ -533,3 +533,11 @@ Desktop-wide strict Clippy was attempted and is not passing: existing unused
 and style warnings remain, and the intentionally unmounted transport is unused
 in the application target. No lint was disabled or runtime mount added to hide
 those failures. Core feature strict Clippy is a separate passing check.
+
+Attachment completion publication now retains a result when the bounded
+workspace mailbox is full; only the worker waits for delivery. Three headless
+Engine fixtures pass for success, error and expired requests. Each fixture
+observes an actual full-channel rejection before allowing Engine polling, then
+requires delivered completion, released ownership and exactly-once attachment
+persistence where applicable. This fixes lost completion under backpressure;
+provider-thread and external-owner shutdown accounting remain separate work.
