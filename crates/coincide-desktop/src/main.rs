@@ -1,5 +1,6 @@
 mod worker_owner;
 use anyhow::Result;
+mod app_menu;
 mod assets;
 mod bot_settings;
 mod browser;
@@ -293,6 +294,7 @@ fn find_row(thread: &Value, thread_id: &str, item_id: &str) -> Option<usize> {
 }
 struct Coincide {
     engine: SharedEngine,
+    quit_requested: Arc<std::sync::atomic::AtomicBool>,
     control_owner: Arc<Mutex<control::Server>>,
     quit_runtime: Option<shutdown_runtime::Runtime>,
     quit_runtime_error: Option<String>,
@@ -610,6 +612,7 @@ impl Coincide {
     }
     fn new(
         engine: SharedEngine,
+        quit_requested: Arc<std::sync::atomic::AtomicBool>,
         control_owner: Arc<Mutex<control::Server>>,
         profile_dir: std::path::PathBuf,
         media_config: coincide_core::legacy_media_service::ServiceConfig,
@@ -929,6 +932,7 @@ impl Coincide {
         });
         let mut this = Self {
             engine,
+            quit_requested,
             control_owner,
             quit_runtime: None,
             quit_runtime_error: None,
@@ -2141,6 +2145,12 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .quit_requested
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.media.shutdown_requested = true;
+        }
         self.image_validation_tasks.retain(|task| !task.is_ready());
         self.navigation_tasks.retain(|task| !task.is_ready());
         if self
@@ -3935,6 +3945,7 @@ fn main() -> Result<()> {
         .with_assets(assets::CoincideAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
             let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
@@ -3949,6 +3960,7 @@ fn main() -> Result<()> {
                     cx.new(|cx| {
                         Coincide::new(
                             engine,
+                            quit_requested,
                             control_owner,
                             data.join("browser-profile"),
                             media_config,
