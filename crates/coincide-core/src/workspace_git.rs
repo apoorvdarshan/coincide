@@ -1,6 +1,6 @@
 //! Local Git primitives. Checkpoints capture the index, never unstaged/untracked data.
 //! No checkout, reset, clean, worktree removal, network or user hook execution.
-use crate::workspace::git;
+use crate::workspace::{external_git_path, git};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::path::{Component, Path};
@@ -232,7 +232,10 @@ pub fn create_worktree(
             .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound),
         "Worktree destination already exists or is inaccessible"
     );
-    let destination_text = destination.to_str().context("Worktree path is not UTF-8")?;
+    let external_destination = external_git_path(&destination)?;
+    let destination_text = external_destination
+        .to_str()
+        .context("Worktree path is not UTF-8")?;
     ensure!(
         text(directory, &["cat-file", "-t", base])? == "commit",
         "Base must be a commit object"

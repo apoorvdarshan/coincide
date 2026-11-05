@@ -1,6 +1,8 @@
 use anyhow::Result;
 mod browser;
 mod composer_attachments;
+mod credential_settings;
+mod credentials;
 mod navigation;
 mod presentation;
 mod provider_settings;
@@ -8,6 +10,7 @@ mod queue;
 mod scheduling;
 mod settings;
 mod terminal_selection;
+mod workspace;
 use browser::BrowserController;
 use coincide_core::{
     api::{Engine, SharedEngine, call},
@@ -129,6 +132,11 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    credentials_open: bool,
+    credential_panel: Entity<credential_settings::CredentialSettings>,
+    credential_jobs: std::sync::mpsc::Receiver<credentials::FillJob>,
+    workspace_open: bool,
+    workspace_panel: Entity<workspace::WorkspacePanel>,
     provider_settings: provider_settings::ProviderSettings,
     settings: Value,
     settings_status: String,
@@ -205,6 +213,13 @@ impl Coincide {
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
+        // Discovery checks executable metadata only. Vault reads require a
+        // password-manager button click in this native panel.
+        let (credential_settings, credential_jobs) =
+            credential_settings::CredentialSettings::new(credential_settings::installed_sources());
+        let credential_panel = cx.new(|_| credential_settings);
+        let workspace_panel =
+            cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -226,7 +241,7 @@ impl Coincide {
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { shift: false, .. })
                     && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
-                    && !this.settings_open && !this.schedules_open
+                    && !this.settings_open && !this.schedules_open && !this.workspace_open
                 {
                     this.send(window, cx);
                 }
@@ -291,6 +306,11 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            credentials_open: false,
+            credential_panel,
+            credential_jobs,
+            workspace_open: false,
+            workspace_panel,
             provider_settings,
             settings,
             settings_status: String::new(),
@@ -750,6 +770,49 @@ impl Coincide {
             self.refresh(cx);
         }
     }
+    fn sync_credentials(&mut self, cx: &mut Context<Self>) {
+        // Provider setup is another native settings workflow, never a reason
+        // to keep password approval active behind that panel.
+        if self.provider_settings.open {
+            self.credentials_open = false;
+        }
+        let visible = self.settings_open && self.credentials_open;
+        let thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let (page, available) = if visible {
+            self.browser
+                .as_ref()
+                .map(|browser| {
+                    (
+                        thread
+                            .as_deref()
+                            .and_then(|thread| browser.credential_page(thread, cx)),
+                        browser.credential_fill_available(),
+                    )
+                })
+                .unwrap_or((None, false))
+        } else {
+            (None, false)
+        };
+        // Revocation precedes polling or delivery: closing the panel, changing
+        // documents, or losing the selection cannot retain a prior approval.
+        self.credential_panel.update(cx, |panel, cx| {
+            panel.set_page(page, available, cx);
+            panel.poll(cx);
+        });
+        if let Some(browser) = &mut self.browser {
+            browser.drain_credential_fills(
+                thread.as_deref().unwrap_or(""),
+                &self.credential_jobs,
+                cx,
+            );
+        } else {
+            // Dropping a private job disconnects its acknowledgement receiver;
+            // a missing browser must never leave a worker believing it filled.
+            for job in self.credential_jobs.try_iter().take(2) {
+                drop(job);
+            }
+        }
+    }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.engine.lock().is_ok_and(|engine| engine.shutdown) {
             cx.quit();
@@ -761,6 +824,7 @@ impl Coincide {
             cx.notify();
         }
         self.poll_browser(window, cx);
+        self.sync_credentials(cx);
         self.poll_terminal(cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -1320,6 +1384,10 @@ impl Coincide {
         )
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A hidden composer may retain focus after opening the Git pane.
+        if self.workspace_open {
+            return;
+        }
         if self
             .selected
             .as_ref()
@@ -2552,6 +2620,10 @@ impl Render for Coincide {
         if let Some(id) = open {
             self.select(&id, window, cx);
         }
+        self.sync_credentials(cx);
+        let workspace_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        self.workspace_panel
+            .update(cx, |panel, cx| panel.set_thread(workspace_thread, cx));
         self.sync_model_input(window, cx);
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
@@ -2578,23 +2650,50 @@ impl Render for Coincide {
         .flex_1()
         .min_h_0();
         let conversation_content = if self.settings_open {
-            if self.provider_settings.open {
+            if self.credentials_open {
+                div()
+                    .id("password-settings-surface")
+                    .flex_1()
+                    .flex_basis(px(0.))
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .child(self.credential_panel.clone())
+                    .into_any_element()
+            } else if self.provider_settings.open {
                 self.antigravity_settings(cx)
             } else {
                 self.settings_pane(cx)
             }
         } else if self.schedules_open {
             self.schedules_pane(cx)
+        } else if self.workspace_open {
+            // The outer column has a finite window height. A zero flex basis
+            // keeps the workspace entity bounded and lets its own body scroll.
+            div()
+                .id("workspace-surface")
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_h_0()
+                .min_w_0()
+                .overflow_hidden()
+                .child(self.workspace_panel.clone())
+                .into_any_element()
         } else {
             transcript.into_any_element()
         };
         let browser_pane = self.browser_pane(cx);
-        let pending_pane = self.pending_pane(cx);
-        let draft_images = if self.schedules_open || self.settings_open {
+        let pending_pane = if self.workspace_open {
+            None
+        } else {
+            self.pending_pane(cx)
+        };
+        let draft_images = if self.schedules_open || self.settings_open || self.workspace_open {
             None
         } else {
             self.draft_images(window, cx)
         };
+        let show_composer = !self.schedules_open && !self.settings_open && !self.workspace_open;
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         div()
@@ -2635,6 +2734,38 @@ impl Render for Coincide {
                                 ),
                             )
                             .child(
+                                Button::new("password-settings-toggle")
+                                    .label(if self.settings_open && self.credentials_open {
+                                        "Close passwords"
+                                    } else {
+                                        "Passwords"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let open = !(this.settings_open && this.credentials_open);
+                                        this.credentials_open = open;
+                                        this.settings_open = open;
+                                        this.provider_settings.open = false;
+                                        this.workspace_open = false;
+                                        this.schedules_open = false;
+                                        this.sync_credentials(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-workspace-toggle")
+                                    .label(if self.workspace_open {
+                                        "Close Git workspace"
+                                    } else {
+                                        "Git workspace"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.workspace_open = !this.workspace_open;
+                                        this.settings_open = false;
+                                        this.schedules_open = false;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
                                 Button::new("schedules")
                                     .label(if self.schedules_open {
                                         "Conversation"
@@ -2643,6 +2774,7 @@ impl Render for Coincide {
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.settings_open = false;
+                                        this.workspace_open = false;
                                         this.schedules_open = !this.schedules_open;
                                         if this.schedules_open {
                                             this.refresh_schedules(cx);
@@ -2690,17 +2822,19 @@ impl Render for Coincide {
                     })
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
-                    .when(self.terminal_id.is_some(), |view| {
+                    .when(self.terminal_id.is_some() && !self.workspace_open, |view| {
                         view.child(self.terminal_pane(window, cx))
                     })
-                    .when(!self.schedules_open && !self.settings_open, |view| {
+                    .when(show_composer, |view| {
                         view.child(
                             div()
                                 .id("composer-column")
                                 .w_full()
                                 .flex()
+                                .items_start()
                                 .justify_center()
-                                .flex_shrink_0()
+                                .min_h(px(180.))
+                                .overflow_y_scroll()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
                                 .child(

@@ -3,6 +3,7 @@
 //! and render that entity in the workspace surface. Requires workspace_api routes.
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
+use gpui_kit::base::Disableable;
 use gpui_kit::{
     component::{
         button::*,
@@ -678,7 +679,7 @@ mod tests {
             std::fs::remove_dir(&self.root).unwrap();
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn refresh_polls_both_contracts_and_binds_full_head() {
         let mut fixture = Fixture::new();
         let loaded = fixture
@@ -702,7 +703,7 @@ mod tests {
         );
         assert!(fixture.pending.is_empty());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn checkpoint_sends_confirmed_root_head_label_and_refreshes_after_success() {
         let mut fixture = Fixture::new();
         let binding = fixture.binding();
@@ -730,7 +731,7 @@ mod tests {
             1
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn committed_mutation_with_failed_refresh_is_not_reported_as_failed_or_replayed() {
         let mut fixture = Fixture::new();
         fixture.fail_refresh = true;
@@ -750,7 +751,7 @@ mod tests {
             1
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn failed_checkpoint_is_not_retried_and_does_not_refresh_as_success() {
         let mut fixture = Fixture::new();
         fixture.fail_mutation = true;
@@ -770,7 +771,7 @@ mod tests {
         );
         assert!(!fixture.requests.iter().any(|(m, _)| m == "threads.read"));
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn worktree_reservation_uses_confirmed_base_and_reports_unpopulated() {
         let mut fixture = Fixture::new();
         let binding = fixture.binding();
@@ -794,7 +795,7 @@ mod tests {
             &json!({"threadId":binding.thread,"expectedRoot":binding.root,"base":binding.head,"name":"task-42","branch":"feature/task-42"})
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn diff_is_path_scoped_and_stale_root_prevents_dispatch() {
         let mut fixture = Fixture::new();
         let binding = fixture.binding();
@@ -817,7 +818,7 @@ mod tests {
         assert!(fixture.execute(Action::Diff(stale, None, false)).is_err());
         assert!(!fixture.requests.iter().any(|(m, _)| m == "git.diff"));
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn checkpoint_review_sends_root_and_id() {
         let mut fixture = Fixture::new();
         let binding = fixture.binding();

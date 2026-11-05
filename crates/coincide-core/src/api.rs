@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 #[path = "provider_antigravity_api.rs"]
 mod antigravity_api;
+#[path = "session_import_api.rs"]
+mod session_import_api;
 #[path = "workspace_api.rs"]
 mod workspace_api;
 #[cfg(test)]
@@ -120,6 +122,16 @@ impl Engine {
             return self.workspace_command(method, p);
         }
         match method {
+            "cli.sessions.preview" => {
+                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
+                session_import_api::preview(p)
+            }
+            "cli.sessions.import" => {
+                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
+                let result = session_import_api::import(&mut self.store, p)?;
+                self.revision += 1;
+                Ok(result)
+            }
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
@@ -316,6 +328,8 @@ impl Engine {
                 ,"agent.pending", "agent.answer", "agent.select"
                 ];
                 methods.extend_from_slice(workspace_api::METHODS);
+                #[cfg(unix)]
+                methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))
             },
             "threads.open" => {

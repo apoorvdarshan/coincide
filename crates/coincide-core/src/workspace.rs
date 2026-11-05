@@ -1,5 +1,8 @@
 //! Bounded project inspection shared by the desktop and CLI.
+#[path = "workspace_path.rs"]
+mod path;
 use anyhow::{Context, Result, bail, ensure};
+pub(crate) use path::external_git_path;
 use serde_json::{Value, json};
 use std::{
     io::Read,
@@ -15,6 +18,8 @@ const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     ensure!(directory.is_dir(), "Project directory does not exist");
     let mut command = Command::new("git");
+    #[cfg(windows)]
+    command.args(["-c", "core.longpaths=true"]);
     // An inherited Git config/index can redirect operations into another checkout.
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("GIT_") {
@@ -22,10 +27,10 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
         }
     }
     // A regular file cannot contain executable hooks (portable across platforms).
-    let hooks = std::env::current_exe()?;
+    let hooks = external_git_path(&std::env::current_exe()?)?;
     command
         .arg("-c")
-        .arg(format!("core.hooksPath={}", hooks.display()));
+        .arg(format!("core.hooksPath={}", hooks.to_string_lossy()));
     command
         .args([
             "--no-pager",
@@ -38,7 +43,7 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
             "protocol.allow=never",
             "-C",
         ])
-        .arg(directory)
+        .arg(external_git_path(directory)?)
         .args(arguments)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")

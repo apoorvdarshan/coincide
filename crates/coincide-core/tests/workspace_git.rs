@@ -139,3 +139,36 @@ fn checkpoint_does_not_execute_reference_transaction_hooks() {
     git::create_checkpoint(root, &head, "must bypass hooks").unwrap();
     assert_eq!(run(root, &["rev-parse", "HEAD"]), head);
 }
+
+#[cfg(windows)]
+#[test]
+fn canonical_windows_paths_support_git_worktrees_beyond_max_path() {
+    let source = repo();
+    let root = source.path().canonicalize().unwrap();
+    assert!(root.to_str().unwrap().starts_with(r"\\?\"));
+    let head = run(source.path(), &["rev-parse", "HEAD"]);
+    let target = tempfile::tempdir().unwrap();
+    let mut parent = target.path().canonicalize().unwrap();
+    for number in 0..20 {
+        parent.push(format!("long fixture directory {number}"));
+    }
+    std::fs::create_dir_all(&parent).unwrap();
+    assert!(parent.as_os_str().len() > 260);
+    let before = workspace::status(&root).unwrap();
+    let reserved =
+        git::create_worktree(&root, &parent, "child", "feature/long-path", &head).unwrap();
+    let path = reserved["path"].as_str().unwrap();
+    assert!(!path.starts_with(r"\\?\") && !path.starts_with("//?/"));
+    let destination = Path::new(path);
+    assert!(destination.join(".git").is_file());
+    assert!(!destination.join("[literal].txt").exists());
+    assert_eq!(workspace::status(&root).unwrap(), before);
+    // All reads also pass their canonical directory through the shared helper.
+    assert!(
+        git::worktrees(&destination.canonicalize().unwrap()).unwrap()["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["branch"] == "refs/heads/feature/long-path")
+    );
+}
