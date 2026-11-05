@@ -162,6 +162,21 @@ impl Terminal {
     /// A changed viewport invalidates existing selection and paged frame revisions.
     pub fn scroll(&mut self, request: TerminalScroll) -> Result<bool> {
         self.poll()?;
+        self.scroll_current(request)
+    }
+
+    /// Apply a viewport operation only to the frame the caller observed. Poll
+    /// before checking so newly arrived output also invalidates stale requests.
+    pub fn scroll_checked(&mut self, revision: u64, request: TerminalScroll) -> Result<bool> {
+        self.poll()?;
+        ensure!(
+            revision == self.revision,
+            "Terminal revision changed; read a fresh frame"
+        );
+        self.scroll_current(request)
+    }
+
+    fn scroll_current(&mut self, request: TerminalScroll) -> Result<bool> {
         let before = self.term.grid().display_offset();
         let scroll = match request {
             // Alacritty adds an i32 offset to this value; clamp first to prevent
