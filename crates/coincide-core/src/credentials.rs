@@ -1,10 +1,13 @@
 //! Trusted native boundary. Never expose this module's sink or CLI output through
 //! agent JSON APIs. Approval must originate in native UI, not page content.
 use serde_json::Value;
+#[cfg(unix)]
 use std::{
     io::Read,
-    path::PathBuf,
     process::{Command, Stdio},
+};
+use std::{
+    path::PathBuf,
     time::{Duration, Instant},
 };
 use url::Url;
@@ -109,50 +112,81 @@ impl CliCommand {
 }
 impl VaultCommand for CliCommand {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
-        let mut child = Command::new(&self.executable)
+        self.capture(args, Duration::from_secs(30))
+    }
+}
+impl CliCommand {
+    #[cfg(not(unix))]
+    fn capture(&self, _args: &[&str], _timeout: Duration) -> Result<Vec<u8>, Failure> {
+        // Windows needs Job Object ownership and cancellable pipe I/O first.
+        Err(Failure::Unavailable)
+    }
+    #[cfg(unix)]
+    fn capture(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>, Failure> {
+        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        struct OwnedGroup(std::process::Child);
+        impl Drop for OwnedGroup {
+            fn drop(&mut self) {
+                // The child becomes its own process-group leader before exec.
+                // Tear down descendants even when the leader has already exited.
+                unsafe {
+                    libc::kill(-(self.0.id() as i32), libc::SIGKILL);
+                }
+                let _ = self.0.wait();
+            }
+        }
+        let child = Command::new(&self.executable)
             .args(args)
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| Failure::Unavailable)?;
-        let stdout = child.stdout.take().ok_or(Failure::Unavailable)?;
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let result = stdout
-                .take(8 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .map(|_| bytes);
-            let _ = sender.send(result);
-        });
-        let start = Instant::now();
-        let success = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status.success(),
-                Ok(None) if start.elapsed() < Duration::from_secs(30) => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(Failure::Unavailable);
-                }
-            }
-        };
-        if !success {
+        let mut group = OwnedGroup(child);
+        let mut stdout = group.0.stdout.take().ok_or(Failure::Unavailable)?;
+        let fd = stdout.as_raw_fd();
+        // Nonblocking reads avoid any reader thread: even an escaped descendant
+        // retaining this pipe cannot outlive the capture deadline in our process.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
             return Err(Failure::Unavailable);
         }
-        let bytes = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .map_err(|_| Failure::Unavailable)?
-            .map_err(|_| Failure::Unavailable)?;
-        if bytes.len() > 8 * 1024 * 1024 {
-            return Err(Failure::InvalidResponse);
+        let start = Instant::now();
+        let mut bytes = Vec::new();
+        let mut eof = false;
+        loop {
+            if start.elapsed() >= timeout {
+                return Err(Failure::Unavailable);
+            }
+            let mut chunk = [0_u8; 8192];
+            match stdout.read(&mut chunk) {
+                Ok(0) => eof = true,
+                Ok(n) => {
+                    if bytes.len() + n > 8 * 1024 * 1024 {
+                        return Err(Failure::InvalidResponse);
+                    }
+                    bytes.extend_from_slice(&chunk[..n]);
+                    continue;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return Err(Failure::Unavailable),
+            }
+            // Do not reap the leader until capture completes. This retains its
+            // PID while group cleanup still needs the process-group identifier.
+            if eof {
+                match group.0.try_wait().map_err(|_| Failure::Unavailable)? {
+                    Some(status) if status.success() => return Ok(bytes),
+                    Some(_) => return Err(Failure::Unavailable),
+                    None => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        Ok(bytes)
     }
 }
+
 pub struct Vault<R> {
     manager: Manager,
     runner: R,
@@ -493,5 +527,74 @@ mod tests {
         let approval = vault.approve(&page, &item, true).unwrap();
         vault.fill(approval, &page, &mut Sink(false)).unwrap();
         assert!(!valid_id("--help"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn descendant_retaining_stdout_is_killed_at_deadline() {
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("descendant.pid");
+        // No account CLI is invoked: only a synthetic shell descendant.
+        let cli = CliCommand::new(PathBuf::from("/bin/sh")).unwrap();
+        let start = Instant::now();
+        assert_eq!(
+            cli.capture(
+                &[
+                    "-c",
+                    "sleep 60 & echo $! > \"$1\"; exit 0",
+                    "fixture",
+                    pid_file.to_str().unwrap()
+                ],
+                Duration::from_millis(200)
+            ),
+            Err(Failure::Unavailable)
+        );
+        assert!(start.elapsed() < Duration::from_secs(3));
+        let pid: i32 = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // A terminated orphan can briefly remain a zombie; it must not run.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(pid, 0) };
+            if result != 0 {
+                break;
+            }
+            #[cfg(target_os = "linux")]
+            if std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|s| s.split_whitespace().nth(2) == Some("Z"))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant survived group teardown"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn bounded_capture_success_failure_and_overflow() {
+        let cli = CliCommand::new(PathBuf::from("/bin/sh")).unwrap();
+        assert_eq!(
+            cli.capture(&["-c", "printf synthetic"], Duration::from_secs(2)),
+            Ok(b"synthetic".to_vec())
+        );
+        assert_eq!(
+            cli.capture(&["-c", "printf synthetic; exit 2"], Duration::from_secs(2)),
+            Err(Failure::Unavailable)
+        );
+        assert_eq!(
+            cli.capture(&["-c", "yes synthetic"], Duration::from_secs(3)),
+            Err(Failure::InvalidResponse)
+        );
+    }
+    #[cfg(not(unix))]
+    #[test]
+    fn unsupported_process_capture_fails_closed() {
+        let cli = CliCommand::new(std::env::current_exe().unwrap()).unwrap();
+        assert_eq!(cli.run(&[]), Err(Failure::Unavailable));
     }
 }
