@@ -20,3 +20,5 @@ pub mod organization;
 pub mod usage_history;
 pub mod credentials;
 pub mod dictation;
+pub mod platform_host;
+pub mod remote;
