@@ -42,7 +42,7 @@ private:
     void open_selected(){
         if(!active_||working_||!valid_||completed_query_!=winrt::to_string(query_.Text()))return;
         const auto index=results_.SelectedIndex();if(index<0||static_cast<std::size_t>(index)>=hits_.size())return;
-        try{const auto hit=hits_[static_cast<std::size_t>(index)];if(!navigate_||!navigate_(hit,completed_query_))throw std::runtime_error("Search result changed");}
+        try{const auto hit=hits_[static_cast<std::size_t>(index)];const auto query=completed_query_;if(!navigate_||!navigate_(hit,query))throw std::runtime_error("Search result changed");}
         catch(...){valid_=false;open_.IsEnabled(false);status_.Text(ui_text(L"This search result changed or is unavailable. Search again."));}
     }
     winrt::fire_and_forget execute(){
