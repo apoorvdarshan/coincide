@@ -104,6 +104,7 @@ pub(crate) struct ProfileCatalog {
     pub revision: u64,
     pub profiles: Vec<ProfileMetadata>,
     selections: BTreeMap<String, ProfileChoice>,
+    raw_document: Value,
 }
 impl ProfileCatalog {
     pub fn open(root: PathBuf, legacy_rust_default: Option<Uuid>) -> Result<Self> {
@@ -161,6 +162,10 @@ impl ProfileCatalog {
                     "Rust default profile identity mismatch"
                 );
             }
+            ensure!(
+                value.get("threads").is_none_or(Value::is_object),
+                "Invalid browser thread choices"
+            );
             let mut selections = BTreeMap::new();
             if let Some(threads) = value["threads"].as_object() {
                 ensure!(threads.len() <= 4096, "Too many profile selections");
@@ -184,6 +189,7 @@ impl ProfileCatalog {
                 revision: 0,
                 profiles: parsed,
                 selections,
+                raw_document: value,
             }
         } else {
             Self {
@@ -196,6 +202,7 @@ impl ProfileCatalog {
                     cookie_import: None,
                 }],
                 selections: BTreeMap::new(),
+                raw_document: json!({"version":1,"profiles":[],"threads":{}}),
             }
         };
         if !existed {
@@ -369,20 +376,39 @@ impl ProfileCatalog {
         }
     }
     fn save(&mut self) -> Result<()> {
-        let threads: BTreeMap<_, _> = self
-            .selections
-            .iter()
-            .map(|(thread, choice)| {
-                (
-                    thread,
-                    match choice {
+        // Unknown fields remain opaque data; only existing owned fields/new rows
+        // are patched. They never become profile/path/runtime authority.
+        let mut value = self.raw_document.clone();
+        let old = value["profiles"].as_array().cloned().unwrap_or_default();
+        let profiles=self.profiles.iter().map(|profile| {
+            let mut row=old.iter().find(|row|row["id"].as_str().and_then(|id|Uuid::parse_str(id).ok())==Some(profile.id)).cloned()
+                .unwrap_or_else(||json!({"id":profile.id,"name":profile.name,"default":profile.is_default}));
+            if row["name"]!=profile.name {row["name"]=json!(profile.name);}
+            if row["default"].as_bool().unwrap_or(false)!=profile.is_default {row["default"]=json!(profile.is_default);}
+            if let Some(marker)=&profile.cookie_import {row["cookieImport"]=json!(marker.raw());}
+            row
+        }).collect::<Vec<_>>();
+        value["profiles"] = json!(profiles);
+        if !self.selections.is_empty() {
+            if value.get("threads").is_none() {
+                value["threads"] = json!({});
+            }
+            for (thread, choice) in &self.selections {
+                let previous = value["threads"][thread].as_str();
+                let same = match choice {
+                    ProfileChoice::Private => previous == Some("private"),
+                    ProfileChoice::Persistent(id) => {
+                        previous.and_then(|value| Uuid::parse_str(value).ok()) == Some(*id)
+                    }
+                };
+                if !same {
+                    value["threads"][thread] = json!(match choice {
                         ProfileChoice::Private => "private".into(),
                         ProfileChoice::Persistent(id) => id.to_string(),
-                    },
-                )
-            })
-            .collect();
-        let value = json!({"version":1,"profiles":self.profiles.iter().map(|p|{let mut value=json!({"id":p.id,"name":p.name,"default":p.is_default});if let Some(marker)=&p.cookie_import {value["cookieImport"]=json!(marker.raw());}value}).collect::<Vec<_>>(),"threads":threads});
+                    });
+                }
+            }
+        }
         let bytes = serde_json::to_vec_pretty(&value)?;
         ensure!(
             bytes.len() as u64 <= MAX_DOCUMENT,
@@ -412,6 +438,8 @@ impl ProfileCatalog {
         })();
         if result.is_err() {
             let _ = fs::remove_file(temporary);
+        } else {
+            self.raw_document = value;
         }
         result
     }
@@ -1634,5 +1662,47 @@ mod tests {
                 .reserve_cookie_profile(&thread, catalog.revision, "Default")
                 .is_err()
         );
+    }
+    #[::core::prelude::v1::test]
+    fn cookie_marker_merge_preserves_opaque_existing_profile_top_and_choice_metadata() {
+        let scratch = Scratch::new();
+        let thread = Uuid::new_v4().to_string();
+        let default = Uuid::new_v4();
+        let source = json!({"version":1,"futureTop":{"exact":[null,true,"opaque"]},"profiles":[{"id":default.to_string().to_uppercase(),"name":"Existing","default":true,"futureProfile":{"opaque":[7,"keep"]}}],"threads":{thread.clone():default.to_string().to_uppercase()},"threadChoiceMetadata":{thread.clone():{"futureChoice":{"opaque":[true,91]}}}});
+        fs::write(
+            scratch.0.join("profiles.json"),
+            serde_json::to_vec(&source).unwrap(),
+        )
+        .unwrap();
+        let mut catalog = ProfileCatalog::open(scratch.0.clone(), Some(default)).unwrap();
+        let fresh = catalog
+            .reserve_cookie_profile(&thread, 0, "New cookie profile")
+            .unwrap();
+        catalog.commit_cookie_profile(&thread, &fresh).unwrap();
+        catalog.mark_cookie_readback_verified(fresh.id()).unwrap();
+        let after: Value =
+            serde_json::from_slice(&fs::read(scratch.0.join("profiles.json")).unwrap()).unwrap();
+        for key in ["futureTop", "threads", "threadChoiceMetadata"] {
+            assert_eq!(after[key], source[key]);
+        }
+        assert_eq!(after["profiles"][0], source["profiles"][0]);
+        assert_eq!(after["profiles"][1]["cookieImport"], "readback_verified");
+    }
+    #[::core::prelude::v1::test]
+    fn future_version_or_malformed_choice_refuses_without_rewriting_source() {
+        let scratch = Scratch::new();
+        let id = Uuid::new_v4();
+        let thread = Uuid::new_v4().to_string();
+        for source in [
+            json!({"version":2,"profiles":[{"id":id,"name":"Existing","default":true}],"future":{"keep":true}}),
+            json!({"version":1,"profiles":[{"id":id,"name":"Existing","default":true}],"threads":{thread.clone():{"profile":id,"futureChoice":"opaque"}}}),
+            json!({"version":1,"profiles":[{"id":id,"name":"Existing","default":true}],"threads":["future unsupported shape"]}),
+        ] {
+            let bytes = serde_json::to_vec(&source).unwrap();
+            let path = scratch.0.join("profiles.json");
+            fs::write(&path, &bytes).unwrap();
+            assert!(ProfileCatalog::open(scratch.0.clone(), Some(id)).is_err());
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
     }
 }
