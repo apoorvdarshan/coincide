@@ -884,6 +884,26 @@ impl Engine {
             ..*totals
         }
     }
+    /// Trusted owner-only catalog cancellation after Engine admission freeze.
+    /// This requests cancellation and never waits for a worker or process.
+    pub fn request_model_catalog_shutdown(&mut self) -> Result<()> {
+        ensure!(
+            self.admissions_frozen(),
+            "Catalog shutdown requires frozen admissions"
+        );
+        self.model_catalog.request_shutdown();
+        Ok(())
+    }
+    /// Catalog thread ownership only, not whole-app quiescence or child cleanup.
+    pub fn model_catalog_shutdown_status(
+        &mut self,
+    ) -> Result<crate::model_catalog::ShutdownStatus> {
+        ensure!(
+            self.admissions_frozen(),
+            "Catalog shutdown status requires frozen admissions"
+        );
+        Ok(self.model_catalog.shutdown_status())
+    }
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
         self.require_admissions()?;
         use crate::message_queue::{self as queue, State};
@@ -1913,5 +1933,28 @@ mod terminal_prompt_api_tests {
             .unwrap();
         assert!(engine.execute("terminal.prompt_marks", &scope).is_err());
         assert_eq!(engine.store.thread(&owner).unwrap()["id"], owner);
+    }
+}
+
+#[cfg(test)]
+mod catalog_shutdown_adapter_tests {
+    use super::*;
+    #[test]
+    fn catalog_shutdown_adapters_require_frozen_admissions_and_add_no_json_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        assert!(engine.request_model_catalog_shutdown().is_err());
+        assert!(engine.model_catalog_shutdown_status().is_err());
+        engine.freeze_admissions();
+        engine.request_model_catalog_shutdown().unwrap();
+        engine.request_model_catalog_shutdown().unwrap();
+        let status = engine.model_catalog_shutdown_status().unwrap();
+        assert!(status.closed);
+        assert_eq!(status.running, 0);
+        assert_eq!(status.panicked, 0);
+        assert!(!engine.shutdown);
+        let reply =
+            engine.dispatch(json!({"method":"agent.models.refresh","params":{"provider":"codex"}}));
+        assert_eq!(reply["error"]["message"], "Engine admissions are frozen");
     }
 }

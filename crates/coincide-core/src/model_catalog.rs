@@ -24,6 +24,24 @@ const DEADLINE: Duration = Duration::from_secs(15);
 
 type Completion = (String, Result<Vec<Value>, String>);
 
+#[cfg(test)]
+#[path = "model_catalog_shutdown_tests.rs"]
+mod shutdown_tests;
+
+/// Catalog Rust-worker ownership only; this is not whole-app readiness or
+/// acknowledgement that child/process cleanup succeeded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShutdownStatus {
+    pub closed: bool,
+    pub running: usize,
+    pub returned: u64,
+    pub panicked: u64,
+    pub unclassified: u64,
+}
+struct Worker {
+    cancelled: Arc<AtomicBool>,
+    completion: crate::agent::WorkerCompletion,
+}
 struct Job {
     response: Value,
     cancelled: Arc<AtomicBool>,
@@ -32,6 +50,8 @@ struct Job {
 pub struct ModelCatalog {
     jobs: HashMap<String, Job>,
     order: VecDeque<String>,
+    workers: HashMap<String, Worker>,
+    shutdown: ShutdownStatus,
     tx: mpsc::SyncSender<Completion>,
     rx: mpsc::Receiver<Completion>,
 }
@@ -41,6 +61,8 @@ impl Default for ModelCatalog {
         Self {
             jobs: HashMap::new(),
             order: VecDeque::new(),
+            workers: HashMap::new(),
+            shutdown: ShutdownStatus::default(),
             tx,
             rx,
         }
@@ -48,13 +70,11 @@ impl Default for ModelCatalog {
 }
 impl Drop for ModelCatalog {
     fn drop(&mut self) {
-        for job in self.jobs.values() {
-            job.cancelled.store(true, Ordering::Release);
-        }
+        self.request_shutdown();
     }
 }
 impl ModelCatalog {
-    pub fn poll(&mut self) -> bool {
+    fn receive_completions(&mut self) -> bool {
         let mut changed = false;
         for (id, outcome) in self.rx.try_iter() {
             if let Some(job) = self.jobs.get_mut(&id) {
@@ -73,10 +93,73 @@ impl ModelCatalog {
         }
         changed
     }
+    pub fn poll(&mut self) -> bool {
+        let mut changed = self.receive_completions();
+        let mut exited = Vec::new();
+        let totals = &mut self.shutdown;
+        self.workers.retain(|id, worker| {
+            use crate::agent::WorkerThreadStatus;
+            let counter = match worker.completion.status() {
+                WorkerThreadStatus::Running => return true,
+                WorkerThreadStatus::Returned => &mut totals.returned,
+                WorkerThreadStatus::Panicked => &mut totals.panicked,
+                WorkerThreadStatus::Unclassified => &mut totals.unclassified,
+            };
+            *counter = counter.saturating_add(1);
+            exited.push(id.clone());
+            false
+        });
+        // A worker may publish between the first receive pass and its join
+        // acknowledgement. Drain again before diagnosing a missing result.
+        changed |= self.receive_completions();
+        for id in exited {
+            if let Some(job) = self.jobs.get_mut(&id)
+                && job.response["state"] == "loading"
+            {
+                job.response["state"] = json!("failed");
+                job.response["error"] = json!("Model catalog worker exited without a result");
+                changed = true;
+            }
+        }
+        changed
+    }
+    /// Irreversible admission closure and cancellation request, never a wait.
+    pub fn request_shutdown(&mut self) {
+        self.shutdown.closed = true;
+        for job in self.jobs.values() {
+            job.cancelled.store(true, Ordering::Release);
+        }
+        // Worker ownership survives job/result eviction.
+        for worker in self.workers.values() {
+            worker.cancelled.store(true, Ordering::Release);
+        }
+    }
+    /// Poll existing responses and actual join acknowledgements only.
+    pub fn shutdown_status(&mut self) -> ShutdownStatus {
+        self.poll();
+        ShutdownStatus {
+            running: self.workers.len(),
+            ..self.shutdown
+        }
+    }
     /// `executable` is selected by the host from trusted configuration/discovery,
     /// never accepted from a request, model response, or conversation document.
     pub fn refresh(&mut self, provider: &str, executable: Option<PathBuf>) -> Result<Value> {
+        let provider_owned = provider.to_owned();
+        self.refresh_with(provider, move |cancelled| {
+            executable.context("Provider executable is unavailable; configure or discover its installation first")
+                .and_then(|path| discover(&provider_owned, path, DEADLINE, cancelled))
+                .map_err(|error| error.to_string())
+        })
+    }
+    fn refresh_with(
+        &mut self,
+        provider: &str,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
+        ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         crate::agent::Provider::from_name(provider)?;
+        self.poll();
         if let Some(job) = self
             .jobs
             .values()
@@ -86,13 +169,7 @@ impl ModelCatalog {
         }
         let supported = supported(provider);
         ensure!(
-            !supported
-                || self
-                    .jobs
-                    .values()
-                    .filter(|job| job.response["state"] == "loading")
-                    .count()
-                    < MAX_ACTIVE,
+            !supported || self.workers.len() < MAX_ACTIVE,
             "Too many model catalog reads; wait for the current refresh"
         );
         while self.order.len() >= MAX_JOBS {
@@ -122,14 +199,22 @@ impl ModelCatalog {
         );
         self.order.push_back(id.clone());
         if supported {
-            let provider = provider.to_owned();
             let tx = self.tx.clone();
-            std::thread::spawn(move || {
-                let result = executable.context("Provider executable is unavailable; configure or discover its installation first")
-                    .and_then(|path| discover(&provider, path, DEADLINE, &cancelled))
-                    .map_err(|error| error.to_string());
-                let _ = tx.try_send((id, result));
+            let worker_id = id.clone();
+            let worker_cancelled = cancelled.clone();
+            let worker = std::thread::spawn(move || {
+                let result = work(&worker_cancelled);
+                // Backpressure remains on the worker. Polling must continue
+                // during shutdown so neither response nor join ACK is lost.
+                let _ = tx.send((worker_id, result));
             });
+            self.workers.insert(
+                id,
+                Worker {
+                    cancelled,
+                    completion: crate::agent::WorkerCompletion::observe(worker),
+                },
+            );
         }
         Ok(response)
     }
