@@ -585,6 +585,9 @@
   <data name="Text_4ed0f8cd13bc52ab" xml:space="preserve">
     <value>Delete schedule</value>
   </data>
+  <data name="Text_4f771ec4bee0a52a" xml:space="preserve">
+    <value>The saved session could not be matched. Earlier work may have run or may still be running. Use New Chat to continue in a separate empty conversation. Your original history, draft, attachments, saved queue and session records remain here for review.</value>
+  </data>
   <data name="Text_4f8eb0976f1c0f5f" xml:space="preserve">
     <value>Approve reviewed action</value>
   </data>

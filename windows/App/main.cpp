@@ -57,6 +57,7 @@
 #include "../Runtime/HostToolContextStore.h"
 #include "../Runtime/HostedAgentSession.h"
 #include "HostedInputRecovery.h"
+#include "../Core/SavedHostedAvailability.h"
 #include "ThreadFindBar.h"
 #include "ConversationSearchPanel.h"
 #include <winrt/Windows.Globalization.h>
@@ -1081,6 +1082,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     RunningThread& session_for(const std::string& id){
         if(closing||quitting)throw std::runtime_error("The app is closing.");
+        if(saved_hosted_unavailable(workspace.thread(id)))throw std::runtime_error("The saved hosted session is unavailable. Its original records were retained; use New Chat for a separate conversation.");
         if(repository_busy(workspace.thread(id)))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
         (void)retire_cached_hosted(id);
         if(const auto found=running.find(id);found!=running.end())return found->second;
@@ -1985,6 +1987,21 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(!closing)update_composer();
     }
 
+    bool saved_hosted_unavailable(const coincide::Thread& thread)const{
+        coincide::SavedHostedAvailability availability;
+        availability.enabled=workspace.requires_background_host&&(!fixture_preview||hosted_fixture)&&(thread.provider=="codex"||thread.provider=="claude"||thread.provider=="cursor");
+        if(!availability.enabled)return false;
+        try{
+            availability.metadata_available=host_clients!=nullptr;
+            if(const auto cursor=hosted_cursor(thread,thread.provider))availability.saved_epoch=cursor->epoch;
+            if(host_clients)if(const auto generation=host_clients->get({thread.id,thread.provider})){availability.journal_epoch=generation->binding.epoch;availability.journal_retired=generation->retired;}
+            if(const auto at=running.find(thread.id);at!=running.end()&&at->second.hosted)if(const auto session=std::dynamic_pointer_cast<coincide::HostedAgentSession>(at->second.session)){
+                const auto phase=session->snapshot().phase;
+                availability.runtime_unmatched=(phase==coincide::HostedAgentPhase::unavailable||phase==coincide::HostedAgentPhase::review)&&!session->authenticated_status();
+            }
+            return availability.needs_review();
+        }catch(...){return true;}
+    }
     void update_composer() {
         if (closing || selected.empty() || !writable) return;
         if(quitting){send_button.IsEnabled(false);queue_button.IsEnabled(false);steer_button.IsEnabled(false);models_button.IsEnabled(false);return;}
@@ -1998,15 +2015,21 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         const auto run = running.find(selected);
         const auto busy = run != running.end() && (run->second.pending_actions || run->second.awaiting_completion || run->second.session->busy());
         const auto connected=provider_connected(thread);
+        const auto saved_unavailable=saved_hosted_unavailable(thread);
         const auto has_input=!thread.draft.empty()||!thread.draft_attachments.empty();
-        providers.IsEnabled(!busy); stop_button.IsEnabled(busy);
+        providers.IsEnabled(!busy&&!saved_unavailable); stop_button.IsEnabled(busy);
         const bool submitting=run!=running.end()&&(run->second.pending_actions||run->second.host_review||run->second.host_input_blocked);
-        models_button.IsEnabled(connected&&!busy);queue_button.IsEnabled(connected&&has_input&&!submitting);steer_button.IsEnabled(thread.provider=="codex"&&busy&&has_input&&!submitting);
-        send_button.IsEnabled(connected&&!busy&&!submitting&&has_input&&thread.queued_inputs.empty());
+        models_button.IsEnabled(connected&&!busy&&!saved_unavailable);queue_button.IsEnabled(connected&&has_input&&!submitting&&!saved_unavailable);steer_button.IsEnabled(thread.provider=="codex"&&busy&&has_input&&!submitting&&!saved_unavailable);
+        send_button.IsEnabled(connected&&!busy&&!submitting&&!saved_unavailable&&has_input&&thread.queued_inputs.empty());
         if (run != running.end() && !run->second.status.empty()) state.Text(winrt::to_hstring(run->second.status));
         else if (connected) state.Text(thread.provider=="codex"?L"Codex · Ctrl+Enter sends.":thread.provider=="claude"?L"Claude Code · Ctrl+Enter sends.":thread.provider=="cursor"?L"Cursor · Ctrl+Enter sends.":L"OpenCode · Ctrl+Enter sends.");
         else state.Text(thread.provider=="cursor"?L"Open Accounts to verify and choose a Cursor profile.":L"This provider adapter is not available yet.");
         if(!persistence_error.empty())state.Text(winrt::to_hstring(persistence_error));else if(!platform_error.empty())state.Text(winrt::to_hstring(platform_error));
+        if(saved_unavailable){
+            const auto guidance=coincide::ui_text(L"The saved session could not be matched. Earlier work may have run or may still be running. Use New Chat to continue in a separate empty conversation. Your original history, draft, attachments, saved queue and session records remain here for review.");
+            const auto prefix=(!persistence_error.empty()||!platform_error.empty()||(run!=running.end()&&!run->second.status.empty()))?std::wstring(state.Text())+L"\n":std::wstring{};
+            state.Text(winrt::hstring(prefix+std::wstring(guidance)));
+        }
     }
 
     static std::string delivery_key(std::string id){if(id.size()==36)id="{"+id+"}";return coincide::background_host::guid(std::move(id));}
