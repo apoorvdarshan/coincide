@@ -56,8 +56,11 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
-- 6dc104e passed all five Rust CI jobs (run 42092151516): macOS GPUI build,
-  Linux/macOS/Windows core and Windows GPUI check. The prior 4ae5db4 checkpoint
+- 59abdfc passed all six Rust CI jobs (run 42097308139): macOS GPUI build,
+  Linux/macOS/Windows core, Windows GPUI check and the new Linux GPUI check.
+  Linux checks both desktop configurations and all eight headless release-receipt
+  fixtures; this does not establish Linux GUI acceptance. The earlier 6dc104e
+  checkpoint passed all five then-existing jobs (run 42092151516). The prior 4ae5db4 checkpoint
   also passed all five jobs, including the Linux output-limit fixture
   correction and fixed SQLite. Native Saved Usage/defaults acceptance passed
   real filtering, details, paging, exact project/global choices and invalid-default
@@ -89,7 +92,10 @@ Latest verification and current gates:
 - The additive pinned WebView release registry distinguishes actual Rust Wry
   Drop return and retained foreground-task completion from native deallocation.
   Eight headless receipt tests and the complete desktop suite passed. Actual
-  native release remains Unknown; its dedicated native fixture is prepared.
+  native release remains Unknown. The first native fixture incorrectly retained
+  arena-backed AnyElement output across frames; its failure is retained as fixture
+  evidence, not proof of a production leak. A concrete owned element-payload API
+  now supports the corrected fixture without arena allocation or manual Render.
 - Shared provider pipes now retain and join stdout/stderr/stdin workers after
   child cleanup and channel disconnection. OpenCode similarly retains HTTP,
   startup and SSE workers, including cancellation and TLS teardown. Five shared
@@ -99,7 +105,10 @@ Latest verification and current gates:
 - Actual existing-account one-turn Codex, Claude and Grok adapter smoke checks
   returned the exact requested reply without tool approvals. These are scoped
   transport checks, not complete provider or account parity. New isolated Cursor
-  default-login reuse passed 16 profile/auth tests; actual login remains pending.
+  default-login reuse passed 16 profile/auth tests. A follow-up preserves only
+  validated active-team routing for the same stored-login identity; 22 focused
+  tests and the isolated Cursor provider integration passed. Actual Cursor
+  inference remains pending.
 - The combined authentication/provider batch passed 456 core unit tests plus all
   integration targets (three isolated unit entrypoints remain parent-invoked),
   strict core Clippy and 302 desktop unit tests plus five integration targets.
@@ -115,8 +124,12 @@ Latest verification and current gates:
   The 105 MB debug parent took 2.638/2.604 seconds per software SHA-256 pass;
   dependency-only optimization took 0.212/0.175 seconds with identical hashes.
   Four post-approval fingerprints make that a measured timeout diagnosis. A fresh
-  optimized fixture retains the same five-second deadline and trust checks;
-  positive Ready/Armed/Disarmed acceptance is still pending.
+  optimized V4 fixture retained the same five-second deadline and trust checks.
+  Native approval reached Ready in 2.401 seconds; the actual Armed journal was
+  independently read before native Cancel. Matching Disarmed arrived in 0.169
+  seconds, the journal became Cancelled and the exact helper process was absent.
+  Original bundle hashes/modes were unchanged. No Quiescent, CleanQuit, consent,
+  installation, rollback or relaunch occurred; those acceptance gates stay open.
 
 - Full-app native Quit passed on immutable 814e3c0 with fresh idle and active
   synthetic-Claude fixtures. Actual production CmdQ interrupted the active fake
@@ -174,10 +187,10 @@ off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last fully green Rust remote checkpoint is 6dc104e. Newer local provider,
-browser, authentication and menu work needs its own pushed CI checkpoint. Linux
-GPUI compilation and headless receipt tests are being added to Actions, retaining
-all five existing jobs. No real OS GUI parity is inferred from compilation.
+The last fully green Rust remote checkpoint is 59abdfc (all six jobs). The
+follow-up WebView payload and Cursor team-routing changes require their own pushed
+CI checkpoint. Native menu acceptance and strong native browser deallocation
+remain open. No real OS GUI parity is inferred from compilation.
 
 ## Earlier parallel checkpoint (2026-11-05)
 
