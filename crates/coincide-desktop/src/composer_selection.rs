@@ -35,6 +35,17 @@ impl SelectionDraft {
             use_custom: model != "default",
         }
     }
+    fn has_edits(&self) -> bool {
+        self.proposed_access != mode_or_default(&self.access, "approval")
+            || self.proposed_interaction != mode_or_default(&self.interaction, "build")
+            || self.provider != text(&self.original, "provider")
+            || self.account != self.original["accountID"]
+            || (if self.use_custom {
+                self.custom.trim()
+            } else {
+                "default"
+            }) != self.original["modelID"].as_str().unwrap_or("default")
+    }
     fn params(&self, thread: &Value) -> Result<Value> {
         anyhow::ensure!(
             thread["selection"] == self.original
@@ -120,6 +131,75 @@ fn mode_problem(draft: &SelectionDraft, provider: Option<&Value>) -> Option<Stri
         );
     }
     None
+}
+fn command_params(
+    thread: &Value,
+    command: crate::composer_commands::Command,
+    capabilities: &Value,
+    running: bool,
+) -> Result<Option<Value>> {
+    if let Some(reason) = capability_lock(capabilities, running) {
+        anyhow::bail!(reason);
+    }
+    let mut draft = SelectionDraft::from_thread(thread);
+    if let Some(mode) = command.mode() {
+        draft.proposed_interaction = json!(mode);
+    }
+    let provider = capabilities["providers"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
+    if let Some(reason) = mode_problem(&draft, provider) {
+        anyhow::bail!(reason);
+    }
+    command.mode().map(|_| draft.params(thread)).transpose()
+}
+/// Invoked under one Engine try-lock. Only existing validated selection/draft
+/// endpoints are used, never Send/queue. Every rejection remains intercepted.
+fn command_transaction(
+    submission: &crate::composer_commands::Submission,
+    command: crate::composer_commands::Command,
+    running: bool,
+    mut invoke: impl FnMut(&str, Value) -> Result<Value>,
+) -> Result<Value> {
+    let id = &submission.thread["id"];
+    let current = invoke("threads.read", json!({"threadId":id,"itemLimit":0}))?;
+    anyhow::ensure!(
+        submission.same_content(&current, &submission.draft) && submission.same_selection(&current),
+        "Saved composer changed; command draft retained. Reload or save the current draft before retrying"
+    );
+    let capabilities = invoke("agent.selection.capabilities", json!({"threadId":id}))?;
+    let params = command_params(&current, command, &capabilities, running)?;
+    let ack = if let Some(params) = params {
+        invoke("agent.select", params)?
+    } else {
+        current
+    };
+    anyhow::ensure!(
+        submission.same_content(&ack, &submission.draft),
+        "Selection acknowledgement no longer matches this command's draft/content; draft retained"
+    );
+    if let Some(mode) = command.mode() {
+        anyhow::ensure!(
+            ack["interactionMode"] == mode,
+            "Selection did not acknowledge the requested mode; draft retained"
+        );
+    }
+    let before_clear = invoke("threads.read", json!({"threadId":id,"itemLimit":0}))?;
+    anyhow::ensure!(
+        submission.same_content(&before_clear, &submission.draft)
+            && ["selection", "accessMode", "interactionMode"]
+                .iter()
+                .all(|key| before_clear[*key] == ack[*key]),
+        "Composer changed after acknowledgement; draft retained"
+    );
+    // No UI callback/await or other controller can interleave the Engine lock.
+    // This clears only text, never consumes images or references.
+    let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))?;
+    anyhow::ensure!(
+        cleared["id"] == *id && cleared["draft"] == "",
+        "Draft clear was not acknowledged; local draft retained"
+    );
+    Ok(cleared)
 }
 #[derive(Default)]
 pub(super) struct ComposerSelection {
@@ -207,6 +287,103 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
     }
 }
 impl Coincide {
+    pub(super) fn perform_composer_command(
+        &mut self,
+        command: crate::composer_commands::Command,
+        submission: crate::composer_commands::Submission,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<Value> {
+            let id = text(&submission.thread, "id");
+            anyhow::ensure!(
+                !self.attachment_import_threads.contains(&id),
+                "Wait for image imports to finish; command draft retained"
+            );
+            if command.mode().is_some() {
+                anyhow::ensure!(
+                    !self
+                        .selection_ui
+                        .drafts
+                        .get(&id)
+                        .is_some_and(SelectionDraft::has_edits),
+                    "Apply or discard pending selection edits before a mode command; command draft retained"
+                );
+            }
+            anyhow::ensure!(
+                self.pending_drafts
+                    .get(&id)
+                    .is_none_or(|pending| pending.text == submission.draft),
+                "A newer pending draft exists; command draft retained"
+            );
+            let mut engine = try_state(&self.engine)?;
+            anyhow::ensure!(
+                !engine.admissions_frozen(),
+                "App is closing; command draft retained"
+            );
+            anyhow::ensure!(
+                engine.active_thread() == Some(id.as_str()),
+                "Active conversation changed; command draft retained"
+            );
+            command_transaction(
+                &submission,
+                command,
+                self.running.contains(&id),
+                |method, params| {
+                    let response = engine.dispatch(json!({"method":method,"params":params}));
+                    if let Some(error) = response.get("error") {
+                        anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+                    }
+                    Ok(response["result"].clone())
+                },
+            )
+        })();
+        match result {
+            Ok(thread) => {
+                let current = self.composer.read(cx).value().to_string();
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|thread| submission.same_content(thread, &current))
+                {
+                    let id = text(&submission.thread, "id");
+                    if self
+                        .pending_drafts
+                        .get(&id)
+                        .is_some_and(|pending| pending.text == submission.draft)
+                    {
+                        self.pending_drafts.remove(&id);
+                    }
+                    if command.mode().is_some() {
+                        self.accept_saved_provider_selection(thread);
+                    } else {
+                        self.selected = Some(thread);
+                    }
+                    self.composer
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    if command == crate::composer_commands::Command::Model {
+                        self.selection_ui.expanded = true;
+                    }
+                    self.status = match command {
+                        crate::composer_commands::Command::Model => {
+                            "Model controls opened. Choose and Apply a selection explicitly."
+                        }
+                        crate::composer_commands::Command::Plan => {
+                            "Plan mode saved. No message was sent."
+                        }
+                        crate::composer_commands::Command::Build => {
+                            "Build mode saved. No message was sent."
+                        }
+                    }
+                    .into();
+                } else {
+                    self.status="Command acknowledged; newer conversation/draft retained. No message was sent.".into();
+                }
+            }
+            Err(error) => self.status = format!("Command was not sent; draft retained: {error}"),
+        }
+        cx.notify();
+    }
     /// Existing provider setup explicitly applied a saved selection. Rebase only
     /// that thread; unrelated selection drafts and the message draft survive.
     pub(super) fn accept_saved_provider_selection(&mut self, mut thread: Value) {
@@ -509,15 +686,7 @@ impl Coincide {
         } else {
             text(saved, "modelID")
         };
-        let pending = draft.proposed_access != mode_or_default(&draft.access, "approval")
-            || draft.proposed_interaction != mode_or_default(&draft.interaction, "build")
-            || draft.provider != text(&draft.original, "provider")
-            || draft.account != draft.original["accountID"]
-            || (if draft.use_custom {
-                draft.custom.trim()
-            } else {
-                "default"
-            }) != draft.original["modelID"].as_str().unwrap_or("default");
+        let pending = draft.has_edits();
         let saved_provider = text(saved, "provider");
         let account = if default_account_id(&saved["accountID"]) == Some("default") {
             "Default account".to_owned()
@@ -1074,5 +1243,173 @@ mod tests {
                 .unwrap()["model"],
             "default"
         );
+    }
+    fn command_thread(command: &str) -> Value {
+        json!({"id":"thread","draft":command,"selection":{"provider":"codex","modelID":"explicit-model","accountID":null,"effort":null,"speed":null},"accessMode":"fullAccess","interactionMode":"build"})
+    }
+    fn command_capabilities(provider: &str, locked: bool) -> Value {
+        json!({"provenance":"static_runtime_contract","locked":locked,"lockReason":"synthetic selection lock","providers":[modes(provider,provider=="codex")]})
+    }
+    fn fake_command(
+        command: crate::composer_commands::Command,
+        mut stored: Value,
+        capabilities: Value,
+        fault: &str,
+    ) -> (Result<Value>, Value, Vec<String>) {
+        let submission =
+            crate::composer_commands::Submission::new(&stored, stored["draft"].as_str().unwrap());
+        let mut calls = Vec::new();
+        let mut reads = 0;
+        let result = command_transaction(&submission, command, false, |method, params| {
+            calls.push(method.to_owned());
+            match method {
+                "threads.read" => {
+                    reads += 1;
+                    if reads == 2 && fault == "late-content" {
+                        stored["draftContext"] = json!([{"kind":"quote","text":"new reference"}]);
+                    }
+                    Ok(stored.clone())
+                }
+                "agent.selection.capabilities" => Ok(capabilities.clone()),
+                "agent.select" => {
+                    assert_eq!(params["provider"], stored["selection"]["provider"]);
+                    assert_eq!(params["model"], stored["selection"]["modelID"]);
+                    for (param, field) in [
+                        ("accountId", "accountID"),
+                        ("effort", "effort"),
+                        ("speed", "speed"),
+                    ] {
+                        assert_eq!(params[param], stored["selection"][field]);
+                    }
+                    assert_eq!(params["accessMode"], stored["accessMode"]);
+                    if fault == "select" {
+                        anyhow::bail!("synthetic selection failure");
+                    }
+                    stored["interactionMode"] = params["interactionMode"].clone();
+                    if fault == "late-draft" {
+                        stored["draft"] = json!("newer draft");
+                    }
+                    Ok(stored.clone())
+                }
+                "threads.patch" => {
+                    assert_eq!(params["patch"], json!({"draft":""}));
+                    if fault == "clear" {
+                        anyhow::bail!("synthetic persistence failure");
+                    }
+                    stored["draft"] = json!("");
+                    Ok(stored.clone())
+                }
+                _ => panic!("control command must never send, queue or discover providers"),
+            }
+        });
+        (result, stored, calls)
+    }
+    #[test]
+    fn standalone_mode_uses_saved_tuple_and_clears_only_after_selector_ack() {
+        let original = command_thread("  /plan\n");
+        let (result, stored, calls) = fake_command(
+            crate::composer_commands::Command::Plan,
+            original.clone(),
+            command_capabilities("codex", false),
+            "",
+        );
+        assert!(result.is_ok());
+        assert_eq!(stored["draft"], "");
+        assert_eq!(stored["interactionMode"], "plan");
+        assert_eq!(stored["selection"], original["selection"]);
+        assert_eq!(stored["accessMode"], "fullAccess");
+        assert_eq!(
+            calls,
+            vec![
+                "threads.read",
+                "agent.selection.capabilities",
+                "agent.select",
+                "threads.read",
+                "threads.patch"
+            ]
+        );
+    }
+    #[test]
+    fn model_command_opens_controls_without_selecting_a_model_or_provider() {
+        let original = command_thread("/model");
+        let (result, stored, calls) = fake_command(
+            crate::composer_commands::Command::Model,
+            original.clone(),
+            command_capabilities("codex", false),
+            "",
+        );
+        assert!(result.is_ok());
+        assert_eq!(stored["selection"], original["selection"]);
+        assert_eq!(stored["interactionMode"], "build");
+        assert_eq!(stored["draft"], "");
+        assert!(!calls.iter().any(|method| method == "agent.select"));
+    }
+    #[test]
+    fn locks_unsupported_provider_and_default_plan_never_select_clear_send_or_queue() {
+        for case in ["locked", "provider", "default"] {
+            let mut original = command_thread("/plan");
+            let mut caps = command_capabilities("codex", case == "locked");
+            if case == "provider" {
+                original["selection"]["provider"] = json!("claude");
+                caps = command_capabilities("claude", false);
+            }
+            if case == "default" {
+                original["selection"]["modelID"] = json!("default");
+            }
+            let (result, stored, calls) = fake_command(
+                crate::composer_commands::Command::Plan,
+                original.clone(),
+                caps,
+                "",
+            );
+            assert!(result.is_err());
+            assert_eq!(stored, original);
+            assert_eq!(calls, vec!["threads.read", "agent.selection.capabilities"]);
+        }
+        assert!(
+            command_params(
+                &command_thread("/build"),
+                crate::composer_commands::Command::Build,
+                &command_capabilities("codex", false),
+                true
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn selection_failure_or_clear_failure_retains_exact_command_draft() {
+        for fault in ["select", "clear"] {
+            let original = command_thread(" \t/plan\n");
+            let (result, stored, _) = fake_command(
+                crate::composer_commands::Command::Plan,
+                original.clone(),
+                command_capabilities("codex", false),
+                fault,
+            );
+            assert!(result.is_err());
+            assert_eq!(stored["draft"], original["draft"]);
+        }
+    }
+    #[test]
+    fn late_draft_or_reference_change_is_not_cleared_after_selection_ack() {
+        for fault in ["late-draft", "late-content"] {
+            let original = command_thread("/plan");
+            let (result, stored, calls) = fake_command(
+                crate::composer_commands::Command::Plan,
+                original.clone(),
+                command_capabilities("codex", false),
+                fault,
+            );
+            assert!(result.is_err());
+            assert!(!calls.iter().any(|method| method == "threads.patch"));
+            assert_eq!(
+                stored["draft"],
+                if fault == "late-draft" {
+                    json!("newer draft")
+                } else {
+                    original["draft"].clone()
+                }
+            );
+        }
     }
 }
