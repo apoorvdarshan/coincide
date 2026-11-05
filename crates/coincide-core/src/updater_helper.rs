@@ -30,6 +30,9 @@ pub const HELPER_NAME: &str = "CoincideRustUpdater";
 /// Exact Developer ID predicate; pure construction is fixture-testable on every
 /// host. No ad hoc/unsigned or request-configured identity alternative exists.
 pub fn helper_requirement(anchor: &str) -> Result<String> {
+    code_requirement(anchor, HELPER_ID)
+}
+fn code_requirement(anchor: &str, identifier: &str) -> Result<String> {
     ensure!(
         anchor.len() == 10
             && anchor
@@ -38,7 +41,7 @@ pub fn helper_requirement(anchor: &str) -> Result<String> {
         "Pinned Developer ID team required; unsigned/ad hoc helper is refused"
     );
     Ok(format!(
-        "anchor apple generic and identifier \"{HELPER_ID}\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{anchor}\""
+        "anchor apple generic and identifier \"{identifier}\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{anchor}\""
     ))
 }
 pub const PROTOCOL: u8 = 1;
@@ -205,14 +208,47 @@ pub struct AuthenticatedParent {
     pub installed_version: String,
     pub architecture: Architecture,
 }
+/// Running process identity is distinct from signature checks on a bundle's
+/// current filesystem bytes. This selector cannot contain a request path/ID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunningSubject {
+    Helper,
+    Parent(ParentBinding),
+}
+impl RunningSubject {
+    pub fn identifier(&self) -> &'static str {
+        match self {
+            Self::Helper => HELPER_ID,
+            Self::Parent(_) => crate::updater::PREVIEW_ID,
+        }
+    }
+}
+pub trait RunningCodeTrust: Send + Sync {
+    fn verify(&self, subject: &RunningSubject, anchor: &str) -> Result<()>;
+}
+fn verify_running_pair(
+    parent: &ParentBinding,
+    anchor: &str,
+    trust: &dyn RunningCodeTrust,
+) -> Result<()> {
+    ensure!(parent.pid > 1, "Actual running parent required");
+    trust.verify(&RunningSubject::Helper, anchor)?;
+    trust.verify(&RunningSubject::Parent(parent.clone()), anchor)
+}
 /// Must verify self's fixed helper signature/identity and the actual parent's
-/// preview bundle/team/executable before returning. Not a user boolean proof.
+/// preview bundle/team/executable AND dynamically running code before returning.
+/// Keep PID/start/path snapshots around those checks. Not a user boolean proof.
 pub trait RuntimeIdentity: Send + Sync {
-    fn authenticate(&self, config: &HelperConfig) -> Result<AuthenticatedParent>;
+    fn authenticate(
+        &self,
+        config: &HelperConfig,
+        running: &dyn RunningCodeTrust,
+    ) -> Result<AuthenticatedParent>;
 }
 #[derive(Clone)]
 pub struct HelperDependencies {
     pub identity: Arc<dyn RuntimeIdentity>,
+    pub running: Arc<dyn RunningCodeTrust>,
     pub staging: Dependencies,
     pub installation: InstallDependencies,
 }
@@ -317,15 +353,23 @@ impl NativeApproval for ApprovalProxy {
         }
     }
 }
-struct CleanQuitProxy(SharedSession);
+struct CleanQuitProxy {
+    session: SharedSession,
+    running: Arc<dyn RunningCodeTrust>,
+    parent: ParentBinding,
+    anchor: String,
+}
 impl ShutdownBarrier for CleanQuitProxy {
     fn quiesce_and_flush(&self, proposal: &Proposal) -> Result<()> {
-        let mut session = locked(&self.0)?;
+        let mut session = locked(&self.session)?;
         let binding = session.binding(proposal)?;
         let timeout = session.limits.clean_quit;
         match session.receive(timeout)? {
             ParentMessage::CleanQuit { binding: received } => {
                 ensure!(received == binding, "Post-flush clean-quit binding differs");
+                // The normal-quit wait can last days; do not authorize consent
+                // using only an earlier valid process/disk identity snapshot.
+                verify_running_pair(&self.parent, &self.anchor, self.running.as_ref())?;
                 Ok(())
             }
             ParentMessage::Cancel { transaction } => {
@@ -344,6 +388,8 @@ impl ShutdownBarrier for CleanQuitProxy {
 struct BoundProcessGuard {
     expected: ParentBinding,
     native: Arc<dyn ProcessGuard>,
+    running: Arc<dyn RunningCodeTrust>,
+    anchor: String,
 }
 impl ProcessGuard for BoundProcessGuard {
     fn observe_parent(&self, target: &std::path::Path) -> Result<Box<dyn ParentWatch>> {
@@ -352,7 +398,17 @@ impl ProcessGuard for BoundProcessGuard {
             watch.binding() == self.expected,
             "Authenticated parent instance changed before readiness"
         );
-        Ok(watch)
+        // Approval can remain open for minutes. Recheck running identities after
+        // the first observer and confirm the native path/start binding again before
+        // reporting READY; never keep only the earlier static authentication.
+        verify_running_pair(&self.expected, &self.anchor, self.running.as_ref())?;
+        let after = self.native.observe_parent(target)?;
+        ensure!(
+            after.binding() == self.expected,
+            "Parent changed during dynamic readiness verification"
+        );
+        drop(watch);
+        Ok(after)
     }
     fn ensure_stopped(&self, target: &std::path::Path) -> Result<()> {
         self.native.ensure_stopped(target)
@@ -368,7 +424,9 @@ pub fn serve(
     mut channel: Box<dyn PrivateChannel>,
 ) -> Result<HelperOutcome> {
     config.protocol.validate()?;
-    let authenticated = dependencies.identity.authenticate(&config)?;
+    let authenticated = dependencies
+        .identity
+        .authenticate(&config, dependencies.running.as_ref())?;
     ensure!(
         authenticated.parent.pid > 1
             && authenticated.target == config.install.target_parent.join(APP)
@@ -406,9 +464,12 @@ pub fn serve(
     }));
     let mut installation = dependencies.installation;
     installation.approval = Arc::new(ApprovalProxy(session.clone()));
+    let running = dependencies.running;
     installation.processes = Arc::new(BoundProcessGuard {
-        expected: authenticated.parent,
+        expected: authenticated.parent.clone(),
         native: installation.processes,
+        running: running.clone(),
+        anchor: config.install.trust_anchor.clone(),
     });
     let installer = Installer::configured(config.install, installation)?;
     let Some(authorization) = installer.request_native_authorization(&updater)? else {
@@ -457,7 +518,12 @@ pub fn serve(
         }
         return Err(error);
     }
-    if let Err(error) = armed.authorize_clean_quit(&CleanQuitProxy(session.clone())) {
+    if let Err(error) = armed.authorize_clean_quit(&CleanQuitProxy {
+        session: session.clone(),
+        running,
+        parent: authenticated.parent,
+        anchor: proposal.anchor.clone(),
+    }) {
         let cancelled = locked(&session)?.cancelled;
         installer.cancel(armed)?;
         if cancelled {
@@ -629,15 +695,35 @@ impl PrivateChannel for PipeChannel {
 /// cannot satisfy the explicit Developer ID certificate+team+identifier predicate.
 pub struct MacRuntimeIdentity;
 impl RuntimeIdentity for MacRuntimeIdentity {
-    fn authenticate(&self, config: &HelperConfig) -> Result<AuthenticatedParent> {
+    fn authenticate(
+        &self,
+        config: &HelperConfig,
+        running: &dyn RunningCodeTrust,
+    ) -> Result<AuthenticatedParent> {
         #[cfg(target_os = "macos")]
         {
-            native::authenticate(config)
+            native::authenticate(config, running)
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = config;
+            let _ = (config, running);
             bail!("Independent signed preview helper is unavailable on this platform")
+        }
+    }
+}
+/// Security.framework running-code verification. Non-Mac is unavailable; this
+/// never substitutes a static path check when the dynamic API denies access.
+pub struct MacRunningCodeTrust;
+impl RunningCodeTrust for MacRunningCodeTrust {
+    fn verify(&self, subject: &RunningSubject, anchor: &str) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            native::verify_running_code(subject, anchor)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (subject, anchor);
+            bail!("Dynamic running-code verification is unavailable on this platform")
         }
     }
 }
@@ -660,6 +746,7 @@ pub fn native_main() -> Result<()> {
         let disk = Arc::new(updater::SystemDiskSpace);
         let dependencies = HelperDependencies {
             identity: Arc::new(MacRuntimeIdentity),
+            running: Arc::new(MacRunningCodeTrust),
             staging: Dependencies {
                 transport: Arc::new(OfflineTransport),
                 extractor: Arc::new(updater::ZipExtractor),
@@ -728,6 +815,164 @@ mod native {
         process::{Command, Stdio},
         thread,
     };
+    type CfRef = *const std::ffi::c_void;
+    type CfRetain = Option<unsafe extern "C" fn(CfRef, CfRef) -> CfRef>;
+    type CfRelease = Option<unsafe extern "C" fn(CfRef, CfRef)>;
+    type CfDescription = Option<unsafe extern "C" fn(CfRef) -> CfRef>;
+    type CfEqual = Option<unsafe extern "C" fn(CfRef, CfRef) -> u8>;
+    #[repr(C)]
+    struct CfDictionaryKeyCallbacks {
+        version: isize,
+        retain: CfRetain,
+        release: CfRelease,
+        description: CfDescription,
+        equal: CfEqual,
+        hash: Option<unsafe extern "C" fn(CfRef) -> usize>,
+    }
+    #[repr(C)]
+    struct CfDictionaryValueCallbacks {
+        version: isize,
+        retain: CfRetain,
+        release: CfRelease,
+        description: CfDescription,
+        equal: CfEqual,
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        #[link_name = "CFRelease"]
+        fn cf_release(value: CfRef);
+        #[link_name = "CFStringCreateWithCString"]
+        fn cf_string_create(allocator: CfRef, value: *const libc::c_char, encoding: u32) -> CfRef;
+        #[link_name = "CFNumberCreate"]
+        fn cf_number_create(allocator: CfRef, kind: isize, value: CfRef) -> CfRef;
+        #[link_name = "CFDictionaryCreate"]
+        fn cf_dictionary_create(
+            allocator: CfRef,
+            keys: *const CfRef,
+            values: *const CfRef,
+            count: isize,
+            key_callbacks: *const CfDictionaryKeyCallbacks,
+            value_callbacks: *const CfDictionaryValueCallbacks,
+        ) -> CfRef;
+        #[link_name = "kCFTypeDictionaryKeyCallBacks"]
+        static CF_TYPE_KEYS: CfDictionaryKeyCallbacks;
+        #[link_name = "kCFTypeDictionaryValueCallBacks"]
+        static CF_TYPE_VALUES: CfDictionaryValueCallbacks;
+    }
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        #[link_name = "kSecGuestAttributePid"]
+        static SEC_GUEST_PID: CfRef;
+        #[link_name = "SecCodeCopySelf"]
+        fn sec_code_copy_self(flags: u32, code: *mut CfRef) -> i32;
+        #[link_name = "SecCodeCopyGuestWithAttributes"]
+        fn sec_code_copy_guest(host: CfRef, attributes: CfRef, flags: u32, code: *mut CfRef)
+        -> i32;
+        #[link_name = "SecRequirementCreateWithString"]
+        fn sec_requirement_create(text: CfRef, flags: u32, requirement: *mut CfRef) -> i32;
+        #[link_name = "SecCodeCheckValidity"]
+        fn sec_code_check_validity(code: CfRef, flags: u32, requirement: CfRef) -> i32;
+    }
+    struct OwnedCf(CfRef);
+    impl OwnedCf {
+        fn new(value: CfRef) -> Result<Self> {
+            ensure!(
+                !value.is_null(),
+                "Security/CoreFoundation object unavailable"
+            );
+            Ok(Self(value))
+        }
+        fn copied(status: i32, value: CfRef) -> Result<Self> {
+            if status != 0 {
+                if !value.is_null() {
+                    unsafe { cf_release(value) };
+                }
+                bail!(
+                    "Running-code lookup/requirement unavailable or unauthorized (OSStatus {status})"
+                );
+            }
+            Self::new(value)
+        }
+    }
+    impl Drop for OwnedCf {
+        fn drop(&mut self) {
+            unsafe { cf_release(self.0) };
+        }
+    }
+    /// These are DYNAMIC SecCode objects, never SecStaticCode translations.
+    /// Apple SecCode.h states this call is secure against modification of the
+    /// filesystem source. Default flags do not skip dynamic executable validation.
+    pub(super) fn verify_running_code(subject: &RunningSubject, anchor: &str) -> Result<()> {
+        let requirement = std::ffi::CString::new(code_requirement(anchor, subject.identifier())?)?;
+        // CFStringEncodingUTF8 and kCFNumberSInt32Type from SDK CF headers.
+        let text = OwnedCf::new(unsafe {
+            cf_string_create(std::ptr::null(), requirement.as_ptr(), 0x08000100)
+        })?;
+        let mut raw_requirement = std::ptr::null();
+        let status = unsafe { sec_requirement_create(text.0, 0, &mut raw_requirement) };
+        let requirement = OwnedCf::copied(status, raw_requirement)?;
+        let mut raw_code = std::ptr::null();
+        let (before, before_path) = match subject {
+            RunningSubject::Helper => {
+                let pid = unsafe { libc::getpid() };
+                (process_binding(pid)?, process_path(pid)?)
+            }
+            RunningSubject::Parent(expected) => {
+                let pid = i32::try_from(expected.pid).context("Running parent PID overflow")?;
+                ensure!(
+                    pid > 1 && process_binding(pid)? == *expected,
+                    "Running parent start identity differs"
+                );
+                (expected.clone(), process_path(pid)?)
+            }
+        };
+        match subject {
+            RunningSubject::Helper => {
+                let status = unsafe { sec_code_copy_self(0, &mut raw_code) };
+                let code = OwnedCf::copied(status, raw_code)?;
+                let status = unsafe { sec_code_check_validity(code.0, 0, requirement.0) };
+                ensure!(
+                    status == 0,
+                    "Dynamically running helper is not trusted (OSStatus {status})"
+                );
+            }
+            RunningSubject::Parent(expected) => {
+                let pid = i32::try_from(expected.pid).context("Running parent PID overflow")?;
+                let number = OwnedCf::new(unsafe {
+                    cf_number_create(std::ptr::null(), 3, (&pid as *const i32).cast())
+                })?;
+                let keys = [unsafe { SEC_GUEST_PID }];
+                let values = [number.0];
+                let attributes = OwnedCf::new(unsafe {
+                    cf_dictionary_create(
+                        std::ptr::null(),
+                        keys.as_ptr(),
+                        values.as_ptr(),
+                        1,
+                        std::ptr::addr_of!(CF_TYPE_KEYS),
+                        std::ptr::addr_of!(CF_TYPE_VALUES),
+                    )
+                })?;
+                // NULL host asks the kernel for the actual running PID. This does
+                // NOT obtain static code from a caller-selected filesystem path.
+                let status = unsafe {
+                    sec_code_copy_guest(std::ptr::null(), attributes.0, 0, &mut raw_code)
+                };
+                let code = OwnedCf::copied(status, raw_code)?;
+                let status = unsafe { sec_code_check_validity(code.0, 0, requirement.0) };
+                ensure!(
+                    status == 0,
+                    "Dynamically running preview parent is not trusted (OSStatus {status})"
+                );
+            }
+        }
+        let pid = i32::try_from(before.pid).context("Running PID overflow")?;
+        ensure!(
+            process_binding(pid)? == before && process_path(pid)? == before_path,
+            "Running process changed during dynamic code verification"
+        );
+        Ok(())
+    }
     #[link(name = "proc")]
     unsafe extern "C" {
         fn proc_pidpath(
@@ -913,7 +1158,10 @@ mod native {
         ensure!(count == metadata.len(), "Helper changed during inspection");
         Ok(format!("{:x}", hash.finalize()))
     }
-    pub(super) fn authenticate(config: &HelperConfig) -> Result<AuthenticatedParent> {
+    pub(super) fn authenticate(
+        config: &HelperConfig,
+        running: &dyn RunningCodeTrust,
+    ) -> Result<AuthenticatedParent> {
         ensure!(
             unsafe { libc::getuid() } != 0
                 && unsafe { libc::getuid() } == unsafe { libc::geteuid() }
@@ -928,6 +1176,7 @@ mod native {
             "Helper cache/transaction configuration differs from native location"
         );
         let (parent, target) = parent_target()?;
+        let self_before = process_binding(unsafe { libc::getpid() })?;
         ensure!(
             target == config.install.target_parent.join(APP),
             "Native target configuration differs"
@@ -976,9 +1225,15 @@ mod native {
                 && identity.version == config.updater.current_version,
             "Signed native preview metadata differs"
         );
+        // SecCode validates the kernel's running code object, not a translation
+        // to the currently signed bytes at target's pathname.
+        verify_running_pair(&parent, &config.install.trust_anchor, running)?;
         let (after, after_target) = parent_target()?;
         ensure!(
-            after == parent && after_target == target,
+            process_binding(unsafe { libc::getpid() })? == self_before
+                && std::env::current_exe()? == self_path
+                && after == parent
+                && after_target == target,
             "Native parent changed during signature checks"
         );
         Ok(AuthenticatedParent {
@@ -1106,12 +1361,42 @@ mod tests {
             .unwrap();
         writer.finish().unwrap().into_inner()
     }
+    struct FakeRunningCodeTrust {
+        parent_marker: PathBuf,
+        helper_marker: PathBuf,
+    }
+    impl RunningCodeTrust for FakeRunningCodeTrust {
+        fn verify(&self, subject: &RunningSubject, anchor: &str) -> Result<()> {
+            let marker = match subject {
+                RunningSubject::Helper => &self.helper_marker,
+                RunningSubject::Parent(_) => &self.parent_marker,
+            };
+            // Deliberately independent of the signed-on-disk fixture bundle.
+            // These files model the kernel's running code record in tests only.
+            let info: serde_json::Value = serde_json::from_slice(&fs::read(marker)?)?;
+            ensure!(
+                info["status"] != "unavailable",
+                "fixture dynamic running code unavailable"
+            );
+            ensure!(
+                info["status"] == "running_valid"
+                    && info["team"] == anchor
+                    && info["id"] == subject.identifier(),
+                "fixture dynamic running code requirement failed"
+            );
+            Ok(())
+        }
+    }
     struct FakeIdentity {
         marker: PathBuf,
         parent: ParentBinding,
     }
     impl RuntimeIdentity for FakeIdentity {
-        fn authenticate(&self, config: &HelperConfig) -> Result<AuthenticatedParent> {
+        fn authenticate(
+            &self,
+            config: &HelperConfig,
+            running: &dyn RunningCodeTrust,
+        ) -> Result<AuthenticatedParent> {
             // Test-only trust marker is an injected verifier fixture, NEVER native
             // signature evidence. Production MacRuntimeIdentity uses codesign.
             ensure!(
@@ -1126,6 +1411,7 @@ mod tests {
                     && info["fixtureTrust"] == "FAKE-SIGNED-TEST-ONLY",
                 "fixture unsigned/wrong parent refused"
             );
+            verify_running_pair(&self.parent, &config.install.trust_anchor, running)?;
             Ok(AuthenticatedParent {
                 parent: self.parent.clone(),
                 target,
@@ -1224,6 +1510,8 @@ mod tests {
         Success,
         Decline,
         CancelBeforeProposalObserved,
+        RevokeRunningAfterApproval,
+        RevokeRunningAfterReady,
         WrongApproval,
         ReplaySequence,
         WrongSession,
@@ -1239,6 +1527,7 @@ mod tests {
         next: u64,
         session: Uuid,
         mode: Mode,
+        running_parent: PathBuf,
         sent: Arc<Mutex<Vec<Frame<HelperMessage>>>>,
     }
     impl PrivateChannel for FakeWire {
@@ -1257,6 +1546,13 @@ mod tests {
                 .clone();
             let body = match last {
                 HelperMessage::Proposal { mut binding, .. } => {
+                    if self.mode == Mode::RevokeRunningAfterApproval {
+                        fs::write(
+                            &self.running_parent,
+                            serde_json::to_vec(&json!({
+                            "id":updater::PREVIEW_ID,"team":ANCHOR,"status":"unsigned_running"}))?,
+                        )?;
+                    }
                     if self.mode == Mode::WrongApproval {
                         binding.proposal_sha256 = "f".repeat(64);
                     }
@@ -1280,6 +1576,13 @@ mod tests {
                     }
                 }
                 HelperMessage::Armed { mut binding } => {
+                    if self.mode == Mode::RevokeRunningAfterReady {
+                        fs::write(
+                            &self.running_parent,
+                            serde_json::to_vec(&json!({
+                            "id":updater::PREVIEW_ID,"team":ANCHOR,"status":"unsigned_running"}))?,
+                        )?;
+                    }
                     if self.mode == Mode::MissingClean {
                         bail!("fixture private input closed before flush");
                     }
@@ -1330,6 +1633,8 @@ mod tests {
         config: HelperConfig,
         dependencies: HelperDependencies,
         marker: PathBuf,
+        running_parent: PathBuf,
+        running_helper: PathBuf,
         job: Uuid,
         release: Release,
         target: PathBuf,
@@ -1355,6 +1660,19 @@ mod tests {
             bundle(&target, "0.1.0");
             let marker = root_path.join("helper.trust.fixture");
             fs::write(&marker, b"FAKE-SIGNED-HELPER-TEST-ONLY").unwrap();
+            let running_parent = root_path.join("running-parent.fixture");
+            let running_helper = root_path.join("running-helper.fixture");
+            for (path, id) in [
+                (&running_parent, updater::PREVIEW_ID),
+                (&running_helper, HELPER_ID),
+            ] {
+                fs::write(
+                    path,
+                    serde_json::to_vec(&json!({"id":id,"team":ANCHOR,"status":"running_valid"}))
+                        .unwrap(),
+                )
+                .unwrap();
+            }
             let archive = zip("0.2.0");
             let job = Uuid::new_v4();
             let job_dir = cache.join(job.to_string());
@@ -1388,6 +1706,10 @@ mod tests {
                 identity: Arc::new(FakeIdentity {
                     marker: marker.clone(),
                     parent: parent.clone(),
+                }),
+                running: Arc::new(FakeRunningCodeTrust {
+                    parent_marker: running_parent.clone(),
+                    helper_marker: running_helper.clone(),
                 }),
                 staging: Dependencies {
                     transport: network.clone(),
@@ -1445,6 +1767,8 @@ mod tests {
                 config,
                 dependencies,
                 marker,
+                running_parent,
+                running_helper,
                 job,
                 release,
                 target,
@@ -1469,6 +1793,7 @@ mod tests {
                 next: 1,
                 session,
                 mode,
+                running_parent: self.running_parent.clone(),
                 sent: self.sent.clone(),
             })
         }
@@ -1588,6 +1913,82 @@ mod tests {
             assert!(f.sent.lock().unwrap().is_empty());
             f.no_install();
         }
+    }
+    #[test]
+    fn signed_disk_never_substitutes_for_running_parent_or_helper_identity() {
+        for case in 0..5 {
+            let f = Fixture::new();
+            let helper = case == 3;
+            let path = if helper {
+                &f.running_helper
+            } else {
+                &f.running_parent
+            };
+            let mut info = json!({"id":if helper { HELPER_ID } else { updater::PREVIEW_ID },
+                "team":ANCHOR,"status":"running_valid"});
+            match case {
+                0 | 3 => info["status"] = json!("unsigned_running"),
+                1 => info["id"] = json!("com.apoorvdarshan.coincide"),
+                2 => info["team"] = json!("OTHER00000"),
+                _ => info["status"] = json!("unavailable"),
+            }
+            fs::write(path, serde_json::to_vec(&info).unwrap()).unwrap();
+            let before = f.trust_snapshot();
+            let error = f.run(Mode::Success).unwrap_err().to_string();
+            assert_eq!(
+                error,
+                if case == 4 {
+                    "fixture dynamic running code unavailable"
+                } else {
+                    "fixture dynamic running code requirement failed"
+                }
+            );
+            assert!(f.sent.lock().unwrap().is_empty());
+            assert_eq!(f.trust_snapshot(), before);
+            f.no_install();
+        }
+    }
+    #[test]
+    fn running_trust_changed_during_native_approval_is_rechecked_before_ready() {
+        let f = Fixture::new();
+        let before = f.trust_snapshot();
+        assert_eq!(
+            f.run(Mode::RevokeRunningAfterApproval)
+                .unwrap_err()
+                .to_string(),
+            "fixture dynamic running code requirement failed"
+        );
+        {
+            let sent = f.sent.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            assert!(matches!(sent[0].body, HelperMessage::Proposal { .. }));
+        }
+        assert_eq!(f.trust_snapshot(), before);
+        f.no_install();
+    }
+    #[test]
+    fn running_trust_changed_after_ready_cannot_mint_clean_quit_consent() {
+        let f = Fixture::new();
+        let before = f.trust_snapshot();
+        assert_eq!(
+            f.run(Mode::RevokeRunningAfterReady)
+                .unwrap_err()
+                .to_string(),
+            "fixture dynamic running code requirement failed"
+        );
+        let sent = f.sent.lock().unwrap();
+        assert!(
+            sent.iter()
+                .any(|frame| matches!(frame.body, HelperMessage::Armed { .. }))
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|frame| matches!(frame.body, HelperMessage::ConsentAck { .. }))
+        );
+        drop(sent);
+        assert_eq!(f.trust_snapshot(), before);
+        f.no_install();
     }
     #[test]
     fn unsigned_candidate_refuses_before_proposal_despite_claimed_verified_receipt() {
@@ -1842,7 +2243,7 @@ mod tests {
         let f = Fixture::new();
         assert_eq!(
             MacRuntimeIdentity
-                .authenticate(&f.config)
+                .authenticate(&f.config, f.dependencies.running.as_ref())
                 .unwrap_err()
                 .to_string(),
             "Independent signed preview helper is unavailable on this platform"
@@ -2026,6 +2427,31 @@ mod codec_tests {
         let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
         bytes.extend(body);
         assert!(decode_frame::<ParentMessage>(&bytes).is_err());
+    }
+    #[test]
+    fn dynamic_roles_pin_distinct_preview_and_helper_requirements() {
+        let parent = RunningSubject::Parent(ParentBinding {
+            pid: 42,
+            start_seconds: 100,
+            start_micros: 2,
+        });
+        assert_eq!(parent.identifier(), crate::updater::PREVIEW_ID);
+        assert_eq!(RunningSubject::Helper.identifier(), HELPER_ID);
+        let requirement = code_requirement("FIXTURE001", parent.identifier()).unwrap();
+        assert!(requirement.contains("identifier \"com.apoorvdarshan.coincide.rust\""));
+        assert!(!requirement.contains(HELPER_ID));
+        assert!(requirement.contains("certificate leaf[subject.OU] = \"FIXTURE001\""));
+    }
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn dynamic_native_backend_never_falls_back_to_disk_on_non_mac() {
+        assert_eq!(
+            MacRunningCodeTrust
+                .verify(&RunningSubject::Helper, "FIXTURE001")
+                .unwrap_err()
+                .to_string(),
+            "Dynamic running-code verification is unavailable on this platform"
+        );
     }
     #[test]
     fn trust_requirement_never_accepts_adhoc_unsigned_or_injected_anchor() {
