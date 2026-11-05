@@ -11,6 +11,24 @@ fn workflow_drained(status: &worker_owner::ShutdownStatus) -> bool {
         && status.pending_pickers == 0
 }
 impl Coincide {
+    pub(super) fn poll_cookie_close(&mut self, cx: &mut Context<Self>) -> bool {
+        // Synchronous context invalidation precedes any native progress. The
+        // closed panel retains worker/picker and cleanup-only retry custody.
+        self.browser_settings_panel
+            .update(cx, |panel, _| panel.request_shutdown());
+        let (progress, drained) = self.browser.as_mut().map_or((None, true), |browser| {
+            let progress = browser.poll_cookie_import();
+            (progress, browser.cookie_import_drained())
+        });
+        if let Some(status) = progress {
+            self.browser_settings_panel
+                .update(cx, |panel, cx| panel.set_cookie_import_status(status, cx));
+        }
+        let status = self
+            .browser_settings_panel
+            .update(cx, |panel, _| panel.shutdown_status());
+        drained && workflow_drained(&status)
+    }
     pub(super) fn finish_normal_quit(&mut self, cx: &mut Context<Self>) {
         if self.quit_issued {
             return;
@@ -141,7 +159,7 @@ impl Coincide {
         let browser_done = self
             .browser
             .as_mut()
-            .is_none_or(|b| b.poll_shutdown().owners_drained());
+            .is_none_or(|b| b.poll_shutdown().owners_drained() && b.cookie_import_drained());
         let external = self.quit_frame_seen
             && drafts_saved
             && media.ready()

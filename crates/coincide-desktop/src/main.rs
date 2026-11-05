@@ -661,10 +661,11 @@ impl Coincide {
                     return false;
                 }
                 let drafts_saved = this.flush_pending_drafts();
+                let cookies_ready = this.poll_cookie_close(cx);
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
                 cx.notify();
-                drafts_saved && media_ready && this.computer_use_shutdown_ready()
+                drafts_saved && media_ready && cookies_ready && this.computer_use_shutdown_ready()
             })
             .unwrap_or(false)
         });
@@ -2043,6 +2044,14 @@ impl Coincide {
             && !self.provider_settings.open
             && !self.session_import_open
     }
+    fn cookie_settings_thread(&self, cx: &Context<Self>) -> Option<String> {
+        (!self.media.shutdown_requested
+            && !self.media.close_requested
+            && self.browser_settings_visible()
+            && !self.command_palette.read(cx).is_open())
+        .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
+        .flatten()
+    }
     fn sync_browser_settings(&mut self, cx: &mut Context<Self>) {
         self.sync_browser_settings_route(cx);
         let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
@@ -2078,13 +2087,62 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let bookmark = self.browser_settings_panel.update(cx, |panel, cx| {
-            // Idempotent injection: only the first binding initializes context.
-            panel.set_library_engine(engine);
-            panel.set_snapshot(snapshot, cx);
-            panel.poll(cx);
-            panel.take_bookmark_open()
-        });
+        let (bookmark, reservation, prepared) =
+            self.browser_settings_panel.update(cx, |panel, cx| {
+                // Idempotent injection: only the first binding initializes context.
+                panel.set_library_engine(engine);
+                panel.set_snapshot(snapshot, cx);
+                panel.poll(cx);
+                (
+                    panel.take_bookmark_open(),
+                    panel.take_cookie_reservation_request(),
+                    panel.take_prepared_cookie_import(),
+                )
+            });
+        if let Some(request) = reservation {
+            let result = self
+                .cookie_settings_thread(cx)
+                .filter(|thread| thread == &request.context.snapshot.thread)
+                .ok_or_else(|| {
+                    "Cookie settings closed or selected conversation changed.".to_owned()
+                })
+                .and_then(|thread| {
+                    self.browser
+                        .as_ref()
+                        .ok_or_else(|| "Browser unavailable.".to_owned())
+                        .and_then(|browser| browser.reserve_cookie_import(&thread, request))
+                });
+            self.browser_settings_panel
+                .update(cx, |panel, cx| panel.cookie_reservation_result(result, cx));
+        }
+        if let Some(prepared) = prepared {
+            let result = self
+                .cookie_settings_thread(cx)
+                .filter(|thread| thread == &prepared.reservation.context.snapshot.thread)
+                .ok_or_else(|| {
+                    "Cookie settings closed or selected conversation changed.".to_owned()
+                })
+                .and_then(|thread| {
+                    self.browser
+                        .as_mut()
+                        .ok_or_else(|| "Browser unavailable.".to_owned())
+                        .and_then(|browser| browser.admit_cookie_import(&thread, prepared))
+                });
+            self.browser_settings_panel
+                .update(cx, |panel, cx| match result {
+                    Ok(status) => panel.set_cookie_import_status(status, cx),
+                    Err(error) => panel.set_cookie_import_error(error, cx),
+                });
+            // Admission may have created exactly its reserved destination. Feed
+            // its status first, then reconcile a fresh ordinary snapshot.
+            let snapshot = self.cookie_settings_thread(cx).and_then(|thread| {
+                self.browser
+                    .as_ref()
+                    .map(|browser| browser.profile_snapshot(&thread))
+            });
+            self.browser_settings_panel
+                .update(cx, |panel, cx| panel.set_snapshot(snapshot, cx));
+        }
         if let Some(bookmark) = bookmark
             && visible
             && selected_thread.as_deref() == Some(bookmark.thread.as_str())
@@ -2231,15 +2289,42 @@ impl Coincide {
             cx.notify();
             return;
         }
+        // Global Quit progresses the stopped actor through poll_shutdown above.
+        // A window-close wait closes cookie admission before polling receipts.
+        let cookies_ready = if self.media.close_requested {
+            self.poll_cookie_close(cx)
+        } else {
+            self.sync_browser_settings_route(cx);
+            if let Some(status) = self
+                .browser
+                .as_mut()
+                .and_then(|browser| browser.poll_cookie_import())
+            {
+                self.browser_settings_panel
+                    .update(cx, |panel, cx| panel.set_cookie_import_status(status, cx));
+            }
+            true
+        };
         if self.media.close_requested {
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
-            if drafts_saved && self.media_shutdown_ready(cx) && self.computer_use_shutdown_ready() {
+            if drafts_saved
+                && cookies_ready
+                && self.media_shutdown_ready(cx)
+                && self.computer_use_shutdown_ready()
+            {
                 window.remove_window();
             } else if !drafts_saved {
                 self.status =
                     "Closing is waiting for drafts to save. Failed saves require Retry save."
                         .into();
+                cx.notify();
+            } else if !cookies_ready
+                && self.media_shutdown_ready(cx)
+                && self.computer_use_shutdown_ready()
+            {
+                self.status =
+                    "Closing waits for owned cookie work and private snapshot cleanup.".into();
                 cx.notify();
             } else if !self.media_shutdown_ready(cx) {
                 self.computer_use_open = false;
@@ -3356,7 +3441,19 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.media.shutdown_requested {
+        // Closing exposes only already-owned cleanup recovery, never the general
+        // settings surface or a new source/profile admission.
+        let cookie_recovery = if self.media.shutdown_requested || self.media.close_requested {
+            self.browser_settings_panel
+                .update(cx, |panel, cx| panel.cookie_cleanup_recovery(cx))
+        } else {
+            None
+        };
+        if self.media.shutdown_requested
+            || (self.media.close_requested
+                && self.media_shutdown_ready(cx)
+                && self.computer_use_shutdown_ready())
+        {
             self.quit_frame_seen = true;
             return div()
                 .flex()
@@ -3366,8 +3463,13 @@ impl Render for Coincide {
                 .gap_3()
                 .bg(self.color(0x10141c))
                 .text_color(self.color(0xe4e9f2))
-                .child("Finishing background work and saving before quitting…")
+                .child(if self.media.shutdown_requested {
+                    "Finishing background work and saving before quitting…"
+                } else {
+                    "Finishing background work and saving before closing…"
+                })
                 .child(self.status.clone())
+                .when_some(cookie_recovery, |view, recovery| view.child(recovery))
                 .when(!self.pending_drafts.is_empty(), |view| {
                     view.child(Button::new("quit-retry-save").label("Retry save").on_click(
                         cx.listener(|this, _, _, cx| {
@@ -3667,6 +3769,7 @@ impl Render for Coincide {
                     .flex_1()
                     .min_w_0()
                     .h_full()
+                    .when_some(cookie_recovery, |view, recovery| view.child(recovery))
                     .when(!self.pending_drafts.is_empty(), |view| {
                         view.child(
                             div()
