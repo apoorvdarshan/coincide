@@ -37,6 +37,7 @@ struct Runtime<'a> {
     queued: VecDeque<Control>,
     events: &'a Sender<Event>,
     aborted_requests: Vec<thread::JoinHandle<()>>,
+    owned_workers: Vec<thread::JoinHandle<()>>,
     #[cfg(test)]
     request_join_entered: Option<Sender<()>>,
 }
@@ -77,7 +78,7 @@ impl Runtime<'_> {
     /// Success joins here; aborted requests remain owned until Runtime Drop,
     /// after Server/OwnedChild has promptly terminated its process. All joins
     /// are on the background provider thread; UI/Engine remain nonblocking.
-    /// This does not account for the separately owned SSE/stdout/stderr workers below.
+    /// SSE/stdout/stderr workers are separately retained until Runtime Drop.
     fn request_with_worker<T: Send + 'static>(
         &mut self,
         limit: Duration,
@@ -116,10 +117,26 @@ impl Runtime<'_> {
         // Private test signal is at the actual owned-join entry, not an elapsed
         // absence assertion. Reverting to a detached request never enters it.
         #[cfg(test)]
-        if let Some(observed) = self.request_join_entered.take() {
+        if let Some(observed) = self.request_join_entered.as_ref() {
             let _ = observed.send(());
         }
         worker.join()
+    }
+    fn spawn_owned(
+        &mut self,
+        name: &'static str,
+        work: impl FnOnce() + Send + 'static,
+    ) -> Result<()> {
+        ensure!(
+            self.owned_workers.len() < 3,
+            "OpenCode I/O worker capacity reached"
+        );
+        let worker = thread::Builder::new()
+            .name(name.into())
+            .spawn(work)
+            .context("OpenCode I/O worker could not start")?;
+        self.owned_workers.push(worker);
+        Ok(())
     }
     fn next_command(&mut self) -> Option<Control> {
         self.queued
@@ -134,12 +151,15 @@ impl Drop for Runtime<'_> {
         for worker in std::mem::take(&mut self.aborted_requests) {
             panicked |= self.join_request_worker(worker).is_err();
         }
-        // Aborted child panic cannot be silently converted into successful
+        for worker in std::mem::take(&mut self.owned_workers) {
+            panicked |= self.join_request_worker(worker).is_err();
+        }
+        // A child panic cannot be silently converted into successful
         // provider teardown. During an existing unwind the parent is already
         // Panicked; avoid a double-panic process abort after all joins finish.
         assert!(
             !panicked || thread::panicking(),
-            "OpenCode aborted HTTP request worker panicked"
+            "OpenCode owned worker panicked during teardown"
         );
     }
 }
@@ -179,11 +199,11 @@ impl Server {
             .take()
             .context("OpenCode stderr unavailable")?;
         // Drain diagnostics without ever copying inherited credentials into a transcript.
-        thread::spawn(move || {
+        runtime.spawn_owned("coincide-opencode-stderr", move || {
             let _ = std::io::copy(&mut BufReader::new(error), &mut std::io::sink());
-        });
+        })?;
         let (sender, receiver) = mpsc::sync_channel(1);
-        thread::spawn(move || {
+        runtime.spawn_owned("coincide-opencode-stdout", move || {
             let mut reader = BufReader::new(output);
             loop {
                 let mut bytes = Vec::new();
@@ -214,7 +234,7 @@ impl Server {
                     return;
                 }
             }
-        });
+        })?;
         let url = runtime.wait(receiver, Duration::from_secs(30))?;
         let http = Http::new(url, &password);
         let info = runtime.request(&http, "GET", "/api/info".into(), None)?;
@@ -501,6 +521,7 @@ fn run_inner(
         queued: VecDeque::new(),
         events,
         aborted_requests: Vec::new(),
+        owned_workers: Vec::new(),
         #[cfg(test)]
         request_join_entered: None,
     };
@@ -509,7 +530,12 @@ fn run_inner(
     let heartbeat = Arc::new(Mutex::new(Instant::now()));
     let http = server.http.clone();
     let clock = heartbeat.clone();
-    thread::spawn(move || http.stream(stream_tx, clock));
+    // stream_rx is declared after Server: disconnect bounded sends first,
+    // terminate/reap the owned server next, then join all I/O (including TLS).
+    // A blocked HTTP read that does not unblock keeps ownership Running.
+    runtime.spawn_owned("coincide-opencode-sse", move || {
+        http.stream(stream_tx, clock)
+    })?;
     let connected = Instant::now();
     loop {
         while let Ok(command) = runtime.commands.try_recv() {
