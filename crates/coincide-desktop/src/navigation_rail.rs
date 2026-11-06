@@ -67,12 +67,14 @@ impl Coincide {
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
             )
             .child(div().w(px(24.)).h(px(1.)).my_1().bg(self.color(0x29303d)))
-            .child(
-                button("navigation-terminal", IconName::SquareTerminal, "Terminal")
-                    .selected(self.terminal_visible_thread.is_some())
-                    .disabled(self.selected.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| this.terminal(window, cx))),
-            )
+            .when(!self.terminal_on_right(), |rail| {
+                rail.child(
+                    button("navigation-terminal", IconName::SquareTerminal, "Terminal")
+                        .selected(self.terminal_visible_thread.is_some())
+                        .disabled(self.selected.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| this.terminal(window, cx))),
+                )
+            })
             .child({
                 let preferred =
                     open_targets::preferred(&self.open_targets, &self.settings).cloned();

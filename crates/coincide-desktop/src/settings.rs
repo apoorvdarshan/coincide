@@ -459,6 +459,10 @@ impl Coincide {
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
         self.apply_appearance(window, cx);
+        if self.terminal_open {
+            self.ensure_terminal_space(window);
+        }
+        self.sync_terminal_resize(window);
         // Virtualized rows cache their measured height and presentation.
         self.transcript_list
             .splice(0..self.transcript_count, self.transcript_count);
@@ -855,6 +859,17 @@ impl Coincide {
             content = content.child(self.open_target_settings(cx));
         }
         for (section, terms, label, key, fallback, choices) in [
+            (
+                S::Appearance,
+                "terminal placement bottom right panel drawer inspector",
+                "Terminal",
+                "terminalPlacement",
+                json!("bottom"),
+                vec![
+                    ("Bottom panel", json!("bottom")),
+                    ("Right panel", json!("right")),
+                ],
+            ),
             (
                 S::Appearance,
                 "reply font serif system typeface",
