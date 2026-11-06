@@ -395,10 +395,16 @@ impl Coincide {
                     .child(state.error.clone()),
             );
         }
-        if mode.operation().is_some() && state.preview.is_none() {
+        if (mode.operation().is_some() && state.preview.is_none())
+            || (mode == Mode::Recovery && !state.error.is_empty())
+        {
             panel = panel.child(
                 Button::new("project-review-again")
-                    .label("Review current project")
+                    .label(if mode == Mode::Recovery {
+                        "Reload removed projects"
+                    } else {
+                        "Review current project"
+                    })
                     .on_click(
                         cx.listener(|this, _, window, cx| this.review_project_form(window, cx)),
                     ),
@@ -419,13 +425,27 @@ impl Coincide {
                 ),
                 _ => String::new(),
             };
+            let accessibility_label = if mode == Mode::Add {
+                self.project_management.folders.first().map_or_else(
+                    || "Add selected folder: choose a folder first".to_owned(),
+                    |path| {
+                        format!(
+                            "Add {} selected folders; first folder: {}",
+                            self.project_management.folders.len(),
+                            path.display()
+                        )
+                    },
+                )
+            } else {
+                format!(
+                    "{label}: {} — {}",
+                    text(&project, "name"),
+                    text(&project, "path")
+                )
+            };
             panel = panel.child(
                 Button::new("project-confirm-change")
-                    .accessibility_label(format!(
-                        "{label}: {} — {}",
-                        text(&project, "name"),
-                        text(&project, "path")
-                    ))
+                    .accessibility_label(accessibility_label)
                     .label(label)
                     .disabled(
                         choosing

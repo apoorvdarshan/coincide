@@ -243,6 +243,19 @@ fn codex_enrollment_fixture_child() {
         std::thread::sleep(Duration::from_millis(2));
     }
     let calls = records(&root);
+    assert!(
+        calls
+            .iter()
+            .all(|record| record["home"] == json!(home_a) || record["home"] == json!(home_b))
+    );
+    assert!(calls.iter().any(
+        |record| record["home"] == json!(home_b) && record["method"] == "account/login/cancel"
+    ));
+    assert!(
+        !calls
+            .iter()
+            .any(|record| record["home"] == json!(home_b) && record["method"] == "account/read")
+    );
     assert!(!calls.iter().any(|record| matches!(
         record["method"].as_str(),
         Some("thread/start" | "thread/resume" | "turn/start" | "model/list")

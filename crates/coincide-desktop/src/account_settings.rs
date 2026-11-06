@@ -401,7 +401,7 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
+    #[::core::prelude::v1::test]
     fn account_status_rejects_other_profile_operation_and_noncanonical_ids() {
         let account = "00000000-0000-4000-8000-aaaaaaaaaaaa".to_owned();
         let operation = "00000000-0000-4000-8000-bbbbbbbbbbbb".to_owned();

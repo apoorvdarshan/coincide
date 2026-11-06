@@ -10,9 +10,9 @@ ownership, rather than imposing a global concurrency rule.
 | Owner | Current work | Boundary / evidence |
 | --- | --- | --- |
 | Coordinator | Integration, serial Cargo lane, CI, checklist and elapsed-time reporting | Reviewed commits, actual test results and exact-head CI |
-| discard_native | Native account Settings and explicit Codex enrollment | Isolated profiles integrated; seven focused units and actual fake runtime passed; no live credentials |
+| discard_native | Combined account/keyboard native fixture preparation | Enrollment and recorder source integrated; full Core/desktop checks passed; no live credentials |
 | limits_review | Browser history persistence and native admission review | Source integrated; combined automated/native validation owned by coordinator |
-| limits_ui | Combined project/history acceptance fixture source | Synthetic seed/verifiers only; no Cargo or runtime until coordinator allocation |
+| limits_ui | Sole native project/history acceptance owner | Frozen ordinary 6b9645a V2 candidate, real Store baseline, explicit removal/recovery and history guards |
 
 Each implementation owner uses an isolated checkout. Shared entry-point changes
 have distinct function scopes and are integrated by the coordinator. A committed
@@ -23,8 +23,7 @@ The coordinator owns the single Cargo writer for
 through GitHub Actions. The ASUS/SSH lane remains closed.
 
 Needed foreground native testing is explicitly authorized. Only one owner uses
-Coincide Computer Use at a time, currently the coordinator when its exact candidate is
-ready. Candidates use unique bundles and task-owned data; the active Swift app
+Coincide Computer Use at a time, currently limits_ui on its frozen V2 candidate. Candidates use unique bundles and task-owned data; the active Swift app
 and user data remain untouched. Synthetic acceptance does not authorize a
 production cutover, install, release, real vault operation or provider submission.
 

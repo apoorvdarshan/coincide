@@ -53,17 +53,28 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 The broad inventory remains 7 of 32 accepted areas. Partial source and scoped
 native results do not close a full feature row.
 
+- Native Codex profile list/create/scoped selection and explicit device sign-in
+  are integrated with keyboard recording/disable/reset for eight existing
+  commands. Device enrollment avoids the upstream shared callback-port cancel
+  behavior, opens no page automatically, and checks matching completion plus
+  subscription authentication. Ephemeral challenges stay out of persistence.
+  Keyboard writes retain unsupported imported commands and opaque settings.
+  The full Core run passed 562 units and every integration target; strict feature
+  Clippy passed. The combined desktop run passed 398 units plus all four
+  integration targets (19, 10, 14, 11). Native account/keyboard acceptance and
+  real-account verification remain open.
 - Integrated Rust-owned Codex login profiles with private launch homes, captured
   account/session binding and pre-turn subscription authentication. Six profile
   units, the captured-session unit and the actual isolated fake Engine/app-server
   integration passed. The parent exercised its intentionally ignored child.
-  Native enrollment/account Settings and named model/catalog/limits parity remain
-  open; no real login or provider submission was performed.
+  Native enrollment/account Settings acceptance and named model/catalog/limits
+  parity remain open; no real login or provider submission was performed.
 - Integrated native project add/rename/relocate and explicit counted removal with
   transactional raw recovery and Restore, plus profile-bound history review,
   import, restart persistence, saved list and explicit new-tab open. The combined
-  Core unit run passed 560 tests (seven intentional ignored fixtures); full
-  integration, desktop and combined native acceptance are in progress.
+  Core unit run passed 560 tests (seven intentional ignored fixtures); the subsequent
+  full integration/desktop batch passed as listed above; combined native project
+  and history acceptance is in progress.
 - The ordinary transcript fixture on exact 5b5a9a2 passed user/assistant layouts,
   reasoning/tool Expand/Collapse, hidden-tail Find and Next/Previous, visible
   Unicode selection, full assistant Copy and one real Edit branch. A real Core
@@ -75,7 +86,7 @@ native results do not close a full feature row.
   strict Core feature Clippy. The historical image viewer now declares a Dialog
   role and label; this semantic correction passed desktop compilation but does
   not establish native focus restoration.
-- Exact 5b5a9a2 passed all six Rust jobs, packaging, general CI and iOS tests.
+- Exact 6b9645a passed all six Rust jobs, packaging, general CI and iOS tests.
   Both completed Linux main-archive provisioning samples took 47 seconds, versus
   prior 23-second and 15m09s Azure samples. The bounded mirror change retains all
   packages/checks; runner variance prevents a fixed runtime promise.
@@ -96,6 +107,7 @@ These narrower results do not close the broad UI/UX row above.
 | Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | V5 passed full-image containment at wide/minimum/widened sizes, Escape/Close, normal Quit and exact preservation; focused-element proof remains unverified |
 | Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Foreground min/max, narrow/wide behavior and restart preservation passed; content geometry measured approximately from screenshots |
 | User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble/actions observed in the ordinary roles fixture |
+| Keyboard recorder and Codex account Settings | Integrated; 398 desktop units/all integrations, 562 Core units/all integrations and strict Core Clippy passed | Pending isolated ordinary-app acceptance; real login was not performed |
 | Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
 ## Overnight checkpoint (2026-11-05)
