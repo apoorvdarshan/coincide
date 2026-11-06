@@ -163,7 +163,7 @@ fn enabled_value_patch(
 fn search_matches(section: Section, query: &str) -> bool {
     let keywords = match section {
         Section::General => {
-            "appearance dark light theme colors font text zoom messages terminal layout awake number locale"
+            "appearance dark light theme colors font text zoom messages terminal layout awake number locale open editor folder project application"
         }
         Section::Models => "favorite hidden custom model catalog",
         Section::Usage => "account limits tokens cost credits history",

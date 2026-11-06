@@ -847,6 +847,13 @@ impl Coincide {
                     ),
             );
         }
+        if matches(
+            S::Appearance,
+            "open project folders editor terminal file manager application automatic",
+        ) {
+            count += 1;
+            content = content.child(self.open_target_settings(cx));
+        }
         for (section, terms, label, key, fallback, choices) in [
             (
                 S::Appearance,
