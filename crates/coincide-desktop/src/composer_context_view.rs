@@ -23,13 +23,10 @@ pub fn cards(raw: &Value) -> Vec<Card> {
                 _ => "Unsupported saved reference",
             }
             .to_owned();
-            let preview = ["text", "comment", "path"]
-                .into_iter()
-                .find_map(|key| row[key].as_str())
-                .unwrap_or("Saved data retained")
-                .chars()
-                .take(160)
-                .collect();
+            let title = super::context_details::details(row)
+                .map(|details| details.title)
+                .unwrap_or(title);
+            let preview = super::context_details::preview(row);
             Card {
                 id: row["id"]
                     .as_str()

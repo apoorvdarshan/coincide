@@ -19,6 +19,8 @@ mod chat_layout;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
+mod context_details;
+mod context_details_mount;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
@@ -387,6 +389,7 @@ struct Coincide {
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
     appshots: appshots::State,
+    context_details: context_details_mount::State,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -1182,6 +1185,7 @@ impl Coincide {
             main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
             appshots: appshots::State::new(cx),
+            context_details: Default::default(),
             keyboard,
             usage_history,
             codex_limits,
@@ -1776,6 +1780,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.context_details.invalidate();
                     self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
@@ -3630,7 +3635,7 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
-        let context_pane = self.transcript_context_pane(&item["context"]);
+        let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         let previews = images
             .iter()
             .take(20)
@@ -4057,6 +4062,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_context_details();
         // Revoke image-modal input immediately on either close path, before its
         // ordinary conversation surface is replaced by cleanup-only controls.
         if self.media.close_requested || self.media.shutdown_requested {
@@ -4286,7 +4292,8 @@ impl Render for Coincide {
             .relative()
             .capture_key_down(
                 cx.listener(|this, event, window, cx| {
-                    if !this.project_defaults_key(event, window, cx)
+                    if !this.context_details_shortcut(event, window, cx)
+                        && !this.project_defaults_key(event, window, cx)
                         && !this.historical_image_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
@@ -4543,6 +4550,7 @@ impl Render for Coincide {
             .when_some(browser_pane, |view, pane| view.child(pane))
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| view.child(form))
+            .when_some(self.context_details_overlay(cx), |view, details| view.child(details))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()
