@@ -84,7 +84,7 @@ impl Coincide {
                 }
             }
         }
-        let drafts_saved = self.flush_pending_drafts();
+        let drafts_saved = self.flush_pending_drafts() && self.flush_native_selection();
         self.selection_ui.close_capability_reads();
         self.thread_bulk.close();
         self.composer_files.close();

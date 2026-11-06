@@ -661,6 +661,27 @@ impl Coincide {
             self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
     }
+    fn flush_native_selection(&mut self) -> bool {
+        let Some(selected) = self.pending_native_selection.as_ref() else {
+            return true;
+        };
+        let Ok(mut engine) = self.engine.try_lock() else {
+            return false;
+        };
+        match engine
+            .store
+            .remember_native_selected_thread(selected.as_deref())
+        {
+            Ok(_) => {
+                self.pending_native_selection = None;
+                true
+            }
+            Err(error) => {
+                self.status = format!("Unable to remember conversation selection: {error}");
+                false
+            }
+        }
+    }
     fn flush_pending_drafts(&mut self) -> bool {
         for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
             self.save_pending_draft(&id);
@@ -1183,7 +1204,10 @@ impl Coincide {
         };
         this.apply_appearance(window, cx);
         let remembered = match this.engine.lock() {
-            Ok(engine) => engine.store.native_last_selected_thread(),
+            Ok(engine) => match &engine.requested_open {
+                Some(id) => Ok(Some(id.clone())),
+                None => engine.store.native_last_selected_thread(),
+            },
             Err(_) => Err(anyhow::anyhow!("Conversation owner unavailable")),
         };
         let remembered = match remembered {
@@ -1656,6 +1680,13 @@ impl Coincide {
                         let _ = engine.set_active_thread(None);
                         self.status =
                             format!("Selected conversation authority unavailable: {error}");
+                    }
+                    match engine.store.remember_native_selected_thread(Some(id)) {
+                        Ok(_) => self.pending_native_selection = None,
+                        Err(error) => {
+                            self.status =
+                                format!("Unable to remember conversation selection: {error}")
+                        }
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
