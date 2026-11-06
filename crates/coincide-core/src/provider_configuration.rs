@@ -167,6 +167,12 @@ pub(crate) fn native_account_matches(selection: &Value) -> bool {
             .is_some_and(|profile| profile.matches(selection))
     })
 }
+pub(crate) fn native_key_profile(provider: &str) -> bool {
+    current()
+        .as_ref()
+        .and_then(|configuration| configuration.profile.as_ref())
+        .is_some_and(|profile| profile.is_key_for(provider))
+}
 pub(crate) fn current_stamp() -> Option<Stamp> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
 }
@@ -196,7 +202,12 @@ pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
         profile.configure_base(command)?;
     }
     for (key, value) in &configuration.record.environment {
-        if named {
+        if named
+            && !configuration
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.is_key_for(&configuration.stamp.provider))
+        {
             ensure!(
                 !sensitive_for_profile(key),
                 "A named subscription profile cannot accept provider auth, endpoint or proxy overrides"
@@ -609,7 +620,7 @@ fn provider_id(provider: &str) -> Result<()> {
     ensure!(
         matches!(
             provider,
-            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "antigravity"
         ),
         "Unsupported provider"
     );
@@ -943,6 +954,10 @@ impl LaunchConfiguration {
     pub(crate) fn validate_named_profile(&self, named: bool) -> Result<()> {
         ensure!(
             !named
+                || self
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.is_key_for(&self.stamp.provider))
                 || !self
                     .record
                     .environment
@@ -1149,6 +1164,16 @@ pub(crate) mod tests {
         let engine =
             Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
+    }
+    pub(crate) fn with_native_key_configuration<T>(
+        provider: &str,
+        body: impl FnOnce(&mut Engine, &Path) -> T,
+    ) -> T {
+        let (_root, mut engine, binary) = fixture();
+        save(&mut engine, provider, &binary, "synthetic-global-key");
+        let (configuration, home) = accounts::synthetic_key_configuration(&mut engine, provider);
+        let _scope = enter(Some(configuration));
+        body(&mut engine, &home)
     }
     pub(crate) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
         let baseline = engine

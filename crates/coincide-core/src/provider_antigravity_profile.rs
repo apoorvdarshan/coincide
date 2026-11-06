@@ -93,24 +93,29 @@ impl Profile {
         let acp = directory.join("antigravity-acp");
         make_directory(&acp)?;
         let token = acp.join("acp_token.json");
-        if !token.exists() {
-            let source = original
-                .as_ref()
-                .context(AUTH_FAILURE)?
-                .join("antigravity-acp/acp_token.json");
-            check_components(&source)?;
-            let bytes = read(&source, 1024 * 1024).map_err(|_| anyhow::anyhow!(AUTH_FAILURE))?;
-            validate_token(&bytes)?;
-            write_new(&token, &bytes, 0o600)?;
-        } else {
-            safe_file(&token, true)?;
-            validate_token(&read(&token, 1024 * 1024)?)?;
+        let native_key = crate::provider_configuration::native_key_profile("antigravity");
+        if !native_key {
+            if !token.exists() {
+                let source = original
+                    .as_ref()
+                    .context(AUTH_FAILURE)?
+                    .join("antigravity-acp/acp_token.json");
+                check_components(&source)?;
+                let bytes =
+                    read(&source, 1024 * 1024).map_err(|_| anyhow::anyhow!(AUTH_FAILURE))?;
+                validate_token(&bytes)?;
+                write_new(&token, &bytes, 0o600)?;
+            } else {
+                safe_file(&token, true)?;
+                validate_token(&read(&token, 1024 * 1024)?)?;
+            }
         }
-        replace(
-            &acp.join("settings.json"),
-            b"{\"auth\":{\"type\":\"oauth-personal\"}}\n",
-            0o600,
-        )?;
+        let settings = if native_key {
+            b"{\"auth\":{\"type\":\"gemini-api-key\"}}\n".as_slice()
+        } else {
+            b"{\"auth\":{\"type\":\"oauth-personal\"}}\n".as_slice()
+        };
+        replace(&acp.join("settings.json"), settings, 0o600)?;
         let helper = directory.join("browser-suppressed.sh");
         ensure!(
             !helper.to_string_lossy().contains([':', '\n', '\r'])
@@ -216,7 +221,7 @@ impl Profile {
             "'/bin/sh' '{}' '%s'",
             helper.to_string_lossy().replace('\'', "'\"'\"'")
         );
-        vec![
+        let mut environment = vec![
             (
                 "GEMINI_HOME".into(),
                 self.directory.clone().into_os_string(),
@@ -233,7 +238,13 @@ impl Profile {
             ("TMPDIR".into(), self.temporary.as_os_str().to_owned()),
             ("TMP".into(), self.temporary.as_os_str().to_owned()),
             ("TEMP".into(), self.temporary.as_os_str().to_owned()),
-        ]
+        ];
+        if crate::provider_configuration::native_key_profile("antigravity") {
+            if let Some(key) = crate::provider_configuration::effective_var("GEMINI_API_KEY") {
+                environment.push(("GEMINI_API_KEY".into(), key));
+            }
+        }
+        environment
     }
 }
 impl Drop for Profile {
@@ -554,6 +565,37 @@ mod tests {
         )
         .unwrap();
         source
+    }
+    #[test]
+    fn native_api_key_profile_requires_no_oauth_copy_and_keeps_key_in_child_environment() {
+        crate::provider_configuration::tests::with_native_key_configuration(
+            "antigravity",
+            |_engine, home| {
+                let profile =
+                    Profile::prepare(&home.join("threads/synthetic"), None, None).unwrap();
+                assert!(
+                    !profile
+                        .directory
+                        .join("antigravity-acp/acp_token.json")
+                        .exists()
+                );
+                let settings: Value = serde_json::from_slice(
+                    &fs::read(profile.directory.join("antigravity-acp/settings.json")).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(settings["auth"]["type"], "gemini-api-key");
+                assert!(!settings.to_string().contains("synthetic-owned-account-key"));
+                let environment = profile.environment(&home.join("synthetic-runtime"));
+                assert!(
+                    environment
+                        .iter()
+                        .any(|(key, value)| key == "GEMINI_API_KEY"
+                            && value == "synthetic-owned-account-key")
+                );
+            },
+        );
+        let root = tempfile::tempdir().unwrap();
+        assert!(Profile::prepare(&root.path().join("without-native-grant"), None, None).is_err());
     }
     #[test]
     fn antigravity_profile_rejects_overlap_and_account_rebinding_before_source_writes() {

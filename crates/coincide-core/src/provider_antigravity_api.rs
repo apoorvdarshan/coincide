@@ -152,6 +152,11 @@ impl Engine {
             "Acknowledge the Antigravity account risk through providers.antigravity.acknowledge before selecting or running it"
         );
         let id = account_id(&selection["accountID"])?;
+        if provider_configuration::native_key_profile("antigravity")
+            && provider_configuration::native_account_matches(selection)
+        {
+            return Ok((id, json!({"auth":"apiKey","native":true})));
+        }
         let account=config["accounts"].get(&id).cloned().context("Configure the selected Antigravity account through providers.antigravity.configure first")?;
         ensure!(
             account["auth"] == "login",
@@ -165,6 +170,27 @@ impl Engine {
         selection: &Value,
     ) -> Result<(Provider, PathBuf)> {
         let (id, account) = self.antigravity_selection(selection)?;
+        if account["native"] == true && provider_configuration::native_key_profile("antigravity") {
+            let executable = provider_configuration::current()
+                .and_then(|configuration| configuration.approved_executable())
+                .context(
+                    "Approve the Antigravity executable and helper in native Settings first",
+                )?;
+            let data = self.store.data_directory()?;
+            return Ok((
+                Provider::Antigravity {
+                    profile: Some(
+                        data.join("providers/antigravity")
+                            .join(id)
+                            .join("threads")
+                            .join(thread_id),
+                    ),
+                    source_profile: None,
+                    risk_acknowledged: true,
+                },
+                executable,
+            ));
+        }
         let executable = match std::env::var_os("COINCIDE_ANTIGRAVITY_EXECUTABLE") {
             Some(path) => absolute_file(&json!(PathBuf::from(path)))?,
             None => absolute_file(&account["executable"])?,

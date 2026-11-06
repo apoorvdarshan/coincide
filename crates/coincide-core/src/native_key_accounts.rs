@@ -328,7 +328,7 @@ fn launch_with_secrets(
     ensure!(
         matches!(
             account.provider.as_str(),
-            "claude" | "cursor" | "grok" | "opencode"
+            "claude" | "cursor" | "grok" | "opencode" | "antigravity"
         ),
         "This API-key provider still requires its guarded native runtime enrollment"
     );
@@ -366,6 +366,13 @@ fn launch_with_secrets(
     Ok(configuration)
 }
 
+#[cfg(test)]
+pub(super) fn synthetic_configuration(
+    engine: &mut Engine,
+    provider: &str,
+) -> (LaunchConfiguration, PathBuf) {
+    tests::synthetic_configuration(engine, provider)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +420,41 @@ mod tests {
                 .remove(&(service.into(), id.into()));
             Ok(())
         }
+    }
+    pub(super) fn synthetic_configuration(
+        engine: &mut Engine,
+        provider: &str,
+    ) -> (LaunchConfiguration, PathBuf) {
+        let variable = key_choices(provider).unwrap()[0].0;
+        let account = engine
+            .create_native_key_account(provider, "Synthetic native key", variable)
+            .unwrap();
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let secrets = NativeSecretStore::from_owner(&owner)
+            .unwrap()
+            .with_backend(Arc::new(Fake::default()));
+        engine
+            .save_account_key_with(
+                &owner,
+                &secrets,
+                provider,
+                &account.id,
+                &account.revision,
+                "synthetic-owned-account-key",
+            )
+            .unwrap();
+        let raw = engine.store.native_accounts_payload(provider).unwrap();
+        let row = super::super::account(
+            &read(&owner, provider, raw.as_deref()).unwrap(),
+            provider,
+            &account.id,
+        )
+        .unwrap();
+        let home = row.home.clone();
+        (
+            launch_with_secrets(&owner, &engine.store, row, &secrets).unwrap(),
+            home,
+        )
     }
     #[test]
     fn failed_secret_write_preserves_saved_pointer_and_durable_cleanup_receipt() {

@@ -264,6 +264,9 @@ impl LoginHome {
     pub(super) fn matches(&self, selection: &Value) -> bool {
         selection["provider"] == self.account.provider && selection["accountID"] == self.account.id
     }
+    pub(super) fn is_key_for(&self, provider: &str) -> bool {
+        self.account.authentication == Authentication::ApiKey && self.account.provider == provider
+    }
     pub(super) fn configure_base(&self, command: &mut Command) -> Result<()> {
         self.validate()?;
         command.env_clear().envs(&self.base_environment);
@@ -532,7 +535,10 @@ impl Engine {
         );
         let provider = text(&current["selection"], "provider");
         ensure!(
-            matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode"),
+            matches!(
+                provider.as_str(),
+                "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+            ),
             "Use this provider's existing guarded account workflow"
         );
         let target = account.filter(|account| !account.is_empty() && *account != "default");
@@ -560,6 +566,9 @@ impl Engine {
         }
         crate::composer_policy::Policy::parse(&changed, crate::composer_policy::Origin::Ordinary)?
             .preflight()?;
+        if provider == "antigravity" {
+            self.antigravity_selection(&changed["selection"])?;
+        }
         let owner = Private::open(&self.store, false)?;
         let grant = target.map(|target| {
             let owner = owner.as_ref().context("Native account authority missing")?;
@@ -780,6 +789,13 @@ impl Engine {
     }
 }
 
+#[cfg(test)]
+pub(super) fn synthetic_key_configuration(
+    engine: &mut Engine,
+    provider: &str,
+) -> (LaunchConfiguration, PathBuf) {
+    keys::synthetic_configuration(engine, provider)
+}
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};
