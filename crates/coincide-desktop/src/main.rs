@@ -2533,6 +2533,7 @@ impl Coincide {
         }
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
+        self.poll_codex_account_settings(cx);
         self.sync_github_context(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);

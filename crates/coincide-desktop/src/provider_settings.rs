@@ -1,7 +1,10 @@
 //! Native provider setup uses the same explicit configuration/acknowledgement
-//! commands as the CLI. Discovery reads metadata only and never signs in.
+//! commands as the CLI. Discovery reads metadata only; Codex enrollment requires
+//! an explicit action in the isolated profile panel.
 use super::*;
 use std::path::PathBuf;
+#[path = "account_settings.rs"]
+mod account_settings;
 
 const RISK_NOTICE: &str = "Using Antigravity through Coincide may break Google’s Antigravity terms, which forbid accessing it with third-party tools. Google has suspended accounts for this, including access to Gemini CLI and Code Assist. Use at your own risk; consider a separate Google account.";
 const API_KEY_NOTE: &str =
@@ -15,6 +18,8 @@ struct Suggestions {
 }
 pub(super) struct ProviderSettings {
     pub open: bool,
+    codex_open: bool,
+    codex: account_settings::AccountSettings,
     account: String,
     name: Entity<InputState>,
     executable: Entity<InputState>,
@@ -30,6 +35,8 @@ impl ProviderSettings {
     pub fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
         Self {
             open: false,
+            codex_open: false,
+            codex: account_settings::AccountSettings::new(window, cx),
             account: "default".into(),
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Account name")),
             executable: cx
@@ -48,7 +55,7 @@ impl ProviderSettings {
         }
     }
     pub fn subscriptions(&self, cx: &mut Context<Coincide>) -> Vec<Subscription> {
-        [&self.name, &self.executable, &self.source, &self.model]
+        let mut subscriptions = [&self.name, &self.executable, &self.source, &self.model]
             .into_iter()
             .map(|input| {
                 cx.subscribe(input, |_, _, event, cx| {
@@ -57,7 +64,9 @@ impl ProviderSettings {
                     }
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        subscriptions.extend(self.codex.subscriptions(cx));
+        subscriptions
     }
     fn configured(&self) -> bool {
         self.report["accounts"].get(&self.account).is_some()
@@ -94,6 +103,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         self.provider_settings.open = true;
+        self.provider_settings.codex_open = false;
         self.settings_open = true;
         self.schedules_open = false;
         self.refresh_antigravity_settings(cx);
@@ -324,6 +334,9 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn antigravity_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.provider_settings.codex_open {
+            return self.codex_account_settings(cx);
+        }
         let state = &self.provider_settings;
         let configured = state.configured();
         let unsaved = state.has_unsaved_changes(cx);

@@ -36,6 +36,8 @@ mod browser_history_api;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
+#[path = "codex_profile_login_api.rs"]
+mod codex_profile_login_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
 #[path = "project_management_api.rs"]
@@ -119,6 +121,7 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
     github_threads: github_threads_engine::State,
@@ -189,6 +192,7 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             github_threads: github_threads_engine::State::default(),
@@ -296,6 +300,7 @@ impl Engine {
                 Ok(result)
             }
             "providers.codex.profiles.status" | "providers.codex.profiles.create" | "providers.codex.profiles.select" => self.codex_login_profile_command(method,p),
+            "providers.codex.profiles.login.start" | "providers.codex.profiles.login.status" | "providers.codex.profiles.login.cancel" => self.codex_profile_login_command(method,p),
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
@@ -1499,6 +1504,7 @@ impl Engine {
             })
     }
     pub fn poll(&mut self) {
+        self.poll_codex_profile_login();
         self.poll_steering();
         self.provider_workers_status();
         self.computer_use_expire();

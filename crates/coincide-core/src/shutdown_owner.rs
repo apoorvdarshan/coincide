@@ -74,6 +74,7 @@ impl Engine {
     /// request; callers retain and poll this Engine until actual acknowledgments.
     pub fn request_core_owner_shutdown(&mut self) -> Result<()> {
         self.freeze_admissions();
+        self.cancel_codex_profile_login();
         self.enabled_queues.clear();
         let threads = self.runs.keys().cloned().collect::<Vec<_>>();
         for thread in threads {

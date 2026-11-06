@@ -20,6 +20,8 @@ mod acp;
 mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
+#[path = "codex_profile_login.rs"]
+pub(crate) mod codex_profile_login;
 #[path = "codex_speed.rs"]
 mod codex_speed;
 #[path = "codex_steering.rs"]

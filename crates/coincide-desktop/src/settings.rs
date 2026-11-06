@@ -747,6 +747,12 @@ impl Coincide {
             ),
             (
                 S::Accounts,
+                "codex-accounts",
+                "Codex login profiles",
+                "codex openai chatgpt subscription login accounts profiles sign in",
+            ),
+            (
+                S::Accounts,
                 "antigravity",
                 "Antigravity accounts",
                 "antigravity provider configured account models",
@@ -795,6 +801,8 @@ impl Coincide {
                                 this.provider_settings.open = false;
                                 if id == "antigravity" {
                                     this.open_antigravity_settings(window, cx);
+                                } else if id == "codex-accounts" {
+                                    this.open_codex_account_settings(window, cx);
                                 }
                                 window.blur(cx);
                                 this.sync_transcription_binding(cx);

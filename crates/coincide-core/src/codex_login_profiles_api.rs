@@ -19,7 +19,7 @@ impl Engine {
                     Ok(json!({"id":id,"name":account["name"],"auth":"login","authenticationChecked":false,"accountIdentityVerified":false}))
                 }).collect::<Result<Vec<_>>>()?;
                 Ok(
-                    json!({"accounts":accounts,"namedResumeSupported":false,"enrollmentConnected":false,"uiMounted":false}),
+                    json!({"accounts":accounts,"namedResumeSupported":false,"enrollmentConnected":true,"uiMounted":self.ui_available}),
                 )
             }
             "providers.codex.profiles.create" => {
@@ -44,7 +44,7 @@ impl Engine {
                     .save_document(profiles::DOCUMENT, &configuration)?;
                 self.revision += 1;
                 Ok(
-                    json!({"id":id,"name":name,"auth":"login","authenticationChecked":false,"accountIdentityVerified":false,"enrollmentConnected":false}),
+                    json!({"id":id,"name":name,"auth":"login","authenticationChecked":false,"accountIdentityVerified":false,"enrollmentConnected":true}),
                 )
             }
             "providers.codex.profiles.select" => {
@@ -125,6 +125,12 @@ impl Engine {
         profiles::validate_thread(thread)?;
         let account = required(&thread["selection"], "accountID")?;
         profiles::account(&profiles::configuration(&self.store)?, account)?;
+        ensure!(
+            self.codex_profile_login
+                .as_ref()
+                .is_none_or(|operation| !operation.active() || operation.account() != account),
+            "Finish or cancel this profile's sign-in before sending"
+        );
         Ok(Some(profiles::LaunchContext::capture(
             &self.store.data_directory()?,
             account,

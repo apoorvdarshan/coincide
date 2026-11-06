@@ -50,6 +50,9 @@ impl LaunchContext {
     pub(crate) fn executable(&self) -> &Path {
         &self.executable
     }
+    pub(crate) fn home(&self) -> &Path {
+        &self.home
+    }
     pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
             managed_home(&self.root, &self.account, false)? == self.home,
