@@ -59,10 +59,18 @@ serial=int((home/'serial').read_text())+1 if (home/'serial').exists() else 1
 (home/'serial').write_text(str(serial))
 native=(home.name+'-'+str(serial)) if r['method']=='thread/start' else r['params']['threadId']
 record({'native':native,'threadMethod':r['method']})
+if mode=='auth-change':
+ write({'method':'account/updated','params':{'authMode':None,'planType':None}})
+ sys.stdin.readline();sys.exit(0)
+def rate_update():
+ record({'sentNotification':'account/rateLimits/updated'})
+ write({'method':'account/rateLimits/updated','params':{'rateLimits':{'limitId':'codex','limitName':'synthetic-profile-limit','primary':None,'secondary':None,'credits':None,'planType':None}}})
+if named:rate_update()
 write({'id':r['id'],'result':{'thread':{'id':native},'model':'reported-default'}})
 r=read();assert r['method']=='turn/start';record({'turn':r['params']})
 turn='turn-'+str(serial)
 write({'id':r['id'],'result':{'turn':{'id':turn}}})
+if named:rate_update()
 write({'method':'item/completed','params':{'threadId':native,'turnId':turn,'item':{'type':'agentMessage','id':native+'-reply-'+str(serial),'text':'Synthetic reply'}}})
 write({'method':'turn/completed','params':{'threadId':native,'turn':{'id':turn,'status':'completed'}}})
 sys.stdin.readline()
@@ -172,6 +180,23 @@ fn codex_profile_fixture_child() {
         let saved = engine.store.thread(&id).unwrap();
         assert_eq!(saved["future"], json!({"keep":42}));
         assert!(!saved.to_string().contains("synthetic@example.invalid"));
+        assert!(!saved.to_string().contains("synthetic-profile-limit"));
+        assert!(
+            saved["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["kind"] != "error")
+        );
+        assert_eq!(
+            saved["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["kind"] == "assistant" && item["text"] == "Synthetic reply")
+                .count(),
+            number + 1
+        );
         assert_eq!(
             text(&saved["sessions"]["codex"], "accountID"),
             if *account == "default" { "" } else { *account }
@@ -188,6 +213,13 @@ fn codex_profile_fixture_child() {
     assert!(saved["accountSessions"][format!("codex/{a_id}")]["sessionID"].is_string());
     assert!(saved["accountSessions"][format!("codex/{b_id}")]["sessionID"].is_string());
     let calls = records(&root);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["sentNotification"] == "account/rateLimits/updated")
+            .count(),
+        6
+    );
     assert!(
         calls
             .iter()
@@ -229,6 +261,39 @@ fn codex_profile_fixture_child() {
         v["method"].as_str(),
         Some("thread/start" | "thread/resume" | "turn/start")
     )));
+    // Actual auth-context changes still fail closed after the initial account
+    // read, before turn/start; quota notifications cannot grant that authority.
+    fs::write(home_a.join("fixture-mode"), "auth-change").unwrap();
+    let before = records(&root).len();
+    call(
+        &mut engine,
+        "agent.send",
+        json!({"threadId":id,"text":"changed synthetic auth"}),
+    );
+    settle(&mut engine);
+    let after = records(&root);
+    assert!(
+        after
+            .iter()
+            .skip(before)
+            .any(|call| call["method"] == "thread/start")
+    );
+    assert!(
+        !after
+            .iter()
+            .skip(before)
+            .any(|call| call["method"] == "turn/start" || call["method"] == "thread/resume")
+    );
+    assert!(
+        engine.store.thread(&id).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "error"
+                && item["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("authentication changed")))
+    );
     // Cancellation while account/read waits uses the existing real worker and
     // owned child cleanup path, not a fabricated authentication completion.
     fs::write(home_a.join("fixture-mode"), "block").unwrap();
@@ -251,7 +316,7 @@ fn codex_profile_fixture_child() {
     );
     engine.request_provider_stop(&id).unwrap();
     settle(&mut engine);
-    assert!(engine.provider_workers_status().returned >= 7);
+    assert!(engine.provider_workers_status().returned >= 8);
     for record in records(&root)
         .iter()
         .filter(|record| record["pid"].is_number())

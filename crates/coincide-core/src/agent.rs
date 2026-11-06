@@ -549,6 +549,11 @@ fn run(
                 stage = 2;
                 continue; // Never forward account metadata to transcript/events.
             }
+            if profile.is_some() && frame["method"] == "account/rateLimits/updated" {
+                // This ordinary sparse quota notification provides no account
+                // authority. Named-profile limits are not mounted in this slice.
+                continue;
+            }
             if profile.is_some()
                 && frame["method"]
                     .as_str()
