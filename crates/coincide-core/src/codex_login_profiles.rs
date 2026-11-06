@@ -225,8 +225,10 @@ pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
                     thread["accessMode"].as_str(),
                     Some("approval" | "fullAccess")
                 ))
-            && (thread["interactionMode"].is_null() || thread["interactionMode"] == "build"),
-        "Named Codex login profiles require ordinary build mode and explicit-model effort/speed"
+            && (thread["interactionMode"].is_null()
+                || thread["interactionMode"] == "build"
+                || (thread["interactionMode"] == "plan" && model != "default")),
+        "Named Codex login profiles require ordinary threads and explicit-model Plan/effort/speed"
     );
     ensure!(
         thread["accessMode"] != "fullAccess" || model != "default",
