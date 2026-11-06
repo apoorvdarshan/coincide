@@ -11,7 +11,16 @@ fn fixture() -> (
 ) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("private-model-restore");
-    crate::native_file::private_directory(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+    }
+    #[cfg(windows)]
+    crate::private_fs::windows::create_directory(&root).unwrap();
     let root = root.canonicalize().unwrap();
     let account = uuid::Uuid::new_v4().to_string();
     crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
