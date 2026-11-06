@@ -19,6 +19,7 @@ mod composer_commands;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
+mod composer_follow_up_mount;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
@@ -351,6 +352,8 @@ struct Coincide {
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
+    follow_up_picker: bool,
+    follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     queued_messages: Vec<Value>,
@@ -1138,6 +1141,8 @@ impl Coincide {
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
+            follow_up_picker: false,
+            follow_up_deliveries: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
             queued_messages: Vec::new(),
@@ -2879,6 +2884,7 @@ impl Coincide {
         if self.steering.poll() {
             cx.notify();
         }
+        self.poll_composer_follow_ups(window, cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
         self.poll_codex_account_settings(cx);
@@ -3449,6 +3455,9 @@ impl Coincide {
         )
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_selected(false, window, cx);
+    }
+    fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
         // A hidden composer may retain focus after opening the Git pane.
         if self.workspace_open || self.session_import_open {
             return;
@@ -3469,7 +3478,7 @@ impl Coincide {
             if self.running.contains(&text(thread, "id"))
                 && coincide_core::composer_context::has_context(context)
             {
-                self.status = "Queued messages do not yet support references. Send after the current turn finishes, or remove the references explicitly.".into();
+                self.status = "Follow-up messages currently support text only. Keep the attached references for a direct send after the current turn.".into();
                 cx.notify();
                 return;
             }
@@ -3485,7 +3494,7 @@ impl Coincide {
             .as_ref()
             .is_some_and(|v| self.running.contains(&text(v, "id")))
         {
-            self.queue_message(window, cx);
+            self.send_follow_up(alternate, cx);
             return;
         }
         if let Some(v) = self.selected.as_ref() {
@@ -4392,6 +4401,7 @@ impl Render for Coincide {
                                                         .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
                                                         .when(!self.composer_files.opened, |view| view
                                                         .when(self.composer_selection_expanded(), |view| view.child(self.composer_selection_pane(cx)))
+                                                        .when_some(self.follow_up_pane(cx), |view, pane| view.child(pane))
                                                         .when_some(
                                                             self.composer_steering_pane(cx),
                                                             |view, steering| view.child(steering),
@@ -4426,6 +4436,8 @@ impl Render for Coincide {
                                                 ))
                                                 .child(
                                                     Textarea::new(&self.composer)
+                                                        .accessibility_id("composer-input")
+                                                        .aria_label("Message")
                                                         .appearance(false)
                                                         .bordered(false)
                                                         .h({
@@ -4481,13 +4493,15 @@ impl Render for Coincide {
                                                     Button::new("send")
                                                         .primary()
                                                         .disabled(importing_images || self.selection_send_blocked())
-                                                        .accessibility_label(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
-                                                        .tooltip(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
-                                                        .icon(if self.running.contains(&selected_id) { gpui_kit::assets::IconName::ListPlus } else { gpui_kit::assets::IconName::ArrowUp })
+                                                        .accessibility_label(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
+                                                        .tooltip(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
+                                                        .icon(composer_follow_up_mount::dispatch_icon(self.composer_send_dispatch(false)))
                                                         .w(px(28.)).h(px(28.)).rounded(px(14.)).p_0()
                                                         .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.send(window, cx)
+                                                            |this, event: &gpui_kit::ClickEvent, window, cx| {
+                                                                let modifiers = event.modifiers();
+                                                                let alternate = if cfg!(target_os = "macos") { modifiers.platform } else { modifiers.control };
+                                                                this.send_selected(alternate, window, cx)
                                                             },
                                                         )),
                                                 )
@@ -4585,6 +4599,7 @@ fn main() -> Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             composer_file_picker::init(cx);
+            composer_follow_up_mount::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);

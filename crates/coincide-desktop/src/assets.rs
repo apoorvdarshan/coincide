@@ -124,6 +124,7 @@ icon_assets!(
         Settings,
         SortAscending,
         SortDescending,
+        SkipForward,
         SquareTerminal,
         Square,
         StarFill,
@@ -174,6 +175,7 @@ mod tests {
             "icons/at-sign.svg",
             "icons/list-plus.svg",
             "icons/corner-up-right.svg",
+            "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
         ] {

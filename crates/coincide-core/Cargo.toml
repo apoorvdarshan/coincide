@@ -42,3 +42,8 @@ tempfile.workspace = true
 name = "provider_codex_profile_resume_portable"
 path = "tests/provider_codex_profile_resume_portable.rs"
 harness = false
+
+[[test]]
+name = "provider_native_follow_up_portable"
+path = "tests/provider_native_follow_up_portable.rs"
+harness = false

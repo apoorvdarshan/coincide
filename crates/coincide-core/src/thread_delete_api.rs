@@ -50,10 +50,20 @@ impl Engine {
         provider: &str,
     ) -> Result<Option<String>> {
         let session = agent::provider_session(thread, provider);
+        let account = thread["selection"]["accountID"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
         if let Some(native) = &session
-            && self
+            && (self
                 .store
                 .is_native_session_revoked(required(thread, "id")?, native)?
+                || provider == "codex"
+                    && self.store.is_native_session_uncertain(
+                        required(thread, "id")?,
+                        account,
+                        native,
+                    )?)
         {
             return Ok(None);
         }
@@ -73,6 +83,7 @@ impl Engine {
         ensure!(
             self.workspace_mutations.is_empty()
                 && self.steering_operations.is_empty()
+                && !self.native_follow_up.has_pending()
                 && self.schedule_completions.is_empty(),
             "Wait for pending workspace/provider results before deleting or restoring conversations"
         );
