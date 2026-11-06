@@ -12,6 +12,15 @@ pub struct NativeLoginAccount {
     pub revision: String,
     pub home: PathBuf,
 }
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+enum Authentication {
+    #[default]
+    Login,
+    ApiKey,
+}
+fn login_mode(mode: &Authentication) -> bool {
+    *mode == Authentication::Login
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Account {
     id: String,
@@ -19,6 +28,12 @@ pub(super) struct Account {
     name: String,
     revision: String,
     launch_revision: String,
+    #[serde(default, skip_serializing_if = "login_mode")]
+    authentication: Authentication,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_variable: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<account_secret_store::SecretSlot>,
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
@@ -40,7 +55,7 @@ fn supported(provider: &str) -> Result<&'static str> {
     }
 }
 fn home(root: &Path, provider: &str, id: &str) -> Result<PathBuf> {
-    supported(provider)?;
+    provider_id(provider)?;
     let canonical = Uuid::parse_str(id)?.to_string();
     ensure!(canonical == id, "Invalid native account identity");
     Ok(root.join("providers").join(provider).join(canonical))
@@ -107,7 +122,7 @@ fn summary(account: &Account) -> NativeLoginAccount {
     }
 }
 fn read(owner: &Private, provider: &str, raw: Option<&str>) -> Result<Value> {
-    supported(provider)?;
+    provider_id(provider)?;
     let Some(raw) = raw else {
         return Ok(
             json!({"source":owner.source,"purpose":PURPOSE,"provider":provider,"accounts":{}}),
@@ -379,7 +394,11 @@ impl Engine {
             .as_object()
             .unwrap()
             .keys()
-            .map(|id| account(&payload, provider, id).map(|account| summary(&account)))
+            .map(|id| account(&payload, provider, id))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|account| account.authentication == Authentication::Login)
+            .map(|account| Ok(summary(&account)))
             .collect()
     }
     pub fn create_native_login_account(
@@ -411,6 +430,9 @@ impl Engine {
             name: name.into(),
             revision: Uuid::new_v4().to_string(),
             launch_revision: Uuid::new_v4().to_string(),
+            authentication: Authentication::Login,
+            key_variable: None,
+            key: None,
             home,
             home_identity,
             guard_identity,
@@ -544,10 +566,12 @@ impl Engine {
             .context("Add this account in native Settings first")?;
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        let profile = LoginHome::capture(
-            &self.store.data_directory()?,
-            account(&payload, provider, id)?,
-        )?;
+        let account = account(&payload, provider, id)?;
+        ensure!(
+            account.authentication == Authentication::Login,
+            "Use this account's native API key workflow"
+        );
+        let profile = LoginHome::capture(&self.store.data_directory()?, account)?;
         // Both native envelopes share this authority lease.
         let record = read_record(&owner.read()?, provider)?;
         ensure!(
@@ -697,6 +721,10 @@ impl Engine {
         let mut payload = read(&owner, provider, raw.as_deref())?;
         let current = account(&payload, provider, id)?;
         ensure!(
+            current.authentication == Authentication::Login,
+            "Use this account's native API key workflow"
+        );
+        ensure!(
             current.revision == expected,
             "Account changed; reload before signing in"
         );
@@ -713,6 +741,10 @@ impl Engine {
         account(&payload, provider, id)
     }
 }
+
+#[path = "native_key_accounts.rs"]
+mod keys;
+pub use keys::{NativeKeyAccount, NativeKeySave};
 
 #[cfg(test)]
 mod tests {

@@ -25,7 +25,7 @@ pub struct PreparedSecret {
     slot: SecretSlot,
     value: Zeroizing<Vec<u8>>,
 }
-trait Backend: Send + Sync {
+pub(super) trait Backend: Send + Sync {
     fn write(&self, service: &str, id: &str, value: &[u8]) -> Result<()>;
     fn read(&self, service: &str, id: &str) -> Result<Zeroizing<Vec<u8>>>;
     fn delete(&self, service: &str, id: &str) -> Result<()>;
@@ -88,6 +88,16 @@ impl Engine {
         self.require_admissions()?;
         let owner =
             Private::open(&self.store, true)?.context("Native account authority unavailable")?;
+        NativeSecretStore::from_owner(&owner)
+    }
+}
+impl NativeSecretStore {
+    #[cfg(test)]
+    pub(super) fn with_backend(mut self, backend: Arc<dyn Backend>) -> Self {
+        self.backend = backend;
+        self
+    }
+    pub(super) fn from_owner(owner: &Private) -> Result<Self> {
         let namespace = crate::digest_hex::lower_hex(
             hmac::sign(&owner.key, &serde_json::to_vec(&owner.source)?).as_ref(),
         );
@@ -98,8 +108,6 @@ impl Engine {
             backend: Arc::new(OsBackend),
         })
     }
-}
-impl NativeSecretStore {
     /// Allocate a new immutable slot. The registry owner must durably retain
     /// this plan's cleanup receipt before calling write; a failed CAS must never
     /// overwrite the old account's slot.
@@ -168,6 +176,10 @@ impl NativeSecretStore {
         self.validate(slot)?;
         let value = self.backend.read(&self.service, &slot.id)?;
         ensure!(
+            value.len() <= 16 * 1024,
+            "The saved account key exceeds its limit"
+        );
+        ensure!(
             self.tag(slot, &value)? == slot.tag,
             "The saved account secret changed; replace it before use"
         );
@@ -185,6 +197,16 @@ impl PreparedSecret {
         self.slot.clone()
     }
 }
+
+impl SecretSlot {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(super) fn belongs_to(&self, provider: &str, account: &str, purpose: SecretPurpose) -> bool {
+        self.provider == provider && self.account == account && self.purpose == purpose
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
