@@ -244,6 +244,25 @@ mod tests {
     #[test]
     fn an_older_archive_undo_cannot_reauthorize_a_deleted_bots_local_instruction_snapshot() {
         let (_dir, mut engine, bot, id, context) = fixture(true);
+        // Remove this fixture's scheduled target through the ordinary service
+        // before preparing deletion; the production schedule guard stays intact.
+        let schedule_id = Uuid::new_v4().to_string();
+        let mut schedules = engine
+            .store
+            .document("scheduled-tasks.json")
+            .unwrap()
+            .unwrap();
+        schedules["tasks"][0]["id"] = json!(&schedule_id);
+        engine
+            .store
+            .save_document("scheduled-tasks.json", &schedules)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call("schedules.delete", &json!({"scheduleId":schedule_id}))
+                .unwrap()["removed"],
+            true
+        );
         let mut thread = engine.store.thread(&id).unwrap();
         thread["isArchived"] = json!(true);
         engine.store.save(&thread).unwrap();
