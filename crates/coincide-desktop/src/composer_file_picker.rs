@@ -1,5 +1,6 @@
 //! Project-file path references with proven native @query completion; no key interception.
 use super::*;
+use gpui_kit::component::tooltip::Tooltip;
 #[path = "composer_file_mentions.rs"]
 mod mentions;
 use coincide_core::{
@@ -599,19 +600,49 @@ impl Coincide {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap_2()
-            .child(if state.automatic {"Attach a path reference and remove only this @query. Surrounding text stays unchanged; file contents are not read."} else {"Choose a path reference. Message text and file contents stay unchanged."})
-            .child(div().text_xs().child(state.status.clone()));
+            .gap_1();
+        if state.files.is_empty() {
+            results = results
+                .child(if state.automatic {
+                    "Choose a path reference to complete this @query. File contents are not read."
+                } else {
+                    "Choose a path reference. Message text and file contents stay unchanged."
+                })
+                .child(div().text_xs().child(state.status.clone()));
+        }
         if !state.directory.is_empty() {
+            let counts = format!(
+                "{} files / {} paths · {} skipped{}{}",
+                state.files.len(),
+                state.total,
+                state.skipped,
+                if state.truncated { " · limited" } else { "" },
+                if busy { " · working…" } else { "" },
+            );
+            let details = format!(
+                "{} eligible files shown from {} matching Git paths; {} unavailable or unsupported entries skipped. {}Project: {}",
+                state.files.len(),
+                state.total,
+                state.skipped,
+                if state.truncated {
+                    "Result limit reached; refine the search for more. "
+                } else {
+                    ""
+                },
+                state.directory,
+            );
             results = results.child(
                 div()
+                    .id("composer-file-result-summary")
+                    .role(Role::Label)
+                    .aria_label(details.clone())
+                    .tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx))
+                    .h(px(20.))
+                    .flex_shrink_0()
                     .text_xs()
                     .truncate()
-                    .child(format!("Project: {}", state.directory)),
+                    .child(format!("{counts} · {}", state.directory)),
             );
-        }
-        if state.truncated || state.skipped > 0 {
-            results=results.child(div().text_xs().child(format!("{} eligible files shown from {} matching Git paths; {} unavailable or unsupported entries skipped. Refine the search for more.",state.files.len(),state.total,state.skipped)));
         }
         let pane = div()
             .id("composer-file-picker")
@@ -675,6 +706,8 @@ impl Coincide {
                     .id(("composer-file-row", index))
                     .role(Role::ListItem)
                     .aria_label(format!("Project file {}", file.path()))
+                    .h(px(32.))
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap_2()
