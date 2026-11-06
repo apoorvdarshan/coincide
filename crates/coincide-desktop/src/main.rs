@@ -62,6 +62,7 @@ mod project_management;
 mod project_management_mount;
 mod provider_settings;
 mod queue;
+mod reply_selection_mount;
 mod quit_mount;
 mod scheduling;
 mod session_import;
@@ -4310,11 +4311,13 @@ impl Render for Coincide {
             .capture_key_down(
                 cx.listener(|this, event, window, cx| {
                     if !this.project_defaults_key(event, window, cx)
-                        && !this.historical_image_shortcut(event, window, cx) {
+                        && !this.historical_image_shortcut(event, window, cx)
+                        && !this.reply_selection_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
                 }),
             )
+            .on_action(cx.listener(|this,_:&app_menu::AddSelectionToComposer,window,cx|this.add_selection_to_composer(window,cx)))
             .flex()
             .size_full()
             .bg(self.color(0x10141c))

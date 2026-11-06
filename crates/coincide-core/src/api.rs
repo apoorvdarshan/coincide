@@ -1,4 +1,6 @@
 //! One command dispatcher for the desktop and the local CLI/API.
+#[path = "reply_selection_api.rs"]
+mod reply_selection_api;
 use crate::{
     agent::{self, Event, Launch, Provider, Session},
     store::{Store, swift_timestamp, text},

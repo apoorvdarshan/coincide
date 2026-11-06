@@ -15,6 +15,7 @@ actions!(
         RequestHide,
         RequestHideOthers,
         RequestShowAll,
+        AddSelectionToComposer,
         UnavailableEdit
     ]
 );
@@ -69,6 +70,7 @@ impl Pending {
 struct MenuState {
     pending: Pending,
     context: EditContext,
+    selection_available: bool,
 }
 impl Global for MenuState {}
 
@@ -87,7 +89,7 @@ fn edit_item(
         MenuItem::action(name, UnavailableEdit).disabled(true)
     }
 }
-fn menus(context: EditContext) -> Vec<Menu> {
+fn menus(context: EditContext, selection_available: bool) -> Vec<Menu> {
     let mut app = vec![
         MenuItem::action("Settings…", RequestSettings),
         MenuItem::separator(),
@@ -109,6 +111,9 @@ fn menus(context: EditContext) -> Vec<Menu> {
             edit_item(context, "Paste", input::Paste, OsAction::Paste),
             MenuItem::separator(),
             edit_item(context, "Select All", input::SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Add Selection to Composer", AddSelectionToComposer)
+                .disabled(!selection_available),
         ]),
     ]
 }
@@ -135,11 +140,24 @@ pub fn install(cx: &mut App) -> Arc<AtomicBool> {
     cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([KeyBinding::new(
+        "cmd-l",
+        AddSelectionToComposer,
+        Some("TextView"),
+    )]);
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([KeyBinding::new(
+        "ctrl-l",
+        AddSelectionToComposer,
+        Some("TextView"),
+    )]);
     cx.set_global(MenuState {
         pending,
         context: EditContext::Unverified,
+        selection_available: false,
     });
-    cx.set_menus(menus(EditContext::Unverified));
+    cx.set_menus(menus(EditContext::Unverified, false));
     requested
 }
 /// Parent calls outside any Engine guard; consumption itself has no effects.
@@ -157,7 +175,16 @@ pub fn set_context(cx: &mut App, context: EditContext) {
         return;
     }
     cx.global_mut::<MenuState>().context = context;
-    cx.set_menus(menus(context));
+    cx.set_menus(menus(context, cx.global::<MenuState>().selection_available));
+}
+
+pub fn set_selection_available(cx: &mut App, available: bool) {
+    if !cx.has_global::<MenuState>() || cx.global::<MenuState>().selection_available == available {
+        return;
+    }
+    cx.global_mut::<MenuState>().selection_available = available;
+    let context = cx.global::<MenuState>().context;
+    cx.set_menus(menus(context, available));
 }
 
 #[cfg(test)]
@@ -165,7 +192,7 @@ mod tests {
     use super::*;
     #[::core::prelude::v1::test]
     fn native_selector_menu_uses_real_focused_input_actions_and_omits_unsafe_fallbacks() {
-        let menu = menus(EditContext::StandardResponder);
+        let menu = menus(EditContext::StandardResponder, true);
         let edit = menu.iter().find(|m| m.name == "Edit").unwrap();
         let mut count = 0;
         for item in &edit.items {
@@ -197,16 +224,20 @@ mod tests {
                     assert!(action.as_any().is::<input::SelectAll>());
                     assert!(matches!(os_action, Some(OsAction::SelectAll)));
                 }
+                "Add Selection to Composer" => {
+                    assert!(action.as_any().is::<AddSelectionToComposer>());
+                    assert!(os_action.is_none());
+                }
                 other => panic!("Unsupported Edit menu action: {other}"),
             }
             count += 1;
         }
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
     #[::core::prelude::v1::test]
     fn unverified_or_terminal_focus_never_enables_stale_composer_edits() {
         for context in [EditContext::Unverified, EditContext::Terminal] {
-            let menu = menus(context);
+            let menu = menus(context, false);
             let edit = menu.iter().find(|m| m.name == "Edit").unwrap();
             for item in &edit.items {
                 if let MenuItem::Action {
@@ -221,6 +252,9 @@ mod tests {
                         os_action.is_none(),
                         "native validation must not restore a terminal selector"
                     );
+                    if action.as_any().is::<AddSelectionToComposer>() {
+                        continue;
+                    }
                     assert!(action.as_any().is::<UnavailableEdit>());
                 }
             }
