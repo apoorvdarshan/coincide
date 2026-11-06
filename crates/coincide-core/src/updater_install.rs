@@ -1148,10 +1148,9 @@ fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 fn proposal_hash(proposal: &Proposal) -> Result<String> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(proposal)?)
-    ))
+    Ok(crate::digest_hex::lower_hex(Sha256::digest(
+        serde_json::to_vec(proposal)?,
+    )))
 }
 fn files(root: &Path) -> Result<BTreeMap<String, PathBuf>> {
     fn walk(root: &Path, at: &Path, result: &mut BTreeMap<String, PathBuf>) -> Result<()> {
@@ -1216,7 +1215,7 @@ fn fingerprint(root: &Path) -> Result<String> {
         }
         ensure!(file.read(&mut buffer[..1])? == 0, "Bundle file grew");
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::digest_hex::lower_hex(hash.finalize()))
 }
 fn copy_bundle(source: &Path, destination: &Path) -> Result<()> {
     let entries = files(source)?;
@@ -1774,7 +1773,7 @@ mod tests {
             let bytes = if url.path().ends_with("feed.json") {
                 serde_json::to_vec(
                     &json!({"channel":"rust-preview","bundle_id":PREVIEW_ID,"version":"0.2.0",
-                "artifacts":[{"version":"0.2.0","platform":"macos","architecture":"arm64","url":"https://fixture.example/preview/0.2.0/Coincide-Rust-macos-arm64.zip","size":self.archive.len(),"sha256":format!("{:x}",Sha256::digest(&self.archive))}]}),
+                "artifacts":[{"version":"0.2.0","platform":"macos","architecture":"arm64","url":"https://fixture.example/preview/0.2.0/Coincide-Rust-macos-arm64.zip","size":self.archive.len(),"sha256":crate::digest_hex::lower_hex(Sha256::digest(&self.archive))}]}),
                 )?
             } else {
                 self.archive.clone()
@@ -2130,7 +2129,7 @@ mod tests {
         let approval = f.authorization();
         assert_eq!(
             approval.proposal().release.sha256,
-            format!("{:x}", Sha256::digest(&f.http.archive))
+            crate::digest_hex::lower_hex(Sha256::digest(&f.http.archive))
         );
         assert_eq!(approval.proposal().anchor, ANCHOR);
         assert_eq!(approval.proposal().target, f.installer.target());

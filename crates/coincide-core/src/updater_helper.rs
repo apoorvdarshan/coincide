@@ -153,10 +153,9 @@ fn decode_payload<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<Frame
     Ok(frame)
 }
 pub fn proposal_digest(proposal: &Proposal) -> Result<String> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(proposal)?)
-    ))
+    Ok(crate::digest_hex::lower_hex(Sha256::digest(
+        serde_json::to_vec(proposal)?,
+    )))
 }
 #[derive(Clone)]
 pub struct ProtocolLimits {
@@ -1338,7 +1337,7 @@ mod native {
             hash.update(&bytes[..size]);
         }
         ensure!(count == metadata.len(), "Helper changed during inspection");
-        Ok(format!("{:x}", hash.finalize()))
+        Ok(crate::digest_hex::lower_hex(hash.finalize()))
     }
     pub(super) fn authenticate(
         config: &HelperConfig,
@@ -2038,7 +2037,7 @@ mod tests {
                 url: "https://fixture.invalid/rust-preview/0.2.0/Coincide-Rust-macos-arm64.zip"
                     .into(),
                 size: archive.len() as u64,
-                sha256: format!("{:x}", Sha256::digest(&archive)),
+                sha256: crate::digest_hex::lower_hex(Sha256::digest(&archive)),
             };
             let parent = ParentBinding {
                 pid: 42,
@@ -2464,7 +2463,7 @@ mod tests {
                 )
                 .unwrap();
                 f.release.size = archive.len() as u64;
-                f.release.sha256 = format!("{:x}", Sha256::digest(&archive));
+                f.release.sha256 = crate::digest_hex::lower_hex(Sha256::digest(&archive));
             } else {
                 f.config.updater.limits.entries = 1;
             }

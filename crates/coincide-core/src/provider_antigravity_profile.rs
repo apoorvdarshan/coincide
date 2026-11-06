@@ -398,7 +398,7 @@ fn hash_file(path: &Path) -> Result<String> {
         }
         hash.update(&buffer[..n]);
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::digest_hex::lower_hex(hash.finalize()))
 }
 fn resolve(path: &Path) -> Result<PathBuf> {
     ensure!(path.is_absolute(), "Antigravity path must be absolute");

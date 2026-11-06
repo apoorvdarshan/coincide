@@ -128,7 +128,7 @@ impl Candidate {
     }
 }
 pub fn fingerprint(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::digest_hex::lower_hex(Sha256::digest(bytes))
 }
 /// Parses only documented bookmark fields. Other metadata is preview-only and
 /// never copied into the durable library. Source IDs are never reused.

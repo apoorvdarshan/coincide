@@ -111,7 +111,7 @@ impl DurableOwnership {
 }
 fn digest_value(value: &Value) -> RecoveryResult<String> {
     let bytes = serde_json::to_vec(value).map_err(|_| RecoveryError::InvalidRecord)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(crate::digest_hex::lower_hex(Sha256::digest(bytes)))
 }
 fn snapshot(id: ReceiptId, receipt: &CompletionReceipt) -> RecoveryResult<Value> {
     let value = json!({"receiptId":id.to_string(), "operationId":receipt.operation_id.to_string(),

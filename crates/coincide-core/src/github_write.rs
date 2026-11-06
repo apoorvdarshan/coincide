@@ -24,7 +24,9 @@ const NOTICE: &str = "Reviews target the specified commit; GitHub does not atomi
 const FIELDS: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup,mergeCommit";
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 fn digest(value: &impl Serialize) -> Result<String> {
-    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
+    Ok(crate::digest_hex::lower_hex(Sha256::digest(
+        serde_json::to_vec(value)?,
+    )))
 }
 fn uuid(value: &str) -> Result<()> {
     ensure!(
