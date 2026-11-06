@@ -8,6 +8,9 @@ use std::collections::HashMap;
 mod capability_cache;
 #[path = "codex_profile_models.rs"]
 mod named_models;
+#[cfg(test)]
+#[path = "composer_provider_commands_tests.rs"]
+mod provider_command_tests;
 
 #[derive(Clone, Debug, PartialEq)]
 struct SelectionDraft {
@@ -496,6 +499,50 @@ fn command_params(
     if let Some(reason) = capability_lock(capabilities, running) {
         anyhow::bail!(reason);
     }
+    if let Some(target) = command.provider() {
+        anyhow::ensure!(
+            thread["selection"]["provider"] != target,
+            "This conversation already uses {target}; command draft retained"
+        );
+        let provider = capabilities["providers"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["provider"] == target))
+            .context(
+                "This provider is unavailable in the current runtime; command draft retained",
+            )?;
+        anyhow::ensure!(
+            provider["accountPolicy"] == "default_only"
+                && default_account_id(&thread["selection"]["accountID"]) == Some("default"),
+            "Use model/account controls to choose this account explicitly; command draft retained"
+        );
+        anyhow::ensure!(
+            provider["models"]
+                .as_array()
+                .is_some_and(|models| models.iter().any(|model| model["id"] == "default")),
+            "Provider default is unavailable in the current runtime; command draft retained"
+        );
+        anyhow::ensure!(
+            thread["selection"]["effort"].is_null() && thread["selection"]["speed"].is_null(),
+            "Clear saved effort/speed explicitly in model controls before switching provider; command draft retained"
+        );
+        let mut draft = SelectionDraft::from_thread(thread);
+        draft.provider = target.into();
+        draft.account = Value::Null;
+        draft.use_custom = false;
+        draft.custom.clear();
+        if let Some(reason) = mode_problem(&draft, Some(provider)) {
+            anyhow::bail!(reason);
+        }
+        let mut params = draft.params(thread)?;
+        // Preserve absent/null mode shape instead of normalizing unrelated
+        // saved metadata while changing provider and its explicit default model.
+        for key in ["accessMode", "interactionMode"] {
+            if thread[key].is_null() {
+                params.as_object_mut().unwrap().remove(key);
+            }
+        }
+        return Ok(Some(params));
+    }
     // Swift /model and /usage-limits open controls, rather than changing a mode.
     // Preserve the authoritative capability/active/origin locks above; merely
     // showing existing choices must not invent another mode-change gate.
@@ -579,6 +626,16 @@ fn command_transaction(
             "Selection did not acknowledge the requested mode; draft retained"
         );
     }
+    if let Some(provider) = command.provider() {
+        anyhow::ensure!(
+            ack["selection"]["provider"] == provider
+                && ack["selection"]["modelID"] == "default"
+                && default_account_id(&ack["selection"]["accountID"]) == Some("default")
+                && ack["accessMode"] == submission.thread["accessMode"]
+                && ack["interactionMode"] == submission.thread["interactionMode"],
+            "Selection did not acknowledge the requested provider/default and preserved modes; draft retained"
+        );
+    }
     let before_clear = invoke("threads.read", json!({"threadId":id,"itemLimit":0}))?;
     anyhow::ensure!(
         submission.same_content(&before_clear, &submission.draft)
@@ -590,14 +647,38 @@ fn command_transaction(
     // No UI callback/await or other controller can interleave the Engine lock.
     // This clears only text, never consumes images or references.
     let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))
-        .map_err(|error| anyhow::anyhow!("{}: {error}", if command.mode().is_some() {
-            "Mode was saved, but command draft clearing failed; draft retained"
+        .map_err(|error| anyhow::anyhow!("{}: {error}", if command.changes_selection() {
+            "Selection was saved, but command draft clearing failed; draft retained"
         } else if command == crate::composer_commands::Command::UsageLimits { "Reported limits were validated, but command draft clearing failed; draft retained" } else { "Model controls were validated, but command draft clearing failed; draft retained" }))?;
     anyhow::ensure!(
         cleared["id"] == *id && cleared["draft"] == "",
         "Draft clear was not acknowledged; local draft retained"
     );
     Ok(cleared)
+}
+fn engine_command_transaction(
+    engine: &mut coincide_core::api::Engine,
+    submission: &crate::composer_commands::Submission,
+    command: crate::composer_commands::Command,
+    running: bool,
+    reported: Option<&crate::codex_limits_view::Observation>,
+) -> Result<Value> {
+    let id = text(&submission.thread, "id");
+    anyhow::ensure!(
+        !engine.admissions_frozen(),
+        "App is closing; command draft retained"
+    );
+    anyhow::ensure!(
+        engine.active_thread() == Some(id.as_str()),
+        "Active conversation changed; command draft retained"
+    );
+    command_transaction(submission, command, running, reported, |method, params| {
+        let response = engine.dispatch(json!({"method":method,"params":params}));
+        if let Some(error) = response.get("error") {
+            anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+        }
+        Ok(response["result"].clone())
+    })
 }
 #[derive(Default)]
 pub(super) struct ComposerSelection {
@@ -862,14 +943,14 @@ impl Coincide {
                 !self.attachment_import_threads.contains(&id),
                 "Wait for image imports to finish; command draft retained"
             );
-            if command.mode().is_some() {
+            if command.changes_selection() {
                 anyhow::ensure!(
                     !self
                         .selection_ui
                         .drafts
                         .get(&id)
                         .is_some_and(SelectionDraft::has_edits),
-                    "Apply or discard pending selection edits before a mode command; command draft retained"
+                    "Apply or discard pending selection edits before a selection command; command draft retained"
                 );
             }
             anyhow::ensure!(
@@ -879,26 +960,12 @@ impl Coincide {
                 "A newer pending draft exists; command draft retained"
             );
             let mut engine = try_state(&self.engine)?;
-            anyhow::ensure!(
-                !engine.admissions_frozen(),
-                "App is closing; command draft retained"
-            );
-            anyhow::ensure!(
-                engine.active_thread() == Some(id.as_str()),
-                "Active conversation changed; command draft retained"
-            );
-            command_transaction(
+            engine_command_transaction(
+                &mut engine,
                 &submission,
                 command,
                 self.running.contains(&id),
                 reported.as_ref(),
-                |method, params| {
-                    let response = engine.dispatch(json!({"method":method,"params":params}));
-                    if let Some(error) = response.get("error") {
-                        anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
-                    }
-                    Ok(response["result"].clone())
-                },
             )
         })();
         match result {
@@ -917,7 +984,7 @@ impl Coincide {
                     {
                         self.pending_drafts.remove(&id);
                     }
-                    if command.mode().is_some() {
+                    if command.changes_selection() {
                         self.accept_saved_provider_selection(thread);
                     } else {
                         self.selected = Some(thread);
@@ -944,6 +1011,9 @@ impl Coincide {
                         }
                         crate::composer_commands::Command::Build => {
                             "Build mode saved. No message was sent."
+                        }
+                        crate::composer_commands::Command::Provider(_) => {
+                            "Provider selection saved with Provider default. Authentication/model access was not checked. No message was sent."
                         }
                     }
                     .into();
