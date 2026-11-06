@@ -80,6 +80,42 @@ impl Preferences {
             .unwrap_or_else(|| super::navigation::automatic_sidebar_limit(height))
     }
 }
+/// Numeric runs compare by value, matching the sidebar's natural name order.
+pub(super) fn name_order(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = left.to_lowercase();
+    let right = right.to_lowercase();
+    let mut left = left.chars().peekable();
+    let mut right = right.chars().peekable();
+    loop {
+        match (left.peek(), right.peek()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, _) => return std::cmp::Ordering::Less,
+            (_, None) => return std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) if a.is_ascii_digit() && b.is_ascii_digit() => {
+                let mut a = String::new();
+                while left.peek().is_some_and(char::is_ascii_digit) {
+                    a.push(left.next().unwrap());
+                }
+                let mut b = String::new();
+                while right.peek().is_some_and(char::is_ascii_digit) {
+                    b.push(right.next().unwrap());
+                }
+                let a = a.trim_start_matches('0');
+                let b = b.trim_start_matches('0');
+                let order = a.len().cmp(&b.len()).then_with(|| a.cmp(b));
+                if order != std::cmp::Ordering::Equal {
+                    return order;
+                }
+            }
+            _ => {
+                let order = left.next().cmp(&right.next());
+                if order != std::cmp::Ordering::Equal {
+                    return order;
+                }
+            }
+        }
+    }
+}
 pub(super) fn normalized_order(saved: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     for id in saved {
@@ -181,6 +217,18 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn numeric_names_order_naturally_and_case_ties_remain_available_to_activity_ordering() {
+        assert!(name_order("Project 2", "project 10").is_lt());
+        assert_eq!(name_order("AGENT 02", "agent 2"), std::cmp::Ordering::Equal);
+        assert!(
+            name_order(
+                "Thread 999999999999999999999999999999",
+                "Thread 1000000000000000000000000000000"
+            )
+            .is_lt()
+        );
+    }
     #[::core::prelude::v1::test]
     fn section_moves_preserve_future_sections_and_deduplicate_known_sections() {
         let saved = vec![

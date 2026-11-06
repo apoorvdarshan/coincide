@@ -355,9 +355,11 @@ struct Coincide {
     thread_bulk: thread_bulk::State,
     thread_bulk_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
+    sidebar_list_height: f32,
     thread_list_focus: FocusHandle,
     navigation_focus: FocusHandle,
     open_targets: Vec<open_targets::Target>,
+    open_target_children: Vec<std::process::Child>,
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
@@ -429,6 +431,7 @@ struct Coincide {
     sidebar_all_threads: Vec<ThreadSummary>,
     sidebar_preferences: sidebar_preferences::Preferences,
     sidebar_bots: Vec<Value>,
+    sidebar_schedules: Vec<Value>,
     sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
     sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
@@ -1048,6 +1051,7 @@ impl Coincide {
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
+        let sidebar_schedules=call(&engine,"schedules.list",json!({})).ok().and_then(|reply|reply["tasks"].as_array().cloned()).unwrap_or_default();
         let sidebar_bot_reply=call(&engine,"bots.list",json!({})).unwrap_or(Value::Null);
         let sidebar_bots=sidebar_bot_reply["bots"].as_array().cloned().unwrap_or_default();
         let sidebar_bot_baseline=text(&sidebar_bot_reply,"baseline");
@@ -1110,9 +1114,11 @@ impl Coincide {
             thread_bulk: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
             sidebar_resize,
+            sidebar_list_height: 560.,
             thread_list_focus: cx.focus_handle(),
             navigation_focus: cx.focus_handle(),
             open_targets: open_targets::installed(),
+            open_target_children: Vec::new(),
             settings_open: false,
             thread_actions_open: false,
             settings_search,
@@ -1184,6 +1190,7 @@ impl Coincide {
             show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
             sidebar_preferences,
             sidebar_bots,
+            sidebar_schedules,
             sidebar_bot_baseline,
             sidebar_bot_pending: None,
             sidebar_settle_undo: None,
@@ -1655,6 +1662,7 @@ impl Coincide {
             Ok(threads) => self.threads = threads,
             Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
         }
+        if let Ok(reply)=call(&self.engine,"schedules.list",json!({})) { if let Some(tasks)=reply["tasks"].as_array() {self.sidebar_schedules=tasks.clone();} }
         if let Ok(reply) = call(&self.engine, "bots.list", json!({})) { if let Some(bots) = reply["bots"].as_array() { self.sidebar_bots = bots.clone(); self.sidebar_bot_baseline=text(&reply,"baseline"); } }
         if self.search.read(cx).value().trim().is_empty() { self.sidebar_all_threads = self.threads.clone(); }
         else if let Ok(rows) = call(&self.engine, "threads.list", json!({"includeArchived":true})).and_then(|reply| Ok(serde_json::from_value(reply)?)) { self.sidebar_all_threads = rows; }
@@ -2588,6 +2596,7 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_target_children.retain_mut(|child|matches!(child.try_wait(),Ok(None)));
         if self.sidebar_preferences.retry(&self.engine) { self.show_archived=self.sidebar_preferences.flag("showsArchivedThreads"); self.show_snoozed=self.sidebar_preferences.flag("showsSnoozedThreads"); self.refresh(cx); }
         let menu_quit = self
             .quit_requested

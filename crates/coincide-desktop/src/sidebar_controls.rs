@@ -77,7 +77,12 @@ impl Coincide {
                 cx.new(|_| drag.clone())
             })
             .on_drop(cx.listener(move |this, drag: &SectionDrag, _, cx| {
-                if searching || !sidebar_preferences::SECTIONS.contains(&drag.0.as_str()) {
+                if searching
+                    || !this.search.read(cx).value().trim().is_empty()
+                    || this.media.close_requested
+                    || this.media.shutdown_requested
+                    || !sidebar_preferences::SECTIONS.contains(&drag.0.as_str())
+                {
                     return;
                 }
                 let order = sidebar_preferences::moved(

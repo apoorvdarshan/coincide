@@ -132,7 +132,9 @@ impl Coincide {
                 })
         });
         match self.sidebar_preferences.sort("botSort") {
-            "name" => bots.sort_by_key(|bot| text(bot, "name").to_lowercase()),
+            "name" => bots.sort_by(|left, right| {
+                sidebar_preferences::name_order(&text(left, "name"), &text(right, "name"))
+            }),
             "recentActivity" => bots.sort_by(|left, right| {
                 let stamp = |bot: &Value| {
                     bot_conversations(&self.sidebar_all_threads, &text(bot, "id"))
@@ -167,41 +169,44 @@ impl Coincide {
             let preview = latest
                 .and_then(|thread| thread.navigation.as_ref()?.preview.clone())
                 .unwrap_or_else(|| "Say hello".into());
+            let running = conversations
+                .iter()
+                .any(|thread| self.running.contains(&thread.id));
+            let age = navigation::sidebar_age(
+                latest.and_then(|thread| thread.navigation.as_ref()?.updated_at),
+                coincide_core::store::swift_timestamp(),
+            );
+            let active_schedules = self
+                .sidebar_schedules
+                .iter()
+                .filter(|task| {
+                    task["isPaused"] != true
+                        && task["awaitingApproval"] != true
+                        && conversations
+                            .iter()
+                            .any(|thread| task["threadID"] == thread.id)
+                })
+                .map(|task| text(task, "name"))
+                .collect::<Vec<_>>();
             let parent = cx.entity().downgrade();
             let past = conversations
                 .iter()
                 .map(|thread| (thread.id.clone(), thread.title.clone()))
                 .collect::<Vec<_>>();
             rows = rows.child(
-                Button::new(SharedString::from(format!("sidebar-bot-{id}")))
-                    .ghost()
-                    .compact()
+                div()
+                    .id(SharedString::from(format!("sidebar-bot-drag-{id}")))
                     .w_full()
-                    .h(px(44.))
-                    .justify_start()
-                    .selected(selected)
-                    .disabled(self.sidebar_bot_pending.is_some())
-                    .accessibility_label(format!("{name}, {preview}"))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .w_full()
-                            .min_w_0()
-                            .child(IconName::Bot)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .child(div().truncate().text_sm().child(name))
-                                    .child(div().truncate().text_xs().child(preview)),
-                            ),
-                    )
                     .on_drag(BotDrag(drag_id), |drag, _, _, cx| cx.new(|_| drag.clone()))
                     .on_drop(cx.listener(move |this, drag: &BotDrag, _, cx| {
+                        if !this.search.read(cx).value().trim().is_empty()
+                            || this.thread_bulk.mode
+                            || this.sidebar_bot_pending.is_some()
+                            || this.media.close_requested
+                            || this.media.shutdown_requested
+                        {
+                            return;
+                        }
                         let mut ids: Vec<_> = this
                             .sidebar_bots
                             .iter()
@@ -232,61 +237,119 @@ impl Coincide {
                         }
                         cx.notify();
                     }))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.sidebar_open_bot(click_id.clone(), false, window, cx)
-                    }))
-                    .context_menu(move |mut menu, _, _| {
-                        let parent_new = parent.clone();
-                        let id = menu_id.clone();
-                        menu = menu.item(PopupMenuItem::new("New Conversation").on_click(
-                            move |_, window, cx| {
-                                let _ = parent_new.update(cx, |this, cx| {
-                                    this.sidebar_open_bot(id.clone(), true, window, cx)
-                                });
-                            },
-                        ));
-                        for (thread, title) in &past {
-                            let parent = parent.clone();
-                            let thread = thread.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(format!("Past Conversation: {title}")).on_click(
+                    .child(
+                        Button::new(SharedString::from(format!("sidebar-bot-{id}")))
+                            .ghost()
+                            .compact()
+                            .w_full()
+                            .h(px(44.))
+                            .justify_start()
+                            .selected(selected)
+                            .disabled(self.sidebar_bot_pending.is_some())
+                            .accessibility_label(format!("{name}, {preview}"))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .w_full()
+                                    .min_w_0()
+                                    .child(IconName::Bot)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .truncate()
+                                                            .text_size(px(13.))
+                                                            .child(name),
+                                                    )
+                                                    .child(div().text_size(px(11.)).child(age)),
+                                            )
+                                            .child(div().truncate().text_xs().child(preview)),
+                                    )
+                                    .when(running, |row| {
+                                        row.child(
+                                            gpui_kit::component::spinner::Spinner::new().small(),
+                                        )
+                                    })
+                                    .when(!active_schedules.is_empty(), |row| {
+                                        row.child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "sidebar-bot-clock-{id}"
+                                                )))
+                                                .child(IconName::Clock)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::new(active_schedules.join("\n"))
+                                                        .build(window, cx)
+                                                }),
+                                        )
+                                    }),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.sidebar_open_bot(click_id.clone(), false, window, cx)
+                            }))
+                            .context_menu(move |mut menu, _, _| {
+                                let parent_new = parent.clone();
+                                let id = menu_id.clone();
+                                menu = menu.item(PopupMenuItem::new("New Conversation").on_click(
                                     move |_, window, cx| {
-                                        let _ = parent.update(cx, |this, cx| {
-                                            this.select(&thread, window, cx)
+                                        let _ = parent_new.update(cx, |this, cx| {
+                                            this.sidebar_open_bot(id.clone(), true, window, cx)
                                         });
                                     },
-                                ),
-                            );
-                        }
-                        if let Some((latest, _)) = past.first() {
-                            let parent = parent.clone();
-                            let latest = latest.clone();
-                            menu = menu.item(PopupMenuItem::new("Schedule…").on_click(
-                                move |_, window, cx| {
-                                    let _ = parent.update(cx, |this, cx| {
-                                        this.select(&latest, window, cx);
-                                        if this
-                                            .selected
-                                            .as_ref()
-                                            .is_some_and(|thread| thread["id"] == latest)
-                                        {
-                                            this.open_conversation_schedules(cx);
-                                            this.open_schedule_editor(None, window, cx);
-                                        }
-                                    });
-                                },
-                            ));
-                        }
-                        let parent_edit = parent.clone();
-                        let id = menu_id.clone();
-                        menu.item(
-                            PopupMenuItem::new("Edit Bot…").on_click(move |_, window, cx| {
-                                let _ = parent_edit.update(cx, |this, cx| {
-                                    this.sidebar_edit_bot(Some(id.clone()), window, cx)
-                                });
+                                ));
+                                for (thread, title) in &past {
+                                    let parent = parent.clone();
+                                    let thread = thread.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(format!("Past Conversation: {title}"))
+                                            .on_click(move |_, window, cx| {
+                                                let _ = parent.update(cx, |this, cx| {
+                                                    this.select(&thread, window, cx)
+                                                });
+                                            }),
+                                    );
+                                }
+                                if let Some((latest, _)) = past.first() {
+                                    let parent = parent.clone();
+                                    let latest = latest.clone();
+                                    menu = menu.item(PopupMenuItem::new("Schedule…").on_click(
+                                        move |_, window, cx| {
+                                            let _ =
+                                                parent.update(cx, |this, cx| {
+                                                    this.select(&latest, window, cx);
+                                                    if this.selected.as_ref().is_some_and(
+                                                        |thread| thread["id"] == latest,
+                                                    ) {
+                                                        this.open_conversation_schedules(cx);
+                                                        this.open_schedule_editor(None, window, cx);
+                                                    }
+                                                });
+                                        },
+                                    ));
+                                }
+                                let parent_edit = parent.clone();
+                                let id = menu_id.clone();
+                                menu.item(PopupMenuItem::new("Edit Bot…").on_click(
+                                    move |_, window, cx| {
+                                        let _ = parent_edit.update(cx, |this, cx| {
+                                            this.sidebar_edit_bot(Some(id.clone()), window, cx)
+                                        });
+                                    },
+                                ))
                             }),
-                        )
-                    }),
+                    ),
             );
         }
         rows.into_any_element()

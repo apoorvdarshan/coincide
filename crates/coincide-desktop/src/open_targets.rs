@@ -10,10 +10,42 @@ pub(super) struct Target {
     program: PathBuf,
     args: Vec<String>,
 }
+#[cfg(not(target_os = "macos"))]
 fn executable(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(name))
-        .find(|path| path.is_file())
+        .find(|path| {
+            if !path.is_file() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                path.metadata()
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        })
+}
+#[cfg(target_os = "macos")]
+fn mac_application(bundle: &str) -> Option<PathBuf> {
+    // NSWorkspace resolves renamed/nonstandard installs by bundle identity,
+    // matching Swift. Discovery performs no launch or account operation.
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let workspace: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return None;
+        }
+        let identifier = objc2_foundation::NSString::from_str(bundle);
+        let url: Option<objc2::rc::Retained<objc2_foundation::NSURL>> =
+            objc2::msg_send![workspace, URLForApplicationWithBundleIdentifier:&*identifier];
+        url.and_then(|url| url.path())
+            .map(|path| PathBuf::from(path.to_string()))
+    })
 }
 pub(super) fn installed() -> Vec<Target> {
     let mut targets = Vec::new();
@@ -29,31 +61,70 @@ pub(super) fn installed() -> Vec<Target> {
         ("com.vscodium", "VSCodium", "VSCodium.app"),
         ("com.exafunction.windsurf", "Windsurf", "Windsurf.app"),
         ("dev.zed.Zed", "Zed", "Zed.app"),
+        ("dev.zed.Zed-Preview", "Zed Preview", "Zed Preview.app"),
         ("com.google.antigravity", "Antigravity", "Antigravity.app"),
+        ("com.trae.app", "Trae", "Trae.app"),
         ("dev.kiro.desktop", "Kiro", "Kiro.app"),
         ("com.apple.dt.Xcode", "Xcode", "Xcode.app"),
         ("com.sublimetext.4", "Sublime Text", "Sublime Text.app"),
         ("com.panic.Nova", "Nova", "Nova.app"),
         ("com.barebones.bbedit", "BBEdit", "BBEdit.app"),
+        (
+            "com.jetbrains.intellij",
+            "IntelliJ IDEA",
+            "IntelliJ IDEA.app",
+        ),
+        (
+            "com.jetbrains.intellij.ce",
+            "IntelliJ IDEA CE",
+            "IntelliJ IDEA CE.app",
+        ),
+        ("com.jetbrains.WebStorm", "WebStorm", "WebStorm.app"),
+        ("com.jetbrains.pycharm", "PyCharm", "PyCharm.app"),
+        ("com.jetbrains.pycharm.ce", "PyCharm CE", "PyCharm CE.app"),
+        ("com.jetbrains.goland", "GoLand", "GoLand.app"),
+        ("com.jetbrains.CLion", "CLion", "CLion.app"),
+        ("com.jetbrains.rustrover", "RustRover", "RustRover.app"),
+        ("com.jetbrains.PhpStorm", "PhpStorm", "PhpStorm.app"),
+        ("com.jetbrains.rider", "Rider", "Rider.app"),
+        ("com.jetbrains.rubymine", "RubyMine", "RubyMine.app"),
+        ("com.jetbrains.datagrip", "DataGrip", "DataGrip.app"),
+        (
+            "com.google.android.studio",
+            "Android Studio",
+            "Android Studio.app",
+        ),
         ("com.apple.Terminal", "Terminal", "Utilities/Terminal.app"),
         ("com.googlecode.iterm2", "iTerm", "iTerm.app"),
         ("com.mitchellh.ghostty", "Ghostty", "Ghostty.app"),
+        ("dev.warp.Warp-Stable", "Warp", "Warp.app"),
+        ("com.github.wez.wezterm", "WezTerm", "WezTerm.app"),
+        ("net.kovidgoyal.kitty", "kitty", "kitty.app"),
+        ("org.alacritty", "Alacritty", "Alacritty.app"),
     ] {
-        let found = [
-            PathBuf::from("/Applications"),
-            PathBuf::from("/System/Applications"),
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Applications"),
-        ]
-        .into_iter()
-        .map(|root| root.join(bundle))
-        .find(|path| path.is_dir());
+        let found = mac_application(id).or_else(|| {
+            [
+                PathBuf::from("/Applications"),
+                PathBuf::from("/System/Applications"),
+                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Applications"),
+            ]
+            .into_iter()
+            .map(|root| root.join(bundle))
+            .find(|path| path.is_dir())
+        });
         if let Some(app) = found {
             targets.push(Target {
                 id,
                 name,
                 editor: !matches!(
                     id,
-                    "com.apple.Terminal" | "com.googlecode.iterm2" | "com.mitchellh.ghostty"
+                    "com.apple.Terminal"
+                        | "com.googlecode.iterm2"
+                        | "com.mitchellh.ghostty"
+                        | "dev.warp.Warp-Stable"
+                        | "com.github.wez.wezterm"
+                        | "net.kovidgoyal.kitty"
+                        | "org.alacritty"
                 ),
                 program: "/usr/bin/open".into(),
                 args: vec!["-a".into(), app.to_string_lossy().into_owned()],
@@ -239,17 +310,17 @@ impl Coincide {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
-                .map(|_| target.name)
+                .map(|child| (target.name, child))
                 .map_err(|_| "The selected app could not be opened.")
         });
         let completion = cx.spawn(async move |this, cx| {
             let result = launch.await;
             let _ = this.update(cx, |this, cx| {
-                if this.media.shutdown_requested {
-                    return;
-                }
                 this.status = match result {
-                    Ok(name) => format!("Requested folder opening in {name}."),
+                    Ok((name, child)) => {
+                        this.open_target_children.push(child);
+                        format!("Requested folder opening in {name}.")
+                    }
                     Err(error) => error.into(),
                 };
                 cx.notify();

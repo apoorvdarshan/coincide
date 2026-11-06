@@ -7,10 +7,22 @@ use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 impl Coincide {
     pub(super) fn navigation_rail(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let button = |id: &'static str, icon: IconName, label: &'static str| {
+            use keyboard_settings::Command as K;
+            let command = match id {
+                "navigation-threads" => Some(K::Sidebar),
+                "new" => Some(K::NewThread),
+                "navigation-search" => Some(K::Palette),
+                "navigation-terminal" => Some(K::Terminal),
+                _ => None,
+            };
+            let tooltip = command
+                .and_then(|command| keyboard_settings::shortcut_label(&self.settings, command))
+                .map(|keys| format!("{label} ({keys})"))
+                .unwrap_or_else(|| label.into());
             Button::new(id)
                 .icon(icon)
                 .accessibility_label(label)
-                .tooltip(label)
+                .tooltip(tooltip)
                 .ghost()
                 .compact()
                 .w(px(38.))
@@ -64,7 +76,6 @@ impl Coincide {
             .child({
                 let preferred =
                     open_targets::preferred(&self.open_targets, &self.settings).cloned();
-                let targets = self.open_targets.clone();
                 let parent = cx.entity().downgrade();
                 let label = preferred
                     .as_ref()
@@ -91,7 +102,12 @@ impl Coincide {
                             }
                         }),
                     )
-                    .context_menu(move |mut menu, _, _| {
+                    .context_menu(move |mut menu, _, cx| {
+                        let targets = open_targets::installed();
+                        let _ = parent.update(cx, |this, cx| {
+                            this.open_targets = targets.clone();
+                            cx.notify();
+                        });
                         for target in &targets {
                             let parent = parent.clone();
                             let target = target.clone();

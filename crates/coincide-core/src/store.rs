@@ -1049,6 +1049,75 @@ impl Store {
         );
         Ok(projects)
     }
+    /// Native manual ordering is an exact permutation of a reviewed array.
+    /// No project fields, folders, threads or session authority are changed.
+    pub fn reorder_projects_if_unchanged(
+        &mut self,
+        expected: &Value,
+        ids: &[String],
+    ) -> Result<Value> {
+        let projects = expected
+            .as_array()
+            .context("Project order source is not an array")?;
+        ensure!(
+            projects.len() <= 10_000
+                && ids.len() == projects.len()
+                && serde_json::to_vec(expected)?.len() <= 16 * 1024 * 1024,
+            "Project reorder exceeds bounds or omits projects"
+        );
+        let mut seen = std::collections::HashSet::new();
+        let mut ordered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let identity = canonical_uuid(id)?;
+            ensure!(seen.insert(identity), "Duplicate project in reorder");
+            ordered.push(
+                projects
+                    .iter()
+                    .find(|project| {
+                        project["id"]
+                            .as_str()
+                            .and_then(|id| canonical_uuid(id).ok())
+                            == Some(identity)
+                    })
+                    .context("Unknown project in reorder")?
+                    .clone(),
+            );
+        }
+        let value = json!(ordered);
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='projects.json'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current: Value = if let Some(local) = local {
+            serde_json::from_str(&local)?
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='projects.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+                .unwrap_or(json!([]))
+        };
+        ensure!(
+            &current == expected,
+            "Projects changed; refresh before reordering"
+        );
+        tx.execute("INSERT INTO documents(name,document) VALUES ('projects.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document",[value.to_string()])?;
+        tx.commit()?;
+        Ok(value)
+    }
     pub fn create_project(&mut self, path: &Path, name: Option<&str>) -> Result<Value> {
         self.connection()?;
         ensure!(path.is_dir(), "Project directory does not exist");
@@ -2191,5 +2260,50 @@ mod navigation_metadata_tests {
             before
         );
         assert!(before.get("rustBotContext").is_none());
+    }
+}
+
+#[cfg(test)]
+mod project_order_tests {
+    use super::*;
+    #[test]
+    fn reviewed_project_permutation_retains_unknown_fields_and_rejects_stale_or_invalid_orders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        let first = "00000000-0000-4000-8000-000000000001";
+        let second = "00000000-0000-4000-8000-000000000002";
+        let original = json!([{"id":first,"name":"One","path":"/fixture/one","future":{"keep":true}},{"id":second,"name":"Two","path":"/fixture/two","threadDefaults":{"future":"keep"}}]);
+        store.save_document("projects.json", &original).unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), first.into()])
+                .is_err()
+        );
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), original);
+        let reordered = store
+            .reorder_projects_if_unchanged(&original, &[second.into(), first.into()])
+            .unwrap();
+        assert_eq!(reordered, json!([original[1], original[0]]));
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), reordered);
+        let mut other = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        other
+            .patch_project(first, &json!({"name":"Changed elsewhere"}))
+            .unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&reordered, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap()[1]["name"], "Changed elsewhere");
     }
 }
