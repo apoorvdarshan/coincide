@@ -181,27 +181,24 @@ impl Engine {
         })
     }
     pub(super) fn restore_provider_accounts(&mut self, current: Value, p: &Value) -> Result<Value> {
-        if let Some(intent) = self.provider_restore.take() {
-            ensure!(
-                p.get("accountId").is_some() == intent.explicit
-                    && (p["restoreCurrent"] == true) == intent.automatic,
-                "Account restoration action changed; draft retained"
-            );
-            if intent.explicit {
-                let account = if crate::composer_selection::default_account(&p["accountId"]) {
-                    "default"
-                } else {
-                    required(p, "accountId")?
-                };
-                ensure!(
-                    account == intent.requested,
-                    "Requested account changed; draft retained"
+        if let Some(intent) = self.provider_restore.as_ref() {
+            let explicit_match = p.get("accountId").is_some() == intent.explicit
+                && (p["restoreCurrent"] == true) == intent.automatic
+                && (!intent.explicit
+                    || (if crate::composer_selection::default_account(&p["accountId"]) {
+                        Some("default")
+                    } else {
+                        p["accountId"].as_str()
+                    }) == Some(intent.requested.as_str()));
+            let valid =
+                explicit_match && intent.source == current && self.restore_intent_valid(intent);
+            if !valid {
+                self.cancel_provider_restore();
+                bail!(
+                    "Provider restore source, requested account or target changed; draft retained"
                 );
             }
-            ensure!(
-                intent.source == current && self.restore_intent_valid(&intent),
-                "Provider restore source or target changed; draft retained"
-            );
+            let intent = self.provider_restore.take().unwrap();
             return self.advance_restore(intent);
         }
         let mut source_syntax = current.clone();
@@ -285,7 +282,12 @@ impl Engine {
         let mut candidates = Vec::new();
         for account in accounts {
             match self.restore_candidate(&current, &account) {
-                Ok(candidate) => candidates.push(candidate),
+                Ok(mut candidate) => {
+                    if automatic {
+                        candidate.thread = current.clone();
+                    }
+                    candidates.push(candidate)
+                }
                 Err(error) if explicit || automatic => return Err(error),
                 Err(_) => {} // A missing/invalid configured account is not ready.
             }
@@ -305,10 +307,12 @@ impl Engine {
         self.advance_restore(intent)
     }
     fn advance_restore(&mut self, mut intent: RestoreIntent) -> Result<Value> {
-        ensure!(
-            self.restore_intent_valid(&intent),
-            "Provider restore source or target changed; draft retained"
-        );
+        if !self.restore_intent_valid(&intent) {
+            if let Some(request) = &intent.request {
+                self.model_catalog.cancel_named_restore(request);
+            }
+            bail!("Provider restore source or target changed; draft retained");
+        }
         while intent.index < intent.candidates.len() {
             let candidate = intent.candidates[intent.index].clone();
             let ready = match &candidate.binding {
@@ -316,16 +320,34 @@ impl Engine {
                 Binding::Default(binding) => self.model_catalog.ready_default_restore(binding),
             };
             let status = if let Some(request) = &intent.request {
-                match &candidate.binding {
-                    Binding::Named(binding) => self.model_catalog.named_status(request, binding)?,
-                    Binding::Default(binding) => self
-                        .model_catalog
-                        .default_restore_status(request, binding)?,
+                let result = match &candidate.binding {
+                    Binding::Named(binding) => self.model_catalog.named_status(request, binding),
+                    Binding::Default(binding) => {
+                        self.model_catalog.default_restore_status(request, binding)
+                    }
+                };
+                match result {
+                    Ok(status) => status,
+                    Err(error) => {
+                        self.model_catalog.cancel_named_restore(request);
+                        return Err(error);
+                    }
                 }
             } else if let Some(ready) = ready {
                 intent.request = ready["requestId"].as_str().map(str::to_owned);
                 ready
             } else {
+                let scope_busy = match &candidate.binding {
+                    Binding::Default(binding) => {
+                        self.model_catalog.default_restore_scope_busy(binding)
+                    }
+                    Binding::Named(_) => false,
+                };
+                if !self.model_catalog.restore_admission_available() || scope_busy {
+                    let response = intent.pending();
+                    self.provider_restore = Some(intent);
+                    return Ok(response);
+                }
                 let response = match &candidate.binding {
                     Binding::Named(binding) => self.model_catalog.refresh_named(binding.clone()),
                     Binding::Default(binding) => {
@@ -337,11 +359,7 @@ impl Engine {
                         intent.request = Some(required(&response, "requestId")?.to_owned());
                         response
                     }
-                    Err(error) if intent.explicit || intent.automatic => return Err(error),
-                    Err(_) => {
-                        intent.index += 1;
-                        continue;
-                    }
+                    Err(error) => return Err(error),
                 }
             };
             if status["state"] == "loading" {
@@ -354,9 +372,14 @@ impl Engine {
                 let rows = status["models"]
                     .as_array()
                     .context("Invalid account model observation")?;
-                if rows.iter().any(|row| row["id"] != "default") {
-                    let result = self.commit_restored_candidate(&intent, candidate, &status)?;
-                    return Ok(result);
+                if intent.automatic || rows.iter().any(|row| row["id"] != "default") {
+                    let result = self.commit_restored_candidate(&intent, candidate, &status);
+                    if result.is_err() {
+                        if let Some(request) = &intent.request {
+                            self.model_catalog.cancel_named_restore(request);
+                        }
+                    }
+                    return result;
                 }
             }
             if let Some(request) = intent.request.take() {
@@ -387,6 +410,33 @@ impl Engine {
             self.restore_intent_valid(intent),
             "Saved composer or target changed; draft retained"
         );
+        if intent.automatic {
+            let Binding::Named(binding) = &candidate.binding else {
+                bail!("Saved account warmup requires its named profile");
+            };
+            let request = intent
+                .request
+                .as_deref()
+                .context("Missing saved account observation")?;
+            let readiness = (|| -> Result<()> {
+                let proof =
+                    self.model_catalog
+                        .named_model_proof(&intent.source, binding, Some(request))?;
+                crate::composer_policy::Policy::parse_named(
+                    &intent.source,
+                    crate::composer_policy::Origin::Ordinary,
+                    proof.as_ref(),
+                )?
+                .preflight()
+            })();
+            let execution_ready = readiness.is_ok();
+            let reason = readiness.err().map(|error| error.to_string());
+            // An ordinary reopen is not a composer choice: no selection,
+            // preference, default, draft, session or transcript write occurs.
+            let response = json!({"thread":intent.source,"model":intent.source["selection"]["modelID"],"accountID":candidate.account,
+                "selectionUnchanged":true,"executionReady":execution_ready,"reason":reason,"restored":false,"accountRestored":false,"authenticationChecked":true,"provenance":"selected_account_catalog","catalog":status});
+            return Ok(intent.receipt(response, &candidate.account));
+        }
         let rows = status["models"]
             .as_array()
             .context("Invalid account model list")?;
@@ -458,7 +508,7 @@ impl Engine {
         self.revision += 1;
         let named = candidate.account != "default";
         let response = json!({"thread":candidate.thread,"model":candidate.thread["selection"]["modelID"],"accountID":candidate.account,"restored":true,"accountRestored":named,"authenticationChecked":true,
-            "provenance":if named{"latest_authenticated_named_catalog"}else{"latest_authenticated_default_catalog"}});
+            "provenance":if named{"latest_authenticated_named_catalog"}else{"latest_authenticated_default_catalog"},"catalog":status});
         Ok(intent.receipt(response, &candidate.account))
     }
 }

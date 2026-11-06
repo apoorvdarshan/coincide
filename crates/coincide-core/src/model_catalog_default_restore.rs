@@ -122,6 +122,18 @@ impl ModelCatalog {
             && !job.cancelled.load(Ordering::Acquire))
         .then(|| job.response.clone())
     }
+    pub(crate) fn default_restore_scope_busy(&self, binding: &DefaultBinding) -> bool {
+        self.jobs.values().any(|job| {
+            job.named.is_none()
+                && job.response["provider"] == "codex"
+                && job.response["state"] == "loading"
+                && !job.cancelled.load(Ordering::Acquire)
+                && self
+                    .default_restore
+                    .get(job.response["requestId"].as_str().unwrap_or(""))
+                    != Some(binding)
+        })
+    }
     pub(crate) fn refresh_default_restore(&mut self, binding: DefaultBinding) -> Result<Value> {
         binding.validate()?;
         // Never relabel a normal model-list job as an authenticated observation.

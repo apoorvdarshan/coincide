@@ -642,6 +642,28 @@ fn restore_receipt_scope(
         let model = response["model"]
             .as_str()
             .context("Missing restored model acknowledgement")?;
+        if response["selectionUnchanged"] == true {
+            anyhow::ensure!(
+                explicit.is_none()
+                    && provider == "codex"
+                    && actual == expected
+                    && current["selection"]["provider"] == "codex"
+                    && restore_account_id(&current["selection"]["accountID"]) == Some(actual)
+                    && response["authenticationChecked"] == true
+                    && response["executionReady"].is_boolean()
+                    && response["restored"] == false
+                    && response["accountRestored"] == false
+                    && response["provenance"] == "selected_account_catalog"
+                    && response["thread"]["selection"] == current["selection"]
+                    && response["model"] == current["selection"]["modelID"],
+                "Saved account warmup changed its exact selection"
+            );
+            return Ok(if actual == "default" {
+                Value::Null
+            } else {
+                json!(actual)
+            });
+        }
         let named = actual != "default";
         let authenticated = response["authenticationChecked"] == true;
         anyhow::ensure!(
@@ -845,6 +867,7 @@ pub(super) struct ComposerSelection {
     )>,
     pending_provider_picker: Option<PickerRestore>,
     automatic_profile_context: Option<Value>,
+    automatic_profile_quiet: Option<(Value, Instant)>,
     expanded: bool,
 }
 #[derive(Clone)]
@@ -1075,8 +1098,31 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
     }
 }
 impl Coincide {
+    pub(super) fn selected_account_wait_status(&self) -> &'static str {
+        if self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
+            && self.selection_ui.capabilities["locked"] == true
+        {
+            "The saved model or options are unavailable for this account. Your message draft is retained."
+        } else {
+            "Checking the selected account. Your message draft is retained."
+        }
+    }
     pub(super) fn selection_send_blocked(&self) -> bool {
+        if self.selection_ui.pending_provider.is_some()
+            || self.selection_ui.pending_provider_picker.is_some()
+        {
+            return true;
+        }
         self.selected.as_ref().is_some_and(|thread| {
+            if named_models::named_thread(thread) && !self.running.contains(&text(thread, "id")) {
+                let named = &self.selection_ui.capabilities["namedModels"];
+                if named["threadId"] != thread["id"]
+                    || named["accountID"] != thread["selection"]["accountID"]
+                    || named["accountCatalogReady"] != true
+                {
+                    return true;
+                }
+            }
             current_submission_blocked(
                 self.selection_ui.context.as_ref(),
                 &self.selection_ui.capabilities,
@@ -1207,10 +1253,30 @@ impl Coincide {
             }
             Ok((response, _)) => {
                 self.selection_ui.pending_provider_picker = None;
-                self.accept_saved_provider_selection(response["thread"].clone());
-                self.status =
-                    "Previous provider account and available model selected. No message was sent."
-                        .into();
+                if response["selectionUnchanged"] == true {
+                    self.selection_ui.context = None;
+                    self.selection_ui.capability_cache.invalidate();
+                    self.status = if response["executionReady"]==false {"The saved model or options are unavailable. Choose an available model; your message draft is retained."}else{"Account is ready."}.into();
+                } else {
+                    self.accept_saved_provider_selection(response["thread"].clone());
+                    self.status="Previous provider account and available model selected. No message was sent.".into();
+                }
+                if let Some(catalog) = response.get("catalog") {
+                    let request = CatalogRequest {
+                        request_id: text(catalog, "requestId"),
+                        provider: "codex".into(),
+                        account_id: text(catalog, "accountID"),
+                        thread_id: catalog["threadId"].as_str().map(str::to_owned),
+                    };
+                    if catalog_response_matches(catalog, &request)
+                        && request.account_id
+                            == restore_account_id(&response["thread"]["selection"]["accountID"])
+                                .unwrap_or("")
+                    {
+                        self.selection_ui.catalog = catalog.clone();
+                        self.selection_ui.catalog_request = None;
+                    }
+                }
             }
             Err(error) if engine_busy(&error) => {
                 self.selection_ui.pending_provider_picker = retry_on_busy;
@@ -1221,6 +1287,8 @@ impl Coincide {
             }
             Err(error) => {
                 self.selection_ui.pending_provider_picker = None;
+                self.selection_ui.context = None;
+                self.selection_ui.capability_cache.invalidate();
                 if let Ok(mut engine) = try_state(&self.engine) {
                     let _ =
                         selection_response(&mut engine, "agent.provider.cancelRestore", json!({}));
@@ -1380,7 +1448,7 @@ impl Coincide {
             || named["threadId"] != thread["id"]
             || named["accountID"] != thread["selection"]["accountID"]
             || named["refreshAllowed"] != true
-            || named["fullAccessSupported"] == true
+            || named["accountCatalogReady"] == true
             || self.running.contains(&text(thread, "id"))
             || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_provider_picker.is_some()
@@ -1388,9 +1456,18 @@ impl Coincide {
         {
             return;
         }
-        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]});
+        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"draft":self.composer.read(cx).value().to_string(),"draftContext":thread["draftContext"],"rustDraftImages":thread["rustDraftImages"],"sourceGeneration":named["sourceGeneration"]});
         if self.selection_ui.automatic_profile_context.as_ref() == Some(&context) {
             return;
+        }
+        match &self.selection_ui.automatic_profile_quiet {
+            Some((previous, since))
+                if previous == &context && since.elapsed() >= Duration::from_millis(300) => {}
+            Some((previous, _)) if previous == &context => return,
+            _ => {
+                self.selection_ui.automatic_profile_quiet = Some((context, Instant::now()));
+                return;
+            }
         }
         self.selection_ui.automatic_profile_context = Some(context);
         self.switch_provider_from_history("codex".into(), None, cx);

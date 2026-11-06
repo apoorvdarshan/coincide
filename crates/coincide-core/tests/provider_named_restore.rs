@@ -51,6 +51,9 @@ assert read()['method']=='initialized'
 r=read();assert r['method']=='account/read' and r['params']=={'refreshToken':False}
 if (home/'block').exists() or mode=='block':
  (home/'blocked').write_text('ready');sys.stdin.readline();sys.exit(0)
+if (home/'hold').exists():
+ (home/'held').write_text('ready')
+ while (home/'hold').exists():time.sleep(0.002)
 write({'id':r['id'],'result':{'requiresOpenaiAuth':True,'account':None if (home/'deny').exists() or mode=='deny' else {'type':'apiKey' if mode=='apiKey' else 'chatgpt','email':'synthetic@example.invalid','planType':'plus'}}})
 r=read();assert r['method']=='model/list'
 write({'id':r['id'],'result':{'data':json.loads((home/'models.json').read_text()),'nextCursor':None}})
@@ -442,6 +445,139 @@ fn named_restore_child() {
             .all(|row| row["home"] != json!(f.a_home))
     );
     drain(&mut f.engine);
+
+    // Restoring an existing conversation is observation-only. Desired high
+    // must not overwrite its saved low selection (which binds native resume),
+    // and Provider default remains Provider default. No metadata is rewritten.
+    for saved_model in ["synthetic-a", "default", "unavailable-saved-model"] {
+        let mut f = fixture(&root, &format!("exact-warmup-{saved_model}"));
+        fs::write(f.a_home.join("models.json"),json!([{"model":"synthetic-a","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}],"defaultReasoningEffort":"high"}]).to_string()).unwrap();
+        f.source["selection"] = json!({"provider":"codex","accountID":f.a,"modelID":saved_model});
+        if saved_model != "default" {
+            f.source["selection"]["effort"] = json!("low");
+        }
+        f.source["modelPreferences"] =
+            json!({format!("codex/{}",f.a):{"effort":"high","speed":"priority","future":41}});
+        f.engine.store.save(&f.source).unwrap();
+        let settings = json!({"defaultSelection":{"provider":"claude","modelID":"retained-default"},"defaultAccessMode":"approval","future":42});
+        f.engine
+            .store
+            .save_document("settings.json", &settings)
+            .unwrap();
+        let mut params = expected(&f.source, "codex");
+        params["restoreCurrent"] = json!(true);
+        let pending = call(&mut f.engine, "agent.provider.select", params);
+        assert_eq!(pending["pending"], true);
+        assert_eq!(
+            f.engine
+                .store
+                .thread(f.source["id"].as_str().unwrap())
+                .unwrap(),
+            f.source
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut params = retry(&f.source, &pending);
+            params["restoreCurrent"] = json!(true);
+            let response = f
+                .engine
+                .dispatch(json!({"method":"agent.provider.select","params":params}));
+            assert!(response.get("error").is_none(), "{response}");
+            if response["result"]["pending"] != true {
+                assert_eq!(response["result"]["selectionUnchanged"], true);
+                assert_eq!(response["result"]["thread"], f.source);
+                assert_eq!(response["result"]["catalog"]["authenticationChecked"], true);
+                assert_eq!(
+                    response["result"]["executionReady"],
+                    saved_model != "unavailable-saved-model"
+                );
+                if saved_model == "unavailable-saved-model" {
+                    assert!(
+                        response["result"]["reason"]
+                            .as_str()
+                            .unwrap()
+                            .contains("not reported"),
+                        "{response}"
+                    );
+                }
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            f.engine
+                .store
+                .thread(f.source["id"].as_str().unwrap())
+                .unwrap(),
+            f.source,
+            "warmup must preserve native resume tuple, all content and preferences"
+        );
+        assert_eq!(call(&mut f.engine, "settings.read", json!({})), settings);
+        {
+            let capabilities = call(
+                &mut f.engine,
+                "agent.selection.capabilities",
+                json!({"threadId":f.source["id"]}),
+            );
+            assert_eq!(capabilities["namedModels"]["accountCatalogReady"], true);
+            assert_eq!(
+                capabilities["namedModels"]["fullAccessSupported"],
+                saved_model != "default" && saved_model != "unavailable-saved-model"
+            );
+            assert_eq!(
+                capabilities["locked"],
+                saved_model == "unavailable-saved-model"
+            );
+        }
+        drain(&mut f.engine);
+    }
+
+    // Busy readers are admission pressure, not evidence an account is unready.
+    // Wait for the exact ready observation instead of silently falling back.
+    let mut f = fixture(&root, "busy-catalog-admission");
+    for (account, home) in [(&f.a, &f.a_home), (&f.b, &f.b_home)] {
+        fs::write(home.join("hold"), "synthetic").unwrap();
+        let mut selected = f.source.clone();
+        selected["selection"] = json!({"provider":"codex","modelID":"default","accountID":account});
+        f.engine.store.save(&selected).unwrap();
+        call(
+            &mut f.engine,
+            "providers.codex.profiles.models.refresh",
+            json!({"threadId":f.source["id"],"accountId":account,"expectedSelection":selected["selection"]}),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.a_home.join("held").exists() || !f.b_home.join("held").exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    f.engine.store.save(&f.source).unwrap();
+    let pending = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    assert_eq!(pending["pending"], true);
+    assert_eq!(pending["accountID"], f.a);
+    assert_eq!(pending["catalogRequestId"], Value::Null);
+    assert_eq!(
+        f.engine
+            .store
+            .thread(f.source["id"].as_str().unwrap())
+            .unwrap(),
+        f.source
+    );
+    fs::remove_file(f.a_home.join("hold")).unwrap();
+    fs::remove_file(f.b_home.join("hold")).unwrap();
+    let response = finish(&mut f.engine, &f.source, &pending);
+    assert_eq!(response["accountID"], f.a);
+    assert_eq!(response["fallback"], false);
+    drain(&mut f.engine);
+    assert_eq!(
+        f.engine.model_catalog_shutdown_status().unwrap().returned,
+        2
+    );
 
     // Explicit account picks go directly from A's active model to B after
     // B's observation, with no temporary default/wrong-account selection.

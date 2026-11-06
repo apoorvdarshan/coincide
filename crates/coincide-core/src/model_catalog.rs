@@ -103,6 +103,12 @@ impl Drop for ModelCatalog {
     }
 }
 impl ModelCatalog {
+    pub(crate) fn restore_admission_available(&mut self) -> bool {
+        self.workers.len()
+            + self.limits.shutdown_status().running
+            + self.named_limits.shutdown_status().running
+            < MAX_ACTIVE
+    }
     fn receive_completions(&mut self) -> bool {
         let mut changed = false;
         for (id, outcome) in self.rx.try_iter() {

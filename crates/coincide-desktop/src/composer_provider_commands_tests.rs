@@ -583,3 +583,27 @@ fn fallback_receipts_bind_original_intent_each_candidate_and_explicit_account_sc
     borrowed["provenance"] = json!("latest_default_catalog");
     assert!(restore_receipt_scope(&borrowed, &thread, "codex", None, Some("intent-a")).is_err());
 }
+
+#[::core::prelude::v1::test]
+fn saved_account_warmup_receipt_preserves_exact_selection_even_for_default_model() {
+    for model in ["synthetic-low", "default"] {
+        let thread = json!({"id":"synthetic","selection":{"provider":"codex","accountID":"account-a","modelID":model,"effort":if model=="default"{Value::Null}else{json!("low")}},"modelPreferences":{"codex/account-a":{"effort":"high"}}});
+        let receipt = json!({"requestId":"warmup","accountID":"account-a","requestedAccountID":"account-a","candidateAccountIDs":["account-a"],"explicitAccount":false,"fallback":false,"selectionUnchanged":true,"executionReady":true,"thread":thread,"model":model,"restored":false,"accountRestored":false,"authenticationChecked":true,"provenance":"selected_account_catalog"});
+        assert!(restore_receipt_scope(&receipt, &thread, "codex", None, Some("warmup")).is_ok());
+        for field in ["modelID", "effort", "accountID"] {
+            let mut changed = receipt.clone();
+            changed["thread"]["selection"][field] = json!("different");
+            assert!(
+                restore_receipt_scope(&changed, &thread, "codex", None, Some("warmup")).is_err(),
+                "{field}"
+            );
+        }
+        let mut unavailable = receipt.clone();
+        unavailable["executionReady"] = json!(false);
+        unavailable["reason"] = json!("Saved model unavailable");
+        assert!(
+            restore_receipt_scope(&unavailable, &thread, "codex", None, Some("warmup")).is_ok(),
+            "an observed catalog can be available while Send remains proof-locked"
+        );
+    }
+}
