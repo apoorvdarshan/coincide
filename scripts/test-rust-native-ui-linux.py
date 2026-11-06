@@ -6,6 +6,8 @@ navigation and a normal Quit/reopen with a private Store. It does not prove
 provider execution, all UI parity, Wayland or hardware-GPU rendering.
 """
 import argparse
+import csv
+import io
 import hashlib
 import json
 import os
@@ -147,8 +149,29 @@ def main():
         wait_for("active native thread", lambda: rpc("app.status")["activeThread"] == thread_id)
         before = capture(window, "conversation", "Native Linux smoke")
         # Real X11 input into the production textarea; RPC reads only verify it.
+        # Locate the production placeholder in the captured native frame, rather
+        # than assuming a fixed textarea height. Keep the exact rendered words
+        # and bounds as evidence; absent or ambiguous input must fail the smoke.
+        tsv = command("tesseract", str(artifacts / "conversation.png"), "stdout",
+                      "--psm", "11", "tsv", env=env)
+        (artifacts / "composer-locator.tsv").write_text(tsv)
+        lines = {}
+        for row in csv.DictReader(io.StringIO(tsv), delimiter="\t"):
+            if row["text"].strip():
+                key = tuple(row[name] for name in ("page_num", "block_num", "par_num", "line_num"))
+                lines.setdefault(key, []).append(row)
+        inputs = [rows for rows in lines.values()
+                  if "write a message" in " ".join(row["text"] for row in rows).lower()]
+        assert len(inputs) == 1, "Expected exactly one rendered composer placeholder"
+        rows = inputs[0]
+        left = min(int(row["left"]) for row in rows)
+        top = min(int(row["top"]) for row in rows)
+        right = max(int(row["left"]) + int(row["width"]) for row in rows)
+        bottom = max(int(row["top"]) + int(row["height"]) for row in rows)
+        assert top > before.height // 2, "Composer placeholder must be in the lower native workspace"
+        report["composerInputBounds"] = [left, top, right, bottom]
         command("xdotool", "mousemove", "--window", window,
-                str(before.width // 2), str(before.height - 115), "click", "1", env=env)
+                str((left + right) // 2), str((top + bottom) // 2), "click", "1", env=env)
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
         wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
