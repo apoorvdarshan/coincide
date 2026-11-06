@@ -385,7 +385,7 @@ fn private_instructions_ui_child() {
     }
     let mut command = Command::new(std::env::current_exe().unwrap());
     command.args(["--ignored", "instructions::setup::headless_tests::headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit", "--exact", "--nocapture", "--test-threads=1"]).env_clear()
-        .env(CHILD, "1").env(ROOT, &base).env("HOME", base.join("home")).env("USERPROFILE", base.join("home")).env("XDG_CONFIG_HOME", base.join("home/config"))
+        .env(CHILD, "1").env(ROOT, &base).env("COINCIDE_RUST_DATA_DIR", base.join("data")).env("HOME", base.join("home")).env("USERPROFILE", base.join("home")).env("XDG_CONFIG_HOME", base.join("home/config"))
         .env("TMPDIR", base.join("tmp")).env("TMP", base.join("tmp")).env("TEMP", base.join("tmp")).env("LANG", "en_US.UTF-8").current_dir(&base);
     for key in ["PATH", "SystemRoot", "WINDIR"] {
         if let Some(value) = std::env::var_os(key) {
