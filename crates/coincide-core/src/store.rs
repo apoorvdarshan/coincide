@@ -9,6 +9,8 @@ mod navigation_cache;
 mod project_defaults;
 #[path = "project_management.rs"]
 mod project_management;
+#[path = "store_provider_account_removal.rs"]
+mod provider_account_removal;
 #[path = "store_provider_accounts.rs"]
 mod provider_accounts;
 #[path = "store_follow_up.rs"]

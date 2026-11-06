@@ -386,9 +386,9 @@ impl Engine {
             .context("Native account identity must be text")?;
         if let Some(owner) = Private::open(&self.store, false)? {
             let raw = self.store.native_accounts_payload(&provider)?;
-            if read(&owner, &provider, raw.as_deref())?["accounts"]
-                .get(selected)
-                .is_some()
+            let payload = read(&owner, &provider, raw.as_deref())?;
+            if payload["accounts"].get(selected).is_some()
+                || payload["revoked_accounts"].get(selected).is_some()
             {
                 return Ok(true);
             }
@@ -856,6 +856,9 @@ pub(super) fn synthetic_key_configuration(
 ) -> (LaunchConfiguration, PathBuf) {
     keys::synthetic_configuration(engine, provider)
 }
+#[path = "native_provider_account_removal.rs"]
+mod removal;
+pub use removal::{NativeAccountRemoval, PreparedNativeAccountRemoval};
 #[path = "native_codex_key_context.rs"]
 mod codex_key_context;
 pub(crate) use codex_key_context::NativeCodexApiContext;

@@ -1151,8 +1151,8 @@ pub mod account_secret_store;
 mod accounts;
 pub(crate) use accounts::NativeCodexApiContext;
 pub use accounts::{
-    NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave,
-    NativeLoginAccount,
+    NativeAccountRemoval, NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt,
+    NativeKeyAccount, NativeKeySave, NativeLoginAccount, PreparedNativeAccountRemoval,
 };
 
 #[path = "provider_setup.rs"]
