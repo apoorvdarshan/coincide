@@ -25,6 +25,16 @@ impl<'a> ProcessRpc<'a> {
         cancelled: &'a AtomicBool,
         named: Option<&NamedBinding>,
     ) -> Result<Self> {
+        Self::spawn_in_directory(provider, executable, timeout, cancelled, named, None)
+    }
+    pub(super) fn spawn_in_directory(
+        provider: &str,
+        executable: PathBuf,
+        timeout: Duration,
+        cancelled: &'a AtomicBool,
+        named: Option<&NamedBinding>,
+        directory: Option<&std::path::Path>,
+    ) -> Result<Self> {
         ensure!(
             executable.is_absolute(),
             "Model discovery requires an absolute configured executable"
@@ -88,10 +98,23 @@ impl<'a> ProcessRpc<'a> {
         };
         if let Some(binding) = named {
             binding.validate()?;
+            ensure!(
+                directory.is_none_or(|directory| directory == binding.cwd.as_path()),
+                "Catalog directory does not match its named profile binding"
+            );
+        }
+        if let Some(directory) = directory {
+            ensure!(
+                directory.is_absolute() && directory.is_dir(),
+                "Catalog directory must be an existing absolute project directory"
+            );
         }
         let launch = crate::agent::Launch {
             executable,
-            cwd: named.map_or_else(std::env::temp_dir, |binding| binding.cwd.clone()),
+            cwd: named.map_or_else(
+                || directory.map_or_else(std::env::temp_dir, std::path::Path::to_path_buf),
+                |binding| binding.cwd.clone(),
+            ),
             session: None,
             prompt: String::new(),
             model: None,
