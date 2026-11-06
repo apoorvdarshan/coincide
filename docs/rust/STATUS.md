@@ -53,6 +53,31 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 The broad inventory remains 7 of 32 accepted areas. Partial source and scoped
 native results do not close a full feature row.
 
+- The ordinary 83990b9 account/keyboard run passed native profile creation,
+  per-thread selection/default restoration and explicit fake device-challenge
+  cancellation/reap, with exact preserved data. Keyboard recording persisted,
+  but Done followed by the custom New shortcut failed; the mapping worked only
+  in a separately labeled real composer-focus diagnostic. The original failure
+  remains preserved. A later live-root source-pin check also failed because the
+  coordinator allowed source integration during the frozen-binary run; no guard
+  was edited or weakened. The run quit normally and remains failed/unfinished.
+- The focus fix moves Settings route transitions to the persistent navigation
+  owner. Both real headless draw/dispatch regressions passed without composer
+  focus. Bulk Select/Pin/Archive/Restore and scoped Undo passed six Core tests,
+  the full 568-unit Core run and every integration target, plus strict feature
+  Clippy. The combined desktop passed 402 units and all four integrations.
+  Fresh full keyboard/restart and bulk native acceptance remain pending.
+- Frozen ordinary 6b9645a passed the combined native project/history V2 run:
+  real directory-picker duplicate Add, Rename, Locate path field, duplicate
+  refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
+  import without navigation, profile isolation and explicit local-page Open.
+  The same binary restarted and automatically loaded both saved records.
+  Both normal exits were zero; all raw threads, restored projects, originals,
+  attachments, working files, source bytes and profile data passed exact guards.
+  Nine denied fake Git probes, zero other executable categories. Multi-folder
+  Add, a separate Add-picker Cancel and authoritative native focus were not
+  exercised. A transient Recovery busy error was retained; the next candidate
+  adds an explicit Reload control. The original Swift application is untouched.
 - Native Codex profile list/create/scoped selection and explicit device sign-in
   are integrated with keyboard recording/disable/reset for eight existing
   commands. Device enrollment avoids the upstream shared callback-port cancel
@@ -62,7 +87,11 @@ native results do not close a full feature row.
   The full Core run passed 562 units and every integration target; strict feature
   Clippy passed. The combined desktop run passed 398 units plus all four
   integration targets (19, 10, 14, 11). Native account/keyboard acceptance and
-  real-account verification remain open.
+  real-account verification remain open. A separate audit confirmed both Swift
+  and Rust scope global AGENTS to the selected Codex home; no new restriction or
+  role-changing developerInstructions workaround was added. Shared HOME skill
+  roots survive; default-home plugin/system-cache continuity remains unverified.
+  No protected global instruction file was copied, linked or changed.
 - Integrated Rust-owned Codex login profiles with private launch homes, captured
   account/session binding and pre-turn subscription authentication. Six profile
   units, the captured-session unit and the actual isolated fake Engine/app-server
@@ -74,7 +103,7 @@ native results do not close a full feature row.
   import, restart persistence, saved list and explicit new-tab open. The combined
   Core unit run passed 560 tests (seven intentional ignored fixtures); the subsequent
   full integration/desktop batch passed as listed above; combined native project
-  and history acceptance is in progress.
+  and history acceptance subsequently passed in the scoped V2 run above.
 - The ordinary transcript fixture on exact 5b5a9a2 passed user/assistant layouts,
   reasoning/tool Expand/Collapse, hidden-tail Find and Next/Previous, visible
   Unicode selection, full assistant Copy and one real Edit branch. A real Core

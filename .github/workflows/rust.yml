@@ -91,6 +91,13 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support prepaint_transaction --locked -- --nocapture
+      - name: Test Settings focus routing without a native window
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -o pipefail
+          cargo test --manifest-path vendor/gpui-pre/Cargo.toml --lib --features test-support settings_route_focus_ --locked -- --nocapture | tee "$RUNNER_TEMP/settings-route-focus-tests.log"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/settings-route-focus-tests.log"
       - name: Test actual completed List geometry without a native window
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
