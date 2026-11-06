@@ -98,6 +98,7 @@ pub(super) struct Panel {
     pending: Option<String>,
     active: String,
     check_queue: std::collections::VecDeque<String>,
+    last_clock_refresh: Instant,
     enabled: bool,
     pickers: Vec<Task<()>>,
     _poll: Task<()>,
@@ -139,6 +140,7 @@ impl Panel {
             pending: None,
             active: String::new(),
             check_queue: Default::default(),
+            last_clock_refresh: Instant::now(),
             enabled: true,
             pickers: Vec::new(),
             _poll: poll,
@@ -212,7 +214,7 @@ impl Panel {
             return "Imported settings need review".into();
         }
         if self.pending.as_deref() == Some(provider) {
-            return "Checking…".into();
+            return editor.notice.clone();
         }
         if let Some(report) = &editor.report {
             let status = match report.authenticated {
@@ -474,6 +476,12 @@ impl Panel {
     }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.workers.poll();
+        if self.last_clock_refresh.elapsed() >= Duration::from_secs(30)
+            && self.editors.values().any(|editor| editor.checked.is_some())
+        {
+            self.last_clock_refresh = Instant::now();
+            cx.notify();
+        }
         if self.pending.is_none()
             && self
                 .editors
@@ -691,6 +699,7 @@ impl Panel {
         match part {
             Part::Status => {
                 let check_provider = provider.clone();
+                let reload_provider = provider.clone();
                 let status = editor
                     .report
                     .as_ref()
@@ -766,17 +775,22 @@ impl Panel {
                         }))
                     })
                     .child(div().text_sm().child(editor.notice.clone()))
-                    .when(!loaded && !editor.load_requested, |pane| {
-                        pane.child(
-                            Button::new("provider-config-reload")
-                                .label("Reload Saved Settings")
-                                .disabled(busy)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let provider = this.active.clone();
-                                    this.start(&provider, Request::Load, cx);
-                                })),
-                        )
-                    });
+                    .child(
+                        Button::new("provider-config-reload")
+                            .label("Reload Saved Settings")
+                            .disabled(busy || dirty)
+                            .tooltip(if dirty {
+                                "Discard changes before reloading saved settings"
+                            } else {
+                                "Read current saved settings again"
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.active != reload_provider {
+                                    return;
+                                }
+                                this.start(&reload_provider, Request::Load, cx);
+                            })),
+                    );
             }
             Part::Executable => {
                 let key = provider.clone();
