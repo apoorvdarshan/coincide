@@ -1,6 +1,7 @@
 //! Temporary fake processes only. Never reads live credentials or runs Codex.
 #![cfg(unix)]
 use coincide_core::{
+    agent::provider_session,
     api::Engine,
     store::{Store, text},
 };
@@ -151,6 +152,18 @@ fn records(root: &Path) -> Vec<Value> {
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
 }
+fn assert_profile_sessions(thread: &Value, a: &str, b: &str) {
+    // Persistence keeps one current native reference and caches other accounts.
+    // Resolve through the public account-aware lookup, independent of location.
+    for account in [a, b] {
+        let mut view = thread.clone();
+        view["selection"]["accountID"] = json!(account);
+        assert_eq!(
+            provider_session(&view, "codex"),
+            Some(format!("{account}-fresh-model-thread")),
+        );
+    }
+}
 fn settle(engine: &mut Engine) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -288,6 +301,7 @@ fn profile_models_fixture_child() {
         json!({"threadId":id,"text":"Other profile model turn"}),
     );
     settle(&mut engine);
+    assert_profile_sessions(&engine.store.thread(&id).unwrap(), &a, &b);
     choose(&mut engine, &id, &b, "default", None);
     select_profile(&mut engine, &id, &a);
     choose(
@@ -408,6 +422,5 @@ fn profile_models_fixture_child() {
     );
     // A/B native session IDs and full-replay launches remain separate.
     let saved = engine.store.thread(&id).unwrap();
-    assert!(saved["accountSessions"][format!("codex/{a}")]["sessionID"].is_string());
-    assert!(saved["accountSessions"][format!("codex/{b}")]["sessionID"].is_string());
+    assert_profile_sessions(&saved, &a, &b);
 }
