@@ -73,6 +73,9 @@ fn assert_no_execution(f: &mut Fixture) {
     assert_eq!(providers.returned, 0);
     assert_eq!(providers.panicked, 0);
     assert_eq!(providers.unclassified, 0);
+    // This is the final assertion for each private Engine. The owned catalog
+    // shutdown ledger is readable only after admissions have been frozen.
+    f.engine.freeze_admissions();
     let reads = f.engine.model_catalog_shutdown_status().unwrap();
     assert_eq!(reads.running, 0);
     assert_eq!(reads.returned, 0);
