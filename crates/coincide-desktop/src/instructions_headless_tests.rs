@@ -2,7 +2,7 @@
 //! local Git processes. This does not exercise a physical OS dialog or CUA.
 use crate::instructions::InstructionsPanel;
 use coincide_core::{api::Engine, native_file, store::Store};
-use gpui_kit::{AppContext, Entity, TestAppContext, VisualTestContext};
+use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use std::{
     fs,
@@ -51,22 +51,26 @@ fn settle(
     loop {
         cx.run_until_parked();
         panel.update(cx, |panel, cx| panel.poll_instruction_git(cx));
-        if panel
-            .read(cx)
-            .setup
-            .git
-            .visible_status()
-            .contains("stopped:")
-        {
-            panic!("{}", panel.read(cx).setup.visible_status());
+        if cx.read(|app| {
+            panel
+                .read(app)
+                .setup
+                .git
+                .visible_status()
+                .contains("stopped:")
+        }) {
+            panic!(
+                "{}",
+                cx.read(|app| panel.read(app).setup.visible_status().to_owned())
+            );
         }
-        if done(panel.read(cx)) {
+        if cx.read(|app| done(panel.read(app))) {
             return;
         }
         assert!(
             Instant::now() < deadline,
             "{}",
-            panel.read(cx).setup.visible_status()
+            cx.read(|app| panel.read(app).setup.visible_status().to_owned())
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -133,10 +137,13 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
     let (panel, cx) = cx.add_window_view(|window, cx| {
         InstructionsPanel::new(engine.clone(), editors.editor(), window, cx)
     });
-    assert!(panel.read(cx).setup.metadata.is_none());
+    assert!(cx.read(|app| panel.read(app).setup.metadata.is_none()));
     cx.update(|window, cx| panel.update(cx, |panel, cx| panel.setup_choose_master(window, cx)));
     assert!(!cx.did_prompt_for_paths());
-    assert!(panel.read(cx).setup.visible_status().contains("not ready"));
+    assert!(
+        cx.read(|app| panel.read(app).setup.visible_status().to_owned())
+            .contains("not ready")
+    );
     drop(guard);
     // Retry the same real native handler after the owner becomes available.
     cx.update(|window, cx| panel.update(cx, |panel, cx| panel.setup_choose_master(window, cx)));
@@ -170,9 +177,12 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
             .unwrap(),
         Some(external.clone())
     );
-    assert!(panel.read(cx).setup.visible_status().contains("changed"));
+    assert!(
+        cx.read(|app| panel.read(app).setup.visible_status().to_owned())
+            .contains("changed")
+    );
     assert_ne!(
-        panel.read(cx).native_target_label(),
+        cx.read(|app| panel.read(app).native_target_label()),
         master.display().to_string()
     );
     // Cancel a real pending picker; no config/text write or authority results.
@@ -188,7 +198,7 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
     );
     cx.simulate_path_prompt_response(|_| None);
     cx.run_until_parked();
-    assert!(!panel.read(cx).setup.picker_pending);
+    assert!(!cx.read(|app| panel.read(app).setup.picker_pending));
     assert_eq!(
         engine
             .lock()
@@ -208,11 +218,11 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
     cx.simulate_path_prompt_response(|_| Some(vec![master.clone()]));
     cx.run_until_parked();
     assert_eq!(
-        panel.read(cx).native_target_label(),
+        cx.read(|app| panel.read(app).native_target_label()),
         master.display().to_string()
     );
     assert_eq!(
-        panel.read(cx).editor.read(cx).value().as_ref(),
+        cx.read(|app| panel.read(app).editor.read(app).value().to_string()),
         "Synthetic approved master version two\n"
     );
     cx.update(|window, cx| {
@@ -226,7 +236,7 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
         Some(vec![repo.join("AGENTS.md")])
     });
     cx.run_until_parked();
-    assert!(panel.read(cx).setup.copy.review.is_some());
+    assert!(cx.read(|app| panel.read(app).setup.copy.review.is_some()));
     assert_eq!(
         fs::read(repo.join("AGENTS.md")).unwrap(),
         b"Synthetic old copy\n"
@@ -257,14 +267,14 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
                 .visible_status()
                 .contains("Git copy finished")
     });
-    assert!(
+    assert!(cx.read(|app| {
         panel
-            .read(cx)
+            .read(app)
             .setup
             .git
             .visible_status()
             .contains("Commit: true · Pulled: true · Pushed: true")
-    );
+    }));
     assert_eq!(
         git(&bare, &["show", "main:AGENTS.md"]),
         fs::read(&master).unwrap()
