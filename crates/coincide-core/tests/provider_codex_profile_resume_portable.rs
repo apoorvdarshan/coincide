@@ -421,6 +421,16 @@ fn slots_phase(root: &Path, phase: &str) {
     });
     engine.close_store_after_core_shutdown().unwrap();
 }
+fn provider_diagnostic(root: &Path, named: bool, stage: &str) {
+    let role = if named { "named" } else { "default" };
+    let _ = fs::write(root.join(format!("provider-diagnostic-{role}")), stage);
+}
+fn provider_check(root: &Path, named: bool, condition: bool, reason: &str) {
+    if !condition {
+        provider_diagnostic(root, named, reason);
+        panic!("Synthetic provider check failed: {reason}");
+    }
+}
 fn provider() {
     let home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
     let root = home
@@ -440,7 +450,9 @@ fn provider() {
                 .to_str()
                 .expect("fixture environment name")
                 .to_ascii_uppercase();
-            assert!(
+            provider_check(
+                &root,
+                false,
                 matches!(
                     name.as_str(),
                     "PATH"
@@ -451,21 +463,60 @@ fn provider() {
                         | "HOME"
                         | "OPENAI_API_KEY"
                         | "COINCIDE_CONTROL_SOCKET"
+                        | "COINCIDE_PORTABLE_ROOT"
+                        | "COINCIDE_PORTABLE_PHASE"
+                        | "COINCIDE_CODEX_EXECUTABLE"
                 ),
-                "Unexpected default fixture environment key {name}"
+                &format!("default_environment_key_{name}"),
             );
+            if name == "COINCIDE_PORTABLE_ROOT" {
+                provider_check(
+                    &root,
+                    false,
+                    PathBuf::from(&value) == root,
+                    "default_root_marker",
+                );
+            }
+            if name == "COINCIDE_CODEX_EXECUTABLE" {
+                provider_check(
+                    &root,
+                    false,
+                    PathBuf::from(&value) == std::env::current_exe().unwrap(),
+                    "default_executable_marker",
+                );
+            }
+            if name == "COINCIDE_PORTABLE_PHASE" {
+                provider_check(
+                    &root,
+                    false,
+                    matches!(
+                        value.to_str(),
+                        Some(
+                            "ordinary-default-seed"
+                                | "ordinary-default-resume"
+                                | "ordinary-explicit-seed"
+                                | "ordinary-explicit-resume"
+                        )
+                    ),
+                    "default_phase_marker",
+                );
+            }
             if name == "OPENAI_API_KEY" {
-                assert!(
+                provider_check(
+                    &root,
+                    false,
                     value == "synthetic-must-not-inherit",
-                    "Only the cleared parent's synthetic default marker is permitted"
+                    "default_api_marker",
                 );
             }
             if name == "COINCIDE_CONTROL_SOCKET" {
-                assert!(
+                provider_check(
+                    &root,
+                    false,
                     value
                         .to_str()
                         .is_some_and(|s| s.contains("coincide-unbound-")),
-                    "Default fixture control endpoint must be unbound"
+                    "default_control_endpoint",
                 );
             }
         }
@@ -477,27 +528,44 @@ fn provider() {
         "OPENAI_BASE_URL",
         "COINCIDE_PORTABLE_PHASE",
     ] {
-        if key == "OPENAI_API_KEY" && home.is_none() {
+        if matches!(key, "OPENAI_API_KEY" | "COINCIDE_PORTABLE_PHASE") && home.is_none() {
             continue;
         }
-        assert!(
+        provider_check(
+            &root,
+            home.is_some(),
             std::env::var_os(key).is_none(),
-            "Ambient provider variable {key}"
+            &format!("forbidden_environment_{key}"),
         );
     }
     let args = std::env::args().collect::<Vec<_>>();
-    assert_eq!(
+    provider_check(
+        &root,
+        home.is_some(),
         args.iter()
-            .any(|arg| arg == "forced_login_method=\"chatgpt\""),
-        home.is_some()
+            .any(|arg| arg == "forced_login_method=\"chatgpt\"")
+            == home.is_some(),
+        "forced_login_scope",
     );
-    let config: Value =
-        serde_json::from_slice(&fs::read(root.join("fixture.json")).unwrap()).unwrap();
+    provider_diagnostic(&root, home.is_some(), "environment_verified");
+    let config: Value = fs::read(root.join("fixture.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| {
+            provider_check(&root, home.is_some(), false, "fixture_config_missing");
+            unreachable!()
+        });
     let mut native = String::new();
     let read = io::stdin().lock().lines();
     for line in read {
         let frame: Value = serde_json::from_str(&line.unwrap()).unwrap();
         let method = frame["method"].as_str().unwrap();
+        let category = match method {
+            "initialize" | "initialized" | "account/read" | "model/list" | "thread/start"
+            | "thread/resume" | "turn/start" => method,
+            _ => "unexpected_method",
+        };
+        provider_diagnostic(&root, home.is_some(), category);
         let result = match method {
             "initialize" => json!({}),
             "initialized" => continue,
@@ -623,12 +691,19 @@ fn main() {
             .env("OPENAI_API_KEY", "synthetic-must-not-inherit")
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "{stage}: {} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        if !output.status.success() {
+            let named = fs::read_to_string(phase_root.join("provider-diagnostic-named"))
+                .unwrap_or_else(|_| "no_named_diagnostic".into());
+            let default = fs::read_to_string(phase_root.join("provider-diagnostic-default"))
+                .unwrap_or_else(|_| "no_default_diagnostic".into());
+            let retained = dir.keep();
+            panic!(
+                "{stage}: named={named}; default={default}; private fixture retained at {}: {} {}",
+                retained.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
     println!(
         "portable native continuation: explicit-model restart, legacy Provider-default slots, ordinary default/explicit account+provider+default-account switching and cold warmup; exact native model/ID/delta once, saved/joined shutdown: PASS"
