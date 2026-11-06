@@ -261,11 +261,19 @@ fn restore_fixture_child() {
         engine.store.save(&changed).unwrap();
         refused(&mut engine, &root, &id, params(&changed, "codex"));
     }
-    for key in ["botID", "rustBotContext", "draftContext", "rustDraftImages"] {
+    for key in ["botID", "rustBotContext"] {
         let mut changed = original.clone();
         changed[key] = json!([{"synthetic":true}]);
         engine.store.save(&changed).unwrap();
         refused(&mut engine, &root, &id, params(&changed, "codex"));
+    }
+    // Ordinary provider controls retain attached content byte-for-byte. The
+    // desktop command interceptor independently treats slash+attachments as a
+    // literal message, rather than consuming or clearing those attachments.
+    for key in ["draftContext", "rustDraftImages"] {
+        let mut attached = original.clone();
+        attached[key] = json!([{"synthetic":true,"future":{"keep":17}}]);
+        selected(&mut engine, &attached, "synthetic-last-model");
     }
     let mut changed = original.clone();
     changed["selection"]["futureOption"] = json!(true);
@@ -289,7 +297,9 @@ fn restore_fixture_child() {
         .remove("accountID");
     selected(&mut engine, &legacy, "synthetic-last-model");
     legacy["sessions"]["codex"]["accountID"] = json!(uuid::Uuid::new_v4());
-    selected(&mut engine, &legacy, "default");
+    engine.store.save(&legacy).unwrap();
+    // An unknown remembered account cannot silently borrow the default account.
+    refused(&mut engine, &root, &id, params(&legacy, "codex"));
     let mut no_history = original.clone();
     no_history["items"] = json!([]);
     selected(&mut engine, &no_history, "default");
