@@ -1,6 +1,6 @@
 //! Native UI filesystem primitives. This module provides no instruction write
 //! API, configurable path authority, JSON serialization, or control RPC route.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use std::{
     fs::{self, File, OpenOptions},
     path::Path,

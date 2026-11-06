@@ -1,7 +1,7 @@
 //! Bound global-master editor state, reachable only from its native UI module.
 //! Writes preserve the existing file's inode and all existing symlinks. The
 //! private recovery copy is durable before mutation and retained on any error.
-use anyhow::{ensure, Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use coincide_core::native_file::{self, Identity};
 use std::{
     fs::{self, File},
@@ -350,9 +350,11 @@ mod tests {
         let previous = fixture.root.join("previous.md");
         fs::rename(&fixture.master, &previous).unwrap();
         fs::write(&fixture.master, "External synthetic update\n").unwrap();
-        assert!(editor
-            .save("Same bytes on another inode grant no authority")
-            .is_err());
+        assert!(
+            editor
+                .save("Same bytes on another inode grant no authority")
+                .is_err()
+        );
         assert_eq!(
             fs::read_to_string(&fixture.master).unwrap(),
             "External synthetic update\n"
@@ -410,9 +412,11 @@ mod tests {
         let original = editor.load().unwrap();
         let locked = native_file::open_regular(&fixture.master, true).unwrap();
         locked.try_lock().unwrap();
-        assert!(editor
-            .save("Must not write through another editor lease")
-            .is_err());
+        assert!(
+            editor
+                .save("Must not write through another editor lease")
+                .is_err()
+        );
         drop(locked);
         assert_eq!(fs::read(&fixture.master).unwrap(), original.as_bytes());
         assert!(!fixture.recovery.exists());
@@ -429,9 +433,11 @@ mod tests {
         fs::remove_file(&fixture.master).unwrap();
         let mut editor = fixture.editor();
         assert!(editor.load().is_err());
-        assert!(editor
-            .save("Do not create a missing master implicitly")
-            .is_err());
+        assert!(
+            editor
+                .save("Do not create a missing master implicitly")
+                .is_err()
+        );
         assert!(!fixture.master.exists());
         assert!(!fixture.recovery.exists());
     }
@@ -455,9 +461,11 @@ mod tests {
         linked.load().unwrap();
         fs::remove_file(&alias).unwrap();
         symlink("AGENTS.md", &alias).unwrap();
-        assert!(linked
-            .save("A new symlink inode cannot reuse old editor authority")
-            .is_err());
+        assert!(
+            linked
+                .save("A new symlink inode cannot reuse old editor authority")
+                .is_err()
+        );
         assert_eq!(
             fs::read_to_string(&fixture.master).unwrap(),
             "# Saved through original inode\n"

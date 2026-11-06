@@ -2,8 +2,8 @@
 //! no file path or instruction text. Native UI owners hold a lease so API Quit
 //! cannot silently discard edits which have not reached their explicit Save.
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 #[derive(Clone, Default)]
@@ -60,17 +60,21 @@ mod tests {
         first.set_dirty(true);
         second.set_dirty(true);
         let refused = engine.dispatch(json!({"method":"app.quit","params":{}}));
-        assert!(refused["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("native editor"));
+        assert!(
+            refused["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("native editor")
+        );
         assert!(!engine.shutdown);
         assert_eq!(engine.native_ui_editors.pending(), 2);
         first.set_dirty(false);
-        assert!(engine
-            .dispatch(json!({"method":"app.quit","params":{}}))
-            .get("error")
-            .is_some());
+        assert!(
+            engine
+                .dispatch(json!({"method":"app.quit","params":{}}))
+                .get("error")
+                .is_some()
+        );
         drop(second);
         assert_eq!(engine.native_ui_editors.pending(), 0);
         assert_eq!(
@@ -89,10 +93,12 @@ mod tests {
             "native.editors.set",
             "instructions.write",
         ] {
-            assert!(engine
-                .dispatch(json!({"method":method,"params":{"pending":0}}))
-                .get("error")
-                .is_some());
+            assert!(
+                engine
+                    .dispatch(json!({"method":method,"params":{"pending":0}}))
+                    .get("error")
+                    .is_some()
+            );
         }
         assert_eq!(engine.native_ui_editors.pending(), 1);
         assert!(!engine.shutdown);
