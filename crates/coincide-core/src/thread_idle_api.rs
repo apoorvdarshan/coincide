@@ -15,15 +15,20 @@ fn no_draft(thread: &Value) -> bool {
                 .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty))
         })
 }
-fn untouched(thread: &Value, fresh: &Value, ui: &Value, now: f64) -> bool {
+fn untouched(
+    thread: &Value,
+    fresh: &Value,
+    ui: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
     let id = text(thread, "id");
     let settled = ui["settledThreads"]
         .as_object()
         .and_then(|rows| rows.iter().find(|(key, _)| same_uuid(key, &id)))
-        .and_then(|(_, date)| crate::scheduling::parse_date(date))
+        .and_then(|(_, date)| crate::scheduling::parse_date(date).ok())
         .is_some_and(|date| {
             crate::scheduling::parse_date(&thread["updatedAt"])
-                .is_none_or(|updated| date >= updated)
+                .map_or(true, |updated| date >= updated)
         });
     thread["items"].as_array().is_some_and(Vec::is_empty)
         && no_draft(thread)
@@ -31,8 +36,7 @@ fn untouched(thread: &Value, fresh: &Value, ui: &Value, now: f64) -> bool {
         && !settled
         && thread["botID"].is_null()
         && (thread["snoozedUntil"].is_null()
-            || crate::scheduling::parse_date(&thread["snoozedUntil"])
-                .is_some_and(|date| date <= now))
+            || crate::scheduling::parse_date(&thread["snoozedUntil"]).is_ok_and(|date| date <= now))
         && thread["worktreePath"] == fresh["worktreePath"]
         && ["selection", "accessMode", "interactionMode"]
             .iter()
@@ -85,7 +89,7 @@ impl Engine {
             ui.is_object(),
             "Window preferences are malformed; existing chats were retained"
         );
-        let now = swift_timestamp();
+        let now = crate::scheduling::parse_date(&json!(swift_timestamp()))?;
         let mut reusable = None;
         for summary in self.store.summaries("", false)? {
             if !same_project(&summary.project_id, &project) || summary.archived {
