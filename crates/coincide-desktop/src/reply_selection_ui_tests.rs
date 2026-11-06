@@ -1,7 +1,10 @@
 //! Real GPUI rendered Markdown selection on synthetic TestPlatform only. No
 //! Coincide constructor, native host, clipboard fallback, agent or user files.
-use super::*;
-use gpui_kit::{TestAppContext, VisualTestContext, component::input::TextareaState};
+use super::{TextViewState, focused_reply_projection, managed_markdown};
+use gpui_kit::{
+    App, AppContext, Context, Entity, Focusable, IntoElement, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, component::input::TextareaState, div, px,
+};
 const CHILD: &str = "COINCIDE_HEADLESS_REPLY_SELECTION_CHILD";
 const SOURCE: &str = "one **bold** café 👩🏽‍💻\n\nrepeat and `repeat`";
 const ITEM: &str = "12345678-1234-1234-1234-123456789ABC";
