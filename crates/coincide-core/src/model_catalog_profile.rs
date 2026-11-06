@@ -3,7 +3,7 @@ use super::*;
 use crate::codex_login_profiles::LaunchContext;
 use std::{fs, path::Path, time::SystemTime};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct FileStamp {
     length: u64,
     modified: SystemTime,
@@ -24,7 +24,7 @@ impl FileStamp {
         })
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct NamedBinding {
     pub(super) profile: LaunchContext,
     thread: String,

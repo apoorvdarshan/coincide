@@ -10,7 +10,7 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) const DOCUMENT: &str = "rust-codex-login-profiles.json";
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct LaunchContext {
     account: String,
     home: PathBuf,

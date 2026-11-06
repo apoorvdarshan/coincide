@@ -46,6 +46,15 @@ pub struct ImportReport {
 }
 
 impl Store {
+    /// Runtime-only durable authority binding. Never exposed as a document or
+    /// populated by imports; the journal also binds the live Store inode.
+    pub(crate) fn resume_source_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .context("Store has no filesystem location")?;
+        Ok(Path::new(path).canonicalize()?)
+    }
     fn connection(&self) -> Result<&Connection> {
         self.db.as_ref().context("Store is closed")
     }

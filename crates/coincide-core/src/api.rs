@@ -219,7 +219,7 @@ impl Engine {
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
-            named_resume: crate::named_profile_resume::Registry::default(),
+            named_resume: crate::named_profile_resume::Registry::for_store(&store),
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
             store,
@@ -1201,6 +1201,7 @@ impl Engine {
             self.admissions_frozen(),
             "Catalog shutdown requires frozen admissions"
         );
+        self.named_resume.poll();
         self.model_catalog.request_shutdown();
         Ok(())
     }
