@@ -2,7 +2,6 @@
 //! a provider or discovers/authenticates models. Explicit Apply and acknowledged
 //! standalone mode commands use the same validated selection endpoint.
 use super::*;
-use anyhow::Context as _;
 use std::collections::HashMap;
 #[path = "composer_selection_cache.rs"]
 mod capability_cache;
@@ -2997,7 +2996,8 @@ impl Coincide {
                 .flex_col()
                 .gap_1();
             if catalog["models"].is_array() {
-                for model in self.visible_picker_models(catalog, thread, cx) {
+                let rows = self.visible_picker_models(catalog, thread, cx);
+                for model in &rows {
                     let id = text(model, "id");
                     if id.is_empty() {
                         continue;
@@ -3021,13 +3021,7 @@ impl Coincide {
                     );
                 }
                 if rows.is_empty() {
-                    models = models.child(div().child("The provider reported no models."));
-                }
-                if rows.len() > 200 {
-                    models =
-                        models.child(div().child(
-                            "Showing the first 200 models. Custom model IDs remain available.",
-                        ));
+                    models = models.child(div().child("No models match the current filters."));
                 }
             }
             pane = pane.child(models);

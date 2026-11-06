@@ -183,14 +183,18 @@ def main():
         command("xdotool", "windowfocus", "--sync", window, env=env)
         capture(window, "conversation-after-settings", "keyboard draft")
         report["checks"].append("real keyboard palette opened separate Settings; reuse and close preserved main draft")
+        newer = rpc("threads.create", projectId=created_project["id"])
+        rpc("threads.patch", threadId=newer["id"], patch={"title": "Newer unselected Linux conversation"})
+        rpc("threads.open", threadId=thread_id)
+        wait_for("older selected conversation before Quit", lambda: rpc("app.status")["activeThread"] == thread_id)
+        capture(window, "older-selected-before-quit", "keyboard draft")
         quit_normally()
         window = start("restart")
+        wait_for("last selected older conversation restored automatically", lambda: rpc("app.status")["activeThread"] == thread_id)
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
-        rpc("threads.open", threadId=thread_id)
-        time.sleep(0.8)
         capture(window, "reopened-draft", "keyboard draft")
         report["persistedDraftVerified"] = rpc("threads.read", threadId=thread_id)["draft"] == draft
-        report["checks"].append("normal Quit/reopen preserved and rendered the unsent native draft")
+        report["checks"].append("normal Quit/reopen automatically restored older selected conversation and rendered its unsent native draft")
         quit_normally()
         report["passed"] = True
     except BaseException as error:

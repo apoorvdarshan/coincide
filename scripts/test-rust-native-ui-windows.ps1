@@ -221,10 +221,15 @@ try {
     if($script:OwnedProcess.HasExited){throw 'Closing Settings unexpectedly closed the app'}
     if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Settings lost native draft'}
     $Report.checks+='Owned Settings window opened/rendered/closed; main native draft preserved'
+    $newer=Invoke-Rpc 'threads.create' @{projectId=$project.id}
+    Invoke-Rpc 'threads.patch' @{threadId=$newer.id;patch=@{title='Newer unselected Windows conversation'}} | Out-Null
+    Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null
+    Wait-Condition 'older selected conversation before Quit' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
+    Capture-Owned $main 'older-selected-before-quit'
     Quit-Owned $main
     $main=Start-Owned 'restart'
+    Wait-Condition 'last selected older conversation restored automatically' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
     if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Normal Quit/reopen lost native draft'}
-    Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null
     Capture-Owned $main 'reopened-draft'
     $Report.persistedDraftVerified=((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -eq $draft)
     $Report.checks+='Normal Ctrl+Q exited zero and reopening preserved private Store draft with rendered native client'
