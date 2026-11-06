@@ -323,6 +323,77 @@ mod tests {
                 .unwrap()
         );
     }
+    #[test]
+    fn archive_project_filter_is_applied_before_page_counts_and_preserves_global_listing() {
+        let (_dir, mut store, mut threads) = fixture();
+        let project = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        threads[0]["projectID"] = json!(project.to_string());
+        threads[1]["projectID"] = json!(other.to_string());
+        threads[2]["projectID"] = json!(project.to_string());
+        for thread in &threads {
+            store.save(thread).unwrap();
+        }
+        let mut extra = store.new_thread("").unwrap();
+        extra["projectID"] = json!(project.to_string());
+        extra["title"] = json!("Another synthetic archive");
+        extra["isArchived"] = json!(true);
+        store.save(&extra).unwrap();
+        let first = store
+            .archived_conversations_for_project(
+                "archive",
+                Some(&project.simple().to_string()),
+                0,
+                1,
+            )
+            .unwrap();
+        let second = store
+            .archived_conversations_for_project("archive", Some(&project.to_string()), 1, 1)
+            .unwrap();
+        assert_eq!(
+            (
+                first.total,
+                second.total,
+                first.rows.len(),
+                second.rows.len()
+            ),
+            (2, 2, 1, 1)
+        );
+        assert_ne!(first.rows[0].id, second.rows[0].id);
+        assert!(
+            first
+                .rows
+                .iter()
+                .chain(&second.rows)
+                .all(|row| Uuid::parse_str(&row.project_id).unwrap() == project)
+        );
+        assert_eq!(
+            store
+                .archived_conversations_for_project("archive", Some(&other.to_string()), 0, 10)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            store
+                .archived_conversations("archive", 0, 10)
+                .unwrap()
+                .total,
+            3
+        );
+        assert_eq!(
+            store
+                .archived_conversations_for_project("no match", Some(&project.to_string()), 0, 10)
+                .unwrap()
+                .total,
+            0
+        );
+        assert!(
+            store
+                .archived_conversations_for_project("", Some("not-a-project"), 0, 10)
+                .is_err()
+        );
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DeleteVersion {
@@ -433,11 +504,29 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> Result<ArchivedConversations> {
+        self.archived_conversations_for_project(query, None, offset, limit)
+    }
+    pub(crate) fn archived_conversations_for_project(
+        &self,
+        query: &str,
+        project: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedConversations> {
         ensure!(
             query.len() <= 1024 && (1..=100).contains(&limit),
             "Invalid archive filter or page size"
         );
         let query = query.trim().to_lowercase();
+        let project = project
+            .map(|id| {
+                if id.is_empty() {
+                    Ok(Uuid::nil())
+                } else {
+                    Uuid::parse_str(id)
+                }
+            })
+            .transpose()?;
         let mut total = 0usize;
         let mut rows = Vec::new();
         let mut statement=self.connection()?.prepare("SELECT id,substr(title,1,1024),project_id,updated_at FROM thread_summaries WHERE archived=1 ORDER BY updated_at DESC,id")?;
@@ -450,6 +539,16 @@ impl Store {
             })
         })? {
             let row = row?;
+            if project.is_some_and(|project| {
+                let actual = if row.project_id.is_empty() {
+                    Some(Uuid::nil())
+                } else {
+                    Uuid::parse_str(&row.project_id).ok()
+                };
+                actual != Some(project)
+            }) {
+                continue;
+            }
             if !query.is_empty() && !row.title.to_lowercase().contains(&query) {
                 continue;
             }

@@ -385,6 +385,16 @@ impl Engine {
     ) -> Result<ArchivedConversations> {
         self.store.archived_conversations(query, offset, limit)
     }
+    pub fn native_archived_conversations_for_project(
+        &self,
+        query: &str,
+        project: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedConversations> {
+        self.store
+            .archived_conversations_for_project(query, project, offset, limit)
+    }
     pub fn prepare_native_thread_deletion(
         &mut self,
         ids: &[String],

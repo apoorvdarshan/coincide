@@ -18,6 +18,60 @@ pub(super) struct Section<'a> {
     pub name: String,
     pub threads: Vec<&'a ThreadSummary>,
 }
+/// Swift's default section layout, retaining the authoritative summary subset.
+/// Empty configured folders are visible outside search and keep their real IDs.
+pub(super) fn display<'a>(
+    threads: &'a [ThreadSummary],
+    projects: Vec<(String, String)>,
+    selected_project: Option<&str>,
+    show_snoozed: bool,
+    now: f64,
+    searching: bool,
+) -> Vec<Section<'a>> {
+    let order = projects
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    let mut sections = project(
+        threads,
+        projects.clone(),
+        selected_project,
+        show_snoozed,
+        now,
+    );
+    if !searching {
+        for (id, name) in projects {
+            if id.is_empty()
+                || id == NO_PROJECT
+                || id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+                || selected_project.is_some_and(|selected| selected != id)
+                || sections
+                    .iter()
+                    .any(|section| section.project_id.as_deref() == Some(&id))
+            {
+                continue;
+            }
+            sections.push(Section {
+                project_id: Some(id),
+                name,
+                threads: Vec::new(),
+            });
+        }
+    }
+    sections.sort_by_key(|section| match section.project_id.as_deref() {
+        None => (0, 0),
+        Some(id) if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) => (1, 0),
+        Some(NO_PROJECT) => (3, 0),
+        Some(id) => (
+            2,
+            order
+                .iter()
+                .position(|known| known == id)
+                .unwrap_or(usize::MAX),
+        ),
+    });
+    sections
+}
 pub(super) fn project<'a>(
     threads: &'a [ThreadSummary],
     projects: Vec<(String, String)>,
@@ -206,5 +260,52 @@ mod tests {
         );
         assert_eq!(ids(&sections), ["b", "a"]);
         assert_eq!(sections.len(), 2);
+    }
+    #[test]
+    fn display_groups_bots_folders_chats_and_shows_empty_configured_folders_only_outside_search() {
+        let rows = vec![
+            row("project", "p", false),
+            row("bot", BOTS_PROJECT_ID, false),
+            row("chat", "", false),
+            row("pin", "p", true),
+        ];
+        let projects = vec![
+            ("p".into(), "Project".into()),
+            ("empty".into(), "Empty folder".into()),
+        ];
+        let sections = display(&rows, projects.clone(), None, false, 0., false);
+        assert_eq!(
+            sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["Pinned", "Bots", "Project", "Empty folder", "Chats"]
+        );
+        assert_eq!(ids(&sections), ["pin", "bot", "project", "chat"]);
+        assert!(sections[3].threads.is_empty());
+        assert!(
+            !display(&rows, projects.clone(), None, false, 0., true)
+                .iter()
+                .any(|s| s.project_id.as_deref() == Some("empty"))
+        );
+        let selected = display(&rows, projects, Some("empty"), false, 0., false);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].project_id.as_deref(), Some("empty"));
+        let reordered = display(
+            &rows,
+            vec![
+                ("empty".into(), "Empty folder".into()),
+                ("p".into(), "Project".into()),
+            ],
+            None,
+            false,
+            0.,
+            false,
+        );
+        assert_eq!(
+            reordered
+                .iter()
+                .filter(|s| matches!(s.project_id.as_deref(), Some("empty" | "p")))
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Empty folder", "Project"]
+        );
     }
 }
