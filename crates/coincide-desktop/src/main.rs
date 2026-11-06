@@ -2332,13 +2332,14 @@ impl Coincide {
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::current_dir().ok());
         if !self.flush_pending_drafts() {
-            self.status="Save pending drafts before opening a new conversation.".into();
+            self.status = "Save pending drafts before opening a new conversation.".into();
             cx.notify();
             return;
         }
-        let result=(||->Result<Value>{
-            let mut engine=try_state(&self.engine)?;
-            let intent=engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let intent =
+                engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
             engine.apply_native_new_thread(intent)
         })();
         match result {
@@ -2871,8 +2872,8 @@ impl Coincide {
                 }
             }
             if !self.media.close_requested && !self.media.shutdown_requested {
-                if let Err(error)=engine.native_wake_due_snoozes() {
-                    self.status=format!("Snoozed conversations could not wake: {error}");
+                if let Err(error) = engine.native_wake_due_snoozes() {
+                    self.status = format!("Snoozed conversations could not wake: {error}");
                 }
             }
             engine.ui_available = self.browser.is_some();
