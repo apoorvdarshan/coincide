@@ -86,6 +86,28 @@ pub fn resolve(
         chosen == Behavior::Steer,
     )
 }
+pub(crate) fn scope(thread: &Value) -> Value {
+    Value::Object(
+        [
+            "id",
+            "draft",
+            "selection",
+            "accessMode",
+            "interactionMode",
+            "projectID",
+            "projectPath",
+            "worktreePath",
+            "botID",
+            "rustBotContext",
+            "rustDraftImages",
+            "draftContext",
+        ]
+        .into_iter()
+        .filter_map(|key| thread.get(key).map(|value| (key.into(), value.clone())))
+        .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,26 +143,4 @@ mod tests {
         );
         assert_eq!(effective(Behavior::Steer, false), Behavior::Queue);
     }
-}
-
-pub(crate) fn scope(thread: &Value) -> Value {
-    Value::Object(
-        [
-            "id",
-            "draft",
-            "selection",
-            "accessMode",
-            "interactionMode",
-            "projectID",
-            "projectPath",
-            "worktreePath",
-            "botID",
-            "rustBotContext",
-            "rustDraftImages",
-            "draftContext",
-        ]
-        .into_iter()
-        .filter_map(|key| thread.get(key).map(|value| (key.into(), value.clone())))
-        .collect(),
-    )
 }
