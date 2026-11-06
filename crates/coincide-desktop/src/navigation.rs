@@ -620,6 +620,23 @@ impl Coincide {
                                                 ),
                                             );
                                             if !chats {
+                                                let defaults_owner = parent.clone();
+                                                let defaults_target = menu_target.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new("Project Defaults…")
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ = defaults_owner.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.open_project_defaults(
+                                                                        defaults_target.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            );
+                                                        }),
+                                                );
                                                 menu = menu.item(PopupMenuItem::separator());
                                                 for (label, mode) in [
                                                     (

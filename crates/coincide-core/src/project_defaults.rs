@@ -31,6 +31,7 @@ impl ProjectDefaultsReview {
 impl Engine {
     pub fn native_project_defaults(&self, id: &str) -> Result<ProjectDefaultsReview> {
         self.require_admissions()?;
+        ensure!(!self.shutdown, "Application is closing");
         let project = self.store.project_defaults_target(id)?;
         let settings = self
             .store
@@ -59,6 +60,7 @@ impl Engine {
         defaults: Option<&Value>,
     ) -> Result<Value> {
         self.require_admissions()?;
+        ensure!(!self.shutdown, "Application is closing");
         let defaults = defaults
             .map(|defaults| self.validate_composer_defaults(defaults))
             .transpose()?;
