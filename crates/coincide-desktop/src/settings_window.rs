@@ -131,9 +131,9 @@ impl Coincide {
     }
 
     pub(super) fn close_settings_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let separate = self.settings_window.is_some_and(|handle| {
-            gpui_kit::AnyWindowHandle::from(handle) == window.window_handle()
-        });
+        let separate = self
+            .settings_window
+            .is_some_and(|handle| handle == window.window_handle());
         self.settings_window_closed(cx);
         if separate {
             window.remove_window();
@@ -178,9 +178,9 @@ impl Coincide {
             }
             if let Some(existing) = existing {
                 if existing
-                    .update(cx, |_, window, cx| {
+                    .update(cx, |_, window, _| {
                         window.activate_window();
-                        cx.notify();
+                        window.refresh();
                     })
                     .is_ok()
                 {
@@ -190,7 +190,7 @@ impl Coincide {
             let Some(entity) = owner.upgrade() else {
                 return;
             };
-            let opened = cx.open_window(
+            let opened = gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
@@ -200,10 +200,11 @@ impl Coincide {
                     window_min_size: Some(size(px(640.), px(440.))),
                     ..Default::default()
                 },
+                cx,
                 move |window, cx| cx.new(|cx| SettingsWindow::new(entity, window, cx)),
             );
             match opened {
-                Ok(handle) => {
+                Ok((handle, _)) => {
                     owner
                         .update(cx, |owner, cx| {
                             owner.settings_window = Some(handle);
@@ -211,9 +212,9 @@ impl Coincide {
                         })
                         .ok();
                     handle
-                        .update(cx, |_, window, cx| {
+                        .update(cx, |_, window, _| {
                             window.activate_window();
-                            cx.notify();
+                            window.refresh();
                         })
                         .ok();
                 }

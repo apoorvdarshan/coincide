@@ -426,9 +426,10 @@ impl Coincide {
         // the existing app capture handler reachable without focusing an editor.
         if self.settings_open {
             self.show_settings_window(cx);
-            if self.settings_window.is_some_and(|handle| {
-                gpui_kit::AnyWindowHandle::from(handle) == window.window_handle()
-            }) {
+            if self
+                .settings_window
+                .is_some_and(|handle| handle == window.window_handle())
+            {
                 self.settings_focus.focus(window, cx);
             }
         } else {

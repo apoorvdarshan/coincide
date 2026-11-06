@@ -697,7 +697,7 @@ impl Coincide {
                 })),
             );
         }
-        let mut content = div().flex().flex_col().gap_2();
+        let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
         if matches(
             S::Usage,
@@ -957,7 +957,10 @@ impl Coincide {
         div()
             .id("settings-pane")
             .flex_1()
+            .flex_basis(px(0.))
+            .min_w_0()
             .min_h_0()
+            .overflow_hidden()
             .flex()
             .child(
                 div()
@@ -985,7 +988,9 @@ impl Coincide {
             .child(
                 div()
                     .flex_1()
+                    .flex_basis(px(0.))
                     .min_w_0()
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -1006,6 +1011,7 @@ impl Coincide {
                         div()
                             .id("settings-results")
                             .flex_1()
+                            .min_w_0()
                             .min_h_0()
                             .overflow_y_scroll()
                             .child(content),

@@ -351,7 +351,7 @@ struct Coincide {
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
-    settings_window: Option<gpui_kit::WindowHandle<settings_window::SettingsWindow>>,
+    settings_window: Option<gpui_kit::AnyWindowHandle>,
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
