@@ -229,7 +229,11 @@ mod tests {
     use super::*;
     fn fixture() -> (tempfile::TempDir, ModelCatalog, PathBuf, Value) {
         let dir = tempfile::tempdir().unwrap();
-        let executable = dir.path().join("reported-provider");
+        let executable = dir.path().join(if cfg!(windows) {
+            "reported-provider.exe"
+        } else {
+            "reported-provider"
+        });
         std::fs::write(&executable, b"synthetic executable identity").unwrap();
         let mut catalog = ModelCatalog::default();
         let id = "trusted-private-job".to_owned();
@@ -238,6 +242,60 @@ mod tests {
         catalog.order.push_back(id);
         let selection = json!({"provider":"codex","modelID":"reported-model","effort":"high"});
         (dir, catalog, executable, selection)
+    }
+    #[test]
+    fn native_environment_change_revokes_default_model_options_after_restart() {
+        let (root, mut catalog, path, selection) = fixture();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let db = root.path().join("private/state.sqlite");
+        let mut engine = crate::api::Engine::fixture(crate::store::Store::open(&db).unwrap());
+        let save = |engine: &mut crate::api::Engine, value: &str| {
+            let snapshot = engine.native_provider_configuration("codex").unwrap();
+            let plan = engine
+                .prepare_native_provider_configuration(
+                    "codex",
+                    &snapshot.baseline,
+                    Some(&path),
+                    std::collections::BTreeMap::from([(
+                        "SYNTHETIC_TEST_MODE".into(),
+                        value.into(),
+                    )]),
+                )
+                .unwrap();
+            engine.apply_native_provider_configuration(plan).unwrap();
+        };
+        save(&mut engine, "first");
+        let _old_worker = crate::provider_configuration::enter(
+            engine.provider_launch_configuration("codex").unwrap(),
+        );
+        for job in catalog.jobs.values_mut() {
+            job.binding = Some(EffortExecutable::read(&path).unwrap());
+        }
+        let proof = catalog
+            .codex_effort_proof(&selection, &path)
+            .unwrap()
+            .unwrap();
+        proof.validate(&selection).unwrap();
+        save(&mut engine, "second");
+        {
+            let _new_worker = crate::provider_configuration::enter(
+                engine.provider_launch_configuration("codex").unwrap(),
+            );
+            assert!(proof.validate(&selection).is_err());
+            assert!(catalog.codex_effort_proof(&selection, &path).is_err());
+        }
+        // An already-admitted worker keeps its immutable source configuration.
+        proof.validate(&selection).unwrap();
+        drop(engine);
+        let engine = crate::api::Engine::fixture(crate::store::Store::open(&db).unwrap());
+        let _restarted = crate::provider_configuration::enter(
+            engine.provider_launch_configuration("codex").unwrap(),
+        );
+        assert!(proof.validate(&selection).is_err());
     }
     #[test]
     fn private_catalog_proof_binds_model_effort_account_and_executable() {
