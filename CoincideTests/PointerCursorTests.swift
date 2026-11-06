@@ -292,4 +292,34 @@ struct PointerCursorTests {
             }
         }
     }
+
+    @Test func threadCellsAndTheirLabelsShowTheHandUntilTheTitleIsEdited() throws {
+        let cell = ThreadCell()
+        let window = Self.offscreenWindow(holding: [cell])
+        defer { window.close() }
+        cell.frame = NSRect(x: 10, y: 10, width: 360, height: 28)
+        cell.configure(ThreadRowModel(title: "Owned thread", place: "Fixture", provider: .codex,
+            isPinned: false, isArchived: false, status: .idle, updatedAt: Date(), canArchive: true,
+            toolTip: "Owned fixture", accessibilityLabel: "Owned thread"))
+        cell.layoutSubtreeIfNeeded()
+        let title = try #require(cell.textField as? SidebarThreadLabel)
+        let labels = TerminalFocus.descendants(of: cell, as: SidebarThreadLabel.self)
+        #expect(labels.count == 3)
+        Self.withRecorder(on: true) { recorder in
+            #expect(recorder.hands(cell) == [cell.bounds])
+            for label in labels where !label.isHidden {
+                #expect(recorder.hands(label) == [label.bounds])
+            }
+            title.isEditable = true
+            title.isSelectable = true
+            #expect(recorder.hands(title).isEmpty, "renaming must retain the text field's own cursor")
+            title.isEditable = false
+            title.isSelectable = false
+            #expect(recorder.hands(title) == [title.bounds])
+        }
+        Self.withRecorder(on: false) { recorder in
+            #expect(recorder.hands(cell).isEmpty)
+            for label in labels { #expect(recorder.hands(label).isEmpty) }
+        }
+    }
 }

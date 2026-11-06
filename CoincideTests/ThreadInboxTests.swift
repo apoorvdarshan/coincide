@@ -6,6 +6,83 @@ import Testing
 
 @MainActor
 struct ThreadInboxTests {
+    /// Includes NSTableView's mouse-tracking loop; calling the action helper alone
+    /// misses the focus it restores after dispatching an action.
+    private func click(_ outline: NSOutlineView, row: Int, count: Int = 1, at time: TimeInterval,
+                       onTitle: Bool = true, modifiers: NSEvent.ModifierFlags = []) throws {
+        let window = try #require(outline.window)
+        let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)
+        let field = try #require(cell.textField)
+        let title = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: outline)
+        let point = onTitle ? title : outline.convert(NSPoint(x: field.frame.minX - 3, y: field.frame.midY), from: cell)
+        let location = outline.convert(point, to: nil)
+        func event(_ type: NSEvent.EventType) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: location, modifierFlags: modifiers, timestamp: time,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count,
+                pressure: type == .leftMouseDown ? 1 : 0))
+        }
+        window.makeFirstResponder(outline)
+        window.postEvent(try event(.leftMouseUp), atStart: true)
+        outline.mouseDown(with: try event(.leftMouseDown))
+    }
+
+    @Test func nativeThreadClicksFocusAfterTrackingAndOnlyDeliberateTitleDoubleClicksRename() throws {
+        let folder = TemporaryDirectory("inbox-native-click")
+        let store = AppStore.shared
+        let project = store.addProject(at: folder.url)
+        defer { store.removeProject(project.id) }
+        let first = store.createThread(in: project.id).id
+        let second = store.createThread(in: project.id).id
+        let sidebar = SidebarViewController()
+        let outline = try #require(findOutline(in: sidebar.view))
+        let composer = ComposerViewController()
+        let window = TerminalFocus.KeyWindow(size: NSSize(width: 1000, height: 700))
+        defer { window.close() }
+        sidebar.view.frame = NSRect(x: 0, y: 0, width: 300, height: 700)
+        composer.view.frame = NSRect(x: 300, y: 0, width: 700, height: 150)
+        window.contentView?.addSubview(sidebar.view)
+        window.contentView?.addSubview(composer.view)
+        sidebar.select(threadID: first)
+        composer.threadID = first
+        sidebar.onSelectThread = { composer.threadID = $0 }
+        sidebar.view.layoutSubtreeIfNeeded()
+        outline.layoutSubtreeIfNeeded()
+        func row(_ id: UUID) throws -> Int {
+            try #require((0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarNode)?.threadID == id })
+        }
+        func field(_ id: UUID) throws -> NSTextField {
+            try #require((outline.view(atColumn: 0, row: row(id), makeIfNecessary: true) as? NSTableCellView)?.textField)
+        }
+        let start = ProcessInfo.processInfo.systemUptime
+        try click(outline, row: row(second), at: start)
+        #expect(composer.threadID == second)
+        #expect(window.firstResponder === composer.textView)
+        window.firstResponder?.keyDown(with: TerminalFocus.key("q", keyCode: 12, in: window))
+        #expect(composer.textView.string == "q")
+        // Opening a thread and immediately clicking again is navigation, not rename.
+        try click(outline, row: row(second), count: 2, at: start + 0.01)
+        #expect(try !field(second).isEditable)
+        #expect(window.firstResponder === composer.textView)
+        // Rapid clicks across two different thread identities must not become rename.
+        try click(outline, row: row(first), at: start + 1)
+        try click(outline, row: row(second), count: 2, at: start + 1.01)
+        #expect(try !field(second).isEditable)
+        #expect(window.firstResponder === composer.textView)
+        // The icon/margin remains navigation even on the selected thread.
+        try click(outline, row: row(second), at: start + 2, onTitle: false)
+        try click(outline, row: row(second), count: 2, at: start + 2.01, onTitle: false)
+        #expect(try !field(second).isEditable)
+        // A deliberate double click on the already-selected title still renames.
+        try click(outline, row: row(second), at: start + 3)
+        try click(outline, row: row(second), count: 2, at: start + 3.01)
+        let title = try field(second)
+        #expect(title.isEditable && title.isSelectable)
+        #expect(title.currentEditor() === window.firstResponder)
+        window.makeFirstResponder(composer.textView)
+        #expect(!title.isEditable)
+        #expect(!window.isVisible)
+    }
+
     @Test func clickingAThreadFocusesItsComposerAndAcceptsTypingImmediately() throws {
         let folder = TemporaryDirectory("inbox-click-focus")
         let store = AppStore.shared
