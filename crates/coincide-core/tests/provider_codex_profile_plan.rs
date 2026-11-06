@@ -239,12 +239,25 @@ fn marker(p: &Path) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
-fn mode_params(e: &Engine, id: &str, mode: &str, catalog: Option<&Value>) -> Value {
+fn selection_params(e: &Engine, id: &str, catalog: Option<&Value>) -> Value {
     let t = e.store.thread(id).unwrap();
-    let mut p = json!({"threadId":id,"accountId":t["selection"]["accountID"],"expectedSelection":t["selection"],"model":t["selection"]["modelID"],"interactionMode":mode,"expectedAccessMode":t["accessMode"],"expectedInteractionMode":t["interactionMode"]});
+    let mut p = json!({"threadId":id,"accountId":t["selection"]["accountID"],"expectedSelection":t["selection"],"model":t["selection"]["modelID"]});
+    for (saved, expected) in [
+        ("accessMode", "expectedAccessMode"),
+        ("interactionMode", "expectedInteractionMode"),
+    ] {
+        if let Some(value) = t.get(saved) {
+            p[expected] = value.clone();
+        }
+    }
     if let Some(catalog) = catalog {
         p["requestId"] = catalog["requestId"].clone();
     }
+    p
+}
+fn mode_params(e: &Engine, id: &str, mode: &str, catalog: Option<&Value>) -> Value {
+    let mut p = selection_params(e, id, catalog);
+    p["interactionMode"] = json!(mode);
     p
 }
 fn select_mode(e: &mut Engine, id: &str, mode: &str, catalog: Option<&Value>) -> Value {
@@ -385,6 +398,84 @@ fn plan_fixture_child() {
         p.as_object_mut().unwrap().remove(field);
         refuse(&mut e, &root, SELECT, p);
     }
+    // Retained ordinary rows can omit either mode. Omitted, explicit null
+    // and text are three exact CAS baselines, not one normalized default.
+    let mode_baseline = e.store.thread(&id).unwrap();
+    let calls_before_modes = records(&root).len();
+    for access in [None, Some(Value::Null), Some(json!("approval"))] {
+        for interaction in [None, Some(Value::Null), Some(json!("build"))] {
+            let mut shape = mode_baseline.clone();
+            shape["selection"]["modelID"] = json!("synthetic-a");
+            for (key, value) in [
+                ("accessMode", access.clone()),
+                ("interactionMode", interaction.clone()),
+            ] {
+                match value {
+                    Some(value) => {
+                        shape[key] = value;
+                    }
+                    None => {
+                        shape.as_object_mut().unwrap().remove(key);
+                    }
+                }
+            }
+            e.store.save(&shape).unwrap();
+            for (option, value) in [("effort", "high"), ("speed", "priority")] {
+                let mut expected = e.store.thread(&id).unwrap();
+                let mut p = selection_params(&e, &id, Some(&second));
+                p[option] = json!(value);
+                expected["selection"][option] = json!(value);
+                assert_eq!(call(&mut e, SELECT, p), expected);
+            }
+            select_mode(&mut e, &id, "plan", Some(&second));
+            select_mode(&mut e, &id, "build", None);
+        }
+    }
+    assert_eq!(
+        records(&root).len(),
+        calls_before_modes,
+        "Mode/options edits must not launch any process"
+    );
+    // Capture before a presence-only change, retaining the same selection.
+    // Both directions, null and concrete values must fail before any write.
+    for (mode, expected_key, text_value) in [
+        ("accessMode", "expectedAccessMode", "approval"),
+        ("interactionMode", "expectedInteractionMode", "build"),
+    ] {
+        for (captured, changed) in [
+            (None, Some(Value::Null)),
+            (None, Some(json!(text_value))),
+            (Some(Value::Null), None),
+            (Some(json!(text_value)), None),
+            (Some(Value::Null), Some(json!(text_value))),
+            (Some(json!(text_value)), Some(Value::Null)),
+        ] {
+            let mut shape = mode_baseline.clone();
+            shape["selection"]["modelID"] = json!("synthetic-a");
+            match captured {
+                Some(value) => {
+                    shape[mode] = value;
+                }
+                None => {
+                    shape.as_object_mut().unwrap().remove(mode);
+                }
+            }
+            e.store.save(&shape).unwrap();
+            let p = mode_params(&e, &id, "plan", Some(&second));
+            assert_eq!(p.get(expected_key), shape.get(mode));
+            match changed {
+                Some(value) => {
+                    shape[mode] = value;
+                }
+                None => {
+                    shape.as_object_mut().unwrap().remove(mode);
+                }
+            }
+            e.store.save(&shape).unwrap();
+            refuse(&mut e, &root, SELECT, p);
+        }
+    }
+    e.store.save(&mode_baseline).unwrap();
     let external = records(&root).len();
     configure(
         &mut e,
@@ -464,23 +555,20 @@ fn plan_fixture_child() {
     select_mode(&mut e, &id, "build", None);
     // Standard clears speed only, keeps high effort and full access, and uses
     // the fresh owned ACK to clear a previous tier. Plan/Build never changes it.
-    let t = e.store.thread(&id).unwrap();
-    call(
-        &mut e,
-        SELECT,
-        json!({"threadId":id,"accountId":a,"expectedSelection":t["selection"],"model":"synthetic-a","speed":null,"expectedAccessMode":t["accessMode"],"expectedInteractionMode":t["interactionMode"]}),
-    );
+    let mut p = selection_params(&e, &id, None);
+    p["speed"] = Value::Null;
+    call(&mut e, SELECT, p);
     assert_eq!(e.store.thread(&id).unwrap()["selection"]["effort"], "high");
     fs::write(ha.join("fixture-ack"), "priority").unwrap();
     send(&mut e, &id, &ha, "build", "fullAccess", "default");
     // Explicit default/approval/Build clears only the requested options before
     // account change. Neither A nor the default account can authorize B.
-    let t = e.store.thread(&id).unwrap();
-    call(
-        &mut e,
-        SELECT,
-        json!({"threadId":id,"accountId":a,"expectedSelection":t["selection"],"model":"default","accessMode":"approval","interactionMode":"build","effort":null,"speed":null,"expectedAccessMode":t["accessMode"],"expectedInteractionMode":t["interactionMode"]}),
-    );
+    let mut p = mode_params(&e, &id, "build", None);
+    p["model"] = json!("default");
+    p["accessMode"] = json!("approval");
+    p["effort"] = Value::Null;
+    p["speed"] = Value::Null;
+    call(&mut e, SELECT, p);
     select_profile(&mut e, &id, &b);
     let default = call(&mut e, "agent.models.refresh", json!({"provider":"codex"}));
     let deadline = Instant::now() + Duration::from_secs(10);

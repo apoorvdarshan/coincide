@@ -196,9 +196,10 @@ impl Engine {
             || fields.contains_key("speed")
         {
             ensure!(
-                fields.contains_key("expectedAccessMode")
-                    && fields.contains_key("expectedInteractionMode")
-                    && p.get("expectedAccessMode") == thread.get("accessMode")
+                // Omission captures actual absence; explicit null remains a
+                // different baseline. Present saved fields still require their
+                // corresponding expectation, including when saved as null.
+                p.get("expectedAccessMode") == thread.get("accessMode")
                     && p.get("expectedInteractionMode") == thread.get("interactionMode"),
                 "Conversation modes changed; reload profile controls"
             );

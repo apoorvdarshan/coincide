@@ -14,8 +14,8 @@ struct NamedModelOptions<'a> {
     interaction: Option<&'a str>,
     effort: Option<&'a Value>,
     speed: Option<&'a Value>,
-    expected_access: &'a Value,
-    expected_interaction: &'a Value,
+    expected_access: Option<&'a Value>,
+    expected_interaction: Option<&'a Value>,
 }
 impl Coincide {
     fn refresh_named_profile_models(
@@ -77,8 +77,12 @@ impl Coincide {
             params["requestId"] = json!(request);
         }
         if let Some(options) = options {
-            params["expectedAccessMode"] = options.expected_access.clone();
-            params["expectedInteractionMode"] = options.expected_interaction.clone();
+            if let Some(expected) = options.expected_access {
+                params["expectedAccessMode"] = expected.clone();
+            }
+            if let Some(expected) = options.expected_interaction {
+                params["expectedInteractionMode"] = expected.clone();
+            }
             if let Some(effort) = options.effort {
                 params["effort"] = effort.clone();
             }
@@ -142,14 +146,14 @@ impl Coincide {
         if clear_speed {
             default_label.push_str(", Standard speed");
         }
-        let default_access = thread["accessMode"].clone();
-        let default_interaction = thread["interactionMode"].clone();
+        let default_access = thread.get("accessMode").cloned();
+        let default_interaction = thread.get("interactionMode").cloned();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
             .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. Bots and native resume remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("named-profile-model-default").label(default_label).disabled(disabled)
-                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || planning || clear_effort || clear_speed {Some(NamedModelOptions{interaction:if planning {Some("build")}else{None},access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:&default_access,expected_interaction:&default_interaction})}else{None},cx))))
+                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || planning || clear_effort || clear_speed {Some(NamedModelOptions{interaction:if planning {Some("build")}else{None},access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:default_access.as_ref(),expected_interaction:default_interaction.as_ref()})}else{None},cx))))
                 .child(Button::new("named-profile-model-refresh").label("Refresh profile models").disabled(disabled || self.selection_ui.catalog_request.is_some())
                     .on_click(cx.listener(move |this,_,_,cx|this.refresh_named_profile_models(&refresh_id,&refresh_selection,cx)))));
         if let Some(reason) = self.selection_ui.capabilities["lockReason"].as_str() {
@@ -234,8 +238,8 @@ impl Coincide {
             let row_selection = selection.clone();
             let row_model = model.clone();
             let row_request = request.clone();
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             modes = modes.child(
                 Button::new(SharedString::from(format!("named-profile-mode-{mode}")))
                     .label(label)
@@ -260,8 +264,8 @@ impl Coincide {
                                 access: None,
                                 effort: None,
                                 speed: None,
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
@@ -279,8 +283,8 @@ impl Coincide {
             let row_selection = selection.clone();
             let row_model = model.clone();
             let row_request = request.clone();
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             access_controls = access_controls.child(
                 Button::new(SharedString::from(format!("named-profile-access-{access}")))
                     .label(label)
@@ -297,8 +301,8 @@ impl Coincide {
                                 access: Some(access),
                                 effort: None,
                                 speed: None,
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
@@ -324,8 +328,8 @@ impl Coincide {
             let row_id = id.clone();
             let row_selection = selection.clone();
             let row_model = model.clone();
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             effort_controls = effort_controls.child(
                 Button::new("named-profile-effort-clear")
                     .label("Use provider effort (clear saved effort)")
@@ -341,8 +345,8 @@ impl Coincide {
                                 access: None,
                                 effort: Some(&Value::Null),
                                 speed: None,
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
@@ -362,8 +366,8 @@ impl Coincide {
             let row_model = model.clone();
             let row_request = request.clone();
             let row_effort = json!(effort);
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             efforts = efforts.child(
                 Button::new(SharedString::from(format!("named-profile-effort-{effort}")))
                     .label(SharedString::from(effort.to_owned()))
@@ -385,8 +389,8 @@ impl Coincide {
                                 access: None,
                                 effort: Some(&row_effort),
                                 speed: None,
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
@@ -417,8 +421,8 @@ impl Coincide {
             let row_id = id.clone();
             let row_selection = selection.clone();
             let row_model = model.clone();
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             speed_controls = speed_controls.child(
                 Button::new("named-profile-speed-clear")
                     .label("Standard speed (clear saved speed)")
@@ -435,8 +439,8 @@ impl Coincide {
                                 access: None,
                                 effort: None,
                                 speed: Some(&Value::Null),
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
@@ -458,8 +462,8 @@ impl Coincide {
             let row_model = model.clone();
             let row_request = request.clone();
             let row_speed = json!(speed);
-            let expected_access = thread["accessMode"].clone();
-            let expected_interaction = thread["interactionMode"].clone();
+            let expected_access = thread.get("accessMode").cloned();
+            let expected_interaction = thread.get("interactionMode").cloned();
             speeds = speeds.child(
                 Button::new(SharedString::from(format!("named-profile-speed-{speed}")))
                     .label(SharedString::from(
@@ -483,8 +487,8 @@ impl Coincide {
                                 access: None,
                                 effort: None,
                                 speed: Some(&row_speed),
-                                expected_access: &expected_access,
-                                expected_interaction: &expected_interaction,
+                                expected_access: expected_access.as_ref(),
+                                expected_interaction: expected_interaction.as_ref(),
                             }),
                             cx,
                         )
