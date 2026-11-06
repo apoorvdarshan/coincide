@@ -6,6 +6,12 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 mod sections;
 use sections::NO_PROJECT;
 
+// Button's root alignment does not reach its independently centered label slot.
+// A full-width content child keeps the real Button and aligns/truncates its text.
+fn sidebar_button_label(label: String) -> Div {
+    div().w_full().min_w_0().truncate().text_left().child(label)
+}
+
 impl Coincide {
     pub(super) fn navigation_sidebar(
         &self,
@@ -102,11 +108,11 @@ impl Coincide {
                             if chats { "section" } else { "project" },
                             threads.len()
                         )))
-                        .label(format!(
+                        .child(sidebar_button_label(format!(
                             "{} {name} ({})",
                             if collapsed { "▸" } else { "▾" },
                             threads.len()
-                        ))
+                        )))
                         .disabled(searching)
                         .when(searching, |button| {
                             button.tooltip("Clear search to collapse project groups")
@@ -161,7 +167,7 @@ impl Coincide {
                                     "Open conversation: {}",
                                     thread.title
                                 )))
-                                .label(label)
+                                .child(sidebar_button_label(label))
                                 .tooltip(thread.title.clone())
                                 .w_full()
                                 .selected(id == selected)
@@ -214,7 +220,8 @@ impl Coincide {
                     .compact()
                     .justify_start()
                     .h(px(32.))
-                    .label(format!("Project: {project_label}"))
+                    .accessibility_label(format!("Project: {project_label}"))
+                    .child(sidebar_button_label(format!("Project: {project_label}")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.project_picker_open = !this.project_picker_open;
                         cx.notify();
