@@ -1,6 +1,6 @@
 use gpui_kit::{
-    AppContext, Context, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Render,
-    TestAppContext, Window, WindowOptions, div, prelude::*,
+    AppContext, Context, FocusHandle, InputEvent, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke,
+    Render, TestAppContext, Window, WindowOptions, div, prelude::*,
 };
 use std::sync::atomic::Ordering;
 
