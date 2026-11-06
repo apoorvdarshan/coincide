@@ -148,10 +148,37 @@ jobs:
             crates
             vendor
             .cargo
-      - name: Install native compile dependencies
+      - name: Select main Ubuntu archive for native dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcursor-dev libxrandr-dev libxi-dev libegl1-mesa-dev libvulkan-dev libasound2-dev libudev-dev
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("/etc/apt")
+          # Hosted images may point .list/.sources at this fixed mirror list.
+          paths = [root / "sources.list", root / "apt-mirrors.txt"]
+          for suffix in ("*.list", "*.sources"):
+              paths.extend(sorted((root / "sources.list.d").glob(suffix)))
+          azure = re.compile(rb"(^|[ \t]|^URIs:)(https?://)azure\.archive\.ubuntu\.com(?=/ubuntu(?:/|\s|$))", re.I)
+          changed = 0
+          for path in paths:
+              if not path.is_file():
+                  continue
+              original = path.read_bytes()
+              lines = []
+              for line in original.splitlines(keepends=True):
+                  entry, marker, comment = line.partition(b"#")
+                  lines.append(azure.sub(rb"\1\2archive.ubuntu.com", entry) + marker + comment)
+              updated = b"".join(lines)
+              if updated != original:
+                  path.write_bytes(updated)
+                  changed += 1
+          print(f"Selected main Ubuntu archive in {changed} existing source files")
+          PY
+      - name: Update native dependency package indexes
+        run: sudo apt-get update
+      - name: Install native compile dependencies
+        run: sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcursor-dev libxrandr-dev libxi-dev libegl1-mesa-dev libvulkan-dev libasound2-dev libudev-dev
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
