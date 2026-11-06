@@ -1,3 +1,5 @@
+#[path = "store_project_defaults.rs"]
+mod project_defaults;
 #[path = "project_management.rs"]
 mod project_management;
 use anyhow::{Context, Result, bail, ensure};

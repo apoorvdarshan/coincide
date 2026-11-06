@@ -13,6 +13,9 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "project_defaults.rs"]
+pub mod project_defaults;
+
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]

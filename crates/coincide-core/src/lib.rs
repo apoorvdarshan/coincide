@@ -8,6 +8,7 @@ pub mod browser_protocol;
 pub mod control;
 pub mod provider_catalog;
 pub mod provider_preferences;
+pub use api::project_defaults;
 pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
