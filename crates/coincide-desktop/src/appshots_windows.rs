@@ -366,5 +366,5 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
     })
 }
 pub(super) fn sound() {
-    unsafe { MessageBeep(MB_OK) }.ok();
+    unsafe { windows::Win32::System::Diagnostics::Debug::MessageBeep(MB_OK) }.ok();
 }

@@ -4,16 +4,19 @@ use super::*;
 use crate::{attachments::StoredImage, composer_context};
 
 pub struct AppshotTicket {
+    owner: Uuid,
     target: Option<String>,
     expected_settings: Option<Value>,
     expected_images: Option<Value>,
     expected_context: Option<Value>,
 }
 pub struct PreparedAppshot {
-    pub image: StoredImage,
-    pub app: String,
-    pub title: Option<String>,
-    pub text: Option<String>,
+    image: StoredImage,
+    cleanup_identity: crate::private_fs::Identity,
+    retained: bool,
+    app: String,
+    title: Option<String>,
+    text: Option<String>,
 }
 impl PreparedAppshot {
     /// Bounded decoder and private UUID attachment directory shared with normal
@@ -36,12 +39,36 @@ impl PreparedAppshot {
         );
         let image =
             crate::attachments::ingest_image_bytes(root, png, &format!("Appshot of {app}.png"))?;
+        let cleanup_identity =
+            crate::private_fs::identity(image.path.parent().context("Missing image directory")?)?;
         Ok(Self {
+            cleanup_identity,
+            retained: false,
             image,
             app,
             title,
             text,
         })
+    }
+}
+impl Drop for PreparedAppshot {
+    fn drop(&mut self) {
+        if self.retained {
+            return;
+        }
+        let Some(directory) = self.image.path.parent() else {
+            return;
+        };
+        // Remove only the exact generated files in the directory we created.
+        // Replaced directories and unrelated files are never traversed/deleted.
+        if std::fs::canonicalize(directory).ok().as_deref() != Some(directory)
+            || crate::private_fs::identity(directory).ok() != Some(self.cleanup_identity)
+        {
+            return;
+        }
+        let _ = std::fs::remove_file(&self.image.path);
+        let _ = std::fs::remove_file(&self.image.original_path);
+        let _ = std::fs::remove_dir(directory);
     }
 }
 impl Engine {
@@ -86,6 +113,7 @@ impl Engine {
                 .map(|thread| (id.to_owned(), thread))
         });
         Ok(AppshotTicket {
+            owner: self.appshots_owner,
             expected_settings: settings.get("appshots").cloned(),
             expected_images: target
                 .as_ref()
@@ -99,9 +127,13 @@ impl Engine {
     pub fn native_appshot_deliver(
         &mut self,
         ticket: AppshotTicket,
-        prepared: PreparedAppshot,
+        mut prepared: PreparedAppshot,
     ) -> Result<Value> {
         self.require_background_admission()?;
+        ensure!(
+            ticket.owner == self.appshots_owner,
+            "Appshot capture belongs to another engine"
+        );
         let settings = self
             .store
             .document("settings.json")?
@@ -138,12 +170,12 @@ impl Engine {
             total.saturating_add(prepared.image.byte_len) <= 20 * 1024 * 1024,
             "Draft images exceed 20 MiB"
         );
-        images.push(serde_json::to_value(prepared.image)?);
-        if let Some(text) = prepared.text.filter(|s| !s.trim().is_empty()) {
+        images.push(serde_json::to_value(&prepared.image)?);
+        if let Some(text) = prepared.text.as_ref().filter(|s| !s.trim().is_empty()) {
             let raw = thread.get("draftContext").unwrap_or(&Value::Null);
             composer_context::validate(raw)?;
             let mut rows = raw.as_array().cloned().unwrap_or_default();
-            rows.push(json!({"id":Uuid::new_v4(),"kind":"window-text","app":prepared.app,"title":prepared.title,"text":text}));
+            rows.push(json!({"id":Uuid::new_v4(),"kind":"window-text","app":&prepared.app,"title":&prepared.title,"text":text}));
             let raw = Value::Array(rows);
             composer_context::validate(&raw)?;
             thread["draftContext"] = raw;
@@ -152,6 +184,7 @@ impl Engine {
         // Save once: existing draft text/history/selection/unknown fields survive.
         // No send/launch/provider call occurs anywhere on this path.
         self.store.save(&thread)?;
+        prepared.retained = true;
         self.revision += 1;
         Ok(thread)
     }
@@ -296,5 +329,22 @@ mod tests {
                     .is_some()
             );
         }
+    }
+    #[test]
+    fn stale_capture_cleans_only_generated_private_files_and_never_crosses_engine_owner() {
+        let (_one, mut first, _) = fixture();
+        let (_two, mut second, _) = fixture();
+        let ticket = first.native_appshot_admit(None).unwrap();
+        let capture = prepared(&second, None);
+        let directory = capture.image.path.parent().unwrap().to_owned();
+        assert!(directory.exists());
+        assert!(second.native_appshot_deliver(ticket, capture).is_err());
+        assert!(!directory.exists());
+        let capture = prepared(&first, None);
+        let directory = capture.image.path.parent().unwrap().to_owned();
+        std::fs::write(directory.join("future-private-file"), b"keep").unwrap();
+        drop(capture);
+        assert!(directory.join("future-private-file").exists());
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
     }
 }

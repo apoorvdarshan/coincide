@@ -20,7 +20,12 @@ impl Settings {
             custom: raw["trigger"] == "shortcut",
             shortcut: raw["shortcut"]["shortcut"]
                 .as_str()
-                .filter(|s| valid_shortcut(s))
+                .filter(|s| {
+                    valid_shortcut(s)
+                        && raw["shortcut"]["keyCode"]
+                            .as_u64()
+                            .is_some_and(|code| code <= 127)
+                })
                 .map(str::to_owned),
             includes_text: raw["includesWindowText"].as_bool().unwrap_or(false),
             sound: raw["playsSound"].as_bool().unwrap_or(true),
@@ -133,6 +138,16 @@ mod tests {
         let settings = Settings::read(&json!({"appshots":{"enabled":"future","playsSound":false}}));
         assert!(!settings.enabled && !settings.includes_text && !settings.sound);
         assert!(Settings::read(&json!({})).sound);
+        assert!(
+            Settings::read(&json!({"appshots":{"shortcut":{"keyCode":-1,"shortcut":"mod+s"}}}))
+                .shortcut
+                .is_none()
+        );
+        assert!(
+            Settings::read(&json!({"appshots":{"shortcut":{"keyCode":1,"shortcut":"mod+s"}}}))
+                .shortcut
+                .is_some()
+        );
         let current = json!({"appshots":{"future":{"keep":1},"trigger":"new-trigger"},"other":3});
         assert_eq!(
             patch(&current, "enabled", json!(true)).unwrap(),

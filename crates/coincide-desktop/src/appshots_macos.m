@@ -94,8 +94,8 @@ static BOOL ASProtected(pid_t pid) {
   BOOL secure=subrole&&CFGetTypeID(subrole)==CFStringGetTypeID()&&CFEqual(subrole,kAXSecureTextFieldSubrole);
   if(subrole)CFRelease(subrole);return secure;
 }
-static void ASText(AXUIElementRef element,NSMutableString *text,NSUInteger *visited,int depth) {
-  if(depth>16||++*visited>2000||text.length>=8000)return;
+static void ASText(AXUIElementRef element,NSMutableString *text,NSUInteger *visited,int depth,NSTimeInterval deadline) {
+  if(depth>16||++*visited>2000||text.length>=8000||NSProcessInfo.processInfo.systemUptime>=deadline)return;
   CFTypeRef role=ASCopy(element,kAXSubroleAttribute);
   BOOL secure=role&&CFGetTypeID(role)==CFStringGetTypeID()&&CFEqual(role,kAXSecureTextFieldSubrole);if(role)CFRelease(role);
   if(secure)return;
@@ -108,7 +108,7 @@ static void ASText(AXUIElementRef element,NSMutableString *text,NSUInteger *visi
     if(value)CFRelease(value);if(text.length>=8000)return;
   }
   CFTypeRef children=ASCopy(element,kAXChildrenAttribute);
-  if(children&&CFGetTypeID(children)==CFArrayGetTypeID())for(id child in (__bridge NSArray *)children) ASText((__bridge AXUIElementRef)child,text,visited,depth+1);
+  if(children&&CFGetTypeID(children)==CFArrayGetTypeID())for(id child in (__bridge NSArray *)children) ASText((__bridge AXUIElementRef)child,text,visited,depth+1,deadline);
   if(children)CFRelease(children);
 }
 @interface ASCaptureResult : NSObject
@@ -151,7 +151,7 @@ char *coincide_appshots_capture(bool readText, bool (*allowed)(const void *),con
       AXUIElementRef ax=AXUIElementCreateApplication(pid);AXUIElementSetMessagingTimeout(ax,0.2);
       AXUIElementRef win=(AXUIElementRef)ASCopy(ax,kAXFocusedWindowAttribute);CFRelease(ax);
       if(win) {CFTypeRef position=ASCopy(win,kAXPositionAttribute),size=ASCopy(win,kAXSizeAttribute);CGPoint p;CGSize s;
-        if(position&&size&&CFGetTypeID(position)==AXValueGetTypeID()&&CFGetTypeID(size)==AXValueGetTypeID()&&AXValueGetValue(position,kAXValueCGPointType,&p)&&AXValueGetValue(size,kAXValueCGSizeType,&s)&&fabs(p.x-frame.origin.x)<2&&fabs(p.y-frame.origin.y)<2&&fabs(s.width-frame.size.width)<2&&fabs(s.height-frame.size.height)<2){NSUInteger visited=0;ASText(win,text,&visited,0);}
+        if(position&&size&&CFGetTypeID(position)==AXValueGetTypeID()&&CFGetTypeID(size)==AXValueGetTypeID()&&AXValueGetValue(position,kAXValueCGPointType,&p)&&AXValueGetValue(size,kAXValueCGSizeType,&s)&&fabs(p.x-frame.origin.x)<2&&fabs(p.y-frame.origin.y)<2&&fabs(s.width-frame.size.width)<2&&fabs(s.height-frame.size.height)<2){NSUInteger visited=0;ASText(win,text,&visited,0,NSProcessInfo.processInfo.systemUptime+2);}
         if(position)CFRelease(position);if(size)CFRelease(size);CFRelease(win);
       }
     }

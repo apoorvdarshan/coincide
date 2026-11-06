@@ -157,6 +157,7 @@ impl Coincide {
                 }
                 Err(error) => self.appshots.outcome = error.to_string(),
             }
+            self.status = self.appshots.outcome.clone();
             cx.notify();
         }
         if self.appshots.closed {
@@ -189,10 +190,8 @@ impl Coincide {
         let tx = self.appshots.tx.clone();
         let read_text = Settings::read(&self.settings).includes_text;
         self.appshots.workers.spawn(move |admission| {
-            let allowed = || admission.allowed() && generation == stamp.load(Ordering::Acquire);
-            let result = (|| -> Result<_> {
-                anyhow::ensure!(allowed(), "Appshot cancelled");
-                let capture = appshots_platform::capture(read_text, &allowed)?;
+            let result = admitted_capture(&admission, generation, &stamp, |allowed| {
+                let capture = appshots_platform::capture(read_text, allowed)?;
                 anyhow::ensure!(allowed(), "Appshot cancelled");
                 PreparedAppshot::prepare(
                     &root,
@@ -201,11 +200,117 @@ impl Coincide {
                     capture.title,
                     if read_text { capture.text } else { None },
                 )
-            })();
-            if allowed() {
+            });
+            if let Some(result) = result {
                 let _ = tx.try_send((generation, ticket, result));
             }
         });
         cx.notify();
+    }
+}
+
+/// The production worker and synthetic tests share cancellation/publication
+/// admission. A semantic return never releases WorkerOwner's actual join slot.
+fn admitted_capture<T>(
+    admission: &worker_owner::Admission,
+    generation: u64,
+    stamp: &AtomicU64,
+    capture: impl FnOnce(&dyn Fn() -> bool) -> Result<T>,
+) -> Option<Result<T>> {
+    let allowed = || admission.allowed() && generation == stamp.load(Ordering::Acquire);
+    if !allowed() {
+        return None;
+    }
+    let result = capture(&allowed);
+    allowed().then_some(result)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    struct ExitGate {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl Drop for ExitGate {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+    thread_local! {static EXIT:std::cell::RefCell<Option<ExitGate>>=const{std::cell::RefCell::new(None)};}
+    #[::core::prelude::v1::test]
+    fn disable_discards_late_fake_capture_and_retains_actual_thread_custody() {
+        let mut owner = worker_owner::WorkerOwner::default();
+        let stamp = Arc::new(AtomicU64::new(1));
+        let worker_stamp = stamp.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let (join_tx, join_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            EXIT.with(|gate| {
+                *gate.borrow_mut() = Some(ExitGate {
+                    entered: exit_tx,
+                    release: join_rx,
+                })
+            });
+            let result = admitted_capture(&admission, 1, &worker_stamp, |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(7)
+            });
+            result_tx
+                .send(result.map(|result| result.unwrap()))
+                .unwrap();
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!owner.can_start());
+        stamp.fetch_add(1, Ordering::AcqRel);
+        owner.close();
+        assert_eq!(owner.status().unjoined, 1);
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            result_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            None
+        );
+        exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            owner.status().unjoined,
+            1,
+            "semantic cancellation is not a join"
+        );
+        join_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = owner.status();
+            if status.unjoined == 0 {
+                assert_eq!(status.returned, 1);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn unchanged_generation_publishes_one_fake_capture() {
+        let mut owner = worker_owner::WorkerOwner::default();
+        let stamp = AtomicU64::new(3);
+        let (tx, rx) = mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            let result = admitted_capture(&admission, 3, &stamp, |allowed| {
+                assert!(allowed());
+                Ok(9)
+            });
+            tx.send(result.map(|value| value.unwrap())).unwrap();
+        }));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(9));
+        owner.close();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owner.status().unjoined != 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
     }
 }
