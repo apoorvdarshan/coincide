@@ -7,7 +7,7 @@ use coincide_core::{
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::{fs::PermissionsExt, net::UnixDatagram},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -21,7 +21,7 @@ fn named_limits_use_captured_private_account_and_never_borrow_cached_results() {
     let root = dir.path().canonicalize().unwrap();
     let executable = root.join("fake-limits");
     fs::write(&executable, r#"#!/usr/bin/env python3
-import json,os,sys
+import json,os,socket,sys
 from pathlib import Path
 root=Path(__file__).parent
 home=Path(os.environ['CODEX_HOME'])
@@ -59,6 +59,13 @@ if mode=='block':
 if mode=='auth-change':write({'method':'account/updated','params':{}})
 else:write({'method':'account/rateLimits/updated','params':{}})
 if mode=='revoke':
+ # Off-PTY gate: only Rust's completed loading receipt authorizes mutation.
+ with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as gate:
+  gate.settimeout(10)
+  gate.bind(str(root/'revoke-peer.sock'))
+  gate.connect(str(root/'revoke.sock'))
+  gate.send(b'waiting')
+  assert gate.recv(1)==b'R'
  (home/'auth.json').write_text('synthetic file identity change, not authentication');(home/'auth.json').chmod(0o600)
 result={'rateLimits':None} if mode=='missing' else {'rateLimits':{'primary':{'usedPercent':float((home/'fixture-percent').read_text()) if named else 99},'credits':{'hasCredits':True,'balance':'3.00'}}}
 write({'id':r['id'],'result':result})
@@ -475,10 +482,31 @@ fn limits_fixture_child() {
     assert_eq!(records(&root).len(), calls_before_restart);
     assert_eq!(refresh(&mut engine, &id)["state"], "ready");
     // Authentication-file mutation revokes the captured request, not the thread.
+    let revoke_gate = UnixDatagram::bind(root.join("revoke.sock")).unwrap();
+    revoke_gate
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    revoke_gate
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
     fs::write(home_a.join("fixture-mode"), "revoke").unwrap();
     let params = target(&engine, &id);
     let revoking = call(&mut engine, REFRESH, params.clone());
+    assert_eq!(revoking["state"], "loading");
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut waiting = [0u8; 7];
+    let (length, peer) = revoke_gate.recv_from(&mut waiting).unwrap();
+    assert_eq!(&waiting[..length], b"waiting");
+    assert_eq!(
+        peer.as_pathname(),
+        Some(root.join("revoke-peer.sock").as_path())
+    );
+    assert_eq!(
+        revoke_gate
+            .send_to(b"R", root.join("revoke-peer.sock"))
+            .unwrap(),
+        1
+    );
     while !home_a.join("auth.json").exists() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(2));
