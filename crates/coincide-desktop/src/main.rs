@@ -1134,12 +1134,11 @@ impl Coincide {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
-                if let Err(error) = main_window_poll::update(
-                    poll_window,
-                    &this,
-                    cx,
-                    |this, window, cx| this.tick(window, cx),
-                ) {
+                if let Err(error) =
+                    main_window_poll::update(poll_window, &this, cx, |this, window, cx| {
+                        this.tick(window, cx)
+                    })
+                {
                     // A removed main window or released owner ends this task;
                     // never silently keep polling through an unexpected error.
                     eprintln!("Main window polling stopped: {error}");
