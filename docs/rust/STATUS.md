@@ -66,13 +66,26 @@ merged after exact-head checks. Its headless test exercised the actual native
 handlers and real local Git operations with an injected picker response; no
 physical picker-entry result or modification of global user instructions is claimed.
 
-[#274](https://github.com/apoorvdarshan/coincide/pull/274) integrates the remaining
-shared composer/Settings work, Project Defaults, guarded lifecycle actions,
-queue editing, empty-chat reuse, snooze wake-up and off-by-default Appshots.
-[#273](https://github.com/apoorvdarshan/coincide/pull/273) supplies complete provider
-setup/configuration controls and the separately owned terminal handoff. Both are
-under active verification. Context-detail and selected-reply quote workflows are
-being validated separately before integration. The active Swift app, original
+[#274](https://github.com/apoorvdarshan/coincide/pull/274) is merged as
+`dd89c4884c43ea722e1f873c77600da63233ba67`, with the identical tree to tested head
+`2c7f4ca97326696c0b77733b60c6d5380bb133a2`. All 14 applicable hosted checks passed.
+Core 693 and every integration target passed; Desktop 503 and all four integration
+targets passed. Actual Windows/Linux input, separate Settings close, ordinary Quit
+and older-selection/draft restart passed and both platforms' screenshots were
+reviewed. Its composer, Settings, Project Defaults, lifecycle, queue editing,
+empty-chat reuse, snooze wake-up and Appshots results remain scoped; actual
+Appshots capture/hooks/permissions are unverified.
+
+[#275](https://github.com/apoorvdarshan/coincide/pull/275) now integrates
+[#273](https://github.com/apoorvdarshan/coincide/pull/273)'s provider configuration
+and external-terminal setup controls, full selectable context details, native
+selected replies, folder autocomplete, named-account queue dispatch, Send Now,
+and image/context follow-up payloads. Before payload integration, private GPUI
+fixtures passed one actual readonly context/copy case, two actual reply-selection
+cases, and all eight actual composer-dispatch cases. These synthetic fixtures do
+not construct native hosts or use actual providers. Payload and final combined
+all-platform validation are pending. Other provider-account modes and remaining
+General settings are being completed separately. The active Swift app, original
 checkout and actual user data remain preserved; no cutover or release occurred.
 
 See [CHECKLIST](CHECKLIST.md) for the current concise worklist. The following older
