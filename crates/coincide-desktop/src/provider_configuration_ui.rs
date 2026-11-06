@@ -1,0 +1,803 @@
+//! Retained per-provider native drafts. Values cross only the typed private
+//! configuration boundary, never settings.patch, logs, or serialized UI state.
+use super::*;
+use coincide_core::{
+    native_ui_edits::{NativeUiEditLease, NativeUiEditors},
+    provider_configuration::{ProbeReport, Snapshot},
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    sync::mpsc,
+};
+#[derive(Clone, Copy)]
+pub(super) enum Part {
+    Status,
+    Executable,
+    Environment,
+    Setup,
+}
+struct Variable {
+    id: String,
+    name: Entity<InputState>,
+    value: Entity<InputState>,
+    revealed: bool,
+    _subscriptions: Vec<Subscription>,
+}
+struct Editor {
+    path: Entity<InputState>,
+    variables: Vec<Variable>,
+    saved_path: String,
+    saved_environment: BTreeMap<String, String>,
+    baseline: String,
+    generation: u64,
+    loaded: bool,
+    load_requested: bool,
+    notice: String,
+    report: Option<ProbeReport>,
+    checked: Option<Instant>,
+    lease: NativeUiEditLease,
+    _subscriptions: Vec<Subscription>,
+}
+impl Editor {
+    fn values(&self, cx: &App) -> Result<(String, BTreeMap<String, String>)> {
+        let mut values = BTreeMap::new();
+        for row in &self.variables {
+            let key = row.name.read(cx).value().trim().to_owned();
+            if key.is_empty() {
+                continue;
+            }
+            anyhow::ensure!(
+                !values.contains_key(&key),
+                "A variable name is set more than once"
+            );
+            values.insert(key, row.value.read(cx).value().to_string());
+        }
+        Ok((self.path.read(cx).value().trim().to_owned(), values))
+    }
+    fn dirty(&self, cx: &App) -> bool {
+        self.values(cx).map_or(true, |(path, environment)| {
+            path != self.saved_path || environment != self.saved_environment
+        })
+    }
+}
+enum Request {
+    Load,
+    Save {
+        baseline: String,
+        path: String,
+        environment: BTreeMap<String, String>,
+    },
+    Check,
+}
+enum Outcome {
+    Loaded(Snapshot),
+    Saved(Snapshot),
+    Checked(ProbeReport),
+    ManagedChecked(usize),
+}
+struct Reply {
+    provider: String,
+    generation: u64,
+    result: Result<Outcome>,
+}
+pub(super) struct Panel {
+    engine: SharedEngine,
+    editors: HashMap<String, Editor>,
+    native_editors: NativeUiEditors,
+    workers: worker_owner::WorkerOwner,
+    sender: mpsc::SyncSender<Reply>,
+    receiver: mpsc::Receiver<Reply>,
+    pending: Option<String>,
+    active: String,
+    enabled: bool,
+    pickers: Vec<Task<()>>,
+    _poll: Task<()>,
+}
+fn secret(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
+        .iter()
+        .any(|part| name.contains(part))
+}
+impl Panel {
+    pub fn new(
+        engine: SharedEngine,
+        native_editors: NativeUiEditors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let poll = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+                if this
+                    .update_in(cx, |this, window, cx| this.poll(window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self {
+            engine,
+            editors: HashMap::new(),
+            native_editors,
+            workers: Default::default(),
+            sender,
+            receiver,
+            pending: None,
+            active: String::new(),
+            enabled: true,
+            pickers: Vec::new(),
+            _poll: poll,
+        }
+    }
+    pub fn select(
+        &mut self,
+        provider: &str,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.enabled = enabled;
+        self.active = provider.into();
+        if !self.editors.contains_key(provider) {
+            let key = provider.to_owned();
+            let path =
+                cx.new(|cx| InputState::new(window, cx).placeholder("Automatic: search PATH"));
+            let subscription = cx.subscribe_in(&path, window, move |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.edited(&key, window, cx);
+                }
+            });
+            self.editors.insert(
+                provider.into(),
+                Editor {
+                    path,
+                    variables: Vec::new(),
+                    saved_path: String::new(),
+                    saved_environment: BTreeMap::new(),
+                    baseline: "unconfigured".into(),
+                    generation: 0,
+                    loaded: false,
+                    load_requested: true,
+                    notice: String::new(),
+                    report: None,
+                    checked: None,
+                    lease: self.native_editors.editor(),
+                    _subscriptions: vec![subscription],
+                },
+            );
+        }
+        if !self.editors[provider].loaded && self.editors[provider].load_requested {
+            self.start(provider, Request::Load, cx);
+        }
+    }
+    fn variable(
+        &self,
+        provider: &str,
+        name: &str,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Variable {
+        let id = uuid::Uuid::new_v4().to_string();
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("NAME")
+                .default_value(name)
+        });
+        let value = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("value")
+                .default_value(value)
+        });
+        let subscriptions = [&name, &value]
+            .into_iter()
+            .map(|input| {
+                let provider = provider.to_owned();
+                cx.subscribe_in(input, window, move |this, _, event, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.edited(&provider, window, cx);
+                    }
+                })
+            })
+            .collect();
+        Variable {
+            id,
+            name,
+            value,
+            revealed: false,
+            _subscriptions: subscriptions,
+        }
+    }
+    fn edited(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editors.get_mut(provider) {
+            editor.generation = editor.generation.wrapping_add(1);
+            for row in &editor.variables {
+                let masked = secret(&row.name.read(cx).value()) && !row.revealed;
+                row.value
+                    .update(cx, |input, cx| input.set_masked(masked, window, cx));
+            }
+            let dirty = editor.dirty(cx);
+            editor.lease.set_dirty(dirty);
+        }
+        cx.notify();
+    }
+    fn load_snapshot(
+        &mut self,
+        provider: &str,
+        snapshot: Snapshot,
+        replace: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path = snapshot
+            .executable
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let rows = if replace {
+            snapshot
+                .environment
+                .iter()
+                .map(|(name, value)| self.variable(provider, name, value, window, cx))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(editor) = self.editors.get_mut(provider) {
+            editor.baseline = snapshot.baseline;
+            editor.saved_path = path.clone();
+            editor.saved_environment = snapshot.environment;
+            editor.loaded = true;
+            editor.report = None;
+            editor.checked = None;
+            if replace {
+                editor
+                    .path
+                    .update(cx, |input, cx| input.set_value(path, window, cx));
+                editor.variables = rows;
+                for row in &editor.variables {
+                    row.value.update(cx, |input, cx| {
+                        input.set_masked(secret(&row.name.read(cx).value()), window, cx)
+                    });
+                }
+            }
+            let dirty = editor.dirty(cx);
+            editor.lease.set_dirty(dirty);
+            editor.notice = if dirty {
+                "Saved; newer changes remain unsaved.".into()
+            } else {
+                "Saved settings loaded.".into()
+            };
+        }
+        cx.notify();
+    }
+    fn start(&mut self, provider: &str, request: Request, cx: &mut Context<Self>) {
+        if self.pending.is_some() || !self.workers.can_start() {
+            return;
+        }
+        let Some(editor) = self.editors.get_mut(provider) else {
+            return;
+        };
+        let generation = editor.generation;
+        let loading = matches!(&request, Request::Load);
+        editor.notice = match &request {
+            Request::Load => "Loading saved settings…",
+            Request::Save { .. } => "Saving settings…",
+            Request::Check => "Checking provider…",
+        }
+        .into();
+        let engine = self.engine.clone();
+        let sender = self.sender.clone();
+        let provider = provider.to_owned();
+        let selected = provider.clone();
+        if self.workers.spawn(move |admission| {
+            let result = (|| -> Result<Outcome> {
+                anyhow::ensure!(admission.allowed(), "Settings are closing");
+                match request {
+                    Request::Load => Ok(Outcome::Loaded(
+                        try_state(&engine)?.native_provider_configuration(&provider)?,
+                    )),
+                    Request::Save {
+                        baseline,
+                        path,
+                        environment,
+                    } => {
+                        let mut owner = try_state(&engine)?;
+                        anyhow::ensure!(admission.allowed(), "Settings are closing");
+                        let path = expand_path(&path)?;
+                        let plan = owner.prepare_native_provider_configuration(
+                            &provider,
+                            &baseline,
+                            path.as_deref(),
+                            environment,
+                        )?;
+                        anyhow::ensure!(admission.allowed(), "Settings are closing");
+                        Ok(Outcome::Saved(
+                            owner.apply_native_provider_configuration(plan)?,
+                        ))
+                    }
+                    Request::Check if provider == "antigravity" => {
+                        let status = call(&engine, "providers.antigravity.status", json!({}))?;
+                        Ok(Outcome::ManagedChecked(
+                            status["accounts"].as_object().map_or(0, |rows| rows.len()),
+                        ))
+                    }
+                    Request::Check => {
+                        let plan = try_state(&engine)?.prepare_native_provider_check(&provider)?;
+                        Ok(Outcome::Checked(plan.run(&|| admission.allowed())?))
+                    }
+                }
+            })();
+            let _ = sender.send(Reply {
+                provider,
+                generation,
+                result,
+            });
+        }) {
+            if loading {
+                if let Some(editor) = self.editors.get_mut(&selected) {
+                    editor.load_requested = false;
+                }
+            }
+            self.pending = Some(selected);
+        } else if let Some(editor) = self.editors.get_mut(&selected) {
+            editor.notice = "Settings worker could not start; nothing was changed.".into();
+        }
+        cx.notify();
+    }
+    fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workers.poll();
+        if self.pending.is_none()
+            && self
+                .editors
+                .get(&self.active)
+                .is_some_and(|editor| !editor.loaded && editor.load_requested)
+        {
+            let provider = self.active.clone();
+            self.start(&provider, Request::Load, cx);
+        }
+        self.pickers.retain(|task| !task.is_ready());
+        while let Ok(reply) = self.receiver.try_recv() {
+            self.pending = None;
+            if self.workers.closed() {
+                continue;
+            }
+            let unchanged = self
+                .editors
+                .get(&reply.provider)
+                .is_some_and(|editor| editor.generation == reply.generation);
+            match reply.result {
+                Ok(Outcome::Loaded(snapshot)) | Ok(Outcome::Saved(snapshot)) => {
+                    self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
+                }
+                Ok(Outcome::ManagedChecked(accounts)) => {
+                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                        editor.checked = Some(Instant::now());
+                        editor.notice = format!(
+                            "Managed runtime configuration checked: {accounts} accounts. Sign-in has not been verified."
+                        );
+                    }
+                }
+                Ok(Outcome::Checked(report)) => {
+                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                        editor.report = Some(report);
+                        editor.checked = Some(Instant::now());
+                        editor.notice = "Check finished.".into();
+                    }
+                }
+                Err(error) => {
+                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                        editor.load_requested = !editor.loaded && engine_busy(&error);
+                        editor.notice = error.to_string();
+                    }
+                }
+            }
+            cx.notify();
+        }
+    }
+    fn save(&mut self, provider: &str, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.get(provider) else {
+            return;
+        };
+        match editor.values(cx) {
+            Ok((path, environment)) => self.start(
+                provider,
+                Request::Save {
+                    baseline: editor.baseline.clone(),
+                    path,
+                    environment,
+                },
+                cx,
+            ),
+            Err(error) => {
+                if let Some(editor) = self.editors.get_mut(provider) {
+                    editor.notice = error.to_string();
+                }
+                cx.notify();
+            }
+        }
+    }
+    fn discard(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.get(provider) else {
+            return;
+        };
+        let snapshot = Snapshot {
+            executable: (!editor.saved_path.is_empty()).then(|| PathBuf::from(&editor.saved_path)),
+            environment: editor.saved_environment.clone(),
+            baseline: editor.baseline.clone(),
+            approved: editor.loaded,
+        };
+        self.load_snapshot(provider, snapshot, true, window, cx);
+    }
+    fn choose(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workers.begin_picker() {
+            return;
+        }
+        let Some(editor) = self.editors.get(provider) else {
+            self.workers.finish_picker();
+            return;
+        };
+        let generation = editor.generation;
+        let custody = editor.lease.pending_native_action();
+        let provider = provider.to_owned();
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose provider executable".into()),
+        });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result: Result<_> = async { picker.await? }.await;
+            let _custody = custody;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.workers.finish_picker() {
+                    return;
+                }
+                if let Ok(Some(paths)) = result {
+                    if let Some(path) = paths.first() {
+                        if let Some(editor) = this
+                            .editors
+                            .get(&provider)
+                            .filter(|editor| editor.generation == generation)
+                        {
+                            editor.path.update(cx, |input, cx| {
+                                input.set_value(path.to_string_lossy().into_owned(), window, cx)
+                            });
+                            this.edited(&provider, window, cx);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.pickers.push(task);
+    }
+    pub fn dirty_provider(&self, cx: &App) -> Option<String> {
+        self.editors
+            .iter()
+            .find(|(_, editor)| editor.dirty(cx))
+            .map(|(provider, _)| provider.clone())
+    }
+    pub fn has_pending_write(&self) -> bool {
+        self.pending.is_some() || self.pickers.iter().any(|task| !task.is_ready())
+    }
+    pub fn is_selected(&self, provider: &str) -> bool {
+        self.active == provider
+    }
+    pub fn catalogs(&self) -> Vec<Value> {
+        self.editors
+            .iter()
+            .filter_map(|(provider, editor)| {
+                editor.report.as_ref().map(
+                    |report| json!({"provider":provider,"state":"ready","models":report.models}),
+                )
+            })
+            .collect()
+    }
+    pub fn render_part(&self, part: Part, cx: &mut Context<Self>) -> AnyElement {
+        let provider = self.active.clone();
+        let Some(editor) = self.editors.get(&provider) else {
+            return div().child("Select a provider.").into_any_element();
+        };
+        let busy = self.pending.is_some();
+        let dirty = editor.dirty(cx);
+        let loaded = editor.loaded;
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .border_1()
+            .border_color(rgb(0x29303d))
+            .rounded_md();
+        match part {
+            Part::Status => {
+                let status = editor
+                    .report
+                    .as_ref()
+                    .map(|report| match report.authenticated {
+                        Some(true) => "Signed in",
+                        Some(false) => "Sign in required",
+                        None => "Version checked; sign-in not checked",
+                    })
+                    .unwrap_or("Not checked");
+                pane = pane
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(div().flex_1().child(status))
+                            .child(
+                                Button::new("provider-check-again")
+                                    .label("Check Again")
+                                    .disabled(!loaded || !self.enabled || busy || dirty)
+                                    .tooltip(if dirty {
+                                        "Save changes before checking"
+                                    } else {
+                                        "Check this provider’s installation and sign-in"
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let provider = this.active.clone();
+                                        this.start(&provider, Request::Check, cx);
+                                    })),
+                            ),
+                    )
+                    .when_some(editor.report.as_ref(), |pane, report| {
+                        pane.child(div().text_sm().child(format!(
+                            "Version: {}",
+                            report.version.as_deref().unwrap_or("Not reported")
+                        )))
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(format!("Location: {}", report.executable.display())),
+                        )
+                        .when_some(report.account.as_ref(), |pane, account| {
+                            pane.child(format!("Account: {account}"))
+                        })
+                    })
+                    .when_some(editor.checked, |pane, checked| {
+                        pane.child(div().text_xs().child(if checked.elapsed().as_secs() < 60 {
+                            "Last checked just now".into()
+                        } else {
+                            format!(
+                                "Last checked {} minutes ago",
+                                checked.elapsed().as_secs() / 60
+                            )
+                        }))
+                    })
+                    .child(div().text_sm().child(editor.notice.clone()));
+            }
+            Part::Executable => {
+                let key = provider.clone();
+                pane = pane
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Executable"))
+                    .child("Leave empty to find the command-line tool on your PATH.")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Input::new(&editor.path).flex_1())
+                            .child(
+                                Button::new("provider-choose-executable")
+                                    .label("Choose…")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.choose(&key, window, cx)
+                                    })),
+                            ),
+                    );
+            }
+            Part::Environment => {
+                pane = pane
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Environment Variables"),
+                    )
+                    .child("Added only to this provider’s processes. Sensitive values are hidden.");
+                for row in &editor.variables {
+                    let id = row.id.clone();
+                    let remove = id.clone();
+                    let key = provider.clone();
+                    let reveal_key = provider.clone();
+                    pane =
+                        pane.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Input::new(&row.name).w(px(180.)))
+                                .child("=")
+                                .child(Input::new(&row.value).flex_1())
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "provider-env-reveal-{id}"
+                                    )))
+                                    .icon(if row.revealed {
+                                        gpui_kit::assets::IconName::EyeOff
+                                    } else {
+                                        gpui_kit::assets::IconName::Eye
+                                    })
+                                    .ghost()
+                                    .compact()
+                                    .accessibility_label(if row.revealed {
+                                        "Hide value"
+                                    } else {
+                                        "Show value"
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(editor) = this.editors.get_mut(&reveal_key) {
+                                            if let Some(row) =
+                                                editor.variables.iter_mut().find(|row| row.id == id)
+                                            {
+                                                row.revealed = !row.revealed;
+                                                row.value.update(cx, |input, cx| {
+                                                    input.set_masked(
+                                                        secret(&row.name.read(cx).value())
+                                                            && !row.revealed,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                            }
+                                        }
+                                        cx.notify();
+                                    })),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "provider-env-remove-{remove}"
+                                    )))
+                                    .icon(gpui_kit::assets::IconName::Minus)
+                                    .ghost()
+                                    .compact()
+                                    .accessibility_label("Remove variable")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(editor) = this.editors.get_mut(&key) {
+                                            editor.variables.retain(|row| row.id != remove);
+                                        }
+                                        this.edited(&key, window, cx);
+                                    })),
+                                ),
+                        )
+                }
+                let key = provider.clone();
+                pane = pane.child(
+                    Button::new("provider-env-add")
+                        .label("Add Variable")
+                        .disabled(!loaded || editor.variables.len() >= 128)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let row = this.variable(&key, "", "", window, cx);
+                            if let Some(editor) = this.editors.get_mut(&key) {
+                                editor.variables.push(row);
+                            }
+                            this.edited(&key, window, cx);
+                        })),
+                );
+                let save = provider.clone();
+                let discard = provider.clone();
+                pane = pane
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("provider-config-save")
+                                    .label("Save Changes")
+                                    .disabled(!loaded || !dirty || busy)
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.save(&save, cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("provider-config-discard")
+                                    .label("Discard Changes")
+                                    .disabled(!dirty || busy)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.discard(&discard, window, cx)
+                                    })),
+                            ),
+                    )
+                    .child(div().text_sm().child(editor.notice.clone()));
+            }
+            Part::Setup => {
+                pane = pane.child(div().font_weight(FontWeight::SEMIBOLD).child("Setup"));
+                for (label, command) in setup_commands(&provider) {
+                    let copy = command.to_owned();
+                    pane = pane.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(label)
+                                    .child(div().text_sm().child(command)),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "provider-setup-copy-{label}"
+                                )))
+                                .label("Copy")
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                                }),
+                            ),
+                    );
+                }
+                let url = setup_website(&provider);
+                pane = pane
+                    .child(
+                        Button::new("provider-setup-website")
+                            .label("Open Setup Website")
+                            .on_click(move |_, _, cx| cx.open_url(url)),
+                    )
+                    .child("After installing or signing in, choose Check Again.");
+            }
+        }
+        pane.into_any_element()
+    }
+    pub fn request_shutdown(&mut self) {
+        self.workers.close();
+    }
+    pub fn shutdown_status(&mut self) -> worker_owner::ShutdownStatus {
+        while self.receiver.try_recv().is_ok() {}
+        self.workers.status()
+    }
+}
+fn expand_path(path: &str) -> Result<Option<PathBuf>> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .context("Home directory is unavailable")?;
+        return Ok(Some(PathBuf::from(home).join(rest)));
+    }
+    Ok(Some(PathBuf::from(path)))
+}
+fn setup_commands(provider: &str) -> Vec<(&'static str, &'static str)> {
+    match provider {
+        "claude" => vec![
+            ("Install", "curl -fsSL https://claude.ai/install.sh | bash"),
+            ("Sign in", "claude auth login"),
+        ],
+        "codex" => vec![
+            (
+                "Install",
+                "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+            ),
+            ("Sign in", "codex login"),
+        ],
+        "cursor" => vec![
+            ("Install", "curl https://cursor.com/install -fsS | bash"),
+            ("Sign in", "cursor-agent login"),
+        ],
+        "grok" => vec![("Sign in", "grok login")],
+        "opencode" => vec![
+            ("Install", "curl -fsSL https://opencode.ai/install | bash"),
+            ("Sign in", "opencode auth login"),
+        ],
+        _ => Vec::new(),
+    }
+}
+fn setup_website(provider: &str) -> &'static str {
+    match provider {
+        "claude" => "https://claude.com/product/claude-code",
+        "codex" => "https://developers.openai.com/codex/cli",
+        "cursor" => "https://cursor.com/cli",
+        "grok" => "https://x.ai/cli",
+        "opencode" => "https://opencode.ai",
+        _ => "https://antigravity.google",
+    }
+}

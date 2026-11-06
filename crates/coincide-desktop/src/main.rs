@@ -57,6 +57,7 @@ mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
 mod provider_settings;
+mod provider_configuration_ui;
 mod queue;
 mod quit_mount;
 mod scheduling;
@@ -369,6 +370,7 @@ struct Coincide {
     settings_search: Entity<InputState>,
     settings_navigation: settings_navigation::State,
     instructions_panel: Entity<instructions::InstructionsPanel>,
+    provider_configuration_panel: Entity<provider_configuration_ui::Panel>,
     models_settings: models_settings::ModelsSettings,
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
@@ -740,6 +742,7 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                if this.block_provider_configuration_close(window, cx) { return false; }
                 if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
                     this.prompt_instruction_close(false, window, cx);
                     return false;
@@ -785,6 +788,7 @@ impl Coincide {
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let provider_configuration_panel = cx.new(|cx| provider_configuration_ui::Panel::new(engine.clone(), native_editors.clone(), window, cx));
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),
@@ -863,6 +867,7 @@ impl Coincide {
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
                 this.usage_history.load(event, cx);
             }),
+            cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -1156,6 +1161,7 @@ impl Coincide {
             settings_navigation: Default::default(),
             settings_section: Default::default(),
             instructions_panel,
+            provider_configuration_panel,
             models_settings,
             archive_settings,
             instruction_quit_prompt_pending: false,
@@ -2703,7 +2709,7 @@ impl Coincide {
         if native_quit {
             self.native_quit_observed = true;
         }
-        if menu_quit || native_quit {
+        if (menu_quit || native_quit) && !self.block_provider_configuration_close(window, cx) {
             if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
                 self.prompt_instruction_close(true, window, cx);
             } else {

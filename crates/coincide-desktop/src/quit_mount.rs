@@ -89,6 +89,8 @@ impl Coincide {
         self.thread_bulk.close();
         self.instructions_panel
             .update(cx, |panel, _| panel.request_instruction_git_shutdown());
+        self.provider_configuration_panel
+            .update(cx, |panel, _| panel.request_shutdown());
         self.composer_files.close();
         self.usage_history.request_shutdown();
         self.codex_limits.request_shutdown();
@@ -128,6 +130,8 @@ impl Coincide {
         self.request_media_owner_shutdown(cx);
         let media = self.poll_media_owner_shutdown(cx);
         let statuses = [
+            self.provider_configuration_panel
+                .update(cx, |panel, _| panel.shutdown_status()),
             self.selection_ui.capability_read_shutdown_status(),
             self.thread_bulk.shutdown_status(),
             self.instructions_panel

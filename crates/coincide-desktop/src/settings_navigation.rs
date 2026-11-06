@@ -187,6 +187,12 @@ impl Coincide {
         self.session_import_open = false;
         self.provider_settings.open = false;
         self.settings_section = section;
+        if let Section::Provider(provider) = section {
+            let enabled = provider_enabled(&self.settings, provider);
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.select(provider_key(provider), enabled, window, cx)
+            });
+        }
         self.models_settings.focus_provider(match section {
             Section::Provider(provider) => Some(provider_key(provider).to_owned()),
             _ => None,
@@ -456,6 +462,41 @@ impl Coincide {
         }
     }
 
+    pub(super) fn block_provider_configuration_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let provider = self
+            .provider_configuration_panel
+            .read(cx)
+            .dirty_provider(cx);
+        let pending = self
+            .provider_configuration_panel
+            .read(cx)
+            .has_pending_write();
+        if provider.is_none() && !pending {
+            return false;
+        }
+        if let Some(provider) = provider.and_then(|key| {
+            coincide_core::provider_catalog::PROVIDERS
+                .iter()
+                .find(|provider| provider_key(provider.id) == key)
+                .map(|provider| provider.id)
+        }) {
+            self.settings_open = true;
+            self.navigate_settings_section(Section::Provider(provider), window, cx);
+        }
+        self.settings_status = if pending {
+            "Wait for the provider operation or executable chooser to finish before closing."
+        } else {
+            "Save or discard provider changes before closing."
+        }
+        .into();
+        cx.notify();
+        true
+    }
+
     pub(super) fn provider_preferences_pane(
         &self,
         provider: ProviderId,
@@ -463,6 +504,24 @@ impl Coincide {
     ) -> AnyElement {
         let section = Section::Provider(provider);
         let enabled = provider_enabled(&self.settings, provider);
+        let parts = if self
+            .provider_configuration_panel
+            .read(cx)
+            .is_selected(provider_key(provider))
+        {
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                [
+                    provider_configuration_ui::Part::Status,
+                    provider_configuration_ui::Part::Executable,
+                    provider_configuration_ui::Part::Environment,
+                    provider_configuration_ui::Part::Setup,
+                ]
+                .map(|part| panel.render_part(part, cx))
+            })
+        } else {
+            std::array::from_fn(|_| div().child("Loading provider settings…").into_any_element())
+        };
+        let [status, executable, environment, setup] = parts;
         let mut pane = div()
             .id("provider-preferences")
             .flex_1()
@@ -488,6 +547,7 @@ impl Coincide {
                             })),
                     ),
             )
+            .child(status)
             .child(
                 div()
                     .rounded_md()
@@ -533,7 +593,12 @@ impl Coincide {
             }
             _ => {}
         }
-        pane.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx))
+        let mut catalogs = self.provider_configuration_panel.read(cx).catalogs();
+        catalogs.push(self.selection_ui.catalog.clone());
+        pane.child(executable)
+            .child(self.models_settings_panel(&catalogs, cx))
+            .child(environment)
+            .child(setup)
             .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
     }

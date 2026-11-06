@@ -436,7 +436,13 @@ impl Coincide {
             .gap_3()
             .child(div().text_lg().child("Models"))
             .child("Favorite or hide models in the picker, and add custom model IDs.")
-            .child(filters)
+            .when(
+                !matches!(
+                    self.settings_section,
+                    settings::SettingsSection::Provider(_)
+                ),
+                |pane| pane.child(filters),
+            )
             .child(Input::new(&state.search))
             .child(list)
             .child(format!("{count} models"))
