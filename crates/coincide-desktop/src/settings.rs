@@ -923,7 +923,9 @@ impl Coincide {
                 "new threads default access approval full commands edit files",
                 "Access for new threads",
                 "defaultAccessMode",
-                json!("fullAccess"),
+                // Match the actual new-thread/Project Defaults fallback when
+                // no preference was saved; rendering never grants more access.
+                json!("approval"),
                 vec![
                     ("Ask before changes", json!("approval")),
                     ("Full access", json!("fullAccess")),
