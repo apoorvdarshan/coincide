@@ -702,6 +702,15 @@ fn engine_command_transaction(
         Ok(response["result"].clone())
     })
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PickerFacet {
+    #[default]
+    Model,
+    Effort,
+    Speed,
+    Access,
+    Mode,
+}
 #[derive(Default)]
 pub(super) struct ComposerSelection {
     drafts: HashMap<String, SelectionDraft>,
@@ -715,6 +724,7 @@ pub(super) struct ComposerSelection {
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
     expanded: bool,
+    pub(super) facet: PickerFacet,
 }
 #[derive(Clone, Debug)]
 struct CatalogRequest {
@@ -1207,6 +1217,25 @@ impl Coincide {
             }
         }
     }
+    fn edit_selection_immediately(
+        &mut self,
+        edit: impl FnOnce(&mut SelectionDraft),
+        cx: &mut Context<Self>,
+    ) {
+        let pending = self
+            .selected
+            .as_ref()
+            .and_then(|thread| self.selection_ui.drafts.get(&text(thread, "id")))
+            .is_some_and(SelectionDraft::has_edits);
+        if pending {
+            self.status =
+                "Finish or discard the pending model choice before changing another option.".into();
+            cx.notify();
+            return;
+        }
+        self.edit_selection(edit, cx);
+        self.apply_selection_draft(cx);
+    }
     fn choose_effort(
         &mut self,
         expected_id: &str,
@@ -1248,7 +1277,7 @@ impl Coincide {
             Ok(())
         })();
         match result {
-            Ok(()) => self.edit_selection(|draft| draft.proposed_effort = value, cx),
+            Ok(()) => self.edit_selection_immediately(|draft| draft.proposed_effort = value, cx),
             Err(error) => {
                 self.status = format!("Effort was not changed: {error}");
                 cx.notify();
@@ -1285,7 +1314,7 @@ impl Coincide {
             Ok(())
         })();
         match result {
-            Ok(()) => self.edit_selection(|draft| draft.proposed_speed = value, cx),
+            Ok(()) => self.edit_selection_immediately(|draft| draft.proposed_speed = value, cx),
             Err(error) => {
                 self.status = format!("Speed was not changed: {error}");
                 cx.notify();
@@ -1695,31 +1724,83 @@ impl Coincide {
             self.selection_ui.expanded,
             lock.as_deref(),
         );
+        let selection = &thread["selection"];
+        let model = if selection["modelID"] == "default" {
+            "Provider default".to_owned()
+        } else {
+            footer_value(&selection["modelID"], "Choose model")
+        };
+        let effort = footer_value(&selection["effort"], "Default");
+        let speed = footer_value(&selection["speed"], "Standard");
+        let access = if thread["accessMode"] == "fullAccess" {
+            "Full access"
+        } else {
+            "Approval"
+        };
+        let mode = if thread["interactionMode"] == "plan" {
+            "Plan"
+        } else {
+            "Build"
+        };
+        let mut controls = div().flex().flex_wrap().items_center().gap_1();
+        for (facet, id, label, help) in [
+            (
+                PickerFacet::Model,
+                "selection-disclosure",
+                model,
+                summary.accessible.clone(),
+            ),
+            (
+                PickerFacet::Effort,
+                "selection-effort-disclosure",
+                effort,
+                "Reasoning effort".into(),
+            ),
+            (
+                PickerFacet::Speed,
+                "selection-speed-disclosure",
+                speed,
+                "Response speed".into(),
+            ),
+            (
+                PickerFacet::Access,
+                "selection-access-disclosure",
+                access.into(),
+                "Permissions".into(),
+            ),
+            (
+                PickerFacet::Mode,
+                "selection-mode-disclosure",
+                mode.into(),
+                "Build or Plan".into(),
+            ),
+        ] {
+            controls = controls.child(
+                Button::new(id)
+                    .label(label)
+                    .tooltip(help)
+                    .icon(gpui_kit::assets::IconName::ChevronDown)
+                    .ghost()
+                    .compact()
+                    .when(
+                        self.selection_ui.expanded && self.selection_ui.facet == facet,
+                        |button| button.primary(),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.selection_ui.expanded =
+                            !this.selection_ui.expanded || this.selection_ui.facet != facet;
+                        this.selection_ui.facet = facet;
+                        cx.notify();
+                    })),
+            );
+        }
         div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
             .gap_1()
-            .child(
-                Button::new("selection-disclosure")
-                    .label(summary.saved)
-                    .accessibility_label(summary.accessible.clone())
-                    .tooltip(summary.accessible)
-                    .icon(if self.selection_ui.expanded {
-                        gpui_kit::assets::IconName::ChevronUp
-                    } else {
-                        gpui_kit::assets::IconName::ChevronDown
-                    })
-                    .ghost()
-                    .compact()
-                    .w_full()
-                    .min_w_0()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.selection_ui.expanded = !this.selection_ui.expanded;
-                        cx.notify();
-                    })),
-            )
+            .child(controls)
             .when_some(summary.annotation, |view, annotation| {
                 view.child(div().text_xs().truncate().child(annotation))
             })
@@ -1748,7 +1829,9 @@ impl Coincide {
         let conflict = thread["selection"] != draft.original
             || thread["accessMode"] != draft.access
             || thread["interactionMode"] != draft.interaction;
-        let disabled = lock.is_some() || conflict;
+        let disabled = lock.is_some()
+            || conflict
+            || (self.selection_ui.facet != PickerFacet::Model && draft.has_edits());
         let replacement_context = automatic_default_replacement_context(
             draft,
             thread,
@@ -1807,6 +1890,11 @@ impl Coincide {
                 vec![("build", "Build"), ("plan", "Plan")],
             ),
         ] {
+            if (self.selection_ui.facet == PickerFacet::Access && key != "accessModes")
+                || (self.selection_ui.facet == PickerFacet::Mode && key != "interactionModes")
+            {
+                continue;
+            }
             let mut row = div().flex().flex_wrap().gap_2();
             for (mode, label) in choices {
                 if !provider.is_some_and(|provider| advertised_mode(provider, key, mode)) {
@@ -1823,7 +1911,7 @@ impl Coincide {
                         .when(selected, |button| button.primary())
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.edit_selection(
+                            this.edit_selection_immediately(
                                 |draft| {
                                     if key == "accessModes" {
                                         draft.proposed_access = json!(mode);
@@ -2036,6 +2124,26 @@ impl Coincide {
                     );
             }
         }
+        if self.selection_ui.facet != PickerFacet::Model {
+            let section = match self.selection_ui.facet {
+                PickerFacet::Effort => effort_panel.into_any_element(),
+                PickerFacet::Speed => speed_panel.into_any_element(),
+                _ => modes.into_any_element(),
+            };
+            return div()
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(section)
+                .when_some(lock, |view, reason| {
+                    view.child(div().text_sm().child(reason))
+                })
+                .when(!self.selection_ui.error.is_empty(), |view| {
+                    view.child(self.selection_ui.error.clone())
+                })
+                .into_any_element();
+        }
         let mut accounts = div()
             .flex()
             .flex_wrap()
@@ -2073,9 +2181,6 @@ impl Coincide {
         let mut pane = div().flex().flex_col().gap_2().mb_2().child(providers)
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
             .child(accounts)
-            .child(modes)
-            .child(effort_panel)
-            .child(speed_panel)
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
