@@ -208,10 +208,16 @@ impl Policy {
             selection.remove(option);
         }
         let mut policy = Self::parse_with_effort_proof(&syntax, origin, None)?;
-        policy.effort = thread["selection"]["effort"].as_str().map(str::to_owned);
+        policy.effort = proof
+            .and_then(|proof| proof.effective_effort())
+            .or_else(|| thread["selection"]["effort"].as_str())
+            .map(str::to_owned);
         policy.speed = thread["selection"]["speed"].as_str().map(str::to_owned);
         policy.named_proof = proof.cloned();
-        policy.automatic_effort_required = false;
+        policy.automatic_effort_required = thread["selection"]["effort"].is_null()
+            && thread["selection"]["modelID"]
+                .as_str()
+                .is_some_and(crate::model_catalog::astra_model);
         Ok(policy)
     }
     pub(crate) fn codex_effort(&self) -> Option<&str> {

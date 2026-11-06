@@ -196,10 +196,6 @@ pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
         .context("Codex model must be text")?;
     crate::composer_selection::validate_model(model)?;
     ensure!(
-        !matches!(model, "gpt-6-astra" | "openai.gpt-6-astra"),
-        "Named Codex Astra app-default effort is not connected"
-    );
-    ensure!(
         thread["selection"]["provider"] == "codex"
             && (thread["selection"]["effort"].is_null()
                 || (model != "default"

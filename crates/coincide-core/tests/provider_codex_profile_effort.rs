@@ -18,6 +18,13 @@ const REFRESH: &str = "providers.codex.profiles.models.refresh";
 const STATUS: &str = "providers.codex.profiles.models.status";
 #[test]
 fn named_effort_uses_exact_account_catalog_and_captured_turn_policy() {
+    run_fixture("effort_fixture_child");
+}
+#[test]
+fn named_astra_default_reaches_actual_turn_and_owned_resume_without_persisting_effort() {
+    run_fixture("astra_fixture_child");
+}
+fn run_fixture(child: &str) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let exe = root.join("fake-effort");
@@ -57,12 +64,15 @@ if named:
  r=read()
 if r['method']=='model/list':
  if mode=='auth-change':write({'method':'account/updated','params':{}})
- choices=['low','high'] if named and model=='synthetic-a' else ['medium'] if named else ['high']
- write({'id':r['id'],'result':{'data':[{'model':model,'supportedReasoningEfforts':[{'reasoningEffort':x} for x in choices],'defaultReasoningEffort':choices[0]},{'model':'default','supportedReasoningEfforts':[{'reasoningEffort':'high'}]},{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}],'nextCursor':None}})
+ choices=['low','high'] if named and model=='synthetic-a' else ['low','medium','high'] if named and model in ['gpt-6-astra','openai.gpt-6-astra'] and mode!='missing-medium' else ['high'] if mode=='missing-medium' else ['medium'] if named else ['high']
+ rows=[{'model':model,'supportedReasoningEfforts':[{'reasoningEffort':x} for x in choices],'defaultReasoningEffort':choices[0]},{'model':'default','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}]
+ if model!='gpt-6-astra':rows.append({'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'high'}]})
+ write({'id':r['id'],'result':{'data':rows,'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
-assert named and r['method']=='thread/start' and r['params']['model']==model
+assert named and r['method']==('thread/resume' if mode=='resume' else 'thread/start') and r['params']['model']==model
 assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
 native=home.name+'-effort-session'
+if mode=='resume':assert r['params']['threadId']==native and r['params']['excludeTurns'] is True
 write({'id':r['id'],'result':{'thread':{'id':native},'model':model}})
 r=read();assert r['method']=='turn/start'
 assert r['params']['model']==model and r['params']['effort']==effort
@@ -76,12 +86,7 @@ sys.stdin.readline()
 "#).unwrap();
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
     let out = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "effort_fixture_child",
-            "--nocapture",
-        ])
+        .args(["--ignored", "--exact", child, "--nocapture"])
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", &root)
@@ -224,6 +229,13 @@ fn settle(e: &mut Engine) {
     }
 }
 fn finish(e: &mut Engine, expected_provider_returns: u64) -> u64 {
+    finish_with_catalog(e, expected_provider_returns, None)
+}
+fn finish_with_catalog(
+    e: &mut Engine,
+    expected_provider_returns: u64,
+    expected_catalog_returns: Option<u64>,
+) -> u64 {
     e.freeze_admissions();
     e.request_model_catalog_shutdown().unwrap();
     let d = Instant::now() + Duration::from_secs(10);
@@ -232,7 +244,14 @@ fn finish(e: &mut Engine, expected_provider_returns: u64) -> u64 {
         if s.running == 0 {
             assert_eq!(s.panicked, 0);
             assert_eq!(s.unclassified, 0);
-            assert!(s.returned > 0);
+            if let Some(expected) = expected_catalog_returns {
+                assert_eq!(
+                    s.returned, expected,
+                    "Each Engine retains its exact catalog join receipts"
+                );
+            } else {
+                assert!(s.returned > 0);
+            }
             break;
         }
         assert!(Instant::now() < d);
@@ -316,7 +335,7 @@ fn effort_fixture_child() {
     for (model, effort) in [
         ("synthetic-a", "medium"),
         ("default", "high"),
-        ("gpt-6-astra", "high"),
+        ("gpt-6-astra", "medium"),
         ("synthetic-b", "medium"),
     ] {
         let p = params(&e, &id, model, json!(effort), Some(&second));
@@ -356,13 +375,14 @@ fn effort_fixture_child() {
         json!({"threadId":id,"accountId":a,"expectedSelection":chosen["selection"],"model":"synthetic-a","requestId":second["requestId"]}),
     );
     assert_eq!(same, chosen);
-    // Restored unsupported model metadata must never make advertised effort
-    // buttons eligible, even when this exact private catalog reports that row.
+    // A restored Astra null option cannot invent medium from a catalog that
+    // reports only high. Reported explicit high remains available as a repair.
     // Identity-only Refresh stays usable and does not mutate the saved record.
     let supported = e.store.thread(&id).unwrap();
     let supported_raw = raw(&root);
     let mut astra = supported.clone();
     astra["selection"]["modelID"] = json!("gpt-6-astra");
+    astra["selection"]["effort"] = Value::Null;
     e.store.save(&astra).unwrap();
     let astra_raw = raw(&root);
     for after_refresh in [false, true] {
@@ -375,21 +395,23 @@ fn effort_fixture_child() {
             json!({"threadId":id}),
         );
         assert_eq!(caps["namedModels"]["refreshAllowed"], true);
-        assert_eq!(caps["namedModels"]["effortSupported"], false);
+        assert_eq!(caps["namedModels"]["effortSupported"], true);
         let effort = &caps["providers"]
             .as_array()
             .unwrap()
             .iter()
             .find(|row| row["provider"] == "codex")
             .unwrap()["effort"];
-        assert_eq!(effort["supported"], false);
-        assert_eq!(effort["choices"], json!([]));
+        assert_eq!(effort["supported"], true);
+        assert_eq!(effort["choices"], json!(["high"]));
+        assert_eq!(effort["appDefaultAvailable"], false);
+        assert!(effort["effectiveDefault"].is_null());
         assert_eq!(raw(&root), astra_raw);
         refuse(
             &mut e,
             &root,
             "agent.send",
-            json!({"threadId":id,"text":"Restored Astra stays unavailable"}),
+            json!({"threadId":id,"text":"Unreported Astra app default stays unavailable"}),
         );
     }
     e.store.save(&supported).unwrap();
@@ -618,4 +640,175 @@ fn effort_fixture_child() {
             }
         }
     }
+}
+
+#[test]
+#[ignore = "Outer test supplies cleared environment, canonical private HOME and fake executable"]
+fn astra_fixture_child() {
+    let root = PathBuf::from(std::env::var_os("COINCIDE_EFFORT_ROOT").unwrap());
+    let db = root.join("state/state.sqlite");
+    let mut e = Engine::new(Store::open(&db).unwrap());
+    let project = call(
+        &mut e,
+        "projects.create",
+        json!({"path":root,"name":"Synthetic Astra"}),
+    );
+    let thread = call(&mut e, "threads.create", json!({"projectId":project["id"]}));
+    let id = text(&thread, "id");
+    e.set_active_thread(Some(id.clone())).unwrap();
+    call(
+        &mut e,
+        "agent.select",
+        json!({"threadId":id,"provider":"codex","model":"default"}),
+    );
+    let profile = call(
+        &mut e,
+        "providers.codex.profiles.create",
+        json!({"name":"Synthetic Astra A"}),
+    );
+    let account = text(&profile, "id");
+    let home = e
+        .store
+        .data_directory()
+        .unwrap()
+        .join("providers/codex")
+        .join(&account);
+    fs::write(home.join("fixture-effort"), "medium").unwrap();
+    select_profile(&mut e, &id, &account);
+    e.store
+        .save_document("effort-fixture.json", &json!({"future":{"keep":17}}))
+        .unwrap();
+    let mut returns = 0;
+    for model in ["gpt-6-astra", "openai.gpt-6-astra"] {
+        fs::write(home.join("fixture-model"), model).unwrap();
+        fs::write(home.join("fixture-mode"), "allow").unwrap();
+        let catalog = refresh(&mut e, &id);
+        let p = params(&e, &id, model, Value::Null, Some(&catalog));
+        call(&mut e, SELECT, p);
+        let selected = e.store.thread(&id).unwrap();
+        assert!(selected["selection"]["effort"].is_null());
+        let before = raw(&root);
+        let caps = call(
+            &mut e,
+            "agent.selection.capabilities",
+            json!({"threadId":id}),
+        );
+        assert_eq!(
+            caps["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["provider"] == "codex")
+                .unwrap()["effort"]["effectiveDefault"],
+            "medium"
+        );
+        assert_eq!(raw(&root), before);
+        call(
+            &mut e,
+            "agent.send",
+            json!({"threadId":id,"text":"Synthetic Astra app default"}),
+        );
+        settle(&mut e);
+        assert!(e.store.thread(&id).unwrap()["selection"]["effort"].is_null());
+        fs::write(home.join("fixture-mode"), "resume").unwrap();
+        call(
+            &mut e,
+            "agent.send",
+            json!({"threadId":id,"text":"Synthetic Astra owned resume"}),
+        );
+        settle(&mut e);
+        assert!(e.store.thread(&id).unwrap()["selection"]["effort"].is_null());
+        returns += 2;
+        // New exact catalog revokes the old medium authority, while preserving raw data.
+        fs::write(home.join("fixture-mode"), "missing-medium").unwrap();
+        let before = raw(&root);
+        let missing = refresh(&mut e, &id);
+        assert_eq!(missing["state"], "ready");
+        assert_eq!(raw(&root), before);
+        refuse(
+            &mut e,
+            &root,
+            "agent.send",
+            json!({"threadId":id,"text":"No inferred medium"}),
+        );
+        let stale = params(&e, &id, model, Value::Null, Some(&catalog));
+        refuse(&mut e, &root, SELECT, stale);
+        // An advertised explicit override remains valid even without medium.
+        fs::write(home.join("fixture-effort"), "high").unwrap();
+        choose(&mut e, &id, &root, model, "high", &missing);
+        call(
+            &mut e,
+            "agent.send",
+            json!({"threadId":id,"text":"Synthetic explicit high override"}),
+        );
+        settle(&mut e);
+        returns += 1;
+        // Clear-only metadata repair is usable without granting Send authority.
+        let p = params(&e, &id, model, Value::Null, None);
+        call(&mut e, SELECT, p);
+        assert!(e.store.thread(&id).unwrap()["selection"]["effort"].is_null());
+        refuse(
+            &mut e,
+            &root,
+            "agent.send",
+            json!({"threadId":id,"text":"Repair cannot invent medium"}),
+        );
+        let mut plan = e.store.thread(&id).unwrap();
+        plan["interactionMode"] = json!("plan");
+        e.store.save(&plan).unwrap();
+        let count = records(&root).len();
+        let repaired = call(
+            &mut e,
+            SELECT,
+            json!({"threadId":id,"accountId":account,"expectedSelection":plan["selection"],"model":model,"expectedAccessMode":plan["accessMode"],"expectedInteractionMode":"plan","interactionMode":"build"}),
+        );
+        plan["interactionMode"] = json!("build");
+        assert_eq!(repaired, plan);
+        assert_eq!(records(&root).len(), count);
+        refuse(
+            &mut e,
+            &root,
+            "agent.send",
+            json!({"threadId":id,"text":"Build repair cannot invent medium"}),
+        );
+        fs::write(home.join("fixture-effort"), "medium").unwrap();
+    }
+    // Restart does not retain the in-memory proof, even after a good catalog.
+    fs::write(home.join("fixture-mode"), "allow").unwrap();
+    refresh(&mut e, &id);
+    let before = raw(&root);
+    assert_eq!(finish_with_catalog(&mut e, returns, Some(5)), returns);
+    drop(e);
+    let mut e = Engine::new(Store::open(&db).unwrap());
+    e.set_active_thread(Some(id.clone())).unwrap();
+    refuse(
+        &mut e,
+        &root,
+        "agent.send",
+        json!({"threadId":id,"text":"No restart authority"}),
+    );
+    assert_eq!(raw(&root), before);
+    assert_eq!(finish_with_catalog(&mut e, 0, Some(0)), 0);
+    let turns: Vec<_> = records(&root)
+        .into_iter()
+        .filter(|r| r["method"] == "turn/start")
+        .collect();
+    assert_eq!(turns.len(), 6);
+    for (index, turn) in turns.iter().enumerate() {
+        assert_eq!(
+            turn["params"]["effort"],
+            if index % 3 == 2 { "high" } else { "medium" }
+        );
+        assert_eq!(
+            turn["params"]["collaborationMode"]["settings"]["reasoning_effort"],
+            turn["params"]["effort"]
+        );
+    }
+    assert_eq!(
+        records(&root)
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        2
+    );
 }

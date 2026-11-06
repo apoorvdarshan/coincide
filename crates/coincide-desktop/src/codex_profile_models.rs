@@ -9,6 +9,38 @@ fn catalog_scope(catalog: &Value, thread: &Value) -> bool {
         && catalog["accountID"] == thread["selection"]["accountID"]
         && catalog["threadId"] == thread["id"]
 }
+fn astra_model(model: &str) -> bool {
+    matches!(model, "gpt-6-astra" | "openai.gpt-6-astra")
+}
+fn astra_row_reason(model: &str, row: &Value, selection: &Value) -> Option<&'static str> {
+    if !astra_model(model) {
+        return None;
+    }
+    let effort = if selection["effort"].is_null() {
+        "medium"
+    } else {
+        selection["effort"].as_str().unwrap_or("")
+    };
+    if row["reportedEfforts"]
+        .as_array()
+        .is_some_and(|choices| choices.iter().any(|choice| choice.as_str() == Some(effort)))
+    {
+        None
+    } else if selection["effort"].is_null() {
+        Some("app default requires reported medium")
+    } else {
+        Some("saved effort is not reported by this model")
+    }
+}
+fn named_astra_default_available(caps: Option<&Value>) -> bool {
+    caps.is_some_and(|caps| {
+        caps["provenance"] == "named_profile_model_list"
+            && caps["effectiveDefault"] == "medium"
+            && caps["effectiveDefaultProvenance"] == "app_policy+named_profile_model_list"
+            && caps["appDefaultRequired"] == true
+            && caps["appDefaultAvailable"] == true
+    })
+}
 struct NamedModelOptions<'a> {
     access: Option<&'a str>,
     interaction: Option<&'a str>,
@@ -174,24 +206,20 @@ impl Coincide {
                     .gap_1();
                 for row in catalog["models"].as_array().into_iter().flatten().take(200) {
                     let model = text(row, "id");
-                    let unsupported =
-                        matches!(model.as_str(), "gpt-6-astra" | "openai.gpt-6-astra");
+                    let unsupported = astra_row_reason(&model, row, &selection);
                     let row_id = id.clone();
                     let row_selection = selection.clone();
                     let request = text(catalog, "requestId");
                     let chosen = model.clone();
                     models = models.child(
                         Button::new(SharedString::from(format!("named-profile-model-{model}")))
-                            .label(if unsupported {
-                                format!(
-                                    "{} — named app-default effort unavailable",
-                                    text(row, "displayName")
-                                )
+                            .label(if let Some(reason) = unsupported {
+                                format!("{} — {reason}", text(row, "displayName"))
                             } else {
                                 text(row, "displayName")
                             })
                             .tooltip(model.clone())
-                            .disabled(disabled || unsupported)
+                            .disabled(disabled || unsupported.is_some())
                             .when(thread["selection"]["modelID"] == model, |button| {
                                 button.primary()
                             })
@@ -324,6 +352,15 @@ impl Coincide {
             .flex_col()
             .gap_2()
             .child(div().text_sm().child("Reasoning effort"));
+        let astra = astra_model(&model);
+        let app_default = named_astra_default_available(effort_caps);
+        if astra {
+            effort_controls=effort_controls.child(div().text_xs().child(if app_default {
+                "App default: medium, available for this profile. Choose an effort below to override it."
+            }else{
+                "Astra app default requires medium from this profile's exact model catalog. Refresh or choose a reported explicit effort."
+            }));
+        }
         if clear_effort {
             let row_id = id.clone();
             let row_selection = selection.clone();
@@ -332,7 +369,15 @@ impl Coincide {
             let expected_interaction = thread.get("interactionMode").cloned();
             effort_controls = effort_controls.child(
                 Button::new("named-profile-effort-clear")
-                    .label("Use provider effort (clear saved effort)")
+                    .label(if astra {
+                        if app_default {
+                            "Use app default (medium)"
+                        } else {
+                            "Clear saved effort (app default unavailable)"
+                        }
+                    } else {
+                        "Use provider effort (clear saved effort)"
+                    })
                     .disabled(disabled)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_named_profile_model(
@@ -510,6 +555,43 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn astra_rows_require_reported_effective_or_retained_effort() {
+        let row = json!({"reportedEfforts":["high"]});
+        for model in ["gpt-6-astra", "openai.gpt-6-astra"] {
+            assert!(astra_row_reason(model, &row, &json!({"effort":null})).is_some());
+            assert!(astra_row_reason(model, &row, &json!({"effort":"high"})).is_none());
+            assert!(astra_row_reason(model, &row, &json!({"effort":"low"})).is_some());
+            assert!(
+                astra_row_reason(
+                    model,
+                    &json!({"reportedEfforts":["medium"]}),
+                    &json!({"effort":null})
+                )
+                .is_none()
+            );
+        }
+        assert!(astra_row_reason("gpt-6-astra-v2", &row, &Value::Null).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn app_default_label_requires_named_catalog_provenance_and_reported_medium() {
+        let caps = json!({"provenance":"named_profile_model_list","effectiveDefault":"medium","effectiveDefaultProvenance":"app_policy+named_profile_model_list","appDefaultRequired":true,"appDefaultAvailable":true});
+        assert!(named_astra_default_available(Some(&caps)));
+        assert!(!named_astra_default_available(None));
+        for (field, value) in [
+            ("provenance", json!("provider_model_list")),
+            (
+                "effectiveDefaultProvenance",
+                json!("app_policy+provider_model_list"),
+            ),
+            ("appDefaultAvailable", json!(false)),
+            ("effectiveDefault", Value::Null),
+        ] {
+            let mut changed = caps.clone();
+            changed[field] = value;
+            assert!(!named_astra_default_available(Some(&changed)));
+        }
+    }
     #[::core::prelude::v1::test]
     fn named_catalog_ui_requires_exact_thread_and_account() {
         let thread = json!({"id":"a","selection":{"provider":"codex","accountID":"profile-a"}});

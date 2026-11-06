@@ -59,7 +59,7 @@ if r['method']=='model/list':
  else:write({'method':'account/rateLimits/updated','params':{}})
  write({'id':r['id'],'result':{'data':[{'id':model,'model':model,'displayName':'Synthetic '+model},{'model':'hidden-fixture','hidden':True}],'nextCursor':'page-two'}})
  r=read();assert r['method']=='model/list' and r['params']=={'cursor':'page-two'}
- write({'id':r['id'],'result':{'data':[{'model':model},{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]}],'nextCursor':None}})
+ write({'id':r['id'],'result':{'data':[{'model':model},{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]},{'model':'openai.gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
 assert r['method']=='thread/start' and r['params']['model']==model
 assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
@@ -241,7 +241,7 @@ fn profile_models_fixture_child() {
     let ready_a = wait_catalog(&mut engine, &id, &a, &first);
     assert_eq!(ready_a["state"], "ready");
     assert_eq!(ready_a["authenticationChecked"], true);
-    assert_eq!(ready_a["models"].as_array().unwrap().len(), 2);
+    assert_eq!(ready_a["models"].as_array().unwrap().len(), 3);
     assert_eq!(ready_a["models"][0]["id"], "synthetic-a");
     let before = engine.store.thread(&id).unwrap();
     let picked = choose(
@@ -266,10 +266,39 @@ fn profile_models_fixture_child() {
         json!({"threadId":id,"accountId":a,"expectedSelection":picked["selection"]}),
     );
     engine.set_active_thread(Some(id.clone())).unwrap();
+    // Exact advertised medium authorizes Astra's app default without persisting
+    // an explicit effort or launching a provider during selection.
+    let process_records = records(&root).len();
+    let astra = choose(
+        &mut engine,
+        &id,
+        &a,
+        "gpt-6-astra",
+        first["requestId"].as_str(),
+    );
+    let mut expected_astra = picked.clone();
+    expected_astra["selection"]["modelID"] = json!("gpt-6-astra");
+    assert_eq!(astra, expected_astra);
+    assert!(astra["selection"]["effort"].is_null());
+    assert_eq!(records(&root).len(), process_records);
+    // The other exact alias reports only high: it cannot borrow this row's
+    // medium authority for a null saved effort.
     denied(
         &mut engine,
         "providers.codex.profiles.models.select",
-        json!({"threadId":id,"accountId":a,"model":"gpt-6-astra","requestId":first["requestId"],"expectedSelection":picked["selection"]}),
+        json!({"threadId":id,"accountId":a,"model":"openai.gpt-6-astra","requestId":first["requestId"],"expectedSelection":astra["selection"]}),
+    );
+    assert_eq!(engine.store.thread(&id).unwrap(), astra);
+    assert_eq!(records(&root).len(), process_records);
+    assert_eq!(
+        choose(
+            &mut engine,
+            &id,
+            &a,
+            "synthetic-a",
+            first["requestId"].as_str()
+        ),
+        picked
     );
     denied(
         &mut engine,
