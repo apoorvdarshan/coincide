@@ -16,7 +16,10 @@ use std::{
 #[test]
 fn named_limits_use_captured_private_account_and_never_borrow_cached_results() {
     let dir = tempfile::tempdir().unwrap();
-    let executable = dir.path().join("fake-limits");
+    // The Store/project resolver and native cwd use canonical paths. Freeze one
+    // owned identity up front, including macOS /var versus /private/var aliases.
+    let root = dir.path().canonicalize().unwrap();
+    let executable = root.join("fake-limits");
     fs::write(&executable, r#"#!/usr/bin/env python3
 import json,os,sys
 from pathlib import Path
@@ -71,10 +74,10 @@ sys.stdin.readline()
         ])
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
-        .env("HOME", dir.path())
-        .env("COINCIDE_LIMITS_FIXTURE_ROOT", dir.path())
+        .env("HOME", &root)
+        .env("COINCIDE_LIMITS_FIXTURE_ROOT", &root)
         .env("COINCIDE_CODEX_EXECUTABLE", executable)
-        .env("CODEX_HOME", dir.path().join("default-home"))
+        .env("CODEX_HOME", root.join("default-home"))
         .env("OPENAI_API_KEY", "synthetic-key")
         .env("CODEX_API_KEY", "synthetic-key")
         .env("CODEX_ACCESS_TOKEN", "synthetic-token")
@@ -254,6 +257,7 @@ fn limits_fixture_child() {
         "projects.create",
         json!({"path":root,"name":"Synthetic limits"}),
     );
+    assert_eq!(project["path"], json!(root));
     let thread = call(
         &mut engine,
         "threads.create",
@@ -282,7 +286,7 @@ fn limits_fixture_child() {
     engine.store.save(&original).unwrap();
     engine
         .store
-        .save_document("settings", &json!({"future":{"unknown":17}}))
+        .save_document("settings.json", &json!({"future":{"unknown":17}}))
         .unwrap();
     let a = call(
         &mut engine,
@@ -463,7 +467,7 @@ fn limits_fixture_child() {
     assert_eq!(engine.store.thread(&id).unwrap(), retained);
     assert_eq!(engine.store.thread(&text(&other, "id")).unwrap(), other);
     assert_eq!(
-        engine.store.document("settings").unwrap(),
+        engine.store.document("settings.json").unwrap(),
         Some(json!({"future":{"unknown":17}}))
     );
     let restarted_target = target(&engine, &id);
