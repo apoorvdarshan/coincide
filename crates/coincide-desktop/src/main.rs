@@ -15,6 +15,7 @@ mod composer_attachments;
 mod composer_commands;
 mod composer_context_mount;
 mod composer_context_view;
+mod composer_file_picker;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
@@ -420,6 +421,7 @@ struct Coincide {
     model_input: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
+    composer_files: composer_file_picker::Picker,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -758,6 +760,7 @@ impl Coincide {
             });
         let github_threads_panel =
             cx.new(|cx| github_threads::GitHubThreadsPanel::new(threads_transport, window, cx));
+        let composer_files = composer_file_picker::Picker::new(window, cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -773,6 +776,7 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
                 this.codex_limits.refresh(cx);
             }),
@@ -936,7 +940,7 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();}
+                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.invalidate();}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
                 {
@@ -1094,6 +1098,7 @@ impl Coincide {
             model_input,
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
+            composer_files,
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -1502,6 +1507,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.composer_files.invalidate();
         self.thread_bulk.close_selection();
         self.dismiss_palette(window, cx);
         self.dismiss_find(window, cx);
@@ -2428,6 +2434,7 @@ impl Coincide {
         self.sync_media_context(cx);
         self.poll_media_parent(cx);
         self.poll_thread_bulk(window, cx);
+        self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
@@ -2462,6 +2469,7 @@ impl Coincide {
                 && self.media_shutdown_ready(cx)
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
+                && self.composer_files.closed_and_drained()
             {
                 window.remove_window();
             } else if !drafts_saved {
@@ -2479,6 +2487,9 @@ impl Coincide {
             } else if !self.media_shutdown_ready(cx) {
                 self.computer_use_open = false;
                 self.show_media_shutdown(window, cx);
+            } else if !self.composer_files.closed_and_drained() {
+                self.status="Closing waits for owned project-file discovery/attachment work and its receipt.".into();
+                cx.notify();
             } else if !self.thread_bulk.closed_and_drained() {
                 self.status = "Closing waits for the owned sidebar operation to finish and join. Committed changes retain their receipt.".into();
                 cx.notify();
@@ -3766,6 +3777,7 @@ impl Render for Coincide {
             .unwrap_or_default();
         self.sync_sidebar_resize(window);
         self.sync_thread_bulk(cx);
+        self.sync_composer_file_picker(window, cx);
         self.sync_keyboard_recording(window, cx);
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self
@@ -4202,6 +4214,7 @@ impl Render for Coincide {
                                                 .gap_1()
                                                 .mt_2()
                                                 .child(self.composer_selection_footer(cx))
+                                                .child(self.composer_file_button(cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Plus)

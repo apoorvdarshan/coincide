@@ -54,6 +54,11 @@ pub use background_workers::BackgroundShutdownStatus;
 mod composer_astra_api_tests;
 #[path = "composer_context_api.rs"]
 mod composer_context_api;
+#[path = "composer_file_reference.rs"]
+mod composer_file_reference;
+pub use composer_file_reference::{
+    AttachedFileReference, FileReference, FileReferenceList, FileReferenceScope,
+};
 #[cfg(test)]
 #[path = "composer_context_boundary_tests.rs"]
 mod composer_context_boundary_tests;
@@ -127,6 +132,7 @@ struct Running {
 }
 pub struct Engine {
     thread_bulk_owner: Uuid,
+    composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
@@ -199,6 +205,7 @@ impl Engine {
         let notification_events = notification_events::Outbox::new(&store);
         Self {
             thread_bulk_owner: Uuid::new_v4(),
+            composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),

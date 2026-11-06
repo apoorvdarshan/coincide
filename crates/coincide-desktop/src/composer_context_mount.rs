@@ -5,6 +5,7 @@ impl Coincide {
         if self.media.shutdown_requested {
             return;
         }
+        self.composer_files.invalidate();
         let Some(thread) = self
             .selected
             .as_ref()
@@ -47,7 +48,7 @@ impl Coincide {
         let thread = self.selected.as_ref()?;
         let raw = thread.get("draftContext").unwrap_or(&Value::Null);
         if !composer_context::has_context(raw) {
-            return None;
+            return self.composer_file_pane(cx);
         }
         let source = text(thread, "id");
         let mut pane = div()
@@ -93,6 +94,9 @@ impl Coincide {
                     cx.listener(move |this, _, _, cx| this.edit_context(&source, Edit::Clear, cx)),
                 ),
         );
+        if let Some(files) = self.composer_file_pane(cx) {
+            pane = pane.child(files);
+        }
         Some(pane.into_any_element())
     }
     pub(super) fn transcript_context_pane(&self, raw: &Value) -> Option<AnyElement> {

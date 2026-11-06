@@ -13,6 +13,8 @@ use std::{
 use uuid::Uuid;
 #[path = "browser_history_store.rs"]
 mod browser_history_store;
+#[path = "composer_file_reference_store.rs"]
+mod composer_file_reference_store;
 #[path = "thread_bulk_store.rs"]
 mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;

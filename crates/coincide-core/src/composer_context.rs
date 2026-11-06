@@ -198,6 +198,43 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     validate(&result)?;
     Ok(result)
 }
+/// This picker supplies literal project-relative path data, never @ syntax or read authority.
+pub(crate) fn validate_file_reference_path(path: &str) -> Result<()> {
+    use std::path::{Component, Path};
+    ensure!(
+        !path.is_empty()
+            && path.len() <= 4096
+            && !path.chars().any(char::is_control)
+            && !path.contains('\\')
+            && path
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+            && Path::new(path)
+                .components()
+                .all(|part| matches!(part, Component::Normal(_))),
+        "Choose a relative project file without parent components or control characters"
+    );
+    Ok(())
+}
+pub(crate) fn append_file_reference(raw: &Value, path: &str, directory: &str) -> Result<Value> {
+    validate(raw)?;
+    validate_file_reference_path(path)?;
+    ensure!(
+        !directory.is_empty() && directory.len() <= 4096 && !directory.contains('\0'),
+        "Invalid project directory"
+    );
+    let mut rows = raw.as_array().cloned().unwrap_or_default();
+    if rows
+        .iter()
+        .any(|row| row["kind"] == "file" && row["path"] == path && row["directory"] == directory)
+    {
+        return Ok(raw.clone());
+    }
+    rows.push(json!({"id":Uuid::new_v4(),"kind":"file","path":path,"directory":directory}));
+    let next = Value::Array(rows);
+    validate(&next)?;
+    Ok(next)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
