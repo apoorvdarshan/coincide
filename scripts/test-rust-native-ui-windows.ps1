@@ -49,6 +49,8 @@ public static class NativeUiSmoke {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr window);
+    [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SendMessageTimeout(IntPtr window,uint message,UIntPtr wparam,IntPtr lparam,uint flags,uint timeout,out UIntPtr result);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int state);
     [DllImport("user32.dll")] static extern bool MoveWindow(IntPtr window,int x,int y,int width,int height,bool repaint);
     [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window,out Rect rect);
@@ -70,7 +72,12 @@ public static class NativeUiSmoke {
         uint owner;GetWindowThreadProcessId(window,out owner);
         if(window==IntPtr.Zero || owner!=process || !IsWindowVisible(window))throw new Exception("Input/capture target is not the retained process's visible window");
     }
-    public static bool Focus(IntPtr window,uint process) {Owned(window,process);ShowWindow(window,9);SetForegroundWindow(window);return GetForegroundWindow()==window;}
+    public static bool Focus(IntPtr window,uint process) {Owned(window,process);if(GetForegroundWindow()==window)return true;ShowWindow(window,9);SetForegroundWindow(window);return GetForegroundWindow()==window;}
+    public static string[] Diagnose(IntPtr window,uint process) {
+        Owned(window,process);UIntPtr result;
+        bool responsive=SendMessageTimeout(window,0,UIntPtr.Zero,IntPtr.Zero,2,1000,out result)!=IntPtr.Zero;
+        return new[]{"foreground="+(GetForegroundWindow()==window),"hung="+IsHungAppWindow(window),"wmNullResponsive="+responsive};
+    }
     public static void Fit(IntPtr window,uint process,int width,int height) {Owned(window,process);if(!MoveWindow(window,15,15,width,height,true))throw new Exception("Cannot size owned native window");}
     static void Send(IntPtr window,uint process,Input[] input) {
         Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Owned window lost foreground; refusing input");
@@ -187,7 +194,13 @@ function Quit-Owned([IntPtr]$Window) {
     if((Invoke-Rpc 'app.status').running.Count -ne 0){throw 'Provider work unexpectedly started'}
     Wait-Condition 'owned Quit foreground' {[NativeUiSmoke]::Focus($Window,[uint32]$script:OwnedProcess.Id)} | Out-Null
     [NativeUiSmoke]::Chord($Window,[uint32]$script:OwnedProcess.Id,0x51)
-    if(-not $script:OwnedProcess.WaitForExit(30000)){throw "Normal Ctrl+Q did not drain owned PID $($script:OwnedProcess.Id)"}
+    if(-not $script:OwnedProcess.WaitForExit(30000)){
+        # Diagnostics never issue another key or substitute API Quit for the
+        # required native action. Preserve the actual failure and owner.
+        $Report.quitWindowDiagnostics=@([NativeUiSmoke]::Diagnose($Window,[uint32]$script:OwnedProcess.Id))
+        try {$Report.quitControlStatus=Invoke-Rpc 'app.status'} catch {$Report.quitControlError=$_.Exception.Message}
+        throw "Normal Ctrl+Q did not drain owned PID $($script:OwnedProcess.Id)"
+    }
     if($script:OwnedProcess.ExitCode -ne 0){throw 'Normal Quit returned nonzero'}
     $script:OwnedProcess=$null
 }

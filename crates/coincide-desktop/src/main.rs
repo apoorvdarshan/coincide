@@ -2573,6 +2573,8 @@ impl Coincide {
         self.sync_media_context(cx);
         self.poll_media_parent(cx);
         self.poll_thread_bulk(window, cx);
+        self.instructions_panel
+            .update(cx, |panel, cx| panel.poll_instruction_git(cx));
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;

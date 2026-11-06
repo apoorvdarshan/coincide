@@ -26,6 +26,16 @@ pub struct NativeUiEditLease {
     dirty: bool,
 }
 impl NativeUiEditLease {
+    /// Independent custody for a native picker future. Editor Save/Discard
+    /// cannot release it; only actual future/callback completion drops it.
+    /// This carries no path/text and has no control API constructor.
+    pub fn pending_native_action(&self) -> Self {
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        Self {
+            pending: self.pending.clone(),
+            dirty: true,
+        }
+    }
     /// Only the retained native editor calls this after native input, explicit
     /// Save, or explicit Discard. It is not registered on any control API.
     pub fn set_dirty(&mut self, dirty: bool) {
@@ -76,6 +86,30 @@ mod tests {
                 .is_some()
         );
         drop(second);
+        assert_eq!(engine.native_ui_editors.pending(), 0);
+        assert_eq!(
+            engine.dispatch(json!({"method":"app.quit","params":{}}))["result"]["requested"],
+            true
+        );
+    }
+    #[test]
+    fn native_picker_action_outlives_editor_save_and_blocks_api_quit_until_actual_drop() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        let mut editor = engine.native_ui_editors().editor();
+        editor.set_dirty(true);
+        let action = editor.pending_native_action();
+        editor.set_dirty(false);
+        drop(editor);
+        assert_eq!(engine.native_ui_editors.pending(), 1);
+        assert!(
+            engine
+                .dispatch(json!({"method":"app.quit","params":{}}))
+                .get("error")
+                .is_some()
+        );
+        assert!(!engine.shutdown && !engine.admissions_frozen());
+        drop(action);
         assert_eq!(engine.native_ui_editors.pending(), 0);
         assert_eq!(
             engine.dispatch(json!({"method":"app.quit","params":{}}))["result"]["requested"],
