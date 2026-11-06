@@ -185,6 +185,7 @@ pub struct Session {
     completion: WorkerCompletion,
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
     steering: Option<codex_steering::Client>,
+    codex_profile_account: Option<String>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -241,6 +242,24 @@ impl Session {
         instructions: Option<String>,
         policy: Option<crate::composer_policy::Policy>,
     ) -> Self {
+        Self::start_with_mode_policy_and_profile(
+            provider,
+            launch,
+            images,
+            instructions,
+            policy,
+            None,
+        )
+    }
+    pub(crate) fn start_with_mode_policy_and_profile(
+        provider: Provider,
+        launch: Launch,
+        images: Vec<ImageAttachment>,
+        instructions: Option<String>,
+        policy: Option<crate::composer_policy::Policy>,
+        profile: Option<crate::codex_login_profiles::LaunchContext>,
+    ) -> Self {
+        let profile_account = profile.as_ref().map(|profile| profile.account().to_owned());
         let codex = matches!(&provider, Provider::Codex);
         let (steer_client, steer_server) = codex_steering::pair();
         let usage = Arc::new(Mutex::new(None));
@@ -259,7 +278,13 @@ impl Session {
                     }
                     Ok(())
                 })
-                .and_then(|()| validate_images(&provider, &images))
+                .and_then(|()| {
+                    ensure!(
+                        profile.is_none() || matches!(&provider, Provider::Codex),
+                        "A Codex profile cannot launch another provider"
+                    );
+                    validate_images(&provider, &images)
+                })
                 .and_then(|()| match provider {
                     Provider::Codex => run(
                         launch,
@@ -271,6 +296,7 @@ impl Session {
                             usage: output,
                             steering: steer_server,
                             policy,
+                            profile,
                         },
                     ),
                     Provider::Claude => {
@@ -303,10 +329,14 @@ impl Session {
             }
         });
         session.usage = usage;
+        session.codex_profile_account = profile_account;
         if codex {
             session.steering = Some(steer_client);
         }
         session
+    }
+    pub(crate) fn codex_profile_account(&self) -> Option<&str> {
+        self.codex_profile_account.as_deref()
     }
     pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
         self.steering
@@ -329,6 +359,7 @@ impl Session {
             completion: WorkerCompletion::observe(worker),
             usage: Arc::new(Mutex::new(None)),
             steering: None,
+            codex_profile_account: None,
         }
     }
     #[cfg(test)]
@@ -422,6 +453,7 @@ struct CodexOptions {
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
     steering: codex_steering::Server,
     policy: Option<crate::composer_policy::Policy>,
+    profile: Option<crate::codex_login_profiles::LaunchContext>,
 }
 fn run(
     launch: Launch,
@@ -435,6 +467,7 @@ fn run(
         usage,
         mut steering,
         policy,
+        profile,
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
@@ -447,7 +480,15 @@ fn run(
         .map(|image| image.path().to_path_buf())
         .collect::<Vec<_>>();
     drop(images);
-    let mut transport = transport::Transport::spawn(&launch, &["app-server".into()], &[])?;
+    let mut transport = if let Some(profile) = &profile {
+        ensure!(
+            launch.session.is_none() && launch.model.is_none() && instructions.is_none(),
+            "Named Codex profile native resume/options are unavailable"
+        );
+        transport::Transport::spawn_codex_profile(&launch, profile)?
+    } else {
+        transport::Transport::spawn(&launch, &["app-server".into()], &[])?
+    };
     transport.write(&request(
         1,
         "initialize",
@@ -455,6 +496,8 @@ fn run(
     ))?;
     let started = Instant::now();
     let mut stage = 1;
+    let mut account_pending = false;
+    const ACCOUNT_REQUEST: u64 = 4_000_000_001;
     let mut completed = false;
     let mut early_completions = std::collections::VecDeque::new();
     let mut provisional_turn = false;
@@ -495,6 +538,28 @@ fn run(
             transport.next()?
         };
         if let Some(frame) = frame {
+            if profile.is_some() && frame["id"].as_u64() == Some(ACCOUNT_REQUEST) {
+                ensure!(
+                    account_pending && stage == 1 && frame.get("error").is_none(),
+                    "Codex profile authentication check failed"
+                );
+                profile.as_ref().unwrap().admit_account(&frame["result"])?;
+                account_pending = false;
+                write_thread_request(&mut transport, &launch, instructions.as_deref())?;
+                stage = 2;
+                continue; // Never forward account metadata to transcript/events.
+            }
+            if profile.is_some()
+                && frame["method"]
+                    .as_str()
+                    .is_some_and(|method| method.starts_with("account/"))
+            {
+                ensure!(
+                    stage == 1,
+                    "Codex profile authentication changed during the turn"
+                );
+                continue;
+            }
             if steering.response(&frame) {
                 continue;
             }
@@ -519,23 +584,21 @@ fn run(
                 match stage {
                     1 => {
                         transport.write(&json!({"method":"initialized"}))?;
-                        let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
-                        if let Some(model) = &launch.model {
-                            params["model"] = json!(model);
+                        if profile.is_some() {
+                            account_pending = true;
+                            transport.write(&request(
+                                ACCOUNT_REQUEST,
+                                "account/read",
+                                json!({"refreshToken":false}),
+                            ))?;
+                            continue;
                         }
-                        if let Some(instructions) = &instructions {
-                            params["developerInstructions"] = json!(instructions);
-                        }
-                        let method = if let Some(session) = &launch.session {
-                            params["threadId"] = json!(session);
-                            params["excludeTurns"] = json!(true);
-                            "thread/resume"
-                        } else {
-                            "thread/start"
-                        };
-                        transport.write(&request(2, method, params))?;
+                        write_thread_request(&mut transport, &launch, instructions.as_deref())?;
                     }
                     2 => {
+                        if let Some(profile) = &profile {
+                            profile.validate()?;
+                        }
                         let id = frame["result"]["thread"]["id"]
                             .as_str()
                             .context("Codex returned no thread ID")?;
@@ -653,6 +716,27 @@ fn run(
         }
     }
 }
+fn write_thread_request(
+    transport: &mut transport::Transport,
+    launch: &Launch,
+    instructions: Option<&str>,
+) -> Result<()> {
+    let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
+    if let Some(model) = &launch.model {
+        params["model"] = json!(model);
+    }
+    if let Some(instructions) = instructions {
+        params["developerInstructions"] = json!(instructions);
+    }
+    let method = if let Some(session) = &launch.session {
+        params["threadId"] = json!(session);
+        params["excludeTurns"] = json!(true);
+        "thread/resume"
+    } else {
+        "thread/start"
+    };
+    transport.write(&request(2, method, params))
+}
 fn turn_params(id: &str, launch: &Launch, image_paths: &[PathBuf]) -> Value {
     let mut input = Vec::new();
     if !launch.prompt.is_empty() {
@@ -734,8 +818,11 @@ pub fn provider_seen_count(thread: &Value, provider: &str) -> usize {
 /// to persist. Session creation alone does not prove the prompt was delivered.
 /// This never fabricates a missing session or changes another provider/account.
 pub fn mark_provider_seen(thread: &mut Value, provider: &str) {
-    let count = thread["items"].as_array().map_or(0, Vec::len);
     let account = selected_account(thread, provider).to_owned();
+    mark_provider_seen_for_account(thread, provider, &account);
+}
+pub(crate) fn mark_provider_seen_for_account(thread: &mut Value, provider: &str, account: &str) {
+    let count = thread["items"].as_array().map_or(0, Vec::len);
     let current_matches = current_reference(thread, provider)
         .is_some_and(|reference| reference_account(reference) == account);
     let reference = if current_matches {
@@ -765,6 +852,14 @@ pub fn mark_provider_seen(thread: &mut Value, provider: &str) {
 
 pub fn set_provider_session(thread: &mut Value, provider: &str, id: &str) {
     let account = selected_account(thread, provider).to_owned();
+    set_provider_session_for_account(thread, provider, &account, id);
+}
+pub(crate) fn set_provider_session_for_account(
+    thread: &mut Value,
+    provider: &str,
+    account: &str,
+    id: &str,
+) {
     let current = current_reference(thread, provider).cloned();
     let same_account = current
         .as_ref()
@@ -852,6 +947,24 @@ mod tests {
                 42
             );
         }
+    }
+    #[test]
+    fn captured_profile_session_cannot_attach_to_a_later_saved_account_selection() {
+        let mut thread = json!({"selection":{"provider":"codex","accountID":"profile-b"},"sessions":{"codex":{"sessionID":"native-b","accountID":"profile-b","seenItemCount":1,"future":42}},"items":[{},{}]});
+        set_provider_session_for_account(&mut thread, "codex", "profile-a", "native-a");
+        mark_provider_seen_for_account(&mut thread, "codex", "profile-a");
+        assert_eq!(
+            provider_session(&thread, "codex").as_deref(),
+            Some("native-b")
+        );
+        assert_eq!(
+            thread["accountSessions"]["codex/profile-b"]["seenItemCount"],
+            1
+        );
+        assert_eq!(thread["accountSessions"]["codex/profile-b"]["future"], 42);
+        assert_eq!(thread["sessions"]["codex"]["accountID"], "profile-a");
+        assert_eq!(thread["sessions"]["codex"]["seenItemCount"], 2);
+        assert_eq!(thread["selection"]["accountID"], "profile-b");
     }
     #[test]
     fn session_update_preserves_other_accounts_and_future_fields() {

@@ -60,3 +60,5 @@ pub mod composer_policy;
 pub mod browser_bookmarks;
 
 pub mod firefox_cookie_import;
+
+pub(crate) mod codex_login_profiles;

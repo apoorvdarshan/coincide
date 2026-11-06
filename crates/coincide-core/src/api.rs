@@ -33,6 +33,8 @@ mod bot_engine;
 mod browser_bookmarks_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
+#[path = "codex_login_profiles_api.rs"]
+mod codex_login_profiles_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
@@ -283,6 +285,7 @@ impl Engine {
                 self.revision += 1;
                 Ok(result)
             }
+            "providers.codex.profiles.status" | "providers.codex.profiles.create" | "providers.codex.profiles.select" => self.codex_login_profile_command(method,p),
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
             "providers.list"=>Ok(json!({"catalog":crate::provider_catalog::provider_catalog(),"discovery":self.provider_discovery,"runtimeConnected":Provider::supported_names(),"discoveryOnly":true})),
             "attachments.add" => {
@@ -798,8 +801,21 @@ impl Engine {
         };
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
-        let effort_proof = self.composer_thread_effort_proof(&v)?;
-        crate::composer_selection::validate_thread_with_proof(&v, effort_proof.as_ref())?;
+        let codex_profile = self.codex_login_context(&v)?;
+        ensure!(
+            codex_profile.is_none() || !scheduled,
+            "Named Codex profiles are not connected to queued/scheduled dispatch"
+        );
+        let validation_thread = if codex_profile.is_some() {
+            crate::codex_login_profiles::validation_view(&v)
+        } else {
+            v.clone()
+        };
+        let effort_proof = self.composer_thread_effort_proof(&validation_thread)?;
+        crate::composer_selection::validate_thread_with_proof(
+            &validation_thread,
+            effort_proof.as_ref(),
+        )?;
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
                 Vec::new()
@@ -832,7 +848,7 @@ impl Engine {
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
         let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
             Some(crate::composer_policy::Policy::parse_with_effort_proof(
-                &v,
+                &validation_thread,
                 crate::composer_policy::Origin::Ordinary,
                 effort_proof.as_ref(),
             )?)
@@ -843,6 +859,7 @@ impl Engine {
         let mut adapter = Provider::from_name(&provider)?;
         ensure!(
             provider == "antigravity"
+                || codex_profile.is_some()
                 || crate::composer_selection::default_account(&v["selection"]["accountID"])
                 || bot_instructions.is_some(),
             "Alternate provider accounts are not connected yet"
@@ -866,7 +883,13 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
-        let session = agent::provider_session(&v, &provider);
+        // account/read exposes display metadata, not stable account authority.
+        // Named profiles use a fresh native thread and full context replay.
+        let session = if codex_profile.is_some() {
+            None
+        } else {
+            agent::provider_session(&v, &provider)
+        };
         let seen = if session.is_some() {
             agent::provider_seen_count(&v, &provider)
         } else {
@@ -947,7 +970,9 @@ impl Engine {
             });
         // Use exactly the executable whose catalog authorized effort, not a
         // later PATH lookup or another configured provider/account.
-        let executable = if effort_proof.is_some() {
+        let executable = if let Some(profile) = &codex_profile {
+            profile.executable().to_path_buf()
+        } else if effort_proof.is_some() {
             self.composer_codex_executable()?
         } else {
             executable
@@ -985,7 +1010,7 @@ impl Engine {
             id,
             Running {
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
-                session: Session::start_with_mode_policy(
+                session: Session::start_with_mode_policy_and_profile(
                     adapter,
                     Launch {
                         executable,
@@ -997,6 +1022,7 @@ impl Engine {
                     images,
                     bot_instructions,
                     mode_policy,
+                    codex_profile,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1532,7 +1558,16 @@ impl Engine {
                 }
                 match event {
                     Event::Session(session) => {
-                        agent::set_provider_session(&mut v, &self.runs[&id].provider, &session)
+                        if let Some(account) = self.runs[&id].session.codex_profile_account() {
+                            agent::set_provider_session_for_account(
+                                &mut v,
+                                &self.runs[&id].provider,
+                                account,
+                                &session,
+                            );
+                        } else {
+                            agent::set_provider_session(&mut v, &self.runs[&id].provider, &session);
+                        }
                     }
                     Event::Finished => {
                         finished = true;
@@ -1739,7 +1774,15 @@ impl Engine {
                 && !self.runs[&id].cancelled
                 && self.runs[&id].persistence_error.is_none()
             {
-                agent::mark_provider_seen(&mut v, &self.runs[&id].provider);
+                if let Some(account) = self.runs[&id].session.codex_profile_account() {
+                    agent::mark_provider_seen_for_account(
+                        &mut v,
+                        &self.runs[&id].provider,
+                        account,
+                    );
+                } else {
+                    agent::mark_provider_seen(&mut v, &self.runs[&id].provider);
+                }
             }
             if finished {
                 let run = &self.runs[&id];

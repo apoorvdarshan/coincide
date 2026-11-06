@@ -101,14 +101,24 @@ impl Transport {
         remove_env: &[&str],
         environment: &[(std::ffi::OsString, std::ffi::OsString)],
     ) -> Result<Self> {
-        Self::spawn_policy(launch, args, remove_env, environment, false)
+        Self::spawn_policy(launch, args, remove_env, environment, false, None)
     }
     pub(super) fn spawn_antigravity(
         launch: &Launch,
         remove_env: &[&str],
         environment: &[(std::ffi::OsString, std::ffi::OsString)],
     ) -> Result<Self> {
-        Self::spawn_policy(launch, &[], remove_env, environment, true)
+        Self::spawn_policy(launch, &[], remove_env, environment, true, None)
+    }
+    pub(super) fn spawn_codex_profile(
+        launch: &Launch,
+        profile: &crate::codex_login_profiles::LaunchContext,
+    ) -> Result<Self> {
+        ensure!(
+            launch.executable.as_path() == profile.executable(),
+            "Codex profile executable binding differs"
+        );
+        Self::spawn_policy(launch, &profile.arguments(), &[], &[], false, Some(profile))
     }
     fn spawn_policy(
         launch: &Launch,
@@ -116,12 +126,18 @@ impl Transport {
         remove_env: &[&str],
         environment: &[(std::ffi::OsString, std::ffi::OsString)],
         antigravity: bool,
+        codex_profile: Option<&crate::codex_login_profiles::LaunchContext>,
     ) -> Result<Self> {
         ensure!(
             launch.cwd.is_dir(),
             "Agent working directory does not exist"
         );
         let mut command = Command::new(&launch.executable);
+        if let Some(profile) = codex_profile {
+            profile.configure(&mut command)?;
+        }
+        // Apply parent-control isolation after the named profile clears ambient
+        // environment, so the deliberately unbound socket is retained.
         isolate_environment(&mut command);
         command
             .args(args)
