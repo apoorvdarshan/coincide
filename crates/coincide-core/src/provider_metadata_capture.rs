@@ -71,10 +71,11 @@ pub(crate) fn capture(
         if !err_eof {
             err_eof = read_available(&mut stderr, &mut err)?;
         }
-        if let Some(success) = exited(&child)? {
-            if out_eof && err_eof {
-                return Ok((success, out, err));
-            }
+        if let Some(success) = exited(&child)?
+            && out_eof
+            && err_eof
+        {
+            return Ok((success, out, err));
         }
         thread::sleep(Duration::from_millis(10));
     }

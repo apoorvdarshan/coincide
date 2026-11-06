@@ -121,7 +121,7 @@ mod tests {
         for (source, range) in [
             (" ", 0..1),
             ("a\0b", 0..3),
-            ("abc", 2..1),
+            ("abc", std::ops::Range { start: 2, end: 1 }),
             ("abc", 0..4),
             ("abc", 0..0),
         ] {
