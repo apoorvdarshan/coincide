@@ -996,7 +996,7 @@ impl Coincide {
                     "Provider selection saved with Provider default. Authentication was not checked. No message was sent.".to_owned()
                 } else {
                     format!(
-                        "Provider selection saved with previously used catalog model {}. Authentication was not checked. No message was sent.",
+                        "Provider selection saved with previously selected catalog model {}. Authentication was not checked. No message was sent.",
                         text(&thread["selection"], "modelID")
                     )
                 };
