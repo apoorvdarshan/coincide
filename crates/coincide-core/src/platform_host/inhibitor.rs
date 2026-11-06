@@ -463,22 +463,67 @@ mod process {
                 (pid, std::process::ExitStatus::from_raw(libc::SIGKILL))
             );
         }
+        const LOST_OWNER_RECEIPT: &str = "coincide-owned-inhibitor-echild-complete";
         #[test]
         fn lost_child_ownership_never_signals_or_reports_cleanup_success() {
+            let temporary = tempfile::tempdir().unwrap();
+            let home = temporary.path().canonicalize().unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "platform_host::inhibitor::process::tests::lost_child_ownership_fixture_child",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env_clear()
+                .env("HOME", home)
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains(LOST_OWNER_RECEIPT),
+                "the exact isolated child must execute its ownership assertions"
+            );
+        }
+        #[test]
+        #[ignore = "Outer test supplies an isolated one-child process and cleared environment"]
+        fn lost_child_ownership_fixture_child() {
+            // This process runs only this exact test and spawns only this one
+            // exec-cat child. No parallel fixture can replace its child PID.
+            // A reused PID belonging to a different parent still yields ECHILD.
             let mut lease = Lease::start(&fixture(HELPER)).unwrap();
             lease.input.take();
             await_owned_exit(&mut lease);
-            // Consume the actual Child wait outside Lease's receipt boundary to
-            // model ownership loss, without a post-reap numeric PID operation.
+            // Consume the real owned wait, then inspect lost ownership only in
+            // this isolated parent. Never do this in the parallel test process.
             assert!(lease.child.wait().unwrap().success());
-            assert!(
-                lease
-                    .stop_with_signal(|_| panic!("lost ownership must veto the signal"))
-                    .is_err()
+            let error = lease
+                .stop_with_signal(|_| panic!("lost ownership must veto the signal"))
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .raw_os_error(),
+                Some(libc::ECHILD)
             );
             assert!(lease.reaped);
             assert!(lease.cleanup_failure.is_some());
+            assert!(
+                lease
+                    .stop_with_signal(|_| panic!("sticky ownership loss must veto the signal"))
+                    .is_err()
+            );
             assert!(lease.stop().is_err());
+            drop(lease);
+            println!("{LOST_OWNER_RECEIPT}");
         }
         #[test]
         fn harmless_helper_is_reaped_on_drop() {
