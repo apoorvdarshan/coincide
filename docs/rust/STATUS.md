@@ -87,7 +87,7 @@ native results do not close a full feature row.
   feature Core Clippy passed. Desktop passed 406 units and all four integration
   targets (19, 10, 14, 11). A follow-up bounds the file results while keeping
   Close/Search reachable and adds file-specific accessibility labels; its final
-  desktop check and fresh native acceptance are in progress. Automatic caret
+  full desktop check passed. Fresh native acceptance is in progress. Automatic caret
   suggestions and broader named-profile options remain open.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
@@ -161,7 +161,7 @@ These narrower results do not close the broad UI/UX row above.
 | Keyboard recorder and Codex account Settings | Integrated; 402 desktop units/all integrations, 568 Core units/all integrations, strict Core Clippy and two actual GPUI focus regressions passed | Profile create/scoped selection/fake device cancellation passed in V1; fresh keyboard recording/disable/conflict/restart/reset-all passed all V2 guards; real login remains open |
 | Counted bulk selection, Pin/Archive/Restore and scoped Undo | Integrated; full Core/desktop checks passed | V2 passed selection without navigation, review Cancel, exact Pin Undo and Archive/Restore, both normal exits and all preservation guards |
 | Named Codex profile model catalog | Integrated; actual fake protocol integration, combined Core/desktop checks and strict Core Clippy passed | Fresh ordinary candidate acceptance pending; real-account verification remains open |
-| Composer project-file path references | Explicit picker integrated; six Core and three desktop regressions passed in the combined suites; bounded-layout follow-up under final check | Fresh ordinary candidate acceptance pending; automatic caret popup and folder completion remain separate work |
+| Composer project-file path references | Explicit picker and bounded results integrated; six Core and three desktop regressions passed, with the final full desktop suite green | Fresh ordinary candidate acceptance pending; automatic caret popup and folder completion remain separate work |
 | Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
 ## Overnight checkpoint (2026-11-05)
