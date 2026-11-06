@@ -522,13 +522,10 @@ fn queued_interrupt_waits_for_owned_worker_and_rejects_changed_execution_context
         NativeFollowUpStatus::Pending,
         "semantic Finished must not launch replacement before actual worker return"
     );
-    engine
-        .store
-        .patch_thread(
-            &id,
-            &json!({"draft":"unrelated new draft", "projectPath":"/synthetic/changed-project"}),
-        )
-        .unwrap();
+    let mut changed = engine.store.thread(&id).unwrap();
+    changed["draft"] = json!("unrelated new draft");
+    changed["projectPath"] = json!("/synthetic/changed-project");
+    engine.store.save(&changed).unwrap();
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while engine.native_follow_up_status(&ticket).unwrap() == NativeFollowUpStatus::Pending {
