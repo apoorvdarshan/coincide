@@ -26,6 +26,8 @@ struct Plan {
     launch: Binary,
     helper: Binary,
     brew: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<accounts::Account>,
 }
 pub struct SetupHandoff {
     pending: PathBuf,
@@ -256,6 +258,28 @@ impl Engine {
         action: SetupAction,
         helper: &Path,
     ) -> Result<SetupHandoff> {
+        self.prepare_provider_setup(provider, action, helper, None)
+    }
+    pub fn prepare_native_login_account_setup(
+        &mut self,
+        provider: &str,
+        id: &str,
+        expected: &str,
+        helper: &Path,
+    ) -> Result<SetupHandoff> {
+        // Validate the helper before issuing a new login generation. Login itself
+        // remains an explicit external-terminal handoff, never an auth claim.
+        Binary::capture(helper)?;
+        let account = self.prepare_login_setup_account(provider, id, expected)?;
+        self.prepare_provider_setup(provider, SetupAction::SignIn, helper, Some(account))
+    }
+    fn prepare_provider_setup(
+        &self,
+        provider: &str,
+        action: SetupAction,
+        helper: &Path,
+        account: Option<accounts::Account>,
+    ) -> Result<SetupHandoff> {
         self.require_admissions()?;
         provider_id(provider)?;
         let owner = Private::open(&self.store, true)?.context("Setup authority unavailable")?;
@@ -315,6 +339,7 @@ impl Engine {
             launch,
             helper: Binary::capture(helper)?,
             brew: use_brew,
+            account,
         };
         let pending = owner.directory.join(format!("setup-{nonce}.pending"));
         write(&owner, &pending, &serde_json::to_value(plan)?)?;
@@ -445,30 +470,47 @@ fn consume_with(
     let mut command = Command::new(&plan.launch.requested);
     let configuration = if plan.action == SetupAction::SignIn {
         command.args(login(&plan.provider)?);
-        record
-            .map(|record| {
-                let digest =
-                    crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(&record)?));
-                let path = owner.source["path"]
-                    .as_str()
-                    .context("Setup source missing")?;
-                let stamp = Stamp {
-                    source: path.into(),
-                    identity: serde_json::from_value(owner.source["identity"].clone())?,
-                    provider: plan.provider.clone(),
-                    revision: record.revision.clone(),
-                    digest,
-                };
-                Ok::<_, anyhow::Error>(LaunchConfiguration {
-                    stamp,
-                    record,
-                    profile: None,
-                    derived_executable: None,
-                    derived_companion: None,
+        if let Some(account) = &plan.account {
+            if plan.provider == "opencode" {
+                command.arg("--standalone");
+            }
+            Some(accounts::setup_configuration(
+                &owner,
+                &plan.provider,
+                account,
+                record,
+                &plan.launch.requested,
+            )?)
+        } else {
+            record
+                .map(|record| {
+                    let digest =
+                        crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(&record)?));
+                    let path = owner.source["path"]
+                        .as_str()
+                        .context("Setup source missing")?;
+                    let stamp = Stamp {
+                        source: path.into(),
+                        identity: serde_json::from_value(owner.source["identity"].clone())?,
+                        provider: plan.provider.clone(),
+                        revision: record.revision.clone(),
+                        digest,
+                    };
+                    Ok::<_, anyhow::Error>(LaunchConfiguration {
+                        stamp,
+                        record,
+                        profile: None,
+                        derived_executable: None,
+                        derived_companion: None,
+                    })
                 })
-            })
-            .transpose()?
+                .transpose()?
+        }
     } else {
+        ensure!(
+            plan.account.is_none(),
+            "Named account setup cannot install software"
+        );
         if plan.brew {
             command.args(brew_arguments(&plan.provider)?);
         } else if cfg!(windows) {
@@ -563,6 +605,82 @@ mod tests {
             engine
                 .execute("providers.setup", &json!({"provider":"codex"}))
                 .is_err()
+        );
+    }
+    #[test]
+    fn named_login_handoff_owns_exact_home_and_blocks_concurrent_launch() {
+        let (_root, mut engine, binary) = super::super::tests::fixture();
+        super::super::tests::save(&mut engine, "opencode", &binary, "synthetic");
+        let account = engine
+            .create_native_login_account("opencode", "Work")
+            .unwrap();
+        let old = engine
+            .native_login_launch_configuration("opencode", &account.id)
+            .unwrap();
+        assert!(
+            engine
+                .prepare_native_login_account_setup(
+                    "opencode",
+                    &account.id,
+                    &account.revision,
+                    &binary
+                )
+                .is_err()
+        );
+        drop(old);
+        let handoff = engine
+            .prepare_native_login_account_setup("opencode", &account.id, &account.revision, &binary)
+            .unwrap();
+        consume_with(handoff.path(), &binary, |command| {
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                vec![
+                    std::ffi::OsStr::new("auth"),
+                    std::ffi::OsStr::new("login"),
+                    std::ffi::OsStr::new("--standalone")
+                ]
+            );
+            assert!(
+                command.get_envs().any(|(key, value)| key == "XDG_DATA_HOME"
+                    && value == Some(account.home.as_os_str()))
+            );
+            assert!(
+                engine
+                    .native_login_launch_configuration("opencode", &account.id)
+                    .is_err()
+            );
+            Ok(0)
+        })
+        .unwrap();
+        assert!(
+            engine
+                .native_login_launch_configuration("opencode", &account.id)
+                .is_ok()
+        );
+        assert!(
+            consume_with(handoff.path(), &binary, |_| panic!(
+                "replayed named sign in"
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn changed_named_account_cannot_consume_prepared_sign_in() {
+        let (_root, mut engine, binary) = super::super::tests::fixture();
+        super::super::tests::save(&mut engine, "grok", &binary, "synthetic");
+        let account = engine.create_native_login_account("grok", "Work").unwrap();
+        let handoff = engine
+            .prepare_native_login_account_setup("grok", &account.id, &account.revision, &binary)
+            .unwrap();
+        let current = engine.native_login_accounts("grok").unwrap().pop().unwrap();
+        engine
+            .rename_native_login_account("grok", &current.id, &current.revision, "Renamed")
+            .unwrap();
+        assert!(
+            consume_with(handoff.path(), &binary, |_| panic!(
+                "stale account launched"
+            ))
+            .is_err()
         );
     }
     #[test]

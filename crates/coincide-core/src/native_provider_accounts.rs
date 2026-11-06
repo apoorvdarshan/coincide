@@ -1,6 +1,7 @@
 //! Native-issued isolated login profiles. Settings/import account rows are
 //! descriptive only and cannot mint these source-bound signed home grants.
 use super::*;
+use rusqlite::OptionalExtension;
 use std::sync::Arc;
 const PURPOSE: &str = "native-login-accounts-v1";
 const GUARD: &str = ".native-account-owner";
@@ -12,7 +13,7 @@ pub struct NativeLoginAccount {
     pub home: PathBuf,
 }
 #[derive(Clone, Serialize, Deserialize)]
-struct Account {
+pub(super) struct Account {
     id: String,
     provider: String,
     name: String,
@@ -161,6 +162,9 @@ fn account(payload: &Value, provider: &str, id: &str) -> Result<Account> {
 }
 impl LoginHome {
     fn capture(root: &Path, account: Account) -> Result<Self> {
+        Self::capture_with_lock(root, account, false)
+    }
+    fn capture_with_lock(root: &Path, account: Account, exclusive: bool) -> Result<Self> {
         ensure!(
             account.home == home(root, &account.provider, &account.id)?,
             "Native account home is outside its owner"
@@ -177,9 +181,15 @@ impl LoginHome {
             "Native account owner changed"
         );
         let lease = open_file(&path, false)?;
-        lease
-            .try_lock_shared()
-            .context("Native account setup or removal is busy")?;
+        if exclusive {
+            lease
+                .try_lock()
+                .context("Native account is in use; stop its conversations before signing in")?;
+        } else {
+            lease
+                .try_lock_shared()
+                .context("Native account setup or removal is busy")?;
+        }
         let mut base_environment = BTreeMap::new();
         for key in [
             "PATH",
@@ -538,8 +548,7 @@ impl Engine {
             &self.store.data_directory()?,
             account(&payload, provider, id)?,
         )?;
-        // Registry and executable configuration share one authority key. Read
-        // both envelopes under this owner rather than reacquiring its lease.
+        // Both native envelopes share this authority lease.
         let record = read_record(&owner.read()?, provider)?;
         ensure!(
             record.is_some()
@@ -551,53 +560,150 @@ impl Engine {
         if let Some(record) = &record {
             validate_environment(&record.environment)?;
         }
-        let executable = record
-            .as_ref()
-            .and_then(|record| {
+        build_configuration(&owner, profile, record, None)
+    }
+}
+
+fn build_configuration(
+    owner: &Private,
+    profile: LoginHome,
+    record: Option<Record>,
+    executable: Option<PathBuf>,
+) -> Result<LaunchConfiguration> {
+    let provider = profile.account.provider.as_str();
+    let id = profile.account.id.as_str();
+    let executable = executable
+        .or_else(|| {
+            record.as_ref().and_then(|record| {
                 record
                     .executable
                     .as_ref()
                     .map(|binary| binary.requested.clone())
             })
-            .or_else(|| default_executable(provider))
-            .context("Install this provider or approve its executable in native Settings")?;
-        let mut record = record.unwrap_or(Record {
-            revision: "automatic".into(),
-            executable: None,
-            companion: None,
-            custom: false,
-            environment: BTreeMap::new(),
-        });
-        record.executable = Some(Binary::capture(&executable)?);
-        record.environment.retain(|key, _| {
-            !auth_keys(provider)
-                .iter()
-                .any(|owned| key.eq_ignore_ascii_case(owned))
-        });
-        for key in auth_keys(provider) {
-            record.environment.insert((*key).into(), String::new());
-        }
-        record.environment.insert(
-            supported(provider)?.into(),
-            profile.account.home.to_string_lossy().into_owned(),
-        );
-        let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
-            &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
-        )?));
-        let (source, identity) = source(&self.store)?;
-        Ok(LaunchConfiguration {
-            stamp: Stamp {
-                source,
-                identity,
-                provider: provider.into(),
-                revision: profile.account.launch_revision.clone(),
-                digest,
-            },
-            record,
-            profile: Some(profile),
-            derived_executable: None,
-            derived_companion: None,
         })
+        .or_else(|| default_executable(provider))
+        .context("Install this provider or approve its executable in native Settings")?;
+    let mut record = record.unwrap_or(Record {
+        revision: "automatic".into(),
+        executable: None,
+        companion: None,
+        custom: false,
+        environment: BTreeMap::new(),
+    });
+    record.executable = Some(Binary::capture(&executable)?);
+    record.environment.retain(|key, _| {
+        !auth_keys(provider)
+            .iter()
+            .any(|owned| key.eq_ignore_ascii_case(owned))
+    });
+    for key in auth_keys(provider) {
+        record.environment.insert((*key).into(), String::new());
+    }
+    record.environment.insert(
+        supported(provider)?.into(),
+        profile.account.home.to_string_lossy().into_owned(),
+    );
+    let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
+        &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
+    )?));
+    let source: PathBuf = owner.source["path"]
+        .as_str()
+        .context("Native account source missing")?
+        .into();
+    let identity = serde_json::from_value(owner.source["identity"].clone())?;
+    Ok(LaunchConfiguration {
+        stamp: Stamp {
+            source,
+            identity,
+            provider: provider.into(),
+            revision: profile.account.launch_revision.clone(),
+            digest,
+        },
+        record,
+        profile: Some(profile),
+        derived_executable: None,
+        derived_companion: None,
+    })
+}
+
+pub(super) fn setup_configuration(
+    owner: &Private,
+    provider: &str,
+    expected: &Account,
+    record: Option<Record>,
+    launch: &Path,
+) -> Result<LaunchConfiguration> {
+    ensure!(
+        expected.provider == provider,
+        "Setup account belongs to another provider"
+    );
+    let path: PathBuf = owner.source["path"]
+        .as_str()
+        .context("Setup source missing")?
+        .into();
+    let held = crate::legacy_media_service::open_regular_existing(&path)?;
+    ensure!(
+        serde_json::to_value(crate::private_fs::file_identity(&held)?)? == owner.source["identity"],
+        "Setup source changed"
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
+    ensure!(
+        serde_json::to_value(crate::private_fs::identity(&path)?)? == owner.source["identity"],
+        "Setup source changed"
+    );
+    crate::legacy_media_service::verify_database_identity(&path, &held, &db)?;
+    let raw: Option<String> = db
+        .query_row(
+            "SELECT value FROM metadata WHERE key=?1",
+            [format!("native-login-accounts-v1/{}", expected.provider)],
+            |row| row.get(0),
+        )
+        .optional()?;
+    crate::legacy_media_service::verify_database_identity(&path, &held, &db)?;
+    let payload = read(owner, &expected.provider, raw.as_deref())?;
+    let current = account(&payload, &expected.provider, &expected.id)?;
+    ensure!(
+        serde_json::to_value(&current)? == serde_json::to_value(expected)?,
+        "Native account changed; request sign in again"
+    );
+    let profile = LoginHome::capture_with_lock(
+        path.parent().context("Setup source directory missing")?,
+        current,
+        true,
+    )?;
+    build_configuration(owner, profile, record, Some(launch.into()))
+}
+impl Engine {
+    pub(super) fn prepare_login_setup_account(
+        &mut self,
+        provider: &str,
+        id: &str,
+        expected: &str,
+    ) -> Result<Account> {
+        self.require_admissions()?;
+        let owner = Private::open(&self.store, false)?
+            .context("Add this account in native Settings first")?;
+        let raw = self.store.native_accounts_payload(provider)?;
+        let mut payload = read(&owner, provider, raw.as_deref())?;
+        let current = account(&payload, provider, id)?;
+        ensure!(
+            current.revision == expected,
+            "Account changed; reload before signing in"
+        );
+        let _exclusive =
+            LoginHome::capture_with_lock(&self.store.data_directory()?, current, true)?;
+        payload["accounts"][id]["revision"] = json!(Uuid::new_v4().to_string());
+        payload["accounts"][id]["launch_revision"] = json!(Uuid::new_v4().to_string());
+        self.store.save_native_accounts_payload(
+            provider,
+            raw.as_deref(),
+            &encoded(&owner, &payload)?,
+        )?;
+        self.revision += 1;
+        account(&payload, provider, id)
     }
 }
 
