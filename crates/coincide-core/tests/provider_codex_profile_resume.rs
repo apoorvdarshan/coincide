@@ -106,6 +106,31 @@ sys.stdin.readline()
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    // Separate OS processes: no Engine memory, Arc or receipt object can cross
+    // either boundary. The original cleared environment remains enforced.
+    for stage in ["default", "explicit"] {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "durable_restart_child",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", &root)
+            .env("COINCIDE_RESUME_ROOT", &root)
+            .env("COINCIDE_CODEX_EXECUTABLE", &executable)
+            .env("COINCIDE_RESUME_STAGE", stage)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{stage}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 fn call(e: &mut Engine, method: &str, params: Value) -> Value {
     let response = e.dispatch(json!({"method":method,"params":params}));
@@ -638,9 +663,11 @@ fn resume_fixture_child() {
     let saved = e.store.thread(&id).unwrap();
     assert_eq!(saved["future"], t["future"]);
     assert_eq!(saved["sessions"]["claude"]["future"], 43);
+    let before_restart = native(&e, &id);
     finish(&mut e, 19);
     drop(e);
-    // No private receipt or model authority is restored from the stored IDs.
+    // Model proof still requires fresh admission; the independent journal can
+    // restore joined-worker authority once that NEW catalog proof is captured.
     let mut e = Engine::new(Store::open(&dbpath).unwrap());
     e.set_active_thread(Some(id.clone())).unwrap();
     refuse(&mut e, &root, &id);
@@ -649,14 +676,15 @@ fn resume_fixture_child() {
     config(
         &hb,
         "synthetic-b",
-        "thread/start",
-        None,
+        "thread/resume",
+        Some(&before_restart),
         "allow",
         "approval",
     );
-    send(&mut e, &id, "fresh after Engine restart");
+    send(&mut e, &id, "resumed after Engine restart");
+    assert_eq!(native(&e, &id), before_restart);
     // Provider-default profiles have no catalog model proof. Only their actual
-    // resolved-model ACK can authorize a same-Engine continuation.
+    // resolved-model ACK plus the private journal authorizes continuation.
     select(&mut e, &id, "default", None, "approval");
     config(&hb, "default", "thread/start", None, "allow", "approval");
     send(&mut e, &id, "first default-model owned turn");
@@ -677,11 +705,86 @@ fn resume_fixture_child() {
         .iter()
         .filter(|r| r["method"] == "thread/resume")
         .collect();
-    assert_eq!(resumes.len(), 7);
+    assert_eq!(resumes.len(), 8);
     assert!(
         resumes
             .iter()
             .all(|r| r["params"]["threadId"] != "unproved-restored")
     );
     assert_eq!(rows.iter().filter(|r| r.get("turn").is_some()).count(), 19);
+    fs::write(
+        root.join("restart-fixture.json"),
+        serde_json::to_vec(&json!({"id":id,"native":dn,"home":hb})).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "Outer owns private state and launches two distinct restart processes"]
+fn durable_restart_child() {
+    let root = PathBuf::from(std::env::var_os("COINCIDE_RESUME_ROOT").unwrap());
+    let fixture: Value =
+        serde_json::from_slice(&fs::read(root.join("restart-fixture.json")).unwrap()).unwrap();
+    let id = text(&fixture, "id");
+    let home = PathBuf::from(text(&fixture, "home"));
+    let mut e = Engine::new(Store::open(&root.join("state/state.sqlite")).unwrap());
+    e.set_active_thread(Some(id.clone())).unwrap();
+    let stage = std::env::var("COINCIDE_RESUME_STAGE").unwrap();
+    let selected = if stage == "default" {
+        "default"
+    } else {
+        "synthetic-b"
+    };
+    config(
+        &home,
+        selected,
+        "thread/resume",
+        Some(&text(&fixture, "native")),
+        "allow",
+        "approval",
+    );
+    if stage == "explicit" {
+        // Persisted selections do not silently recreate private model proofs.
+        refuse(&mut e, &root, &id);
+        let catalog = refresh(&mut e, &id);
+        select(&mut e, &id, selected, Some(&catalog), "approval");
+    }
+    let prompt = format!("only new prompt after process restart {stage}");
+    send(&mut e, &id, &prompt);
+    assert_eq!(native(&e, &id), fixture["native"]);
+    let rows = calls(&root);
+    let last = rows
+        .iter()
+        .rev()
+        .find(|row| row.get("turn").is_some())
+        .unwrap();
+    assert_eq!(
+        last["turn"]["input"][0]["text"], prompt,
+        "Native continuation must not replay saved transcript"
+    );
+    let mut count = 1;
+    if stage == "default" {
+        config(
+            &home,
+            "synthetic-b",
+            "thread/start",
+            None,
+            "allow",
+            "approval",
+        );
+        let catalog = refresh(&mut e, &id);
+        select(&mut e, &id, "synthetic-b", Some(&catalog), "approval");
+        send(
+            &mut e,
+            &id,
+            "new explicit-model source before second restart",
+        );
+        fs::write(
+            root.join("restart-fixture.json"),
+            serde_json::to_vec(&json!({"id":id,"native":native(&e,&id),"home":home})).unwrap(),
+        )
+        .unwrap();
+        count += 1;
+    }
+    finish(&mut e, count);
 }

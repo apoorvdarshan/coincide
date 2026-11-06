@@ -29,6 +29,11 @@ mod profile;
 mod profile_limits;
 pub(crate) use profile::{NamedBinding, NamedModelProof};
 pub(crate) use profile_limits::LimitsBinding;
+#[cfg(windows)]
+#[path = "model_catalog_windows.rs"]
+mod windows;
+#[cfg(windows)]
+use windows::ProcessRpc;
 
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;
@@ -366,7 +371,7 @@ pub fn status_id(params: &Value) -> Result<&str> {
 }
 
 pub fn supported(provider: &str) -> bool {
-    cfg!(unix) && matches!(provider, "codex" | "claude")
+    cfg!(any(unix, windows)) && matches!(provider, "codex" | "claude")
 }
 
 fn text_field<'a>(entry: &'a Value, field: &str, limit: usize) -> Result<Option<&'a str>> {
@@ -515,11 +520,11 @@ fn codex_model_pages(rpc: &mut impl Rpc) -> Result<Vec<Value>> {
     bail!("Model catalog exceeds 16 pages")
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn discover(_: &str, _: PathBuf, _: Duration, _: &AtomicBool) -> Result<Vec<Value>> {
     bail!("Bounded model discovery is unsupported on this platform")
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn discover(
     provider: &str,
     executable: PathBuf,
@@ -534,7 +539,7 @@ fn discover(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn claude_models(rpc: &mut ProcessRpc<'_>) -> Result<Vec<Value>> {
     const ID: &str = "coincide-model-catalog";
     rpc.write(

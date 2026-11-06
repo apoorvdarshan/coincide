@@ -1,5 +1,8 @@
-//! Ephemeral named-profile continuation authority. Persisted session JSON is
-//! descriptive only; no receipt survives Engine restart or comes from an API.
+//! Owned named-profile continuation authority. Thread JSON stays descriptive;
+//! only the private authenticated journal can carry joined-worker authority
+//! across restart, subject to fresh runtime/catalog admission.
+#[path = "named_profile_resume_journal.rs"]
+mod journal;
 use crate::{
     agent::{self, WorkerCompletion, WorkerThreadStatus},
     codex_login_profiles::LaunchContext,
@@ -25,6 +28,18 @@ struct Context {
     policy: Policy,
 }
 impl Context {
+    fn durable(&self) -> Result<Value> {
+        self.validate()?;
+        // A restart may obtain a NEW private proof only through normal catalog
+        // admission. Arc identity/revocation is never serialized or recreated.
+        // Within one Engine, the original full Context equality still applies.
+        Ok(
+            serde_json::json!({"binding":serde_json::to_value(&self.binding)?,
+            "selection":self.selection,"access":self.access,"accessPresent":self.access.is_some(),
+            "interaction":self.interaction,"interactionPresent":self.interaction.is_some(),
+            "effectiveEffort":self.policy.codex_effort(),"effectiveSpeed":self.policy.codex_speed()}),
+        )
+    }
     fn validate(&self) -> Result<()> {
         self.binding.validate()?;
         self.policy.preflight()
@@ -121,6 +136,45 @@ struct Receipt {
     resolved: String,
     items: Items,
 }
+impl Receipt {
+    fn durable(&self) -> Result<Value> {
+        Ok(
+            serde_json::json!({"owner":self.context.owner,"context":self.context.durable()?,"native":self.native,
+            "resolved":self.resolved,"items":serde_json::to_value(&self.items)?}),
+        )
+    }
+    fn restore(value: Value, context: &Context) -> Result<Self> {
+        ensure!(
+            value["owner"]
+                .as_str()
+                .is_some_and(|owner| owner != context.owner.to_string()),
+            "Current Engine receipts require their exact in-memory proof"
+        );
+        ensure!(
+            value["context"] == context.durable()?,
+            "Durable continuation context changed"
+        );
+        let native = value["native"]
+            .as_str()
+            .context("Invalid durable session")?
+            .to_owned();
+        let resolved = value["resolved"]
+            .as_str()
+            .context("Invalid durable resolved model")?
+            .to_owned();
+        crate::composer_policy::ResolvedCodexModel::from_thread_result(
+            &native,
+            &serde_json::json!({"thread":{"id":native},"model":resolved}),
+        )?;
+        let items: Items = serde_json::from_value(value["items"].clone())?;
+        Ok(Self {
+            context: context.clone(),
+            native,
+            resolved,
+            items,
+        })
+    }
+}
 struct Pending {
     receipt: Receipt,
     worker: WorkerCompletion,
@@ -129,6 +183,7 @@ pub(crate) struct Registry {
     owner: Uuid,
     pending: HashMap<String, Pending>,
     ready: HashMap<String, Receipt>,
+    journal: Option<journal::Journal>,
 }
 impl Default for Registry {
     fn default() -> Self {
@@ -136,10 +191,17 @@ impl Default for Registry {
             owner: Uuid::new_v4(),
             pending: HashMap::new(),
             ready: HashMap::new(),
+            journal: None,
         }
     }
 }
 impl Registry {
+    pub(crate) fn for_store(store: &crate::store::Store) -> Self {
+        Self {
+            journal: journal::Journal::open(store).ok(),
+            ..Self::default()
+        }
+    }
     pub(crate) fn poll(&mut self) {
         let completed: Vec<_> = self
             .pending
@@ -155,6 +217,14 @@ impl Registry {
                 && pending.receipt.context.owner == self.owner
                 && pending.receipt.context.validate().is_ok()
             {
+                if let Some(journal) = &mut self.journal {
+                    // A failed durable save grants no restart authority. The
+                    // independent same-Engine receipt can remain usable.
+                    let record = pending.receipt.durable();
+                    if record.and_then(|record| journal.put(&id, &record)).is_err() {
+                        self.journal = None;
+                    }
+                }
                 self.ready.insert(id, pending.receipt);
             }
         }
@@ -183,7 +253,19 @@ impl Registry {
             policy,
         };
         context.validate()?;
-        let previous = self.ready.remove(id).filter(|receipt| {
+        // Consume disk authority first, even for a same-Engine continuation.
+        // Launch is forbidden if consumption cannot be durably committed.
+        let durable = match &mut self.journal {
+            Some(journal) => journal.take(id)?,
+            None => None,
+        };
+        let in_memory = self.ready.remove(id);
+        let previous = if let Some(receipt) = in_memory {
+            Some(receipt).filter(|receipt| receipt.context == context)
+        } else {
+            durable.and_then(|value| Receipt::restore(value, &context).ok())
+        }
+        .filter(|receipt| {
             receipt.context == context
                 && agent::provider_session(thread, "codex").as_deref()
                     == Some(receipt.native.as_str())
@@ -236,7 +318,7 @@ impl Registry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Items {
     count: usize,
     digest: [u8; 32],
@@ -287,6 +369,80 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(unix)]
+    #[test]
+    fn restart_readmission_preserves_mode_presence_and_same_engine_proof_identity() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let account = Uuid::new_v4().to_string();
+        crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+        let profile =
+            LaunchContext::capture(&root, &account, &std::env::current_exe().unwrap()).unwrap();
+        let baseline = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","accountID":account,"modelID":"default"},"items":[{"kind":"user","text":"owned prefix","future":42}]});
+        let context = |thread: &Value, owner| Context {
+            owner,
+            binding: NamedBinding::capture(profile.clone(), thread["id"].as_str().unwrap(), &root)
+                .unwrap(),
+            selection: thread["selection"].clone(),
+            access: thread.get("accessMode").cloned(),
+            interaction: thread.get("interactionMode").cloned(),
+            policy: Policy::parse_named(thread, crate::composer_policy::Origin::Ordinary, None)
+                .unwrap(),
+        };
+        for field in ["accessMode", "interactionMode"] {
+            for saved in [
+                None,
+                Some(Value::Null),
+                Some(json!(if field == "accessMode" {
+                    "approval"
+                } else {
+                    "build"
+                })),
+            ] {
+                let mut original = baseline.clone();
+                if let Some(value) = &saved {
+                    original[field] = value.clone();
+                }
+                let captured = context(&original, Uuid::new_v4());
+                let receipt = Receipt {
+                    context: captured.clone(),
+                    native: "native-owned".into(),
+                    resolved: "actual-model".into(),
+                    items: Items::capture(&original, None).unwrap(),
+                };
+                let record = receipt.durable().unwrap();
+                assert!(
+                    Receipt::restore(record.clone(), &captured).is_err(),
+                    "Disk cannot bypass a current Engine's Arc proof equality after memory eviction"
+                );
+                assert!(
+                    Receipt::restore(record.clone(), &context(&original, Uuid::new_v4())).is_ok()
+                );
+                for current in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!(if field == "accessMode" {
+                        "approval"
+                    } else {
+                        "build"
+                    })),
+                ] {
+                    let mut changed = baseline.clone();
+                    if let Some(value) = &current {
+                        changed[field] = value.clone();
+                    }
+                    assert_eq!(
+                        Receipt::restore(record.clone(), &context(&changed, Uuid::new_v4()))
+                            .is_ok(),
+                        saved == current,
+                        "Presence-aware durable context must never normalize missing/null/explicit mode shapes"
+                    );
+                }
+            }
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn acknowledgement_requires_the_actual_resolved_model_contract() {

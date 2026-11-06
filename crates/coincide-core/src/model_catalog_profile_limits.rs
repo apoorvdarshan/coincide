@@ -98,7 +98,7 @@ impl ModelCatalog {
             .scoped(self.named_limits.inner.status(id)?, binding)
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn read(
     binding: &NamedBinding,
     cancelled: &AtomicBool,
@@ -139,7 +139,7 @@ fn read(
         result
     }
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn read(_: &NamedBinding, _: &AtomicBool) -> Result<limits::Snapshot, limits::Failure> {
     Err(limits::Failure::UnsupportedPlatform)
 }
