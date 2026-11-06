@@ -20,16 +20,16 @@ impl Authentication {
         }
     }
     pub fn resolve(selected_team: Option<u64>) -> Result<Self> {
-        let token = std::env::var_os("CURSOR_AUTH_TOKEN");
-        let key = std::env::var_os("CURSOR_API_KEY");
+        let token = crate::provider_configuration::effective_var("CURSOR_AUTH_TOKEN");
+        let key = crate::provider_configuration::effective_var("CURSOR_API_KEY");
         let explicit_token = credential_present(token.as_deref())?;
         let explicit_key = !explicit_token && credential_present(key.as_deref())?;
         if explicit_token || explicit_key {
             return Self::explicit(selected_team);
         }
-        let store = std::env::var_os("AGENT_CLI_CREDENTIAL_STORE");
-        let endpoint = std::env::var_os("CURSOR_API_ENDPOINT");
-        let base = std::env::var_os("CURSOR_API_BASE_URL");
+        let store = crate::provider_configuration::effective_var("AGENT_CLI_CREDENTIAL_STORE");
+        let endpoint = crate::provider_configuration::effective_var("CURSOR_API_ENDPOINT");
+        let base = crate::provider_configuration::effective_var("CURSOR_API_BASE_URL");
         let inputs = Inputs {
             explicit_token,
             explicit_key,

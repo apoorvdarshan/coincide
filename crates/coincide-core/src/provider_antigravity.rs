@@ -145,7 +145,12 @@ fn run_owned(
         source.as_deref(),
         launch.session.as_deref(),
     )?;
-    launch.executable = profile.runtime(&launch.executable)?;
+    let runtime_source = launch.executable.clone();
+    launch.executable = profile.runtime(&runtime_source)?;
+    let _runtime_configuration = crate::api::provider_configuration::antigravity_runtime_copy(
+        &runtime_source,
+        &launch.executable,
+    )?;
     let removed = profile::removed_environment();
     let removed = removed.iter().map(String::as_str).collect::<Vec<_>>();
     let mut transport =

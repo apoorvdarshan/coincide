@@ -138,6 +138,7 @@ pub struct Prepared {
 pub(crate) struct LaunchConfiguration {
     stamp: Stamp,
     record: Record,
+    derived_executable: Option<Binary>,
 }
 thread_local! { static CURRENT: RefCell<Option<LaunchConfiguration>>=const {RefCell::new(None)}; }
 pub(crate) struct Scope(Option<LaunchConfiguration>);
@@ -165,7 +166,12 @@ pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
         .as_ref()
         .map(Binary::validate)
         .transpose()?;
-    if let Some(binary) = &configuration.record.executable {
+    if let Some(binary) = configuration
+        .derived_executable
+        .as_ref()
+        .or(configuration.record.executable.as_ref())
+    {
+        binary.validate()?;
         ensure!(
             Path::new(command.get_program()) == binary.requested
                 || Path::new(command.get_program()) == binary.canonical,
@@ -608,6 +614,7 @@ impl Engine {
                 digest,
             },
             record,
+            derived_executable: None,
         }))
     }
     pub(crate) fn native_provider_scope_for_command(
@@ -681,6 +688,46 @@ impl LaunchConfiguration {
     }
 }
 
+/// Authorize only the byte-identical private copy made by the Antigravity profile owner.
+/// The source configuration stamp remains unchanged and the original pin is revalidated
+/// again at spawn. This never grants another provider or an arbitrary copied program.
+pub(crate) fn antigravity_runtime_copy(source: &Path, copied: &Path) -> Result<Scope> {
+    let mut configuration = current();
+    if let Some(configuration) = &mut configuration {
+        ensure!(
+            configuration.stamp.provider == "antigravity",
+            "Runtime copy requires Antigravity configuration"
+        );
+        let original = configuration
+            .record
+            .executable
+            .as_ref()
+            .context("Approved runtime executable is missing")?;
+        original.validate()?;
+        ensure!(
+            source == original.requested || source == original.canonical,
+            "Runtime copy source differs from approved executable"
+        );
+        let derived = Binary::capture(copied)?;
+        ensure!(
+            derived.digest == original.digest && derived.length == original.length,
+            "Private runtime copy differs from approved executable"
+        );
+        configuration.derived_executable = Some(derived);
+    }
+    Ok(enter(configuration))
+}
+
+pub(crate) fn effective_var(name: &str) -> Option<std::ffi::OsString> {
+    CURRENT
+        .with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .and_then(|scope| scope.record.environment.get(name))
+                .map(std::ffi::OsString::from)
+        })
+        .or_else(|| std::env::var_os(name))
+}
 pub(crate) fn current_executable(fallback: PathBuf) -> PathBuf {
     current()
         .map(|scope| scope.executable(fallback.clone()))
@@ -772,6 +819,33 @@ mod tests {
             )
             .unwrap();
         engine.apply_native_provider_configuration(plan).unwrap();
+    }
+    #[test]
+    fn derived_runtime_requires_same_provider_source_and_bytes() {
+        let (root, mut engine, binary) = fixture();
+        save(&mut engine, "antigravity", &binary, "synthetic");
+        let configuration = engine.provider_launch_configuration("antigravity").unwrap();
+        let _scope = enter(configuration);
+        let copied = root.path().join(if cfg!(windows) {
+            "runtime.exe"
+        } else {
+            "runtime"
+        });
+        fs::copy(&binary, &copied).unwrap();
+        {
+            let _runtime = antigravity_runtime_copy(&binary, &copied).unwrap();
+            apply_to_child(&mut Command::new(&copied), false).unwrap();
+            assert_eq!(effective_var("SYNTHETIC_API_KEY").unwrap(), "synthetic");
+            assert!(apply_to_child(&mut Command::new(root.path().join("other")), false).is_err());
+        }
+        assert!(apply_to_child(&mut Command::new(&copied), false).is_err());
+        fs::write(&copied, b"unapproved changed content").unwrap();
+        assert!(antigravity_runtime_copy(&binary, &copied).is_err());
+        assert!(antigravity_runtime_copy(&copied, &binary).is_err());
+        let _codex = enter(engine.provider_launch_configuration("codex").unwrap());
+        save(&mut engine, "codex", &binary, "codex");
+        let _codex = enter(engine.provider_launch_configuration("codex").unwrap());
+        assert!(antigravity_runtime_copy(&binary, &binary).is_err());
     }
     #[test]
     fn imported_settings_and_agent_json_cannot_grant_executable_or_environment_authority() {

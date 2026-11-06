@@ -901,7 +901,7 @@ impl Engine {
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
         let codex_profile = self.codex_login_context(&v)?;
-        if let Some(configuration)=provider_configuration::current(){configuration.validate_named_profile(codex_profile.is_some())?;}
+        if let Some(configuration)=provider_configuration::current(){configuration.validate_named_profile(codex_profile.is_some() || v["selection"]["provider"]=="antigravity")?;}
         ensure!(
             codex_profile.is_none() || !scheduled,
             "Named Codex profiles are not connected to queued/scheduled dispatch"
