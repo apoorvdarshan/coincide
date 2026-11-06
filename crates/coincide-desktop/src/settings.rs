@@ -4,6 +4,8 @@ use super::*;
 pub(super) enum SettingsSection {
     #[default]
     General,
+    Instructions,
+    About,
     All,
     Appearance,
     Keyboard,
@@ -20,6 +22,8 @@ impl SettingsSection {
     fn id(self) -> &'static str {
         match self {
             Self::General => "general",
+            Self::Instructions => "instructions",
+            Self::About => "about",
             Self::All => "all",
             Self::Appearance => "appearance",
             Self::Keyboard => "keyboard",
@@ -36,6 +40,8 @@ impl SettingsSection {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Instructions => "Instructions",
+            Self::About => "About",
             Self::All => "Search results",
             Self::Appearance => "Appearance",
             Self::Keyboard => "Keyboard",
@@ -690,12 +696,14 @@ impl Coincide {
         for section in [
             S::General,
             S::Usage,
+            S::Instructions,
             S::Keyboard,
             S::Voice,
             S::Browser,
             S::ComputerUse,
             S::Media,
             S::Accounts,
+            S::About,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -714,6 +722,25 @@ impl Coincide {
         }
         let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
+        if matches(
+            S::About,
+            "about version help community website github discord contact privacy terms license acknowledgements",
+        ) {
+            count += 1;
+            content = content.child(self.about_settings(cx));
+        }
+        if matches(
+            S::Instructions,
+            "global instructions master agents rules shared",
+        ) {
+            count += 1;
+            content = content.child(
+                div()
+                    .h(px(480.))
+                    .min_h(px(300.))
+                    .child(self.instructions_panel.clone()),
+            );
+        }
         if matches(
             S::Usage,
             "saved local usage history tokens provider reports cost counters live codex limits quota credits",

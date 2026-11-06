@@ -4,6 +4,7 @@ mod usage_history_mount;
 mod usage_history_view;
 mod worker_owner;
 use anyhow::{Context as _, Result};
+mod about_settings;
 mod app_menu;
 mod app_menu_mount;
 mod assets;
@@ -31,6 +32,7 @@ mod github_review;
 mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
+mod instructions;
 mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
@@ -350,6 +352,9 @@ struct Coincide {
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
+    instructions_panel: Entity<instructions::InstructionsPanel>,
+    instruction_quit_prompt_pending: bool,
+    instruction_quit_task: Option<Task<()>>,
     settings_section: settings::SettingsSection,
     settings_window: Option<gpui_kit::AnyWindowHandle>,
     settings_window_pending: bool,
@@ -661,6 +666,7 @@ impl Coincide {
     }
     fn new(
         engine: SharedEngine,
+        native_editors: coincide_core::native_ui_edits::NativeUiEditors,
         quit_requested: Arc<std::sync::atomic::AtomicBool>,
         control_owner: Arc<Mutex<control::Server>>,
         profile_dir: std::path::PathBuf,
@@ -683,6 +689,10 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
+                    this.prompt_instruction_close(false, window, cx);
+                    return false;
+                }
                 // Keep the global drain owner and its recovery controls alive.
                 // Closing this window cannot bypass the broader quit fence.
                 if this.media.shutdown_requested {
@@ -725,6 +735,8 @@ impl Coincide {
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let instructions_panel =
+            cx.new(|cx| instructions::InstructionsPanel::new(native_editors.editor(), window, cx));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -1040,6 +1052,9 @@ impl Coincide {
             thread_actions_open: false,
             settings_search,
             settings_section: Default::default(),
+            instructions_panel,
+            instruction_quit_prompt_pending: false,
+            instruction_quit_task: None,
             settings_window: None,
             settings_window_pending: false,
             main_window: window.window_handle(),
@@ -2430,21 +2445,24 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self
+        let menu_quit = self
             .quit_requested
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-        {
-            self.media.shutdown_requested = true;
-        }
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
         self.image_validation_tasks.retain(|task| !task.is_ready());
         self.navigation_tasks.retain(|task| !task.is_ready());
-        if self
+        let native_quit = self
             .native_quit
             .as_ref()
-            .is_some_and(|guard| guard.take_requested())
-        {
+            .is_some_and(|guard| guard.take_requested());
+        if native_quit {
             self.native_quit_observed = true;
-            self.media.shutdown_requested = true;
+        }
+        if menu_quit || native_quit {
+            if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
+                self.prompt_instruction_close(true, window, cx);
+            } else {
+                self.media.shutdown_requested = true;
+            }
         }
         // Persistence must precede either close path, including API app.quit.
         let drafts_saved = self.flush_pending_drafts();
@@ -4255,7 +4273,9 @@ fn main() -> Result<()> {
         database_path: media_data.join("coincide.sqlite"),
         expected_data_directory: media_data,
     };
-    let engine = Arc::new(Mutex::new(Engine::new(store)));
+    let engine = Engine::new(store);
+    let native_editors = engine.native_ui_editors();
+    let engine = Arc::new(Mutex::new(engine));
     let control_owner = Arc::new(Mutex::new(control::serve(
         data.join("control.sock"),
         engine.clone(),
@@ -4288,6 +4308,7 @@ fn main() -> Result<()> {
                     cx.new(|cx| {
                         Coincide::new(
                             engine,
+                            native_editors,
                             quit_requested,
                             control_owner,
                             data.join("browser-profile"),

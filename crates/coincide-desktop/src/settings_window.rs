@@ -234,3 +234,50 @@ impl Coincide {
         });
     }
 }
+
+impl Coincide {
+    /// No Core owner is frozen while this native user decision is pending.
+    pub(super) fn prompt_instruction_close(
+        &mut self,
+        quit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.instruction_quit_prompt_pending {
+            return;
+        }
+        self.instruction_quit_prompt_pending = true;
+        window.activate_window();
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Save changes to global instructions?",
+            Some("Your changes will be lost if you don't save them."),
+            &["Save", "Don't Save", "Cancel"],
+            cx,
+        );
+        self.instruction_quit_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let answer = answer.await.unwrap_or(2);
+            this.update_in(cx, |this, window, cx| {
+                this.instruction_quit_prompt_pending = false;
+                let proceed = match answer {
+                    0 => this.instructions_panel.update(cx, |panel, cx| panel.native_save(cx)),
+                    1 => { this.instructions_panel.update(cx, |panel, cx| panel.native_discard(window, cx)); true },
+                    _ => false,
+                };
+                if proceed {
+                    if quit { this.media.shutdown_requested = true; }
+                    else { this.media.close_requested = true; }
+                } else {
+                    if let Some(guard) = &this.native_quit { guard.cancel_request(); }
+                    this.native_quit_observed = false;
+                    if answer == 0 {
+                        this.open_settings_panel(window, cx);
+                        this.settings_section = settings::SettingsSection::Instructions;
+                        this.status = "Instructions were not saved. Your edits are retained; review the editor before quitting.".into();
+                    }
+                }
+                cx.notify();
+            }).ok();
+        }));
+    }
+}

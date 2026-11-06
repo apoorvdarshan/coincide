@@ -76,6 +76,11 @@ impl QuitState {
         }
         requested
     }
+    fn cancel(&self) {
+        self.requested.store(false, Ordering::Release);
+        self.observed.store(false, Ordering::Release);
+        self.permit.store(false, Ordering::Release);
+    }
     fn permit_once(&self) -> Result<(), PermitError> {
         if !self.observed.swap(false, Ordering::AcqRel) {
             return Err(PermitError::NoObservedRequest);
@@ -115,6 +120,13 @@ impl NativeQuit {
             }
         }
         false
+    }
+    /// User cancelled the unsaved-editor decision before any shutdown begins.
+    pub(super) fn cancel_request(&self) {
+        #[cfg(target_os = "macos")]
+        if macos::INSTALLED.get() == Some(&self.identity) {
+            macos::STATE.cancel();
+        }
     }
     /// Trusted root calls this only after draft/media/runtime closure guards.
     /// This does not issue quit or prove crash/force-quit data preservation.
@@ -284,6 +296,20 @@ mod tests {
         assert_eq!(state.callback(id, id), TERMINATE_NOW);
         assert_eq!(state.callback(id, id), TERMINATE_CANCEL);
         assert_eq!(state.permit_once(), Err(PermitError::NoObservedRequest));
+        assert!(state.take_requested());
+        state.permit_once().unwrap();
+        assert_eq!(state.callback(id, id), TERMINATE_NOW);
+    }
+    #[test]
+    fn cancelled_unsaved_editor_request_cannot_leave_a_quit_permit() {
+        let state = QuitState::new();
+        let id = identity();
+        state.callback(id, id);
+        assert!(state.take_requested());
+        state.permit_once().unwrap();
+        state.cancel();
+        assert_eq!(state.permit_once(), Err(PermitError::NoObservedRequest));
+        assert_eq!(state.callback(id, id), TERMINATE_CANCEL);
         assert!(state.take_requested());
         state.permit_once().unwrap();
         assert_eq!(state.callback(id, id), TERMINATE_NOW);

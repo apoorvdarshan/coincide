@@ -145,6 +145,7 @@ pub struct Engine {
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
+    pub(crate) native_ui_editors: crate::native_ui_edits::NativeUiEditors,
     catalog_shutdown_requested: bool,
     named_resume: crate::named_profile_resume::Registry,
     github_threads: github_threads_engine::State,
@@ -221,6 +222,7 @@ impl Engine {
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             catalog_shutdown_requested: false,
+            native_ui_editors: Default::default(),
             named_resume: crate::named_profile_resume::Registry::for_store(&store),
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
@@ -266,6 +268,9 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
         }
+    }
+    pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
+        self.native_ui_editors.clone()
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
@@ -462,7 +467,7 @@ impl Engine {
                 }
                 Ok(json!({"ready":false}))
             }
-            "app.quit"=>{ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.quit"=>{ensure!(self.native_ui_editors.pending() == 0,"Unsaved native editor changes require Save or Discard before quitting");ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
