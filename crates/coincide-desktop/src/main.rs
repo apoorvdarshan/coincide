@@ -41,6 +41,8 @@ mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
+#[cfg(target_os = "macos")]
+mod macos_chat_layout;
 mod microphone_settings;
 mod models_settings;
 mod native_quit;
@@ -895,6 +897,10 @@ impl Coincide {
                 // caret-away/back sequence; hidden unfocused composer is stable.
                 this.transcription_target.changed();
                 this.sync_transcription_binding(cx);
+                // Native wrapping and line metrics can change without a text
+                // edit (for example on window resize). Refit the Mac composer.
+                #[cfg(target_os = "macos")]
+                cx.notify();
             }),
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
                 if this.media.shutdown_requested { return; }
@@ -3402,6 +3408,10 @@ impl Coincide {
             return div().into_any_element();
         }
         let body = text(item, "text");
+        #[cfg(target_os = "macos")]
+        if kind == "notice" {
+            return self.notice_row(&source_id, &item_id, body, window, cx);
+        }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
         let expanded = self.expanded.contains(&index) || find_revealed;
@@ -4180,8 +4190,9 @@ impl Render for Coincide {
                                 .flex_col()
                                 .items_center()
                                 .justify_center()
-                                .min_h(px(140.))
-                                .max_h(px(320.))
+                                .when(!cfg!(target_os = "macos"), |column| {
+                                    column.min_h(px(140.)).max_h(px(320.))
+                                })
                                 .flex_shrink_0()
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
@@ -4191,7 +4202,7 @@ impl Render for Coincide {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-                                        .max_h(px(296.))
+                                        .when(!cfg!(target_os = "macos"), |column| column.max_h(px(296.)))
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
@@ -4262,7 +4273,19 @@ impl Render for Coincide {
                                                     Textarea::new(&self.composer)
                                                         .appearance(false)
                                                         .bordered(false)
-                                                        .h(px(if self.composer_files.opened {56.} else {110.}))
+                                                        .h({
+                                                            #[cfg(target_os = "macos")]
+                                                            {
+                                                                let state = self.composer.read(cx);
+                                                                px(macos_chat_layout::composer_height(
+                                                                    state.display_map().wrap_row_count(),
+                                                                    state.line_height().map(f32::from).unwrap_or(20.),
+                                                                    f32::from(window.viewport_size().height),
+                                                                ))
+                                                            }
+                                                            #[cfg(not(target_os = "macos"))]
+                                                            { px(if self.composer_files.opened {56.} else {110.}) }
+                                                        })
                                                         .on_paste(move |item, _, cx| {
                                                             target
                                                                 .update(cx, |this, cx| {
