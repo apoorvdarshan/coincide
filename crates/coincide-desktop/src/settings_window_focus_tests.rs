@@ -47,7 +47,8 @@ fn headless_settings_close_returns_focus_and_global_quit(cx: &mut TestAppContext
     cx.update_window(settings, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear(cx);
-        settings_view.read(cx).focus.focus(window, cx);
+        let settings_focus = settings_view.read(cx).focus.clone();
+        settings_focus.focus(window, cx);
         super::return_focus_to_main(main, main_focus.clone(), cx);
         window.remove_window();
     })
