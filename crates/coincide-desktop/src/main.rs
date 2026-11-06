@@ -3210,6 +3210,7 @@ impl Coincide {
             }
         }
         if self.selection_send_blocked() {
+            self.retry_selected_account_readiness();
             self.status = self.selected_account_wait_status().into();
             cx.notify();
             return;
@@ -3249,7 +3250,10 @@ impl Coincide {
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }
-                Err(e) => self.status = e.to_string(),
+                Err(e) => {
+                    self.retry_selected_account_readiness();
+                    self.status = e.to_string();
+                }
             }
         }
         cx.notify();
