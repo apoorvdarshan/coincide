@@ -127,6 +127,9 @@ mod thread_delete_api;
 pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
 
 pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
+#[path = "thread_idle_api.rs"]
+mod thread_idle_api;
+pub use thread_idle_api::NativeNewThread;
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]
