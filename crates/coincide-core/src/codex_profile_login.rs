@@ -23,7 +23,9 @@ pub(crate) struct Operation {
 impl Operation {
     pub(crate) fn start(profile: LaunchContext) -> Self {
         let account = profile.account().to_owned();
+        let configuration = crate::provider_configuration::current();
         let session = Session::spawn_worker(move |commands, events| {
+            let _configuration_scope = crate::provider_configuration::enter(configuration);
             // run returns only after Transport drops, reaps its owned child,
             // disconnects queues and joins all its pipe workers.
             match run(profile, commands, events) {

@@ -34,10 +34,35 @@ impl Http {
         body: Option<Value>,
         timeout: Duration,
     ) -> Result<Value> {
+        self.request_at(method, path, body, timeout, None)
+    }
+    pub(super) fn catalog(
+        &self,
+        path: &'static str,
+        directory: &str,
+        timeout: Duration,
+    ) -> Result<Value> {
+        ensure!(
+            matches!(path, "/api/model" | "/api/provider" | "/api/integration"),
+            "Invalid OpenCode metadata path"
+        );
+        self.request_at("GET", path, None, timeout, Some(directory))
+    }
+    fn request_at(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        timeout: Duration,
+        directory: Option<&str>,
+    ) -> Result<Value> {
         let mut url = self.base.clone();
         // Paths originate in this adapter; persisted IDs are encoded as segments.
         ensure!(path.starts_with("/api/"), "Invalid OpenCode API path");
         url.set_path(path);
+        if let Some(directory) = directory {
+            url.query_pairs_mut().append_pair("directory", directory);
+        }
         let request = ureq::http::Request::builder()
             .method(method)
             .uri(url.as_str())

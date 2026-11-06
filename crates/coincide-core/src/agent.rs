@@ -32,10 +32,20 @@ mod cursor;
 mod grok;
 #[path = "provider_images.rs"]
 mod images;
+#[path = "provider_metadata_capture.rs"]
+pub(crate) mod metadata_capture;
 #[path = "native_instruction_git_process.rs"]
 pub mod native_instruction_git;
 #[path = "provider_opencode.rs"]
 mod opencode;
+#[path = "provider_setup_process.rs"]
+pub(crate) mod setup_process;
+pub(crate) fn opencode_installation_metadata(
+    executable: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    opencode::installation_metadata(executable, allowed)
+}
 #[path = "provider_transport.rs"]
 mod transport;
 #[cfg(windows)]
@@ -285,7 +295,9 @@ impl Session {
         let output = usage.clone();
         let named_completion = Arc::new(Mutex::new(None));
         let completed_output = named_completion.clone();
+        let configuration = crate::provider_configuration::current();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
+            let _configuration_scope = crate::provider_configuration::enter(configuration);
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| {
                     if let Some(policy) = &policy {

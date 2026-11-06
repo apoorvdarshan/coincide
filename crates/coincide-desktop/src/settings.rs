@@ -450,6 +450,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        self.sync_provider_configuration_settings(window, cx);
         self.appshots.sync(&self.settings);
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
@@ -695,6 +696,8 @@ impl Coincide {
                 .into_any_element()
         } else if self.provider_settings.open {
             self.antigravity_settings(cx)
+        } else if self.settings_section == SettingsSection::Accounts {
+            self.providers_overview_pane(cx)
         } else if let SettingsSection::Provider(provider) = self.settings_section {
             self.provider_preferences_pane(provider, cx)
         } else {

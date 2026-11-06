@@ -118,8 +118,23 @@ fn enabled_patch(
         provider != ProviderId::Antigravity,
         "Use the Antigravity account-risk controls"
     );
+    enabled_value_patch(settings, provider, expected, enabled)
+}
+
+fn enabled_value_patch(
+    settings: &Value,
+    provider: ProviderId,
+    expected: bool,
+    enabled: bool,
+) -> Result<Value> {
     anyhow::ensure!(settings.is_object(), "Saved settings are malformed");
-    let current = coincide_core::provider_preferences::enabled(settings, provider_key(provider))?;
+    let current = if provider == ProviderId::Antigravity
+        && models_settings::provider_value(settings, provider_key(provider))["isEnabled"].is_null()
+    {
+        false
+    } else {
+        coincide_core::provider_preferences::enabled(settings, provider_key(provider))?
+    };
     anyhow::ensure!(
         current == expected,
         "Provider settings changed; review the current value"
@@ -198,6 +213,12 @@ impl Coincide {
         self.session_import_open = false;
         self.provider_settings.open = false;
         self.settings_section = section;
+        if let Section::Provider(provider) = section {
+            let enabled = provider_enabled(&self.settings, provider);
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.select(provider_key(provider), enabled, window, cx)
+            });
+        }
         self.models_settings.focus_provider(match section {
             Section::Provider(provider) => Some(provider_key(provider).to_owned()),
             _ => None,
@@ -435,17 +456,92 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if provider == ProviderId::Antigravity {
-            self.open_antigravity_settings(window, cx);
+        if self
+            .provider_enable_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+        {
             return;
         }
+        if provider == ProviderId::Antigravity && enabled {
+            match call(&self.engine, "providers.antigravity.status", json!({})) {
+                Ok(status) if status["riskAcknowledged"] != true => {
+                    let answer = window.prompt(
+                        PromptLevel::Warning,
+                        "Use Antigravity?",
+                        Some(provider_settings::RISK_NOTICE),
+                        &["I Understand", "Cancel"],
+                        cx,
+                    );
+                    let custody = self
+                        .provider_configuration_panel
+                        .read(cx)
+                        .native_action_custody();
+                    self.provider_enable_prompt =
+                        Some(cx.spawn_in(window, async move |this, cx| {
+                            let _custody = custody;
+                            let accepted = answer.await.unwrap_or(1) == 0;
+                            if accepted {
+                                this.update_in(cx, |this, window, cx| {
+                                    // The prompt is now resolved; this direct continuation
+                                    // performs acknowledgement and the original CAS once.
+                                    match call(
+                                        &this.engine,
+                                        "providers.antigravity.acknowledge",
+                                        json!({"key":provider_settings::RISK_KEY,"accepted":true}),
+                                    ) {
+                                        Ok(_) => this.apply_settings_provider_enabled(
+                                            provider, expected, enabled, window, cx,
+                                        ),
+                                        Err(error) => {
+                                            this.settings_status = error.to_string();
+                                            cx.notify();
+                                        }
+                                    }
+                                })
+                                .ok();
+                            }
+                        }));
+                    return;
+                }
+                Err(error) => {
+                    self.settings_status = error.to_string();
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.apply_settings_provider_enabled(provider, expected, enabled, window, cx);
+    }
+
+    fn apply_settings_provider_enabled(
+        &mut self,
+        provider: ProviderId,
+        expected: bool,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let result = (|| -> Result<Value> {
             let mut owner = try_state(&self.engine)?;
             let current = owner
                 .store
                 .document("settings.json")?
                 .unwrap_or_else(|| json!({}));
-            let patch = enabled_patch(&current, provider, expected, enabled)?;
+            let patch = if provider == ProviderId::Antigravity {
+                if enabled {
+                    let status = owner
+                        .dispatch(json!({"method":"providers.antigravity.status","params":{}}));
+                    anyhow::ensure!(
+                        status["result"]["riskAcknowledged"] == true,
+                        "Acknowledge the Antigravity account risk first"
+                    );
+                }
+                enabled_value_patch(&current, provider, expected, enabled)?
+            } else {
+                enabled_patch(&current, provider, expected, enabled)?
+            };
             let reply = owner.dispatch(json!({"method":"settings.patch","params":{"patch":patch}}));
             if let Some(error) = reply.get("error") {
                 anyhow::bail!(
@@ -469,6 +565,156 @@ impl Coincide {
         }
     }
 
+    pub(super) fn sync_provider_configuration_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Section::Provider(provider) = self.settings_section {
+            let enabled = provider_enabled(&self.settings, provider);
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.select(provider_key(provider), enabled, window, cx)
+            });
+        }
+    }
+
+    pub(super) fn block_provider_configuration_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let provider = self
+            .provider_configuration_panel
+            .read(cx)
+            .dirty_provider(cx);
+        let pending = self
+            .provider_enable_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+            || self
+                .provider_configuration_panel
+                .read(cx)
+                .has_pending_write();
+        if provider.is_none() && !pending {
+            return false;
+        }
+        if let Some(guard) = &self.native_quit {
+            guard.cancel_request();
+        }
+        self.native_quit_observed = false;
+        self.open_settings_panel(window, cx);
+        if let Some(provider) = provider.and_then(|key| {
+            coincide_core::provider_catalog::PROVIDERS
+                .iter()
+                .find(|provider| provider_key(provider.id) == key)
+                .map(|provider| provider.id)
+        }) {
+            self.settings_open = true;
+            self.navigate_settings_section(Section::Provider(provider), window, cx);
+        }
+        self.settings_status = if pending {
+            "Wait for the provider operation or executable chooser to finish before closing."
+        } else {
+            "Save or discard provider changes before closing."
+        }
+        .into();
+        cx.notify();
+        true
+    }
+
+    pub(super) fn providers_overview_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let panel = self.provider_configuration_panel.read(cx);
+        let mut pane = div()
+            .id("providers-overview")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_5()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_xl().child("Providers"));
+        for descriptor in coincide_core::provider_catalog::PROVIDERS {
+            let provider = descriptor.id;
+            let section = Section::Provider(provider);
+            let enabled = provider_enabled(&self.settings, provider);
+            let summary = if enabled {
+                panel.summary(provider_key(provider))
+            } else {
+                "Off".into()
+            };
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+                    .child(icon_tile(section, 30.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(descriptor.display_name)
+                            .child(div().text_xs().child(summary)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "provider-overview-use-{}",
+                            provider_key(provider)
+                        )))
+                        .label(if enabled { "On" } else { "Off" })
+                        .accessibility_label(format!("Use {}", descriptor.display_name))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.set_settings_provider_enabled(
+                                    provider, enabled, !enabled, window, cx,
+                                )
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "provider-overview-open-{}",
+                            provider_key(provider)
+                        )))
+                        .label("Show settings")
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.navigate_settings_section(section, window, cx)
+                            },
+                        )),
+                    ),
+            );
+        }
+        pane.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(panel.last_checked())
+                .child(
+                    Button::new("providers-check-all")
+                        .label("Check All Again")
+                        .disabled(panel.checking_all())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let providers = coincide_core::provider_catalog::PROVIDERS
+                                .iter()
+                                .filter(|descriptor| {
+                                    provider_enabled(&this.settings, descriptor.id)
+                                })
+                                .map(|descriptor| provider_key(descriptor.id).to_owned())
+                                .collect::<Vec<_>>();
+                            this.provider_configuration_panel
+                                .update(cx, |panel, cx| panel.check_all(&providers, window, cx));
+                        })),
+                ),
+        )
+        .child(div().text_sm().child(self.settings_status.clone()))
+        .into_any_element()
+    }
+
     pub(super) fn provider_preferences_pane(
         &self,
         provider: ProviderId,
@@ -476,6 +722,24 @@ impl Coincide {
     ) -> AnyElement {
         let section = Section::Provider(provider);
         let enabled = provider_enabled(&self.settings, provider);
+        let parts = if self
+            .provider_configuration_panel
+            .read(cx)
+            .is_selected(provider_key(provider))
+        {
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                [
+                    provider_configuration_ui::Part::Status,
+                    provider_configuration_ui::Part::Executable,
+                    provider_configuration_ui::Part::Environment,
+                    provider_configuration_ui::Part::Setup,
+                ]
+                .map(|part| panel.render_part(part, cx))
+            })
+        } else {
+            std::array::from_fn(|_| div().child("Loading provider settings…").into_any_element())
+        };
+        let [status, executable, environment, setup] = parts;
         let mut pane = div()
             .id("provider-preferences")
             .flex_1()
@@ -501,6 +765,7 @@ impl Coincide {
                             })),
                     ),
             )
+            .child(status)
             .child(
                 div()
                     .rounded_md()
@@ -546,7 +811,12 @@ impl Coincide {
             }
             _ => {}
         }
-        pane.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx))
+        let mut catalogs = self.provider_configuration_panel.read(cx).catalogs();
+        catalogs.push(self.selection_ui.catalog.clone());
+        pane.child(executable)
+            .child(self.models_settings_panel(&catalogs, cx))
+            .child(environment)
+            .child(setup)
             .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
     }
@@ -600,6 +870,31 @@ mod tests {
         assert!(!search_matches(super::Section::Browser, "claude"));
     }
 
+    #[::core::prelude::v1::test]
+    fn native_antigravity_toggle_round_trip_preserves_provider_values_and_rejects_stale_state() {
+        for providers in [
+            json!({"antigravity":{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}}),
+            json!(["antigravity",{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}]),
+        ] {
+            let initial = json!({"providers":providers});
+            let on = super::enabled_value_patch(&initial, P::Antigravity, false, true).unwrap();
+            let value = super::models_settings::provider_value(&on, "antigravity");
+            assert_eq!(value["isEnabled"], true);
+            assert_eq!(value["opaque"], 42);
+            assert_eq!(
+                value["environment"],
+                json!({"SYNTHETIC_TEST_MODE":"fixture"})
+            );
+            assert!(super::enabled_value_patch(&on, P::Antigravity, false, true).is_err());
+            let off = super::enabled_value_patch(&on, P::Antigravity, true, false).unwrap();
+            assert!(!provider_enabled(&off, P::Antigravity));
+            assert_eq!(
+                super::models_settings::provider_value(&off, "antigravity")["opaque"],
+                42
+            );
+            assert!(enabled_patch(&initial, P::Antigravity, false, true).is_err());
+        }
+    }
     #[::core::prelude::v1::test]
     fn generic_toggle_cannot_bypass_antigravity_risk_controls() {
         assert!(!provider_enabled(&json!({}), P::Antigravity));

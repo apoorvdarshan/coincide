@@ -361,7 +361,10 @@ fn background_dispatch_keeps_unrelated_draft_context(root: &Path) {
     // The schedule entry seam bypasses user draft references and leaves them
     // untouched; the new scheduled user item must not inherit this context.
     engine
-        .send_turn(&json!({"threadId":id,"text":"scheduled request"}), true)
+        .send_turn(
+            &json!({"threadId":id,"text":"scheduled request"}),
+            SendOrigin::Scheduled,
+        )
         .unwrap();
     let scheduled = engine.store.thread(&id).unwrap();
     assert_eq!(scheduled["draftContext"], raw);

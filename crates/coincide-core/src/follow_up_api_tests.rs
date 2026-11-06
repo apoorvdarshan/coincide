@@ -41,6 +41,7 @@ fn fixture() -> Fixture {
     engine.insert_running(
         id.clone(),
         Running {
+            configuration: None,
             resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             session,
             usage_context: Some(agent::usage_capture::TurnContext::new(&thread)),

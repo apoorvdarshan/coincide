@@ -20,7 +20,10 @@ pub(super) fn arguments() -> Vec<String> {
 }
 
 pub(super) fn configured_authentication() -> &'static str {
-    authentication_for_api_key(std::env::var("XAI_API_KEY").is_ok_and(|key| !key.trim().is_empty()))
+    authentication_for_api_key(
+        crate::provider_configuration::effective_var("XAI_API_KEY")
+            .is_some_and(|key| key.to_str().is_some_and(|key| !key.trim().is_empty())),
+    )
 }
 
 fn authentication_for_api_key(has_key: bool) -> &'static str {

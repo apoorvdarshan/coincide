@@ -404,6 +404,16 @@ impl Registry {
             "authority":"saved_turn_actual_join_authenticated_one_attempt",
             "requiresFreshAccountRead":true,"requiresFreshPrivateCatalogForExplicitModel":true,"requiresFreshPrivateCatalogForDefaultModel":true})
     }
+    /// Deny-only queue readiness. Semantic completion cannot dispatch the next
+    /// named turn before this account's exact previous owned worker joined.
+    pub(crate) fn waiting_for_join(&mut self, thread: &Value) -> bool {
+        self.poll();
+        thread["selection"]["provider"] == "codex"
+            && thread["selection"]["accountID"]
+                .as_str()
+                .and_then(|account| slot(thread["id"].as_str()?, account).ok())
+                .is_some_and(|key| self.pending.contains_key(&key))
+    }
     pub(crate) fn poll(&mut self) {
         let completed: Vec<_> = self
             .pending
@@ -1367,6 +1377,10 @@ mod tests {
         registry.poll();
         assert!(registry.ready.is_empty());
         assert!(
+            registry.waiting_for_join(&thread),
+            "Queue must retain its pending claim until actual previous worker join"
+        );
+        assert!(
             registry
                 .prepare(&thread, profile.clone(), &root, policy.clone())
                 .is_err()
@@ -1379,6 +1393,7 @@ mod tests {
         }
         assert_eq!(worker.status(), WorkerThreadStatus::Returned);
         registry.poll();
+        assert!(!registry.waiting_for_join(&thread));
         let resumed = registry
             .prepare(&thread, profile.clone(), &root, policy.clone())
             .unwrap();
