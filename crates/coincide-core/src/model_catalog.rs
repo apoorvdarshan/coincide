@@ -23,7 +23,10 @@ pub(crate) use effort::{CodexEffortProof, astra_default_needed};
 pub(crate) mod limits;
 #[path = "model_catalog_profile.rs"]
 mod profile;
+#[path = "model_catalog_profile_limits.rs"]
+mod profile_limits;
 pub(crate) use profile::{NamedBinding, NamedModelProof};
+pub(crate) use profile_limits::LimitsBinding;
 
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;
@@ -63,6 +66,7 @@ struct Job {
 /// Construction does not discover executables, read credentials, or start work.
 pub struct ModelCatalog {
     limits: limits::Owner,
+    named_limits: profile_limits::Owner,
     jobs: HashMap<String, Job>,
     order: VecDeque<String>,
     workers: HashMap<String, Worker>,
@@ -75,6 +79,7 @@ impl Default for ModelCatalog {
         let (tx, rx) = mpsc::sync_channel(MAX_JOBS);
         Self {
             limits: limits::Owner::default(),
+            named_limits: profile_limits::Owner::default(),
             jobs: HashMap::new(),
             order: VecDeque::new(),
             workers: HashMap::new(),
@@ -111,7 +116,7 @@ impl ModelCatalog {
         changed
     }
     pub fn poll(&mut self) -> bool {
-        let mut changed = self.limits.poll();
+        let mut changed = self.limits.poll() | self.named_limits.poll();
         changed |= self.receive_completions();
         let mut exited = Vec::new();
         let totals = &mut self.shutdown;
@@ -145,6 +150,7 @@ impl ModelCatalog {
     pub fn request_shutdown(&mut self) {
         self.shutdown.closed = true;
         self.limits.request_shutdown();
+        self.named_limits.request_shutdown();
         for job in self.jobs.values() {
             job.cancelled.store(true, Ordering::Release);
         }
@@ -156,7 +162,12 @@ impl ModelCatalog {
     /// Poll existing responses and actual join acknowledgements only.
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
         self.poll();
-        let limits = self.limits.shutdown_status();
+        let mut limits = self.limits.shutdown_status();
+        let named = self.named_limits.shutdown_status();
+        limits.running += named.running;
+        limits.returned = limits.returned.saturating_add(named.returned);
+        limits.panicked = limits.panicked.saturating_add(named.panicked);
+        limits.unclassified = limits.unclassified.saturating_add(named.unclassified);
         ShutdownStatus {
             running: self.workers.len() + limits.running,
             returned: self.shutdown.returned.saturating_add(limits.returned),
@@ -221,7 +232,11 @@ impl ModelCatalog {
         }
         let supported = supported(provider);
         ensure!(
-            !supported || self.workers.len() + self.limits.shutdown_status().running < MAX_ACTIVE,
+            !supported
+                || self.workers.len()
+                    + self.limits.shutdown_status().running
+                    + self.named_limits.shutdown_status().running
+                    < MAX_ACTIVE,
             "Too many model catalog reads; wait for the current refresh"
         );
         while self.order.len() >= MAX_JOBS {
@@ -293,7 +308,10 @@ impl ModelCatalog {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         self.poll();
         ensure!(
-            self.workers.len() + self.limits.shutdown_status().running < MAX_ACTIVE,
+            self.workers.len()
+                + self.limits.shutdown_status().running
+                + self.named_limits.shutdown_status().running
+                < MAX_ACTIVE,
             "Read-only provider workers are still draining"
         );
         self.limits.refresh(executable)

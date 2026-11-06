@@ -390,16 +390,19 @@ impl Drop for Owner {
     }
 }
 impl Owner {
+    pub(super) fn invalidate(&mut self) {
+        self.observations.invalidate();
+        self.current_id = None;
+        for worker in &self.workers {
+            worker
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
     pub(super) fn context(&mut self, executable: Option<PathBuf>) -> bool {
         if self.context != executable {
             self.context = executable;
-            self.observations.invalidate();
-            self.current_id = None;
-            for worker in &self.workers {
-                worker
-                    .cancelled
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
+            self.invalidate();
             return true;
         }
         false
@@ -407,7 +410,7 @@ impl Owner {
     pub(super) fn refresh(&mut self, executable: Option<PathBuf>) -> anyhow::Result<Value> {
         self.refresh_with(executable, read)
     }
-    fn refresh_with(
+    pub(super) fn refresh_with(
         &mut self,
         executable: Option<PathBuf>,
         work: impl FnOnce(Option<PathBuf>, &AtomicBool) -> Result<Snapshot, Failure> + Send + 'static,
