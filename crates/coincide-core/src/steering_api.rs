@@ -79,7 +79,7 @@ impl Engine {
             "Steering text must be nonempty and fit within 1 MiB"
         );
         let stored = self.store.thread(thread)?;
-        self.require_provider_enabled(&text(&stored["selection"], "provider"))?;
+        self.require_provider_enabled(&crate::store::text(&stored["selection"], "provider"))?;
         ensure!(
             !self.store.is_imported(thread)?,
             "Imported conversations are read-only for agent execution until cutover; fork first"
