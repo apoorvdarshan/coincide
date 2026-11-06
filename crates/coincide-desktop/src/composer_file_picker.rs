@@ -1,6 +1,11 @@
 //! Project-file references with proven native completion and scoped suggestion keys.
 use super::*;
 use gpui_kit::component::tooltip::Tooltip;
+#[path = "composer_file_key_capture.rs"]
+mod capture;
+#[cfg(test)]
+#[path = "composer_file_dispatch_tests.rs"]
+mod dispatch_tests;
 #[path = "composer_file_keys.rs"]
 mod keys;
 #[path = "composer_file_mentions.rs"]
@@ -614,55 +619,22 @@ impl Coincide {
         );
     }
     pub(super) fn composer_file_key_scope(&self, scope: Div, cx: &mut Context<Self>) -> Div {
-        use gpui_kit::component::input::{Enter, Escape, IndentInline, MoveDown, MoveUp};
-        // Bound input actions dispatch before raw key listeners. Capture their
-        // public actions before Textarea can emit PressEnter or insert a tab.
-        scope
-            .capture_action(cx.listener(|this, action: &Enter, window, cx| {
-                if !action.secondary && !action.shift {
-                    this.composer_file_bound_key(keys::Key::Enter, window, cx);
-                }
-            }))
-            .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
-                this.composer_file_bound_key(keys::Key::Up, window, cx)
-            }))
-            .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
-                this.composer_file_bound_key(keys::Key::Down, window, cx)
-            }))
-            .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
-                this.composer_file_bound_key(keys::Key::Tab, window, cx)
-            }))
-            .capture_action(cx.listener(|this, _: &Escape, window, cx| {
-                this.composer_file_bound_key(keys::Key::Escape, window, cx)
-            }))
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if !event.prefer_character_input
-                    && let Some(key) = keys::Key::named(&event.keystroke.key)
-                {
-                    this.composer_file_key(key, event.keystroke.modifiers.modified(), window, cx);
-                }
-            }))
-            .capture_key_up(cx.listener(|this, event: &KeyUpEvent, _, _| {
-                if let Some(key) = keys::Key::named(&event.keystroke.key) {
-                    this.composer_files.keys.release(key);
-                }
-            }))
+        capture::attach(
+            scope,
+            cx,
+            Self::composer_file_bound_key,
+            Self::composer_file_key,
+            |this, key, _| this.composer_files.keys.release(key),
+        )
     }
+
     fn composer_file_bound_key(
         &mut self,
         key: keys::Key,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let modifiers = window.modifiers();
-        // These are already resolved plain Input bindings. macOS reports its
-        // hardware Function flag for arrows; the public key parser removes it
-        // from arrow keystrokes. Do not mistake that platform flag for Fn+Enter.
-        let modified = modifiers.control
-            || modifiers.alt
-            || modifiers.shift
-            || modifiers.platform
-            || (modifiers.function && !matches!(key, keys::Key::Up | keys::Key::Down));
+        let modified = capture::bound_modified(key, window.modifiers());
         self.composer_file_key(key, modified, window, cx);
     }
     fn composer_file_key(
