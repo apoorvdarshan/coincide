@@ -21,6 +21,8 @@ pub use appshots_api::{AppshotTicket, PreparedAppshot};
 mod follow_up_api;
 #[path = "project_defaults.rs"]
 pub mod project_defaults;
+#[path = "queue_edit_api.rs"]
+mod queue_edit_api;
 pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
