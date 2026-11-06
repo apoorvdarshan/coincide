@@ -719,6 +719,7 @@ mod tests {
         stops: usize,
         cancels: usize,
         inference: usize,
+        ready_permission: bool,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
         drop_gate: Option<Receiver<()>>,
@@ -743,7 +744,11 @@ mod tests {
             trace.requests += 1;
             trace.threads.push(thread::current().id());
             self.events
-                .push_back(CaptureEvent::PermissionChanged(Permission::Authorized));
+                .push_back(CaptureEvent::PermissionChanged(if trace.ready_permission {
+                    Permission::Ready
+                } else {
+                    Permission::Authorized
+                }));
             Ok(())
         }
         fn start(&mut self, _: usize) -> Result<Uuid, CaptureError> {
@@ -933,6 +938,27 @@ mod tests {
         assert_eq!(text.generation, 1);
         assert_eq!(text.binding.composer_revision, 1);
         assert_eq!(trace.lock().unwrap().inference, 1);
+        assert!(events.try_recv().is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn desktop_preparation_is_distinct_from_os_permission_and_never_starts_capture() {
+        let (mut owner, events, trace) = setup(true, false);
+        trace.lock().unwrap().ready_permission = true;
+        action(&mut owner, Action::Record);
+        assert_eq!(trace.lock().unwrap().starts, 0);
+        action(&mut owner, Action::Enable);
+        assert_eq!(owner.permission, Permission::Ready);
+        assert_ne!(owner.permission, Permission::Authorized);
+        assert_eq!(trace.lock().unwrap().starts, 0);
+        action(&mut owner, Action::Record);
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        action(&mut owner, Action::Stop);
+        assert!(events.try_recv().is_err());
+        action(&mut owner, Action::Transcribe);
+        assert_eq!(
+            events.try_recv().unwrap().text,
+            "synthetic recorded transcript"
+        );
         assert!(events.try_recv().is_err());
     }
     #[::core::prelude::v1::test]
