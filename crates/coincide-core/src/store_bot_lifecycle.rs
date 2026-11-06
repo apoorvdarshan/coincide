@@ -274,8 +274,9 @@ impl Store {
                     tx.query_row("SELECT document FROM threads WHERE id=?1", [&row.id], |r| {
                         r.get(0)
                     })?;
+                let expected_raw = target.to_string();
                 ensure!(
-                    raw == *target,
+                    raw == expected_raw,
                     "A kept conversation changed; bot Undo was refused"
                 );
             }
