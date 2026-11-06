@@ -257,11 +257,18 @@ fn cache_failure_rolls_back_exact_row_and_all_indexes_then_frozen_imported_close
     let before = f.snapshot();
     let revision = f.engine.revision;
     let db = rusqlite::Connection::open(f.root.path().join("state.sqlite")).unwrap();
-    db.execute_batch("CREATE TRIGGER fail_terminal_cache BEFORE INSERT ON thread_summaries BEGIN SELECT RAISE(ABORT,'synthetic cache refusal'); END;").unwrap();
+    // Context-only saves take the non-reindexing UPDATE cache path. Fail after
+    // the thread UPDATE, rather than installing an unused INSERT trigger.
+    db.execute_batch("CREATE TRIGGER fail_terminal_cache BEFORE UPDATE ON thread_summaries BEGIN SELECT RAISE(ABORT,'synthetic cache refusal'); END;").unwrap();
+    let result = f
+        .engine
+        .execute("composer.context.attachTerminalSelection", &p);
+    assert!(result.is_err());
     assert!(
-        f.engine
-            .execute("composer.context.attachTerminalSelection", &p)
-            .is_err()
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("synthetic cache refusal")
     );
     assert_eq!(f.snapshot(), before);
     assert_eq!(f.engine.revision, revision);
