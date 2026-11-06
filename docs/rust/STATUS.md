@@ -66,7 +66,29 @@ native results do not close a full feature row.
   focus. Bulk Select/Pin/Archive/Restore and scoped Undo passed six Core tests,
   the full 568-unit Core run and every integration target, plus strict feature
   Clippy. The combined desktop passed 402 units and all four integrations.
-  Fresh full keyboard/restart and bulk native acceptance remain pending.
+  Fresh ordinary 4585755 keyboard/bulk V2 acceptance subsequently passed all
+  26 frozen checkpoints and both normal exits (11m56.50s combined runtime).
+  Done followed by the custom New shortcut worked without a composer click;
+  recording, disable, conflicting bindings, restart and reset-all passed.
+  Two-row selection did not navigate, Pin Cancel wrote nothing, Pin Undo
+  restored exact raw/cache/FTS snapshots, and Archive/Restore returned both
+  originals byte-exact. Eight denied Git probes, zero other executable
+  categories; every frozen source/data guard passed. The prior V1 failure
+  remains preserved. Exact 4585755 also passed all six Rust CI jobs,
+  packaging, general CI and iOS tests.
+- Named Codex model catalogs and the explicit composer project-file picker are
+  now integrated for combined validation. Named discovery authenticates the
+  captured private profile before paginated model/list; model selection and
+  actual turns require the matching account/thread/directory/auth generation.
+  The isolated fake protocol integration and strict Core Clippy passed before
+  integration. The file picker appends path-only reference data, preserves
+  message text and checks exact thread/project/file freshness before committing.
+  The combined Core run passed 577 units and every integration target; strict
+  feature Core Clippy passed. Desktop passed 406 units and all four integration
+  targets (19, 10, 14, 11). A follow-up bounds the file results while keeping
+  Close/Search reachable and adds file-specific accessibility labels; its final
+  desktop check and fresh native acceptance are in progress. Automatic caret
+  suggestions and broader named-profile options remain open.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
@@ -136,7 +158,10 @@ These narrower results do not close the broad UI/UX row above.
 | Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | V5 passed full-image containment at wide/minimum/widened sizes, Escape/Close, normal Quit and exact preservation; focused-element proof remains unverified |
 | Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Foreground min/max, narrow/wide behavior and restart preservation passed; content geometry measured approximately from screenshots |
 | User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble/actions observed in the ordinary roles fixture |
-| Keyboard recorder and Codex account Settings | Integrated; 398 desktop units/all integrations, 562 Core units/all integrations and strict Core Clippy passed | Pending isolated ordinary-app acceptance; real login was not performed |
+| Keyboard recorder and Codex account Settings | Integrated; 402 desktop units/all integrations, 568 Core units/all integrations, strict Core Clippy and two actual GPUI focus regressions passed | Profile create/scoped selection/fake device cancellation passed in V1; fresh keyboard recording/disable/conflict/restart/reset-all passed all V2 guards; real login remains open |
+| Counted bulk selection, Pin/Archive/Restore and scoped Undo | Integrated; full Core/desktop checks passed | V2 passed selection without navigation, review Cancel, exact Pin Undo and Archive/Restore, both normal exits and all preservation guards |
+| Named Codex profile model catalog | Integrated; actual fake protocol integration, combined Core/desktop checks and strict Core Clippy passed | Fresh ordinary candidate acceptance pending; real-account verification remains open |
+| Composer project-file path references | Explicit picker integrated; six Core and three desktop regressions passed in the combined suites; bounded-layout follow-up under final check | Fresh ordinary candidate acceptance pending; automatic caret popup and folder completion remain separate work |
 | Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
 ## Overnight checkpoint (2026-11-05)
