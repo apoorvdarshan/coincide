@@ -1,11 +1,12 @@
 //! Real panel/native handlers, simulated OS path-prompt primitive, real owned
 //! local Git processes. This does not exercise a physical OS dialog or CUA.
-use super::*;
+use crate::instructions::InstructionsPanel;
 use coincide_core::{api::Engine, native_file, store::Store};
 use gpui_kit::{AppContext, Entity, TestAppContext, VisualTestContext};
+use serde_json::json;
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
