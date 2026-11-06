@@ -2160,6 +2160,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.startup_selection_pending = false;
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
             // bot. The user chooses a saved bot in its existing native editor.
