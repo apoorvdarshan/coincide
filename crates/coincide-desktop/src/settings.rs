@@ -5,6 +5,7 @@ pub(super) enum SettingsSection {
     #[default]
     General,
     Instructions,
+    Archive,
     Models,
     About,
     All,
@@ -24,6 +25,7 @@ impl SettingsSection {
         match self {
             Self::General => "general",
             Self::Instructions => "instructions",
+            Self::Archive => "archive",
             Self::Models => "models",
             Self::About => "about",
             Self::All => "all",
@@ -43,6 +45,7 @@ impl SettingsSection {
         match self {
             Self::General => "General",
             Self::Instructions => "Instructions",
+            Self::Archive => "Archive",
             Self::Models => "Models",
             Self::About => "About",
             Self::All => "Search results",
@@ -701,6 +704,7 @@ impl Coincide {
             S::Models,
             S::Usage,
             S::Instructions,
+            S::Archive,
             S::Keyboard,
             S::Voice,
             S::Browser,
@@ -719,13 +723,24 @@ impl Coincide {
                 .ghost()
                 .when(self.settings_section == section, |button| button.primary())
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    this.archive_settings.close_review();
                     this.settings_section = section;
+                    if section == S::Archive {
+                        this.refresh_archive_settings(cx);
+                    }
                     cx.notify();
                 })),
             );
         }
         let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
+        if matches(
+            S::Archive,
+            "archive archived conversations restore delete undo",
+        ) {
+            count += 1;
+            content = content.child(self.archive_settings_panel(cx));
+        }
         if matches(S::Models, "models favorite hidden custom providers catalog") {
             count += 1;
             content =

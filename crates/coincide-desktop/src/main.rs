@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result};
 mod about_settings;
 mod app_menu;
 mod app_menu_mount;
+mod archive_settings;
 mod assets;
 mod bot_settings;
 mod browser;
@@ -33,6 +34,8 @@ mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
 mod instructions;
+mod instructions_config;
+mod instructions_scope;
 mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
@@ -355,6 +358,7 @@ struct Coincide {
     settings_search: Entity<InputState>,
     instructions_panel: Entity<instructions::InstructionsPanel>,
     models_settings: models_settings::ModelsSettings,
+    archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
     settings_section: settings::SettingsSection,
@@ -740,6 +744,7 @@ impl Coincide {
         let instructions_panel =
             cx.new(|cx| instructions::InstructionsPanel::new(native_editors.editor(), window, cx));
         let models_settings = models_settings::ModelsSettings::new(window, cx);
+        let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -990,6 +995,7 @@ impl Coincide {
             }),
         ];
         subscriptions.extend(models_settings.subscriptions(cx));
+        subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let threads = call(&engine, "threads.list", json!({}))
@@ -1058,6 +1064,7 @@ impl Coincide {
             settings_section: Default::default(),
             instructions_panel,
             models_settings,
+            archive_settings,
             instruction_quit_prompt_pending: false,
             instruction_quit_task: None,
             settings_window: None,

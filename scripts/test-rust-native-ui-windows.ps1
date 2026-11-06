@@ -82,7 +82,7 @@ public static class NativeUiSmoke {
         var inputs=new List<Input>();foreach(char c in text){inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=4}}});inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=6}}});}Send(window,process,inputs.ToArray());
     }
     public static void ComposerClick(IntPtr window,uint process) {
-        Owned(window,process);Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");var point=new Point((rect.right-rect.left)/2,rect.bottom-115);if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target native composer");Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
+        Owned(window,process);Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");var point=new Point((rect.right-rect.left)/2,rect.bottom-190);if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target native composer");Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
     }
     public static void Capture(IntPtr window,uint process,string path) {
         Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Capture target is not the active owned native window");
@@ -201,6 +201,7 @@ try {
     [NativeUiSmoke]::ComposerClick($main,[uint32]$script:OwnedProcess.Id)
     $draft='Windows native input draft survives restart'
     [NativeUiSmoke]::Type($main,[uint32]$script:OwnedProcess.Id,$draft)
+    Capture-Owned $main 'native-input-attempt'
     Wait-Condition 'actual SendInput draft persisted' {(Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -eq $draft} | Out-Null
     Capture-Owned $main 'typed-draft'
     $Report.checks+='Actual Windows visible native window, nonblank client pixels, SendInput draft verified by private RPC'

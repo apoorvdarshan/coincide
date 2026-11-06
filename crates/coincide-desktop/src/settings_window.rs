@@ -143,6 +143,7 @@ impl Coincide {
     }
 
     pub(super) fn settings_window_closed(&mut self, cx: &mut Context<Self>) {
+        self.archive_settings.close_review();
         self.settings_window = None;
         self.settings_window_pending = false;
         self.settings_open = false;
