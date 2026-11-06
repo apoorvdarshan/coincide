@@ -150,11 +150,67 @@ fn phase(root: &Path, phase: &str) {
     }
     engine.close_store_after_core_shutdown().unwrap();
 }
+fn ordinary_choice(
+    engine: &mut Engine,
+    id: &str,
+    provider: &str,
+    account: Option<&str>,
+    warmup: bool,
+) -> Value {
+    let source = engine.store.thread(id).unwrap();
+    let expected = [
+        "id",
+        "draft",
+        "selection",
+        "accessMode",
+        "interactionMode",
+        "rustDraftImages",
+        "draftContext",
+    ]
+    .into_iter()
+    .map(|field| (field.to_owned(), source[field].clone()))
+    .collect::<serde_json::Map<_, _>>();
+    let mut params = json!({"threadId":id,"provider":provider,"expected":expected});
+    if let Some(account) = account {
+        params["accountId"] = if account == "default" {
+            Value::Null
+        } else {
+            json!(account)
+        };
+    }
+    if warmup {
+        params["restoreCurrent"] = json!(true);
+    }
+    let mut result = call(engine, "agent.provider.select", params.clone());
+    wait(
+        engine,
+        "ordinary authenticated provider/account selection",
+        |engine| {
+            if result["pending"] != true {
+                return true;
+            }
+            params["restoreRequestId"] = result["requestId"].clone();
+            result = call(engine, "agent.provider.select", params.clone());
+            result["pending"] != true
+        },
+    );
+    if provider == "codex" {
+        assert_eq!(result["authenticationChecked"], true);
+    }
+    if warmup {
+        assert_eq!(result["selectionUnchanged"], true);
+        assert_eq!(engine.store.thread(id).unwrap(), source);
+    }
+    result
+}
 fn slots_phase(root: &Path, phase: &str) {
+    let seed = phase.ends_with("-seed");
+    let ordinary = phase.starts_with("ordinary-");
+    let explicit = phase.starts_with("ordinary-explicit-");
     let mut engine = Engine::new(Store::open(&root.join("state/state.sqlite")).unwrap());
     let metadata = root.join("fixture.json");
     let saved_path = root.join("slot-fixture.json");
-    let (id, a, b) = if phase == "slots-seed" {
+    let (id, a, b) = if seed {
         let project = call(
             &mut engine,
             "projects.create",
@@ -185,12 +241,37 @@ fn slots_phase(root: &Path, phase: &str) {
     engine.set_active_thread(Some(id.clone())).unwrap();
     let choose = |engine: &mut Engine, account: &str| {
         let thread = engine.store.thread(&id).unwrap();
-        call(
-            engine,
-            "providers.codex.profiles.select",
-            json!({"threadId":id,"accountId":account,"expectedSelection":thread["selection"]}),
-        );
-        refresh_account_catalog(engine, &id, false);
+        if ordinary {
+            ordinary_choice(engine, &id, "codex", Some(account), false);
+            if explicit && engine.store.thread(&id).unwrap()["selection"]["modelID"] == "default" {
+                // The actual user's explicit model choice is made once. Return
+                // selections use the ordinary authenticated restoration path.
+                refresh(engine, &id);
+            }
+            if !explicit && !root.join(format!("native-session-{account}")).exists() {
+                let selected = engine.store.thread(&id).unwrap();
+                call(
+                    engine,
+                    "providers.codex.profiles.models.select",
+                    json!({"threadId":id,"accountId":account,"expectedSelection":selected["selection"],"expectedAccessMode":selected["accessMode"],"expectedInteractionMode":selected["interactionMode"],"model":"default","effort":null,"speed":null,"accessMode":"approval"}),
+                );
+            }
+            assert_eq!(
+                engine.store.thread(&id).unwrap()["selection"]["modelID"],
+                if explicit {
+                    json!("portable-model")
+                } else {
+                    json!("default")
+                }
+            );
+        } else {
+            call(
+                engine,
+                "providers.codex.profiles.select",
+                json!({"threadId":id,"accountId":account,"expectedSelection":thread["selection"]}),
+            );
+            refresh_account_catalog(engine, &id, false);
+        }
     };
     let turn = |engine: &mut Engine,
                 account: &str,
@@ -226,10 +307,14 @@ fn slots_phase(root: &Path, phase: &str) {
         }
         native
     };
-    if phase == "slots-seed" {
+    if seed {
         fs::write(&metadata, b"{}").unwrap();
         choose(&mut engine, &a);
         let native_a = turn(&mut engine, &a, "A first", "thread/start", None, "A first");
+        if ordinary {
+            ordinary_choice(&mut engine, &id, "codex", None, true);
+        }
+
         choose(&mut engine, &b);
         let native_b = turn(
             &mut engine,
@@ -249,6 +334,27 @@ fn slots_phase(root: &Path, phase: &str) {
             Some(&native_a),
             "Earlier conversation context (historical messages, not a new user request):\n\nuser: B first\n\nCurrent user request:\nA second",
         );
+        if ordinary {
+            let current = engine.store.thread(&id).unwrap();
+            let other = call(
+                &mut engine,
+                "threads.create",
+                json!({"projectId":current["projectID"]}),
+            );
+            call(&mut engine, "threads.open", json!({"threadId":other["id"]}));
+            call(&mut engine, "threads.open", json!({"threadId":id}));
+            assert_eq!(engine.active_thread(), Some(id.as_str()));
+            // Provider buttons/slash commands share this exact owner API.
+            ordinary_choice(&mut engine, &id, "claude", None, false);
+            choose(&mut engine, &a);
+            let default_account =
+                ordinary_choice(&mut engine, &id, "codex", Some("default"), false);
+            assert_eq!(
+                default_account["model"], "default",
+                "A remembered default-account tuple must remain Provider default"
+            );
+            choose(&mut engine, &a);
+        }
         choose(&mut engine, &b);
         turn(
             &mut engine,
@@ -271,7 +377,7 @@ fn slots_phase(root: &Path, phase: &str) {
         let refused=engine.dispatch(json!({"method":"agent.send","params":{"threadId":id,"text":"must wait without consuming default-model receipt"}}));
         assert!(
             refused.get("error").is_some(),
-            "A cold Provider-default receipt requires current private admission"
+            "A cold account receipt requires current private admission"
         );
         assert_eq!(
             engine.store.thread(&id).unwrap(),
@@ -283,7 +389,11 @@ fn slots_phase(root: &Path, phase: &str) {
             0,
             "Missing admission cannot launch a provider"
         );
-        refresh_account_catalog(&mut engine, &id, false);
+        if ordinary {
+            ordinary_choice(&mut engine, &id, "codex", None, true);
+        } else {
+            refresh_account_catalog(&mut engine, &id, false);
+        }
         turn(
             &mut engine,
             &a,
@@ -312,8 +422,15 @@ fn slots_phase(root: &Path, phase: &str) {
     engine.close_store_after_core_shutdown().unwrap();
 }
 fn provider() {
-    let home = PathBuf::from(std::env::var_os("CODEX_HOME").expect("private home"));
-    let root = home.ancestors().nth(4).unwrap();
+    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
+    let root = home
+        .as_ref()
+        .map(|home| home.ancestors().nth(4).unwrap().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").expect("private fixture HOME")));
+    let native_namespace = home
+        .as_ref()
+        .map(|h| h.file_name().unwrap().to_string_lossy().into_owned())
+        .unwrap_or_else(|| "default".into());
     for key in [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
@@ -327,9 +444,10 @@ fn provider() {
         );
     }
     let args = std::env::args().collect::<Vec<_>>();
-    assert!(
+    assert_eq!(
         args.iter()
-            .any(|arg| arg == "forced_login_method=\"chatgpt\"")
+            .any(|arg| arg == "forced_login_method=\"chatgpt\""),
+        home.is_some()
     );
     let config: Value =
         serde_json::from_slice(&fs::read(root.join("fixture.json")).unwrap()).unwrap();
@@ -353,19 +471,15 @@ fn provider() {
                 native = if method == "thread/start" {
                     let value = format!("portable-{}", uuid::Uuid::new_v4());
                     fs::write(
-                        root.join(format!(
-                            "native-session-{}",
-                            home.file_name().unwrap().to_string_lossy()
-                        )),
+                        root.join(format!("native-session-{}", native_namespace)),
                         &value,
                     )
                     .unwrap();
                     value
                 } else {
-                    let value = fs::read_to_string(root.join(format!(
-                        "native-session-{}",
-                        home.file_name().unwrap().to_string_lossy()
-                    )))
+                    let value = fs::read_to_string(
+                        root.join(format!("native-session-{}", native_namespace)),
+                    )
                     .unwrap();
                     assert_eq!(frame["params"]["threadId"], value);
                     assert_eq!(config["native"], value);
@@ -397,12 +511,15 @@ fn provider() {
     }
 }
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some("-c") {
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("-c" | "app-server")
+    ) {
         provider();
         return;
     }
     if let Some(phase_name) = std::env::var_os("COINCIDE_PORTABLE_PHASE") {
-        let run = if phase_name.to_str().unwrap().starts_with("slots-") {
+        let run = if !matches!(phase_name.to_str().unwrap(), "seed" | "resume") {
             slots_phase
         } else {
             phase
@@ -421,11 +538,25 @@ fn main() {
     }
     let root = dir.path().canonicalize().unwrap();
     let executable = std::env::current_exe().unwrap();
-    for stage in ["seed", "resume", "slots-seed", "slots-resume"] {
-        let phase_root = if stage.starts_with("slots-") {
-            root.join("slots")
-        } else {
+    for stage in [
+        "seed",
+        "resume",
+        "slots-seed",
+        "slots-resume",
+        "ordinary-default-seed",
+        "ordinary-default-resume",
+        "ordinary-explicit-seed",
+        "ordinary-explicit-resume",
+    ] {
+        let phase_root = if matches!(stage, "seed" | "resume") {
             root.clone()
+        } else {
+            root.join(
+                stage
+                    .strip_suffix("-seed")
+                    .or_else(|| stage.strip_suffix("-resume"))
+                    .unwrap(),
+            )
         };
         if !phase_root.exists() {
             fs::create_dir(&phase_root).unwrap();
@@ -458,6 +589,6 @@ fn main() {
         );
     }
     println!(
-        "portable native continuation: explicit-model restart plus Provider-default A/B/A/restart, exact resolved model/native ID/delta once, saved/joined shutdown: PASS"
+        "portable native continuation: explicit-model restart, legacy Provider-default slots, ordinary default/explicit account+provider+default-account switching and cold warmup; exact native model/ID/delta once, saved/joined shutdown: PASS"
     );
 }

@@ -42,8 +42,6 @@ impl Engine {
                     .is_some_and(|intent| intent.token == request),
                 "Provider restoration was cancelled or superseded; draft retained"
             );
-        } else {
-            self.cancel_provider_restore();
         }
         Provider::from_name(provider)?;
         ensure!(
@@ -111,6 +109,25 @@ impl Engine {
                     )),
             "Finish or remove queued messages before changing provider"
         );
+        if p.get("restoreRequestId").is_none() {
+            let changes_provider = current["selection"]["provider"] != provider;
+            let changes_account = provider == "codex"
+                && p.get("accountId").is_some_and(|account| {
+                    if crate::composer_selection::default_account(account) {
+                        !crate::composer_selection::default_account(
+                            &current["selection"]["accountID"],
+                        )
+                    } else {
+                        &current["selection"]["accountID"] != account
+                    }
+                });
+            if changes_provider || changes_account {
+                // Capture completed resident authority before cancelling its
+                // catalog actor. A pure same-account warmup cannot park it.
+                self.park_named_departure(&current)?;
+            }
+            self.cancel_provider_restore();
+        }
         if provider == "codex" {
             let configuration = crate::codex_login_profiles::configuration(&self.store)?;
             if p.get("accountId").is_some()

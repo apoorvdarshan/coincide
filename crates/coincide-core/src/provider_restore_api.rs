@@ -13,6 +13,7 @@ struct Candidate {
     thread: Value,
     binding: Binding,
     account: String,
+    remembered_default: bool,
 }
 pub(super) struct RestoreIntent {
     source: Value,
@@ -146,7 +147,7 @@ impl Engine {
             == (account == "default")
             && (account == "default" || current["selection"]["accountID"] == account)
             && current["selection"]["provider"] == "codex";
-        let model = if same {
+        let remembered_model = if same {
             current["selection"]["modelID"].as_str()
         } else {
             None
@@ -159,8 +160,8 @@ impl Engine {
                 preference["accountID"] == account
             };
             own.then(|| preference["modelID"].as_str()).flatten()
-        })
-        .unwrap_or("default");
+        });
+        let model = remembered_model.unwrap_or("default");
         thread["selection"] = json!({"provider":"codex","modelID":model});
         if account != "default" {
             thread["selection"]["accountID"] = json!(account);
@@ -198,6 +199,7 @@ impl Engine {
             thread,
             binding,
             account: account.into(),
+            remembered_default: remembered_model == Some("default"),
         })
     }
     pub(super) fn restore_provider_accounts(&mut self, current: Value, p: &Value) -> Result<Value> {
@@ -346,7 +348,22 @@ impl Engine {
         while intent.index < intent.candidates.len() {
             let candidate = intent.candidates[intent.index].clone();
             let ready = match &candidate.binding {
-                Binding::Named(binding) => self.model_catalog.ready_named_restore(binding),
+                Binding::Named(binding) => match self.model_catalog.ready_named_restore(binding) {
+                    Some(ready) => {
+                        let admission = self
+                            .model_catalog
+                            .named_resume_admission(&candidate.thread, binding)?;
+                        if self
+                            .named_resume
+                            .catalog_refresh_required(binding, &admission)?
+                        {
+                            None
+                        } else {
+                            Some(ready)
+                        }
+                    }
+                    None => None,
+                },
                 Binding::Default(binding) => self.model_catalog.ready_default_restore(binding),
             };
             let status = if let Some(request) = &intent.request {
@@ -467,10 +484,13 @@ impl Engine {
         let rows = status["models"]
             .as_array()
             .context("Invalid account model list")?;
-        if candidate.thread["selection"]["modelID"] == "default"
-            || !rows
-                .iter()
-                .any(|row| row["id"] == candidate.thread["selection"]["modelID"])
+        let provider_default =
+            candidate.remembered_default && candidate.thread["selection"]["modelID"] == "default";
+        if !provider_default
+            && (candidate.thread["selection"]["modelID"] == "default"
+                || !rows
+                    .iter()
+                    .any(|row| row["id"] == candidate.thread["selection"]["modelID"]))
         {
             candidate.thread["selection"]["modelID"] = rows
                 .iter()
@@ -484,6 +504,20 @@ impl Engine {
             .as_deref()
             .context("Missing account observation")?;
         match &candidate.binding {
+            Binding::Named(binding) if provider_default => {
+                // Provider default is a valid saved choice, not an explicit
+                // reported row. Its tuple must remain unchanged; current
+                // authenticated private catalog admission is still required.
+                self.model_catalog
+                    .named_resume_admission(&candidate.thread, binding)?
+                    .validate(binding, &candidate.thread["selection"], None)?;
+                crate::composer_policy::Policy::parse_named(
+                    &candidate.thread,
+                    crate::composer_policy::Origin::Ordinary,
+                    None,
+                )?
+                .preflight()?;
+            }
             Binding::Named(binding) => {
                 self.model_catalog.resolve_named_preferences(
                     &mut candidate.thread,
@@ -508,11 +542,13 @@ impl Engine {
             }
             Binding::Default(binding) => {
                 binding.validate()?;
-                crate::model_catalog::resolve_reported_preferences(
-                    &mut candidate.thread,
-                    &candidate.account,
-                    rows,
-                )?;
+                if !provider_default {
+                    crate::model_catalog::resolve_reported_preferences(
+                        &mut candidate.thread,
+                        &candidate.account,
+                        rows,
+                    )?;
+                }
                 let proof = self.composer_effort_proof(&candidate.thread["selection"])?;
                 crate::composer_policy::Policy::parse_with_effort_proof(
                     &candidate.thread,

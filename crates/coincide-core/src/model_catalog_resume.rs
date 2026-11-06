@@ -13,6 +13,9 @@ pub(crate) struct NamedResumeAdmission {
     actor: Arc<AtomicBool>,
 }
 impl NamedResumeAdmission {
+    pub(crate) fn is_actor(&self, fence: &NamedCatalogFence) -> bool {
+        Arc::ptr_eq(&self.actor, &fence.actor)
+    }
     pub(crate) fn validate(
         &self,
         binding: &NamedBinding,
