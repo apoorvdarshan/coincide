@@ -275,7 +275,7 @@ impl Store {
                         r.get(0)
                     })?;
                 ensure!(
-                    raw == target.to_string(),
+                    raw == *target,
                     "A kept conversation changed; bot Undo was refused"
                 );
             }
