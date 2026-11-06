@@ -3154,6 +3154,34 @@ impl Coincide {
             window,
             cx,
         );
+        let copy_action = {
+            let source = source_id.clone();
+            let item = item_id.clone();
+            Button::new(SharedString::from(format!(
+                "copy-message-{source_id}-{item_id}"
+            )))
+            .accessibility_id(SharedString::from(format!(
+                "copy-message-{source_id}-{item_id}"
+            )))
+            .accessibility_label("Copy message")
+            .when(kind == "user", |button| {
+                button.icon(gpui_kit::assets::IconName::Copy)
+            })
+            .when(kind != "user", |button| button.label("Copy message"))
+            .ghost()
+            .compact()
+            .when(kind == "assistant" || kind == "user", |button| {
+                button.xsmall()
+            })
+            .disabled(copy_empty)
+            .tooltip("Copy the complete message text, including collapsed content")
+            .on_click(cx.listener(move |this, _, _, cx| this.copy_message(&source, &item, cx)))
+        };
+        let (metadata_copy, user_copy) = if kind == "user" {
+            (None, Some(copy_action))
+        } else {
+            (Some(copy_action), None)
+        };
         // Swift's assistant row reads body first; provider/model and existing
         // actions form a quiet signature below the reply and its media. Native
         // text/find/selection state and every action controller stay unchanged.
@@ -3210,23 +3238,7 @@ impl Coincide {
                     ),
                 )
             })
-            .child({
-                let source = source_id.clone();
-                let item = item_id.clone();
-                Button::new(SharedString::from(format!(
-                    "copy-message-{source_id}-{item_id}"
-                )))
-                .accessibility_id(SharedString::from(format!(
-                    "copy-message-{source_id}-{item_id}"
-                )))
-                .label("Copy message")
-                .ghost()
-                .compact()
-                .when(kind == "assistant", |button| button.xsmall())
-                .disabled(copy_empty)
-                .tooltip("Copy the complete message text, including collapsed content")
-                .on_click(cx.listener(move |this, _, _, cx| this.copy_message(&source, &item, cx)))
-            })
+            .when_some(metadata_copy, |header, copy| header.child(copy))
             .when(kind == "assistant" && settled, |footer| {
                 let source = source_id.clone();
                 let item = item_id.clone();
@@ -3252,6 +3264,8 @@ impl Coincide {
             });
         let (header, footer) = if kind == "assistant" {
             (None, Some(metadata.into_any_element()))
+        } else if kind == "user" {
+            (None, None)
         } else {
             (Some(metadata.into_any_element()), None)
         };
@@ -3269,6 +3283,7 @@ impl Coincide {
                     - presentation::RAIL_GUTTER)
                     * 0.75))
                     .bg(self.color(0xe4e9f2).opacity(0.06))
+                    .my_0()
             })
             .when(kind == "assistant", |card| {
                 card.px_1().py_0().rounded_none()
@@ -3342,38 +3357,62 @@ impl Coincide {
                 view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
             })
             .children(self.historical_images(&item_id, cx))
-            .when(kind == "user", |view| {
-                let source = source_id.clone();
-                let item = item_id.clone();
-                view.child(
-                    div().mt_2().child(
-                        Button::new(SharedString::from(format!(
-                            "edit-message-branch-{source_id}-{item_id}"
-                        )))
-                        .accessibility_id(SharedString::from(format!(
-                            "edit-message-branch-{source_id}-{item_id}"
-                        )))
-                        .accessibility_label(SharedString::from(format!(
-                            "Edit message in new branch: {action_excerpt}"
-                        )))
-                        .label("Edit in new branch")
-                        .ghost()
-                        .compact()
-                        .disabled(source_running)
-                        .tooltip(if source_running {
-                            "Stop the current turn before editing an earlier message"
-                        } else {
-                            "Create a separate conversation with this message restored as a draft"
-                        })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.branch_from_item(&source, &item, true, window, cx)
-                            },
-                        )),
-                    ),
-                )
-            })
             .when_some(footer, |view, footer| view.child(footer));
+        // Swift's user card has no permanent author header. Keep both real
+        // actions together below the bubble at its outer edge. They stay
+        // reachable for keyboard/AX use without adding hover-only state.
+        let card = if kind == "user" {
+            let source = source_id.clone();
+            let item = item_id.clone();
+            let right = self.settings["userMessageSide"].as_str().unwrap_or("right") != "left";
+            let edit_action = Button::new(SharedString::from(format!(
+                "edit-message-branch-{source_id}-{item_id}"
+            )))
+            .accessibility_id(SharedString::from(format!(
+                "edit-message-branch-{source_id}-{item_id}"
+            )))
+            .accessibility_label(SharedString::from(format!(
+                "Edit message in new branch: {action_excerpt}"
+            )))
+            .label("Edit in new branch")
+            .ghost()
+            .compact()
+            .xsmall()
+            .disabled(source_running)
+            .tooltip(if source_running {
+                "Stop the current turn before editing an earlier message"
+            } else {
+                "Create a separate conversation with this message restored as a draft"
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.branch_from_item(&source, &item, true, window, cx)
+            }));
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .w_full()
+                .max_w(px((presentation::CONTENT_WIDTH
+                    - presentation::RAIL_GUTTER)
+                    * 0.75))
+                .my_3()
+                .child(card)
+                .child(
+                    div()
+                        .mt_1()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_1()
+                        .text_color(self.color(0xe4e9f2).opacity(0.7))
+                        .when(right, |actions| actions.justify_end())
+                        .child(edit_action)
+                        .when_some(user_copy, |actions, copy| actions.child(copy)),
+                )
+                .into_any_element()
+        } else {
+            card.into_any_element()
+        };
         div()
             .flex()
             .w_full()
