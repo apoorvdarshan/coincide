@@ -3150,153 +3150,198 @@ impl Coincide {
             window,
             cx,
         );
-        let card =
-            div()
-                .id(SharedString::from(format!(
-                    "message-row-{source_id}-{item_id}"
-                )))
-                .min_w_0()
-                .w_full()
-                .my_3()
-                .p_3()
-                .rounded(px(12.))
-                .when(kind == "user", |card| {
-                    card.max_w(px((presentation::CONTENT_WIDTH
-                        - presentation::RAIL_GUTTER)
-                        * 0.75))
-                        .bg(self.color(0xe4e9f2).opacity(0.06))
-                })
-                .when(kind == "assistant", |card| {
-                    card.border_l_2()
-                        .border_color(self.provider_ink(&provider))
-                        .rounded_none()
-                })
-                .when(collapsible, |card| {
-                    card.bg(self.color(0x181d28))
-                        .border_1()
-                        .border_color(self.color(0x29303d))
-                })
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(if kind == "assistant" {
-                            self.provider_ink(&provider)
-                        } else {
-                            self.color(0xe4e9f2).opacity(0.7)
-                        })
-                        .mb_2()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .child(div().min_w_0().flex_1().child(label).when(
-                            kind == "assistant" && !model.is_empty(),
-                            |label| {
-                                label.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(self.color(0xe4e9f2).opacity(0.6))
-                                        .child(model),
-                                )
-                            },
-                        ))
-                        .when(kind == "assistant", |header| {
-                            let source = source_id.clone();
-                            let item = item_id.clone();
-                            header.child(Button::new(SharedString::from(format!("quote-message-{source_id}-{item_id}")))
-                                .accessibility_id(SharedString::from(format!("quote-message-{source_id}-{item_id}")))
-                                .label("Quote message").ghost().compact().disabled(copy_empty)
-                                .tooltip("Attach the complete reply as reference material (up to 16,000 bytes)")
-                                .on_click(cx.listener(move |this, _, _, cx| this.quote_message(&source, &item, cx))))
-                        })
-                        .child({
-                            let source = source_id.clone();
-                            let item = item_id.clone();
-                            Button::new(SharedString::from(format!(
-                                "copy-message-{source_id}-{item_id}"
-                            )))
-                            .accessibility_id(SharedString::from(format!(
-                                "copy-message-{source_id}-{item_id}"
-                            )))
-                            .label("Copy message")
-                            .ghost()
-                            .compact()
-                            .disabled(copy_empty)
-                            .tooltip("Copy the complete message text, including collapsed content")
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| this.copy_message(&source, &item, cx),
-                            ))
-                        }),
+        // Swift's assistant row reads body first; provider/model and existing
+        // actions form a quiet signature below the reply and its media. Native
+        // text/find/selection state and every action controller stay unchanged.
+        let metadata = div()
+            .text_sm()
+            .text_color(if kind == "assistant" {
+                self.provider_ink(&provider)
+            } else {
+                self.color(0xe4e9f2).opacity(0.7)
+            })
+            .when(kind == "assistant", |meta| meta.mt_2().text_xs())
+            .when(kind != "assistant", |meta| meta.mb_2())
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(label)
+                    .when(kind == "assistant" && !model.is_empty(), |label| {
+                        label.child(
+                            div()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.6))
+                                .child(model),
+                        )
+                    }),
+            )
+            .when(kind == "assistant", |header| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                header.child(
+                    Button::new(SharedString::from(format!(
+                        "quote-message-{source_id}-{item_id}"
+                    )))
+                    .accessibility_id(SharedString::from(format!(
+                        "quote-message-{source_id}-{item_id}"
+                    )))
+                    .label("Quote message")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .disabled(copy_empty)
+                    .tooltip("Attach the complete reply as reference material (up to 16,000 bytes)")
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.quote_message(&source, &item, cx)),
+                    ),
                 )
-                .when_some(context_pane, |view, context| view.child(context))
-                .when(collapsible, |view| {
-                    let source = source_id.clone();
-                    let item = item_id.clone();
-                    view.child(
-                        Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                            .accessibility_id(SharedString::from(format!(
-                                "expand-{source_id}-{item_id}"
-                            )))
-                            .label(if expanded { "Collapse" } else { "Expand" })
-                            .ghost()
-                            .compact()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let Some(thread) =
-                                    this.selected.as_ref().filter(|v| v["id"] == source)
-                                else {
-                                    return;
-                                };
-                                let Some(index) = thread["items"]
-                                    .as_array()
-                                    .and_then(|items| items.iter().position(|v| v["id"] == item))
-                                else {
-                                    return;
-                                };
-                                if this
-                                    .find_revealed
-                                    .as_ref()
-                                    .is_some_and(|(thread, id, _)| thread == &source && id == &item)
-                                {
-                                    this.find_revealed = None;
-                                    this.find_pending = None;
-                                    this.expanded.remove(&index);
-                                } else if !this.expanded.remove(&index) {
-                                    this.expanded.insert(index);
-                                }
-                                this.transcript_list.splice(index..index + 1, 1);
-                                cx.notify();
-                            })),
-                    )
-                })
-                .child(transcript::preserve_selected_copy(
-                    &source_id,
-                    &item_id,
-                    native_body
-                        .text_size(px(self.conversation_font_size()
-                            + if kind == "assistant"
-                                && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                                    == "newYork"
+            })
+            .child({
+                let source = source_id.clone();
+                let item = item_id.clone();
+                Button::new(SharedString::from(format!(
+                    "copy-message-{source_id}-{item_id}"
+                )))
+                .accessibility_id(SharedString::from(format!(
+                    "copy-message-{source_id}-{item_id}"
+                )))
+                .label("Copy message")
+                .ghost()
+                .compact()
+                .when(kind == "assistant", |button| button.xsmall())
+                .disabled(copy_empty)
+                .tooltip("Copy the complete message text, including collapsed content")
+                .on_click(cx.listener(move |this, _, _, cx| this.copy_message(&source, &item, cx)))
+            })
+            .when(kind == "assistant" && settled, |footer| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                footer.child(
+                    Button::new(SharedString::from(format!(
+                        "fork-message-turn-{source_id}-{item_id}"
+                    )))
+                    .accessibility_id(SharedString::from(format!(
+                        "fork-message-turn-{source_id}-{item_id}"
+                    )))
+                    .accessibility_label(SharedString::from(format!(
+                        "Fork through response: {action_excerpt}"
+                    )))
+                    .label("Fork through this turn")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .tooltip("Copy settled conversation through this turn into a separate branch")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.branch_from_item(&source, &item, false, window, cx)
+                    })),
+                )
+            });
+        let (header, footer) = if kind == "assistant" {
+            (None, Some(metadata.into_any_element()))
+        } else {
+            (Some(metadata.into_any_element()), None)
+        };
+        let card = div()
+            .id(SharedString::from(format!(
+                "message-row-{source_id}-{item_id}"
+            )))
+            .min_w_0()
+            .w_full()
+            .my_3()
+            .p_3()
+            .rounded(px(12.))
+            .when(kind == "user", |card| {
+                card.max_w(px((presentation::CONTENT_WIDTH
+                    - presentation::RAIL_GUTTER)
+                    * 0.75))
+                    .bg(self.color(0xe4e9f2).opacity(0.06))
+            })
+            .when(kind == "assistant", |card| {
+                card.px_1().py_0().rounded_none()
+            })
+            .when(collapsible, |card| {
+                card.bg(self.color(0x181d28))
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+            })
+            .when_some(header, |view, header| view.child(header))
+            .when_some(context_pane, |view, context| view.child(context))
+            .when(collapsible, |view| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                view.child(
+                    Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                        .accessibility_id(SharedString::from(format!(
+                            "expand-{source_id}-{item_id}"
+                        )))
+                        .label(if expanded { "Collapse" } else { "Expand" })
+                        .ghost()
+                        .compact()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source)
+                            else {
+                                return;
+                            };
+                            let Some(index) = thread["items"]
+                                .as_array()
+                                .and_then(|items| items.iter().position(|v| v["id"] == item))
+                            else {
+                                return;
+                            };
+                            if this
+                                .find_revealed
+                                .as_ref()
+                                .is_some_and(|(thread, id, _)| thread == &source && id == &item)
                             {
-                                1.
-                            } else {
-                                0.
-                            }))
-                        .when(
-                            kind == "assistant"
-                                && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
-                                    == "newYork",
-                            |view| view.font_family(settings::reply_font()),
-                        ),
-                ))
-                .when(!previews.is_empty(), |view| {
-                    view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
-                })
-                .children(self.historical_images(&item_id, cx))
-                .when(kind == "user", |view| {
-                    let source = source_id.clone();
-                    let item = item_id.clone();
-                    view.child(
+                                this.find_revealed = None;
+                                this.find_pending = None;
+                                this.expanded.remove(&index);
+                            } else if !this.expanded.remove(&index) {
+                                this.expanded.insert(index);
+                            }
+                            this.transcript_list.splice(index..index + 1, 1);
+                            cx.notify();
+                        })),
+                )
+            })
+            .child(transcript::preserve_selected_copy(
+                &source_id,
+                &item_id,
+                native_body
+                    .text_size(px(self.conversation_font_size()
+                        + if kind == "assistant"
+                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                == "newYork"
+                        {
+                            1.
+                        } else {
+                            0.
+                        }))
+                    .when(
+                        kind == "assistant"
+                            && self.settings["replyTypeface"].as_str().unwrap_or("newYork")
+                                == "newYork",
+                        |view| view.font_family(settings::reply_font()),
+                    ),
+            ))
+            .when(!previews.is_empty(), |view| {
+                view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
+            })
+            .children(self.historical_images(&item_id, cx))
+            .when(kind == "user", |view| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                view.child(
                     div().mt_2().child(
                         Button::new(SharedString::from(format!(
                             "edit-message-branch-{source_id}-{item_id}"
@@ -3308,7 +3353,8 @@ impl Coincide {
                             "Edit message in new branch: {action_excerpt}"
                         )))
                         .label("Edit in new branch")
-                        .ghost().compact()
+                        .ghost()
+                        .compact()
                         .disabled(source_running)
                         .tooltip(if source_running {
                             "Stop the current turn before editing an earlier message"
@@ -3322,32 +3368,8 @@ impl Coincide {
                         )),
                     ),
                 )
-                })
-                .when(kind == "assistant" && settled, |view| {
-                    view.child(
-                    div().mt_2().child(
-                        Button::new(SharedString::from(format!(
-                            "fork-message-turn-{source_id}-{item_id}"
-                        )))
-                        .accessibility_id(SharedString::from(format!(
-                            "fork-message-turn-{source_id}-{item_id}"
-                        )))
-                        .accessibility_label(SharedString::from(format!(
-                            "Fork through response: {action_excerpt}"
-                        )))
-                        .label("Fork through this turn")
-                        .ghost().compact()
-                        .tooltip(
-                            "Copy settled conversation through this turn into a separate branch",
-                        )
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.branch_from_item(&source_id, &item_id, false, window, cx)
-                            },
-                        )),
-                    ),
-                )
-                });
+            })
+            .when_some(footer, |view, footer| view.child(footer));
         div()
             .flex()
             .w_full()
