@@ -106,6 +106,39 @@ native results do not close a full feature row.
   committed reference. Surrounding bytes are preserved. Secondary carets follow
   the editor's collapse behavior; folder completion, keyboard result selection
   and exact Swift popup placement remain open.
+- Ordinary 170cef9 passed the fresh file-picker V2 native workflow: all 13
+  checkpoints, imported-thread refusal, Unicode query changes, Close, real
+  thread-change revocation, project isolation, one path attachment, duplicate
+  no-op and saved-card restart. Both normal exits were zero (10m22.02s combined).
+  Draft/context/session/unknown/source/file/cache/FTS guards passed. Six denied
+  Git probes and seven scoped fake listings; no other executable category.
+  Controls fit the observed 820x552 minimum frame; exact content bounds were
+  not measured. Results require an actual inner scroll. A newer compact-list
+  presentation is integrated for validation, with native first-row visibility
+  still pending. The earlier V1 layout failure is unchanged.
+- The same ordinary candidate verified focused-caret automatic suggestions,
+  stable blink/dismissal intervals, real caret-move reopening, exact native
+  completion of only `@src/café`, and restart readback with Unicode prefix,
+  suffix and both remaining spaces intact. Both normal exits were zero.
+  Ten original checkpoints passed. The original restart-loaded checker failed
+  because it required the first process's socket to remain absent after a
+  legitimate restart. Its failure and source remain preserved; a separate
+  read-only supplement proved the prior exit, exact saved state and kernel
+  ownership of the new socket before the remaining original checks passed.
+  This is qualified application acceptance, not an as-written fixture pass.
+- Named-profile native A refresh and model selection passed on 170cef9. Native
+  B selection then retained a stale active-thread capability lock, so no B
+  refresh or restart was attempted. Normal Quit exited zero after 326.09s;
+  exact preserved data/source/private homes and A1/B0 RPC counts passed. The
+  source fix performs the trusted owner handoff and capability read under the
+  same nonblocking Engine lock, while retaining real model-proof locks. Its
+  three focused owner/cache regressions passed against a real Store/Engine;
+  full-suite and fresh native verification are pending.
+- Exact 170cef9 passed all six Rust CI jobs, packaging, general CI and iOS tests.
+  The new `/usage-limits` opener passed four regressions and the isolated full
+  413-unit desktop suite plus every integration target; it opens only existing
+  reported default Codex windows without starting another provider read. It and
+  the compact file list are integrated with the owner fix for combined checks.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
@@ -177,8 +210,9 @@ These narrower results do not close the broad UI/UX row above.
 | User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble/actions observed in the ordinary roles fixture |
 | Keyboard recorder and Codex account Settings | Integrated; 402 desktop units/all integrations, 568 Core units/all integrations, strict Core Clippy and two actual GPUI focus regressions passed | Profile create/scoped selection/fake device cancellation passed in V1; fresh keyboard recording/disable/conflict/restart/reset-all passed all V2 guards; real login remains open |
 | Counted bulk selection, Pin/Archive/Restore and scoped Undo | Integrated; full Core/desktop checks passed | V2 passed selection without navigation, review Cancel, exact Pin Undo and Archive/Restore, both normal exits and all preservation guards |
-| Named Codex profile model catalog | Integrated; actual fake protocol integration, combined Core/desktop checks and strict Core Clippy passed | Fresh ordinary candidate acceptance pending; real-account verification remains open |
-| Composer project-file path references | Explicit picker and bounded results integrated; six Core and three desktop regressions passed, with the final full desktop suite green | Fresh ordinary candidate acceptance pending; automatic caret popup and folder completion remain separate work |
+| Named Codex profile model catalog | Integrated; actual fake protocol integration, combined Core/desktop checks and strict Core Clippy passed; owner/cache fix under validation | Native A discovery/selection passed; B stale-lock failure preserved and fresh fix acceptance pending; real-account verification remains open |
+| Composer project-file path references | Explicit picker and bounded results integrated; six Core and three desktop regressions passed | V2 passed all 13 native checks and both exits with exact preservation; results require inner scrolling; compact-list follow-up pending native visual verification |
+| Automatic caret file completion | Unicode/grapheme, IME-veto and revision regressions passed | Exact native query removal and restart verified with 10 original stages plus a separate restart-owner supplement; original checker failure preserved; keyboard/folder/multi-caret parity remains open |
 | Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
 ## Overnight checkpoint (2026-11-05)
