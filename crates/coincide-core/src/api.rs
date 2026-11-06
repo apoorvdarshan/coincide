@@ -143,6 +143,7 @@ pub struct Engine {
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
+    named_resume: crate::named_profile_resume::Registry,
     github_threads: github_threads_engine::State,
     computer_use: computer_use_engine::State,
     pub store: Store,
@@ -216,6 +217,7 @@ impl Engine {
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
+            named_resume: crate::named_profile_resume::Registry::default(),
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
             store,
@@ -963,14 +965,31 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
-        // account/read exposes display metadata, not stable account authority.
-        // Named profiles use a fresh native thread and full context replay.
-        let session = if codex_profile.is_some() {
+        // Persisted session metadata never authorizes a named resume. Only
+        // this Engine's successful saved turn + owned worker join can do so.
+        let named_resume = if let Some(profile) = &codex_profile {
+            Some(
+                self.named_resume.prepare(
+                    &v,
+                    profile.clone(),
+                    &cwd,
+                    mode_policy
+                        .as_ref()
+                        .context("Missing named policy")?
+                        .clone(),
+                )?,
+            )
+        } else {
             None
+        };
+        let session = if let Some(authority) = &named_resume {
+            authority.session().map(str::to_owned)
         } else {
             agent::provider_session(&v, &provider)
         };
-        let seen = if session.is_some() {
+        let seen = if let Some(authority) = &named_resume {
+            authority.seen()
+        } else if session.is_some() {
             agent::provider_seen_count(&v, &provider)
         } else {
             0
@@ -1060,6 +1079,15 @@ impl Engine {
         if let Some(policy) = &mode_policy {
             policy.validate_launch_executable(&executable)?;
         }
+        let named_launch = if let Some(profile) = codex_profile {
+            Some(agent::NamedProfileLaunch {
+                profile,
+                model: named_model_proof,
+                resume: named_resume.context("Missing captured named-session authority")?,
+            })
+        } else {
+            None
+        };
         append(&mut v, "user", prompt, None);
         if crate::composer_context::has_context(&context) {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
@@ -1102,8 +1130,7 @@ impl Engine {
                     images,
                     bot_instructions,
                     mode_policy,
-                    codex_profile,
-                    named_model_proof,
+                    named_launch,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1573,6 +1600,7 @@ impl Engine {
         self.poll_codex_profile_login();
         self.poll_steering();
         self.provider_workers_status();
+        self.named_resume.poll();
         self.computer_use_expire();
         let limits_executable = self.codex_limits_executable();
         let named_limits = self.current_profile_limits_binding();
@@ -1914,6 +1942,18 @@ impl Engine {
                 self.unsaved_threads.remove(&id);
                 self.pending_usage.remove(&id);
                 self.notification_events.persisted(&v);
+                if finished
+                    && failure.is_none()
+                    && !self.runs[&id].cancelled
+                    && self.runs[&id].persistence_error.is_none()
+                    && let Some(ack) = self.runs[&id].session.take_named_completion()
+                {
+                    self.named_resume.persisted(
+                        ack,
+                        &v,
+                        self.runs[&id].session.worker_completion(),
+                    );
+                }
             }
             self.revision += 1;
             if finished

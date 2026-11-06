@@ -63,9 +63,11 @@ if r['method']=='model/list':
  if named and model=='synthetic-a':row['supportedReasoningEfforts']=[{'reasoningEffort':'high'}]
  write({'id':r['id'],'result':{'data':[row,{'model':'default','serviceTiers':[{'id':'priority','name':'Synthetic hostile default'}]},{'model':'gpt-6-astra','serviceTiers':[{'id':'priority','name':'Synthetic hostile Astra'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
-assert named and r['method']=='thread/start' and r['params']['model']==model
+expected_method='thread/resume' if model=='synthetic-a' and tier=='omit' else 'thread/start'
+assert named and r['method']==expected_method and r['params']['model']==model
 assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
 native=home.name+'-speed-session'
+if expected_method=='thread/resume':assert r['params']['threadId']==native and r['params']['excludeTurns'] is True
 result={'thread':{'id':native},'model':model}
 if ack!='missing':result['serviceTier']=ack
 write({'id':r['id'],'result':result})
@@ -386,7 +388,7 @@ fn speed_fixture_child() {
     assert_eq!(after["draft"], "");
     assert!(after["draftContext"].is_null());
     // Null is Standard, never an inferred faster tier. Only the actual owned
-    // thread ACK can require a literal reset. Each process is a fresh session.
+    // thread ACK can require a literal reset. Identical owned A contexts then resume.
     let before = e.store.thread(&id).unwrap();
     let clear = params(&e, &id, "synthetic-a", Value::Null, None);
     let cleared = call(&mut e, SELECT, clear);
@@ -574,6 +576,20 @@ fn speed_fixture_child() {
         );
     }
     let calls = records(&root);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        2
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|r| r["method"] == "thread/start")
+            .count(),
+        4
+    );
     let turns: Vec<_> = calls
         .iter()
         .filter(|r| r["method"] == "turn/start")
@@ -619,6 +635,7 @@ fn speed_fixture_child() {
                         | "account/read"
                         | "model/list"
                         | "thread/start"
+                        | "thread/resume"
                         | "turn/start"
                 ),
                 "unexpected RPC {m}"
