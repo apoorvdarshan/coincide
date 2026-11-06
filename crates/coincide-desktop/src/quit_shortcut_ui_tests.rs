@@ -77,6 +77,17 @@ fn headless_actual_prebinding_hold_repeat_release_and_menu_distinction(cx: &mut 
         window.activate_window();
         input.read(cx).focus_handle(cx).focus(window, cx);
         draw(window, cx);
+    })
+    .unwrap();
+    // TestPlatform posts the actual activation notification on its foreground
+    // executor (platform/test/platform.rs set_active_window); deliver that
+    // event before exercising the product's active-window admission guard.
+    cx.run_until_parked();
+    cx.update_window(main, |_, window, cx| {
+        assert!(
+            window.is_window_active(),
+            "fixture must deliver actual platform activation first"
+        );
         down(window, cx, false);
     })
     .unwrap();
@@ -129,6 +140,17 @@ fn headless_actual_prebinding_hold_repeat_release_and_menu_distinction(cx: &mut 
         window.activate_window();
         settings_input.read(cx).focus_handle(cx).focus(window, cx);
         draw(window, cx);
+    })
+    .unwrap();
+    // TestPlatform posts the actual activation notification on its foreground
+    // executor (platform/test/platform.rs set_active_window); deliver that
+    // event before exercising the product's active-window admission guard.
+    cx.run_until_parked();
+    cx.update_window(settings, |_, window, cx| {
+        assert!(
+            window.is_window_active(),
+            "fixture must deliver actual platform activation first"
+        );
         down(window, cx, false);
     })
     .unwrap();
@@ -186,6 +208,17 @@ fn headless_focus_modifier_and_disable_cancel_without_later_quit(cx: &mut TestAp
     cx.update_window(first, |_, window, cx| {
         window.activate_window();
         draw(window, cx);
+    })
+    .unwrap();
+    // TestPlatform posts the actual activation notification on its foreground
+    // executor (platform/test/platform.rs set_active_window); deliver that
+    // event before exercising the product's active-window admission guard.
+    cx.run_until_parked();
+    cx.update_window(first, |_, window, cx| {
+        assert!(
+            window.is_window_active(),
+            "fixture must deliver actual platform activation first"
+        );
         down(window, cx, false);
     })
     .unwrap();
@@ -207,6 +240,17 @@ fn headless_focus_modifier_and_disable_cancel_without_later_quit(cx: &mut TestAp
     cx.update_window(first, |_, window, cx| {
         window.activate_window();
         draw(window, cx);
+    })
+    .unwrap();
+    // TestPlatform posts the actual activation notification on its foreground
+    // executor (platform/test/platform.rs set_active_window); deliver that
+    // event before exercising the product's active-window admission guard.
+    cx.run_until_parked();
+    cx.update_window(first, |_, window, cx| {
+        assert!(
+            window.is_window_active(),
+            "fixture must deliver actual platform activation first"
+        );
         down(window, cx, false);
     })
     .unwrap();
