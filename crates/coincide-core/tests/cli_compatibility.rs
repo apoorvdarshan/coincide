@@ -307,6 +307,23 @@ fn send_words_literal_flags_and_stdin_preserve_exact_message_once() {
             None,
             "hello -",
         ),
+        // Only Core can decide whether attached context/images admit a turn.
+        (vec!["send", THREAD, "", "--socket", socket], None, ""),
+        (
+            vec!["send", THREAD, "-", "--socket", socket],
+            Some("".as_bytes()),
+            "",
+        ),
+        (
+            vec!["send", THREAD, "  \t", "--socket", socket],
+            None,
+            "  \t",
+        ),
+        (
+            vec!["send", THREAD, "-", "--socket", socket],
+            Some(" \n\t ".as_bytes()),
+            " \n\t ",
+        ),
     ] {
         let before = peer.requests().len();
         let (code, value) = run(peer.command(&args), body);
@@ -331,7 +348,6 @@ fn malformed_global_or_stdin_input_never_connects_to_any_socket() {
         vec!["status", "--socket="],
         vec!["status", "--socket", socket, &equals],
         vec!["--json", "status", "--json", "--socket", socket],
-        vec!["send", THREAD, "", &equals],
         vec!["send", THREAD, "hello", "--alternate", &equals],
         vec!["status", "--socket=bad\npath"],
     ] {
@@ -339,7 +355,7 @@ fn malformed_global_or_stdin_input_never_connects_to_any_socket() {
         assert_eq!(code, 2, "{args:?}: {value}");
     }
     let oversized = vec![b'x'; 1024 * 1024 + 1];
-    for body in [Vec::new(), vec![0xff], oversized] {
+    for body in [vec![0xff], oversized] {
         let (code, value) = run(
             peer.command(&["--socket", socket, "send", THREAD, "-"]),
             Some(&body),

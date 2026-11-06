@@ -568,7 +568,6 @@ fn global_options(raw: Vec<String>) -> Result<(Vec<String>, Option<PathBuf>)> {
 }
 const MAX_SEND_MESSAGE: usize = 1024 * 1024;
 fn validate_send_message(message: &str) -> Result<()> {
-    anyhow::ensure!(!message.is_empty(), "send needs a message");
     anyhow::ensure!(
         message.len() <= MAX_SEND_MESSAGE,
         "Send message exceeds 1 MiB"
