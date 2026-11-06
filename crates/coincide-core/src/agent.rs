@@ -32,6 +32,8 @@ mod cursor;
 mod grok;
 #[path = "provider_images.rs"]
 mod images;
+#[path = "provider_key_enrollment_process.rs"]
+pub(crate) mod key_enrollment_process;
 #[path = "provider_metadata_capture.rs"]
 pub(crate) mod metadata_capture;
 #[path = "native_instruction_git_process.rs"]

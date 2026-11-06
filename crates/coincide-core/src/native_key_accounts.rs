@@ -138,6 +138,7 @@ impl Engine {
             authentication: Authentication::ApiKey,
             key_variable: Some(variable.into()),
             key: None,
+            codex_enrollment: None,
             home,
             home_identity,
             guard_identity,

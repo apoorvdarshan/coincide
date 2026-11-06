@@ -34,6 +34,8 @@ pub(super) struct Account {
     key_variable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<account_secret_store::SecretSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    codex_enrollment: Option<Value>,
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
@@ -185,6 +187,13 @@ impl LoginHome {
             "Native account home is outside its owner"
         );
         private(&account.home, true)?;
+        if account.provider == "codex" {
+            ensure!(
+                fs::symlink_metadata(account.home.join("config.toml"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "Native Codex account config overrides are not supported"
+            );
+        }
         ensure!(
             crate::private_fs::identity(&account.home)? == account.home_identity,
             "Native account home changed"
@@ -243,6 +252,13 @@ impl LoginHome {
         Ok(captured)
     }
     pub(super) fn validate(&self) -> Result<()> {
+        if self.account.provider == "codex" {
+            ensure!(
+                fs::symlink_metadata(self.account.home.join("config.toml"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "Native Codex account config overrides are not supported"
+            );
+        }
         ensure!(
             self.account.home == home(&self.root, &self.account.provider, &self.account.id)?,
             "Native account home changed"
@@ -357,6 +373,36 @@ fn auth_keys(provider: &str) -> &'static [&'static str] {
     }
 }
 impl Engine {
+    pub(super) fn routes_native_provider_account(&self, thread: &Value) -> Result<bool> {
+        let provider = text(&thread["selection"], "provider");
+        let selected = thread["selection"]["accountID"]
+            .as_str()
+            .context("Native account identity must be text")?;
+        if let Some(owner) = Private::open(&self.store, false)? {
+            let raw = self.store.native_accounts_payload(&provider)?;
+            if read(&owner, &provider, raw.as_deref())?["accounts"]
+                .get(selected)
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        // A removed native ID must not fall through to an unrelated legacy
+        // account with the same descriptive ID. This marker routes only; the
+        // actual admission below still verifies its source-bound HMAC.
+        if let Some(marker) = self
+            .store
+            .native_account_selection(required(thread, "id")?)?
+        {
+            let marker: Value = match serde_json::from_str(&marker) {
+                Ok(marker) => marker,
+                Err(_) => return Ok(true),
+            };
+            return Ok(marker["payload"]["provider"] == provider
+                && marker["payload"]["account"] == selected);
+        }
+        Ok(false)
+    }
     pub(super) fn validate_native_account_selection(&self, thread: &Value) -> Result<()> {
         let owner = Private::open(&self.store, false)?
             .context("Choose this account in the native composer first")?;
@@ -439,6 +485,7 @@ impl Engine {
             authentication: Authentication::Login,
             key_variable: None,
             key: None,
+            codex_enrollment: None,
             home,
             home_identity,
             guard_identity,
@@ -672,6 +719,8 @@ fn build_configuration(
         Some(supported(provider)?)
     } else if provider == "opencode" {
         Some("XDG_DATA_HOME")
+    } else if provider == "codex" {
+        Some("CODEX_HOME")
     } else {
         None
     };
@@ -796,6 +845,9 @@ pub(super) fn synthetic_key_configuration(
 ) -> (LaunchConfiguration, PathBuf) {
     keys::synthetic_configuration(engine, provider)
 }
+#[path = "native_codex_key_enrollment.rs"]
+mod codex_key_enrollment;
+pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt};
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};
@@ -896,6 +948,54 @@ mod tests {
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
         assert!(effective_var("ANTHROPIC_API_KEY").is_none());
         assert!(effective_var("ARBITRARY_INHERITED_SECRET").is_none());
+    }
+    #[test]
+    fn native_markers_do_not_capture_legacy_account_routes_or_allow_removed_id_fallback() {
+        let (_root, mut engine, _binary) = fixture("antigravity");
+        let mut thread = thread(&mut engine, "antigravity");
+        thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
+        let native = engine
+            .create_native_key_account("antigravity", "Native", "GEMINI_API_KEY")
+            .unwrap();
+        thread["selection"]["accountID"] = json!(native.id);
+        assert!(engine.routes_native_provider_account(&thread).unwrap());
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let raw = engine.store.native_accounts_payload("antigravity").unwrap();
+        let mut payload = read(&owner, "antigravity", raw.as_deref()).unwrap();
+        payload["accounts"]
+            .as_object_mut()
+            .unwrap()
+            .remove(&native.id);
+        engine
+            .store
+            .save_native_accounts_payload(
+                "antigravity",
+                raw.as_deref(),
+                &encoded(&owner, &payload).unwrap(),
+            )
+            .unwrap();
+        drop(owner);
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
+        // Save one genuine native selection marker, then remove its account row.
+        // Revoked native associations continue routing to denial, not legacy.
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let marker=encoded(&owner,&json!({"source":owner.source,"purpose":"native-account-selection-v1","thread":id,"provider":"antigravity","account":native.id})).unwrap();
+        engine.store.save(&thread).unwrap();
+        engine
+            .store
+            .save_native_account_selection(&thread, &thread, Some(&marker))
+            .unwrap();
+        drop(owner);
+        assert!(engine.routes_native_provider_account(&thread).unwrap());
+        assert!(
+            engine
+                .provider_launch_configuration_for_thread(&thread)
+                .is_err()
+        );
+        thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
     }
     #[test]
     fn global_grok_auth_and_configuration_cannot_override_named_login_home() {

@@ -620,7 +620,7 @@ fn provider_id(provider: &str) -> Result<()> {
     ensure!(
         matches!(
             provider,
-            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "antigravity"
+            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity"
         ),
         "Unsupported provider"
     );
@@ -893,7 +893,9 @@ impl Engine {
     ) -> Result<Option<LaunchConfiguration>> {
         let provider = text(&thread["selection"], "provider");
         if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
-            && matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode")
+            && (matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode")
+                || (matches!(provider.as_str(), "codex" | "antigravity")
+                    && self.routes_native_provider_account(thread)?))
         {
             let id = thread["id"]
                 .as_str()
@@ -1131,7 +1133,10 @@ pub mod account_secret_store;
 
 #[path = "native_provider_accounts.rs"]
 mod accounts;
-pub use accounts::{NativeKeyAccount, NativeKeySave, NativeLoginAccount};
+pub use accounts::{
+    NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave,
+    NativeLoginAccount,
+};
 
 #[path = "provider_setup.rs"]
 mod setup;

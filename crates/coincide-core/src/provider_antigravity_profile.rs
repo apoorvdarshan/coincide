@@ -239,10 +239,10 @@ impl Profile {
             ("TMP".into(), self.temporary.as_os_str().to_owned()),
             ("TEMP".into(), self.temporary.as_os_str().to_owned()),
         ];
-        if crate::provider_configuration::native_key_profile("antigravity") {
-            if let Some(key) = crate::provider_configuration::effective_var("GEMINI_API_KEY") {
-                environment.push(("GEMINI_API_KEY".into(), key));
-            }
+        if crate::provider_configuration::native_key_profile("antigravity")
+            && let Some(key) = crate::provider_configuration::effective_var("GEMINI_API_KEY")
+        {
+            environment.push(("GEMINI_API_KEY".into(), key));
         }
         environment
     }

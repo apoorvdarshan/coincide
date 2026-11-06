@@ -81,7 +81,7 @@ pub(crate) fn capture(
     }
 }
 #[cfg(unix)]
-fn read_available<T: Read>(pipe: &mut T, bytes: &mut Vec<u8>) -> Result<bool> {
+pub(super) fn read_available<T: Read>(pipe: &mut T, bytes: &mut Vec<u8>) -> Result<bool> {
     let mut buffer = [0u8; 8192];
     match pipe.read(&mut buffer) {
         Ok(0) => Ok(true),
@@ -98,7 +98,7 @@ fn read_available<T: Read>(pipe: &mut T, bytes: &mut Vec<u8>) -> Result<bool> {
     }
 }
 #[cfg(windows)]
-fn read_available<T: Read + std::os::windows::io::AsRawHandle>(
+pub(super) fn read_available<T: Read + std::os::windows::io::AsRawHandle>(
     pipe: &mut T,
     bytes: &mut Vec<u8>,
 ) -> Result<bool> {
