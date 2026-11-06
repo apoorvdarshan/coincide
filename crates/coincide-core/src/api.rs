@@ -13,8 +13,6 @@ use std::{
 };
 use uuid::Uuid;
 
-#[path = "named_profile_departure_api.rs"]
-mod named_profile_departure;
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]
@@ -35,6 +33,8 @@ mod bot_engine;
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
 mod browser_history_api;
+#[path = "named_profile_departure_api.rs"]
+mod named_profile_departure;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
@@ -986,7 +986,16 @@ impl Engine {
                         .as_ref()
                         .context("Missing named policy")?
                         .clone(),
-                    self.model_catalog.named_resume_admission(&v, &crate::model_catalog::NamedBinding::capture(profile.clone(), &id, &cwd)?).ok(),
+                    self.model_catalog
+                        .named_resume_admission(
+                            &v,
+                            &crate::model_catalog::NamedBinding::capture(
+                                profile.clone(),
+                                &id,
+                                &cwd,
+                            )?,
+                        )
+                        .ok(),
                 )?,
             )
         } else {
