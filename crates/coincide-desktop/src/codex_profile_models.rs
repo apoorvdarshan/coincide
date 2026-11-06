@@ -9,6 +9,12 @@ fn catalog_scope(catalog: &Value, thread: &Value) -> bool {
         && catalog["accountID"] == thread["selection"]["accountID"]
         && catalog["threadId"] == thread["id"]
 }
+struct NamedModelOptions<'a> {
+    access: Option<&'a str>,
+    effort: Option<&'a Value>,
+    expected_access: &'a Value,
+    expected_interaction: &'a Value,
+}
 impl Coincide {
     fn refresh_named_profile_models(
         &mut self,
@@ -56,7 +62,7 @@ impl Coincide {
         selection: &Value,
         model: &str,
         request: Option<&str>,
-        access: Option<(&str, &Value, &Value)>,
+        options: Option<NamedModelOptions<'_>>,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.selected.as_ref().filter(|thread| {
@@ -68,10 +74,15 @@ impl Coincide {
         if let Some(request) = request {
             params["requestId"] = json!(request);
         }
-        if let Some((access, expected_access, expected_interaction)) = access {
-            params["accessMode"] = json!(access);
-            params["expectedAccessMode"] = expected_access.clone();
-            params["expectedInteractionMode"] = expected_interaction.clone();
+        if let Some(options) = options {
+            params["expectedAccessMode"] = options.expected_access.clone();
+            params["expectedInteractionMode"] = options.expected_interaction.clone();
+            if let Some(effort) = options.effort {
+                params["effort"] = effort.clone();
+            }
+            if let Some(access) = options.access {
+                params["accessMode"] = json!(access);
+            }
         }
         match call(
             &self.engine,
@@ -81,7 +92,7 @@ impl Coincide {
             Ok(thread) => {
                 self.accept_saved_provider_selection(thread);
                 self.status =
-                    "Profile model/access saved. This profile is authenticated again before every turn."
+                    "Profile model/access/effort saved. This profile is authenticated again before every turn."
                         .into();
             }
             Err(error) => self.status = format!("Profile model was not changed: {error}"),
@@ -107,14 +118,15 @@ impl Coincide {
         let default_id = id.clone();
         let default_selection = selection.clone();
         let elevated = thread["accessMode"] == "fullAccess";
+        let clear_effort = !thread["selection"]["effort"].is_null();
         let default_access = thread["accessMode"].clone();
         let default_interaction = thread["interactionMode"].clone();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
-            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Full access requires this profile’s refreshed explicit model. Effort, speed, Plan, bots and native resume remain unavailable."))
+            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Full access and explicit reasoning effort require this profile’s refreshed model catalog. Speed, Plan, bots and native resume remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("named-profile-model-default").label(if elevated {"Provider default and approval"} else {"Provider default"}).disabled(disabled)
-                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated {Some(("approval",&default_access,&default_interaction))} else {None},cx))))
+                .child(Button::new("named-profile-model-default").label(match (elevated,clear_effort) {(true,true)=>"Provider default, approval and clear effort",(true,false)=>"Provider default and approval",(false,true)=>"Provider default and clear effort",_=>"Provider default"}).disabled(disabled)
+                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || clear_effort {Some(NamedModelOptions{access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},expected_access:&default_access,expected_interaction:&default_interaction})}else{None},cx))))
                 .child(Button::new("named-profile-model-refresh").label("Refresh profile models").disabled(disabled || self.selection_ui.catalog_request.is_some())
                     .on_click(cx.listener(move |this,_,_,cx|this.refresh_named_profile_models(&refresh_id,&refresh_selection,cx)))));
         if let Some(reason) = self.selection_ui.capabilities["lockReason"].as_str() {
@@ -208,12 +220,106 @@ impl Coincide {
                             &row_selection,
                             &row_model,
                             Some(&row_request),
-                            Some((access, &expected_access, &expected_interaction)),
+                            Some(NamedModelOptions {
+                                access: Some(access),
+                                effort: None,
+                                expected_access: &expected_access,
+                                expected_interaction: &expected_interaction,
+                            }),
                             cx,
                         )
                     })),
             );
         }
+        let effort_caps = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["provider"] == "codex"))
+            .map(|row| &row["effort"]);
+        let effort_ready = !disabled
+            && caps["effortSupported"] == true
+            && catalog_scope(catalog, thread)
+            && catalog["state"] == "ready"
+            && catalog["authenticationChecked"] == true;
+        let mut effort_controls = div()
+            .id("named-profile-effort-controls")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_sm().child("Reasoning effort"));
+        if clear_effort {
+            let row_id = id.clone();
+            let row_selection = selection.clone();
+            let row_model = model.clone();
+            let expected_access = thread["accessMode"].clone();
+            let expected_interaction = thread["interactionMode"].clone();
+            effort_controls = effort_controls.child(
+                Button::new("named-profile-effort-clear")
+                    .label("Use provider effort (clear saved effort)")
+                    .disabled(disabled)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_named_profile_model(
+                            &row_id,
+                            &row_selection,
+                            &row_model,
+                            None,
+                            Some(NamedModelOptions {
+                                access: None,
+                                effort: Some(&Value::Null),
+                                expected_access: &expected_access,
+                                expected_interaction: &expected_interaction,
+                            }),
+                            cx,
+                        )
+                    })),
+            );
+        }
+        let mut efforts = div().flex().flex_wrap().gap_2();
+        for effort in effort_caps
+            .and_then(|value| value["choices"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .take(32)
+        {
+            let row_id = id.clone();
+            let row_selection = selection.clone();
+            let row_model = model.clone();
+            let row_request = request.clone();
+            let row_effort = json!(effort);
+            let expected_access = thread["accessMode"].clone();
+            let expected_interaction = thread["interactionMode"].clone();
+            efforts = efforts.child(
+                Button::new(SharedString::from(format!("named-profile-effort-{effort}")))
+                    .label(SharedString::from(effort.to_owned()))
+                    .tooltip(SharedString::from(format!(
+                        "Use reported reasoning effort {effort} for {model}"
+                    )))
+                    .disabled(!effort_ready)
+                    .when(thread["selection"]["effort"] == effort, |button| {
+                        button.primary()
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_named_profile_model(
+                            &row_id,
+                            &row_selection,
+                            &row_model,
+                            Some(&row_request),
+                            Some(NamedModelOptions {
+                                access: None,
+                                effort: Some(&row_effort),
+                                expected_access: &expected_access,
+                                expected_interaction: &expected_interaction,
+                            }),
+                            cx,
+                        )
+                    })),
+            );
+        }
+        effort_controls = effort_controls.child(efforts).child(div().text_xs().child("Only efforts reported for this exact profile/model can be applied. Clearing keeps the model and modes; unproved models remain locked until Refresh. No message is sent."));
+        if let Some(reason) = effort_caps.and_then(|value| value["reason"].as_str()) {
+            effort_controls = effort_controls.child(div().text_xs().child(reason.to_owned()));
+        }
+        pane = pane.child(effort_controls);
         pane = pane.child(access_controls);
         if elevated {
             pane = pane.child(div().text_xs().child("Full access lets Codex run without app approval prompts. The saved model must retain this profile’s current catalog proof; authentication is checked before every turn. Changing this setting sends no message."));

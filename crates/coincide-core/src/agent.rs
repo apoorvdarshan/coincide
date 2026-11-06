@@ -496,10 +496,15 @@ fn run(
             launch.session.is_none()
                 && instructions.is_none()
                 && (launch.model.is_none() == named_model.is_none()),
-            "Named Codex profile native resume/options are unavailable"
+            "Named Codex profiles require a fresh session and matching captured model proof"
         );
         if let Some(proof) = &named_model {
-            proof.validate_launch(profile, &launch.cwd, launch.model.as_deref())?;
+            proof.validate_launch(
+                profile,
+                &launch.cwd,
+                launch.model.as_deref(),
+                policy.as_ref().and_then(|policy| policy.codex_effort()),
+            )?;
         }
         transport::Transport::spawn_codex_profile(&launch, profile)?
     } else {
@@ -563,7 +568,12 @@ fn run(
                 );
                 profile.admit_account(&frame["result"])?;
                 if let Some(proof) = &named_model {
-                    proof.validate_launch(profile, &launch.cwd, launch.model.as_deref())?;
+                    proof.validate_launch(
+                        profile,
+                        &launch.cwd,
+                        launch.model.as_deref(),
+                        policy.as_ref().and_then(|policy| policy.codex_effort()),
+                    )?;
                 }
                 account_pending = false;
                 write_thread_request(&mut transport, &launch, instructions.as_deref())?;
@@ -629,6 +639,7 @@ fn run(
                                     profile,
                                     &launch.cwd,
                                     launch.model.as_deref(),
+                                    policy.as_ref().and_then(|policy| policy.codex_effort()),
                                 )?;
                                 proof.validate_resolved(&frame["result"])?;
                             }

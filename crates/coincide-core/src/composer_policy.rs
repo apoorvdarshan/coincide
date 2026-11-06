@@ -77,6 +77,7 @@ pub struct Policy {
     automatic_effort_required: bool,
     speed: Option<String>,
     effort_proof: Option<crate::model_catalog::CodexEffortProof>,
+    named_proof: Option<crate::model_catalog::NamedModelProof>,
 }
 impl Policy {
     /// This validates only mode/selection compatibility. Native bot snapshot
@@ -168,12 +169,50 @@ impl Policy {
                 && crate::model_catalog::astra_default_needed(&thread["selection"]),
             speed: thread["selection"]["speed"].as_str().map(str::to_owned),
             effort_proof: proof.cloned(),
+            named_proof: None,
             access,
             interaction,
             provider,
             model,
             bot,
         })
+    }
+    /// Engine-only named-profile authority. Never constructs or borrows a
+    /// default-account effort proof through the internal selection alias.
+    pub(crate) fn parse_named(
+        thread: &Value,
+        origin: Origin,
+        proof: Option<&crate::model_catalog::NamedModelProof>,
+    ) -> Result<Self> {
+        ensure!(
+            origin == Origin::Ordinary
+                && !composer_selection::default_account(&thread["selection"]["accountID"]),
+            "Named effort requires an ordinary selected Codex profile"
+        );
+        crate::codex_login_profiles::validate_model_thread(thread)?;
+        if thread["selection"]["modelID"] != "default" {
+            proof
+                .context("Refresh this profile's exact model catalog before sending")?
+                .validate_thread(thread)?;
+        } else {
+            ensure!(
+                proof.is_none(),
+                "Provider default cannot borrow named model proof"
+            );
+        }
+        let mut syntax = crate::codex_login_profiles::validation_view(thread);
+        syntax["selection"]
+            .as_object_mut()
+            .context("Invalid profile selection")?
+            .remove("effort");
+        let mut policy = Self::parse_with_effort_proof(&syntax, origin, None)?;
+        policy.effort = thread["selection"]["effort"].as_str().map(str::to_owned);
+        policy.named_proof = proof.cloned();
+        policy.automatic_effort_required = false;
+        Ok(policy)
+    }
+    pub(crate) fn codex_effort(&self) -> Option<&str> {
+        self.effort.as_deref()
     }
     pub(crate) fn codex_speed(&self) -> Option<&str> {
         self.speed.as_deref()
@@ -186,6 +225,13 @@ impl Policy {
         Ok(())
     }
     fn validate_effort_proof(&self) -> Result<()> {
+        if let Some(proof) = &self.named_proof {
+            ensure!(
+                self.effort_proof.is_none() && self.speed.is_none(),
+                "Named effort cannot borrow default options"
+            );
+            return proof.validate_policy(self.model.as_deref(), self.effort.as_deref());
+        }
         if self.effort.is_some() || self.speed.is_some() {
             let proof = self.effort_proof.as_ref().context(
                 "Refresh the exact Codex model catalog before applying reasoning effort or speed",
@@ -223,6 +269,9 @@ impl Policy {
     }
     pub(crate) fn validate_launch_executable(&self, executable: &std::path::Path) -> Result<()> {
         if let Some(proof) = &self.effort_proof {
+            proof.validate_executable(executable)?;
+        }
+        if let Some(proof) = &self.named_proof {
             proof.validate_executable(executable)?;
         }
         Ok(())
