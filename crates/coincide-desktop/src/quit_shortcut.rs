@@ -155,14 +155,20 @@ pub(super) fn configure(settings: &Value, cx: &mut App) {
     cx.refresh_windows();
 }
 pub(super) fn cancel(cx: &mut App) {
-    if cx.has_global::<Gate>() {
+    let changed = if cx.has_global::<Gate>() {
         let gate = cx.global_mut::<Gate>();
-        // An external menu/native request must hide the HUD without allowing a
-        // still-held keyboard repeat to create a second shutdown admission.
+        // Every shutdown entry point dismisses the hint once, including API
+        // shutdown. Still-held repeats cannot create another quit admission.
+        let changed = gate.decision.phase != Phase::Quitting || gate.owner.is_some();
         gate.decision.phase = Phase::Quitting;
         gate.owner = None;
+        changed
+    } else {
+        false
+    };
+    if changed {
+        cx.refresh_windows();
     }
-    cx.refresh_windows();
 }
 pub(super) fn install(requested: Arc<AtomicBool>, cx: &mut App) {
     cx.set_global(Gate {

@@ -2786,6 +2786,7 @@ impl Coincide {
             self.media.shutdown_requested = true;
         }
         if self.media.shutdown_requested {
+            quit_shortcut::cancel(cx);
             if self.poll_global_quit(window, cx) {
                 self.finish_normal_quit(cx);
             }

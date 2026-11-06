@@ -233,16 +233,16 @@ impl Coincide {
             f64::from(f32::from(window.viewport_size().height)) - 44.
         };
         let handle = div()
+            .id(if right {
+                "terminal-right-resize"
+            } else {
+                "terminal-bottom-resize"
+            })
             .role(Role::Splitter)
             .aria_label(if right {
                 "Resize terminal panel width"
             } else {
                 "Resize terminal panel height"
-            })
-            .id(if right {
-                "terminal-right-resize"
-            } else {
-                "terminal-bottom-resize"
             })
             .flex_shrink_0()
             .bg(self.color(0x29303d))
