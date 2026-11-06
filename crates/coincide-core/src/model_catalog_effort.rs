@@ -8,8 +8,7 @@ pub(super) struct EffortExecutable {
     canonical: PathBuf,
     length: u64,
     modified: SystemTime,
-    #[cfg(unix)]
-    identity: (u64, u64),
+    identity: crate::private_fs::Identity,
 }
 impl EffortExecutable {
     pub(super) fn read(path: &Path) -> Result<Self> {
@@ -19,17 +18,14 @@ impl EffortExecutable {
         );
         let canonical = path.canonicalize()?;
         let metadata = std::fs::metadata(&canonical)?;
+        let identity = crate::private_fs::identity(&canonical)?;
         ensure!(metadata.is_file(), "Provider executable is not a file");
         Ok(Self {
             requested: path.into(),
             canonical,
             length: metadata.len(),
             modified: metadata.modified()?,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
+            identity,
         })
     }
 }

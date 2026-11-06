@@ -149,6 +149,7 @@ pub struct Engine {
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
+    catalog_shutdown_requested: bool,
     named_resume: crate::named_profile_resume::Registry,
     provider_restore: Option<provider_switch_api::RestoreIntent>,
     github_threads: github_threads_engine::State,
@@ -224,7 +225,8 @@ impl Engine {
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
-            named_resume: crate::named_profile_resume::Registry::default(),
+            catalog_shutdown_requested: false,
+            named_resume: crate::named_profile_resume::Registry::for_store(&store),
             provider_restore: None,
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
@@ -980,8 +982,8 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
-        // Persisted session metadata never authorizes a named resume. Only
-        // this Engine's successful saved turn + owned worker join can do so.
+        // Session JSON cannot authorize named resume. The private registry
+        // and authenticated restart journal require a saved owned worker join.
         let named_resume = if let Some(profile) = &codex_profile {
             Some(
                 self.named_resume.prepare(
@@ -1213,8 +1215,20 @@ impl Engine {
             self.admissions_frozen(),
             "Catalog shutdown requires frozen admissions"
         );
-        self.model_catalog.request_shutdown();
+        self.catalog_shutdown_requested = true;
+        self.poll_model_catalog_shutdown_request();
         Ok(())
+    }
+    fn poll_model_catalog_shutdown_request(&mut self) {
+        if self.catalog_shutdown_requested
+            && self.runs.is_empty()
+            && self.provider_workers_status().running == 0
+        {
+            // First admit exact joined-worker saved completions, then revoke
+            // catalog authority. An unfinished/panicked turn cannot mint here.
+            self.named_resume.poll();
+            self.model_catalog.request_shutdown();
+        }
     }
     /// Catalog thread ownership only, not whole-app quiescence or child cleanup.
     pub fn model_catalog_shutdown_status(
@@ -1224,6 +1238,7 @@ impl Engine {
             self.admissions_frozen(),
             "Catalog shutdown status requires frozen admissions"
         );
+        self.poll_model_catalog_shutdown_request();
         Ok(self.model_catalog.shutdown_status())
     }
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
@@ -1617,6 +1632,7 @@ impl Engine {
         self.poll_steering();
         self.provider_workers_status();
         self.named_resume.poll();
+        self.poll_model_catalog_shutdown_request();
         self.computer_use_expire();
         let limits_executable = self.codex_limits_executable();
         let named_limits = self.current_profile_limits_binding();
@@ -2357,6 +2373,39 @@ mod terminal_prompt_api_tests {
 #[cfg(test)]
 mod catalog_shutdown_adapter_tests {
     use super::*;
+    #[test]
+    fn catalog_revocation_waits_for_exact_provider_worker_join() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let (release, held) = std::sync::mpsc::channel();
+        let session = Session::fixture_worker(move |_, events| {
+            events.send(Event::Finished).unwrap();
+            held.recv().unwrap();
+        });
+        assert!(matches!(
+            session
+                .events
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap(),
+            Event::Finished
+        ));
+        let worker = session.worker_completion();
+        engine.provider_workers.push(worker.clone());
+        engine.freeze_admissions();
+        engine.request_model_catalog_shutdown().unwrap();
+        assert!(
+            !engine.model_catalog_shutdown_status().unwrap().closed,
+            "Semantic completion must not revoke a saved pending receipt before actual join"
+        );
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == agent::WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(worker.status(), agent::WorkerThreadStatus::Returned);
+        assert!(engine.model_catalog_shutdown_status().unwrap().closed);
+    }
     #[test]
     fn catalog_shutdown_adapters_require_frozen_admissions_and_add_no_json_route() {
         let dir = tempfile::tempdir().unwrap();

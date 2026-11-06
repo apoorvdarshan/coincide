@@ -13,8 +13,7 @@ struct Stamp {
     length: u64,
     modified: SystemTime,
     canonical: PathBuf,
-    #[cfg(unix)]
-    identity: (u64, u64),
+    identity: crate::private_fs::Identity,
 }
 impl Stamp {
     fn read(path: &Path) -> Result<Option<Self>> {
@@ -31,11 +30,7 @@ impl Stamp {
                 metadata.modified()?
             },
             canonical: path.canonicalize()?,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
+            identity: crate::private_fs::identity(&path.canonicalize()?)?,
         }))
     }
 }
@@ -58,9 +53,13 @@ impl DefaultBinding {
             uuid::Uuid::parse_str(thread).is_ok(),
             "Invalid default account restore thread"
         );
+        #[cfg(windows)]
+        let platform_home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+        #[cfg(not(windows))]
+        let platform_home = std::env::var_os("HOME");
         let home = std::env::var_os("CODEX_HOME")
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+            .or_else(|| platform_home.map(|home| PathBuf::from(home).join(".codex")))
             .context("Default Codex home is unavailable")?;
         ensure!(
             home.is_absolute() && cwd.is_absolute() && cwd.is_dir(),
@@ -69,6 +68,7 @@ impl DefaultBinding {
         let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
         for key in [
             "HOME",
+            "USERPROFILE",
             "CODEX_HOME",
             "OPENAI_API_KEY",
             "CODEX_API_KEY",
@@ -193,7 +193,7 @@ impl ModelCatalog {
         Ok(job.response.clone())
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn discover(binding: &DefaultBinding, cancelled: &AtomicBool) -> Result<Vec<Value>> {
     binding.validate()?;
     let mut rpc = ProcessRpc::spawn_in_directory(
@@ -220,7 +220,7 @@ fn discover(binding: &DefaultBinding, cancelled: &AtomicBool) -> Result<Vec<Valu
     binding.validate()?;
     Ok(models)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn discover(_: &DefaultBinding, _: &AtomicBool) -> Result<Vec<Value>> {
     bail!("Default Codex readiness observations are unavailable on this platform")
 }
