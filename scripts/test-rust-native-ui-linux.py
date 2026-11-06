@@ -129,18 +129,33 @@ def main():
 
     def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
         """Target one observed sidebar word; never infer coordinates from layout."""
-        capture(window, stage, word)
-        tsv = command("tesseract", str(artifacts / f"{stage}.png"), "stdout",
-                      "--psm", "11", "tsv", env=env)
-        (artifacts / f"{stage}-locator.tsv").write_text(tsv)
-        matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
-                   if row["text"].strip().casefold() == word.casefold()
-                   and int(row["left"]) < max_x and int(row["top"]) >= min_y]
-        assert len(matches) == 1, f"Expected one rendered sidebar target {word!r}, found {len(matches)}"
-        row = matches[0]
-        x = int(row["left"]) + int(row["width"]) // 2
-        y = int(row["top"]) + int(row["height"]) // 2
-        command("xdotool", "mousemove", "--window", window, str(x), str(y), "click", "1", env=env)
+        attempt = 0
+        def observed_target():
+            nonlocal attempt
+            name = f"{stage}-target-{attempt:03}"
+            attempt += 1
+            frame = capture(window, name)
+            # The native failure frame showed General correctly, while full-
+            # window OCR joined its icon and initial G into 'ceneral'. Read
+            # only the actual label strip at higher resolution; exact matching
+            # remains mandatory, and the original pixels remain in evidence.
+            left = 15 if word == "Search" else 44
+            assert left < max_x < frame.width, "Sidebar label crop must fit the observed native window"
+            crop = frame.crop((left, 0, max_x, frame.height))
+            crop_path = artifacts / f"{name}-labels.png"
+            crop.resize((crop.width * 3, crop.height * 3), Image.Resampling.LANCZOS).save(crop_path)
+            tsv = command("tesseract", str(crop_path), "stdout", "--psm", "6", "tsv", env=env)
+            (artifacts / f"{name}-locator.tsv").write_text(tsv)
+            matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
+                       if row["text"].strip().casefold() == word.casefold()
+                       and int(row["top"]) / 3 >= min_y]
+            if len(matches) != 1:
+                return None
+            row = matches[0]
+            return (left + (int(row["left"]) + int(row["width"]) / 2) / 3,
+                    (int(row["top"]) + int(row["height"]) / 2) / 3)
+        x, y = wait_for(f"one exact rendered sidebar target {word!r}", observed_target)
+        command("xdotool", "mousemove", "--window", window, str(round(x)), str(round(y)), "click", "1", env=env)
 
     def quit_normally():
         nonlocal process, log
