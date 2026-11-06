@@ -84,6 +84,11 @@ impl Probe {
                         report.account = bounded_text(&value["userInfo"]["email"]);
                     }
                 }
+                if report.authenticated == Some(true)
+                    && let Ok((true, out, _)) = capture(&["models"])
+                {
+                    report.models = cursor_models(&out);
+                }
             }
             "grok" => {
                 if let Ok((true, out, err)) = capture(&["models"]) {
@@ -124,6 +129,48 @@ impl Probe {
         Ok(report)
     }
 }
+// Swift CursorModels.parseModelsCommand uses the CLI's "id - name" rows.
+// These remain display metadata, never an ACP model/options capability grant.
+fn cursor_models(bytes: &[u8]) -> Vec<Value> {
+    let mut clean = String::new();
+    let mut escape = false;
+    for character in String::from_utf8_lossy(bytes).chars() {
+        if character == '\u{1b}' {
+            escape = true;
+            continue;
+        }
+        if escape {
+            if character.is_ascii_alphabetic() || character == '~' {
+                escape = false;
+            }
+            continue;
+        }
+        clean.push(character);
+    }
+    let mut rows = Vec::new();
+    for line in clean.lines().take(4000) {
+        let Some((id, name)) = line.trim().split_once(" - ") else {
+            continue;
+        };
+        if crate::composer_selection::validate_model(id).is_err()
+            || rows.iter().any(|row: &Value| row["id"] == id)
+        {
+            continue;
+        }
+        let name = name
+            .trim()
+            .trim_end_matches(" (default)")
+            .trim_end_matches(" (current)");
+        let Some(name) = bounded_text(&json!(name)) else {
+            continue;
+        };
+        rows.push(json!({"id":id,"displayName":name}));
+        if rows.len() == 1000 {
+            break;
+        }
+    }
+    rows
+}
 fn bounded_text(value: &Value) -> Option<String> {
     value
         .as_str()
@@ -151,6 +198,13 @@ fn version(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cursor_cli_models_keep_reported_order_and_names_without_granting_options() {
+        let rows = cursor_models(b"Available models:\n\x1b[32mreported-a - First model (default)\x1b[0m\nreported-b - Second model (current)\nreported-a - Duplicate\n--bad - Not a model\n");
+        assert_eq!(rows,json!([{"id":"reported-a","displayName":"First model"},{"id":"reported-b","displayName":"Second model"}]).as_array().unwrap().clone());
+        assert!(rows.iter().all(|row| row.get("reportedEfforts").is_none()
+            && row.get("authenticationChecked").is_none()));
+    }
     #[test]
     fn version_parser_never_treats_arbitrary_auth_output_as_account_or_ready_state() {
         assert_eq!(version(b"Claude Code 2.1.42\n"), Some("2.1.42".into()));
