@@ -5,7 +5,6 @@
 use super::{capture, keys, mentions};
 use gpui_kit as gpui;
 use gpui_kit::component::input::{InputEvent as TextEvent, Textarea, TextareaState};
-use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     App, AppContext, Context, Entity, EntityInputHandler, Focusable, InputEvent,
     InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -252,7 +251,7 @@ fn setup(cx: &mut TestAppContext, wired: bool) -> (Entity<Harness>, &mut VisualT
                 input.focus(window, cx);
             });
         });
-        window.render_frame(cx);
+        render_frame(window, cx);
     });
     cx.run_until_parked();
     view.update(cx, |this, cx| this.arm(cx));
@@ -283,6 +282,12 @@ fn assert_current_callback(
     assert_eq!(callback.selection, before.selection);
     assert_eq!(callback.decision, decision);
 }
+fn render_frame(window: &mut Window, cx: &mut App) {
+    // Public core draw API, also used by Kit's optional test helper. Enabling
+    // that helper's feature would unnecessarily resolve its optional Fast tree.
+    window.refresh();
+    window.draw(cx).clear(cx);
+}
 fn press(cx: &mut VisualTestContext, key: &str, native_fn: bool) {
     cx.update(|window, cx| {
         if native_fn {
@@ -300,19 +305,23 @@ fn press(cx: &mut VisualTestContext, key: &str, native_fn: bool) {
                 .to_platform_input(),
                 cx,
             );
-            let keystroke = Keystroke::parse(key).unwrap();
-            window.render_frame(cx);
-            window.dispatch_event(
-                KeyDownEvent {
-                    keystroke: keystroke.clone(),
-                    is_held: false,
-                    prefer_character_input: false,
-                }
-                .to_platform_input(),
-                cx,
-            );
-            window.render_frame(cx);
-            window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
+        }
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        render_frame(window, cx);
+        // Actual native control-key events: dispatch bindings without simulated
+        // IME text insertion. Every press includes key-up to release custody.
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        render_frame(window, cx);
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
+        if native_fn {
             window.dispatch_event(
                 ModifiersChangedEvent {
                     modifiers: Default::default(),
@@ -321,10 +330,8 @@ fn press(cx: &mut VisualTestContext, key: &str, native_fn: bool) {
                 .to_platform_input(),
                 cx,
             );
-            window.render_frame(cx);
-        } else {
-            window.press(key, cx);
         }
+        render_frame(window, cx);
     });
     cx.run_until_parked();
 }
