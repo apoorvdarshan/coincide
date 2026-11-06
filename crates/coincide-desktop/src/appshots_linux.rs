@@ -52,12 +52,7 @@ struct BoundedStream<'a> {
 impl Stream for BoundedStream<'_> {
     fn poll(&self, mode: PollMode) -> io::Result<()> {
         loop {
-            if !(self.allowed)() || Instant::now() >= self.deadline.get() {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Appshot X11 request cancelled or timed out",
-                ));
-            }
+            self.check()?;
             let mut fd = libc::pollfd {
                 fd: self.inner.as_raw_fd(),
                 events: (if mode.readable() { libc::POLLIN } else { 0 })
@@ -79,10 +74,23 @@ impl Stream for BoundedStream<'_> {
         }
     }
     fn read(&self, buf: &mut [u8], fds: &mut Vec<RawFdContainer>) -> io::Result<usize> {
+        self.check()?;
         self.inner.read(buf, fds)
     }
     fn write(&self, buf: &[u8], fds: &mut Vec<RawFdContainer>) -> io::Result<usize> {
+        self.check()?;
         self.inner.write(buf, fds)
+    }
+}
+impl BoundedStream<'_> {
+    fn check(&self) -> io::Result<()> {
+        if !(self.allowed)() || Instant::now() >= self.deadline.get() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Appshot X11 request cancelled or timed out",
+            ));
+        }
+        Ok(())
     }
 }
 type XConnection<'a> = RustConnection<BoundedStream<'a>>;
@@ -344,11 +352,63 @@ fn owner_pid(connection: &XConnection<'_>, window: Window) -> Result<u32> {
         .value32()
         .and_then(|mut values| values.next())
         .context("The window has no process identity")?;
-    ensure!(
-        pid > 0 && pid != std::process::id(),
-        "Coincide’s own windows are excluded"
-    );
+    ensure!(pid > 0, "The window has no process identity");
     Ok(pid)
+}
+fn target_window(connection: &XConnection<'_>, root: Window) -> Result<(Window, Window)> {
+    let front = active_window(connection, root)?;
+    if eligible_window(connection, front)? {
+        return Ok((front, front));
+    }
+    let stacking = property(
+        connection,
+        root,
+        b"_NET_CLIENT_LIST_STACKING",
+        AtomEnum::WINDOW,
+    )?;
+    let windows: Vec<_> = stacking
+        .value32()
+        .context("The window stacking order is unavailable")?
+        .collect();
+    for window in windows.into_iter().rev().take(512) {
+        connection.stream().check()?;
+        if eligible_window(connection, window)? {
+            return Ok((front, window));
+        }
+    }
+    bail!("No other eligible app window is available")
+}
+fn eligible_window(connection: &XConnection<'_>, window: Window) -> Result<bool> {
+    let Ok(pid) = owner_pid(connection, window) else {
+        return Ok(false);
+    };
+    if pid == std::process::id() {
+        return Ok(false);
+    }
+    let Ok(attributes) = connection.get_window_attributes(window)?.reply() else {
+        return Ok(false);
+    };
+    let Ok(geometry) = connection.get_geometry(window)?.reply() else {
+        return Ok(false);
+    };
+    Ok(attributes.map_state == MapState::VIEWABLE
+        && !attributes.override_redirect
+        && geometry.width >= 40
+        && geometry.height >= 40
+        && eligible_type(connection, window)?)
+}
+fn eligible_type(connection: &XConnection<'_>, window: Window) -> Result<bool> {
+    let types = property(connection, window, b"_NET_WM_WINDOW_TYPE", AtomEnum::ATOM)?;
+    let Some(types) = types.value32() else {
+        return Ok(true);
+    };
+    let normal = atom(connection, b"_NET_WM_WINDOW_TYPE_NORMAL")?;
+    let dialog = atom(connection, b"_NET_WM_WINDOW_TYPE_DIALOG")?;
+    let types: Vec<_> = types.collect();
+    Ok(types.is_empty()
+        || types
+            .into_iter()
+            .all(|kind| kind == normal || kind == dialog))
 }
 
 pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Capture> {
@@ -356,13 +416,15 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
     connection
         .stream()
         .deadline
-        .set(Instant::now() + Duration::from_secs(3));
+        .set(Instant::now() + Duration::from_secs(6));
     let root = connection.setup().roots[screen].root;
-    let window = active_window(&connection, root)?;
+    let (front, window) = target_window(&connection, root)?;
     let pid = owner_pid(&connection, window)?;
     let attributes = connection.get_window_attributes(window)?.reply()?;
     ensure!(
-        attributes.map_state == MapState::VIEWABLE && !attributes.override_redirect,
+        attributes.map_state == MapState::VIEWABLE
+            && !attributes.override_redirect
+            && eligible_type(&connection, window)?,
         "The front window is not an eligible app window"
     );
     for name in [
@@ -377,8 +439,8 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
     }
     let geometry = connection.get_geometry(window)?.reply()?;
     ensure!(
-        geometry.width > 0
-            && geometry.height > 0
+        geometry.width >= 40
+            && geometry.height >= 40
             && u64::from(geometry.width) * u64::from(geometry.height) <= 16_000_000,
         "Window dimensions exceed capture limits"
     );
@@ -394,7 +456,8 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
     let text = inspect_accessibility(pid, frame, read_text, allowed)?;
     ensure!(allowed(), "Appshot cancelled");
     ensure!(
-        active_window(&connection, root)? == window && owner_pid(&connection, window)? == pid,
+        target_window(&connection, root)? == (front, window)
+            && owner_pid(&connection, window)? == pid,
         "The front window changed before capture"
     );
     let pixmap = connection.generate_id()?;
@@ -455,9 +518,10 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
             .map(|part| String::from_utf8_lossy(part).into_owned())
             .filter(|part| !part.is_empty())
             .unwrap_or_else(|| "the app".into());
+        inspect_accessibility(pid, frame, false, allowed)?;
         ensure!(
             allowed()
-                && active_window(&connection, root)? == window
+                && target_window(&connection, root)? == (front, window)
                 && owner_pid(&connection, window)? == pid,
             "The front window changed during capture"
         );
@@ -529,6 +593,15 @@ fn rgba_pixels(
         }
     }
     Ok(rgba)
+}
+
+fn bounded_text(text: &str, limit: usize) -> String {
+    let end = text
+        .char_indices()
+        .find(|(index, ch)| index + ch.len_utf8() > limit)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    text[..end].to_owned()
 }
 
 fn accessibility_bus() -> Result<zbus::blocking::Connection> {
@@ -698,9 +771,9 @@ fn inspect_accessibility(
                         &(0i32, i32::try_from(32_000 - length).unwrap_or(0)),
                     )
                     .unwrap_or_else(|_| proxy.name().unwrap_or_default());
-                let text: String = text.trim().chars().take(32_000 - length).collect();
+                let text = bounded_text(text.trim(), 32_000 - length);
                 if !text.is_empty() && pieces.last() != Some(&text) {
-                    length += text.chars().count() + 1;
+                    length += text.len() + 1;
                     pieces.push(text);
                 }
             }
@@ -772,6 +845,13 @@ mod tests {
             vec![255, 0, 0, 255]
         );
         assert!(rgba_pixels(&[0], 1, 1, &format, &visual, ImageOrder::LSB_FIRST).is_err());
+    }
+    #[test]
+    fn non_ascii_text_uses_bytes_without_splitting_a_character() {
+        assert_eq!(bounded_text("éxyz", 1), "");
+        assert_eq!(bounded_text("éxyz", 2), "é");
+        assert_eq!(bounded_text("éxyz", 3), "éx");
+        assert_eq!(bounded_text("éxyz", 100), "éxyz");
     }
     #[test]
     fn custom_shortcut_requires_exact_modifier_and_key_set() {
