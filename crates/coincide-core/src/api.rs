@@ -877,10 +877,21 @@ impl Engine {
         } else {
             self.composer_thread_effort_proof(&validation_thread)?
         };
-        crate::composer_selection::validate_thread_with_proof(
-            &validation_thread,
-            effort_proof.as_ref(),
-        )?;
+        let named_policy = if codex_profile.is_some() {
+            let policy = crate::composer_policy::Policy::parse_named(
+                &v,
+                crate::composer_policy::Origin::Ordinary,
+                named_model_proof.as_ref(),
+            )?;
+            policy.preflight()?;
+            Some(policy)
+        } else {
+            crate::composer_selection::validate_thread_with_proof(
+                &validation_thread,
+                effort_proof.as_ref(),
+            )?;
+            None
+        };
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
                 Vec::new()
@@ -912,11 +923,15 @@ impl Engine {
         ensure!(cwd.is_dir(), "Working directory does not exist");
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
         let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
-            Some(crate::composer_policy::Policy::parse_with_effort_proof(
-                &validation_thread,
-                crate::composer_policy::Origin::Ordinary,
-                effort_proof.as_ref(),
-            )?)
+            Some(if let Some(policy) = named_policy {
+                policy
+            } else {
+                crate::composer_policy::Policy::parse_with_effort_proof(
+                    &validation_thread,
+                    crate::composer_policy::Origin::Ordinary,
+                    effort_proof.as_ref(),
+                )?
+            })
         } else {
             None
         };
