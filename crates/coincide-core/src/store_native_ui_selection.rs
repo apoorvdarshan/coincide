@@ -1,13 +1,14 @@
 //! Last native window selection is display metadata, never runtime authority.
 //! Preserve the Swift document's other fields and every conversation byte.
 use super::*;
+#[cfg(test)]
 const DOCUMENT: &str = "ui-state.json";
 
 impl Store {
     /// Return an existing stored identity, without opening its transcript or
     /// selecting it on an Engine. The native host applies visibility/fallback.
     pub fn native_last_selected_thread(&self) -> Result<Option<String>> {
-        let Some(document) = self.document(DOCUMENT)? else {
+        let Some(document) = self.native_inspector_document()? else {
             return Ok(None);
         };
         ensure!(document.is_object(), "Saved window state is not an object");
@@ -32,7 +33,8 @@ impl Store {
                 .context("Selected conversation no longer exists")
             })
             .transpose()?;
-        let mut document = self.document(DOCUMENT)?.unwrap_or_else(|| json!({}));
+        let source = self.native_inspector_document()?;
+        let mut document = source.clone().unwrap_or_else(|| json!({}));
         ensure!(document.is_object(), "Saved window state is not an object");
         let unchanged = match &selected {
             Some(selected) => {
@@ -46,8 +48,9 @@ impl Store {
         if unchanged {
             return Ok(false);
         }
-        document["selectedThreadID"] = selected.map(Value::String).unwrap_or(Value::Null);
-        self.save_document(DOCUMENT, &document)?;
+        crate::inspector_preferences::migrate_legacy(&mut document);
+        document["selectedThreadID"] = selected.clone().map(Value::String).unwrap_or(Value::Null);
+        self.save_native_ui_document_if_unchanged(source.as_ref(), &document, selected.as_deref())?;
         Ok(true)
     }
 }
