@@ -144,11 +144,15 @@ mod process {
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
     use std::process::{Child, ChildStdin, Command, Stdio};
     use std::time::{Duration, Instant};
+    #[cfg(test)]
+    type ReapReceipt = std::sync::Arc<std::sync::Mutex<Option<(u32, std::process::ExitStatus)>>>;
 
     pub(super) struct Lease {
         child: Child,
         input: Option<ChildStdin>,
         reaped: bool,
+        #[cfg(test)]
+        reap_receipt: Option<ReapReceipt>,
     }
     impl Lease {
         pub(super) fn start(spec: &CommandSpec) -> Result<Self> {
@@ -172,6 +176,8 @@ mod process {
                 child,
                 input,
                 reaped: false,
+                #[cfg(test)]
+                reap_receipt: None,
             };
             // RAII cleanup also covers all handshake errors and timeouts.
             let mut output = lease
@@ -265,7 +271,12 @@ mod process {
                         return Err(error).context("stop idle sleep process group");
                     }
                 }
-                if let Err(error) = self.child.wait() {
+                let waited = self.child.wait();
+                #[cfg(test)]
+                if let (Ok(status), Some(receipt)) = (&waited, &self.reap_receipt) {
+                    *receipt.lock().unwrap() = Some((self.child.id(), *status));
+                }
+                if let Err(error) = waited {
                     if error.raw_os_error() == Some(libc::ECHILD) {
                         self.reaped = true;
                     }
@@ -302,20 +313,26 @@ mod process {
         }
         #[test]
         fn harmless_helper_is_reaped_on_drop() {
-            let lease = Lease::start(&fixture(HELPER)).unwrap();
-            let pid = i32::try_from(lease.child.id()).unwrap();
+            use std::os::unix::process::ExitStatusExt;
+            // Ignore stdin EOF so the retained wait has a deterministic signal
+            // status, rather than racing cat's normal exit against group kill.
+            let mut lease = Lease::start(&fixture(
+                "printf 'coincide-idle-lease-ready\\n'; exec /bin/sleep 60",
+            ))
+            .unwrap();
+            let pid = lease.child.id();
+            let receipt: ReapReceipt = Default::default();
+            lease.reap_receipt = Some(receipt.clone());
             drop(lease);
-            // The child has been waited, rather than abandoned as a zombie.
-            let mut status = 0;
-            // SAFETY: waitpid inspects this already-reaped test child only.
-            assert_eq!(
-                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
-                -1
-            );
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::ECHILD)
-            );
+            // Inspect the actual owned Child.wait result. A numeric PID can be
+            // reused immediately after reap; waitpid here could steal a
+            // different parallel fixture's child instead of checking our own.
+            let (waited_pid, status) = receipt
+                .lock()
+                .unwrap()
+                .expect("Drop must actually wait its owned child");
+            assert_eq!(waited_pid, pid);
+            assert_eq!(status, std::process::ExitStatus::from_raw(libc::SIGKILL));
         }
         #[test]
         fn readiness_rejects_missing_command_exit_and_invalid_output() {
@@ -363,6 +380,7 @@ mod process {
                 child,
                 input,
                 reaped: false,
+                reap_receipt: None,
             };
             let deadline = Instant::now() + Duration::from_secs(2);
             let descendant: i32 = loop {
