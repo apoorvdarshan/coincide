@@ -56,10 +56,11 @@ These narrower results do not close the broad UI/UX row above.
 | --- | --- | --- |
 | Persistent rail, collapsible list, compact toolbar | Integrated and tested | Scoped pass, including focus/draft preservation and minimum-width reachability |
 | Saved-selection composer footer | Integrated; guarded selection flow retained | Scoped pass for footer/disclosure |
-| Pinned and Chats sections | Integrated and tested in the combined suite | Fresh separate fixture prepared; pending |
-| Assistant body-first layout and compact signature/actions | Integrated and tested in the combined suite | Pending ordinary combined build |
-| Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | Earlier preview failed; new uninstrumented run pending |
-| Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Fresh separate fixture being prepared; pending |
+| Pinned and Chats sections | Integrated and tested in the combined suite | Grouping/search/snooze/archive observed; strict fixture failed its zero-executable guard on two denied fake Git probes, leaving no pre-Pin raw baseline |
+| Assistant body-first layout and compact signature/actions | Integrated and tested in the combined suite | Scoped ordinary-build pass |
+| Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | Preview, Enlarge, Escape/Close and rebinding passed; enlarged containment failed, corrected layout awaiting V5 native result; exact focused-element proof remains unverified |
+| Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Foreground min/max, narrow/wide behavior and restart preservation passed; content geometry measured approximately from screenshots |
+| User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Native follow-up in progress; user bubble not yet separately exercised |
 
 ## Overnight checkpoint (2026-11-05)
 
@@ -69,6 +70,35 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- Native ordinary 0773e1a acceptance displayed the approved historical image and
+  assistant body/footer, exercised Enlarge/Escape/Close and thread rebinding, and
+  quit normally with exact synthetic rows/files and earlier failure artifacts
+  preserved. Enlarged containment failed because the image's intrinsic layout
+  exceeded its flex viewport; the next candidate places the same verified image
+  inside an absolute contained viewport. Focus visibly returned, but no exact AX
+  focused-element readback was recorded, so authoritative native focus acceptance
+  remains open. All four denied executable attempts were fake Git probes; no
+  provider/vault call occurred.
+- Separate fresh sidebar grouping exercised real Pin, two unique rows, search,
+  snooze and archive confirmation/filter behavior, then quit normally. Its frozen
+  zero-executable guard failed on two denied Git probes before the pre-Pin raw
+  baseline was recorded. That failure is preserved; only subsequent post-Pin
+  exact changes are proved by the separate read-only receipts. No strict overall
+  fixture pass is claimed. The separate resize fixture passed both normal exits,
+  real 240/400 bounds, narrow/wide preference preservation and restart readback:
+  zero threads, only listWidth changed, all other data exact, zero executable
+  attempts. Narrow-window content geometry is approximate screenshot evidence.
+- The next UI follow-up passed 382 desktop unit tests plus every integration
+  target (19, 10, 14, 11). It includes body-first user cards with existing actions,
+  the selected project's saved-branch subtitle, corrected real Button label
+  alignment and compact image controls. V5 uses an ordinary immutable build.
+- Exact 0773e1a passed five Rust CI jobs, packaging and general CI; Linux desktop
+  remained in package provisioning for more than twelve minutes. Historical logs
+  show the same Azure Ubuntu archive install taking over sixteen minutes versus
+  23 seconds on another runner. A focused mirror experiment selects the official
+  main archive and separates update/install steps, retaining every package, test,
+  signature check and timeout. The current stalled command's exact cause and the
+  new mirror's performance remain unconfirmed until Actions logs are available.
 - The combined UI source passed 379 desktop unit tests with all notification,
   microphone, Computer Use and helper adapters enabled, plus every desktop
   integration target (19, 10, 14, 11). All 43 vendored List tests passed, including
