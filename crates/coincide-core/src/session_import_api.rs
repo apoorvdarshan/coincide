@@ -92,7 +92,7 @@ fn read_source(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 fn fingerprint(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::digest_hex::lower_hex(Sha256::digest(bytes))
 }
 fn parse(provider: &str, bytes: &[u8]) -> Result<SessionPreview> {
     match provider {

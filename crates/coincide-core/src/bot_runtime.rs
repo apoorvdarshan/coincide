@@ -22,7 +22,10 @@ pub fn context_document_name(context: &Value) -> Result<String> {
         context.is_object() && bytes.len() <= 512 * 1024,
         "Invalid bot context record"
     );
-    Ok(format!("rust-bot-context-{:x}.json", Sha256::digest(bytes)))
+    Ok(format!(
+        "rust-bot-context-{}.json",
+        crate::digest_hex::lower_hex(Sha256::digest(bytes))
+    ))
 }
 
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
@@ -61,7 +64,7 @@ fn snapshot(store: &Store) -> Result<(Option<Value>, Value, String)> {
         bytes.len() <= DOCUMENT_LIMIT,
         "Bots document exceeds size limit"
     );
-    let baseline = format!("{:x}", Sha256::digest(bytes));
+    let baseline = crate::digest_hex::lower_hex(Sha256::digest(bytes));
     Ok((source, document, baseline))
 }
 fn selection(bot: &Value) -> Result<&Value> {

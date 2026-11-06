@@ -198,7 +198,10 @@ fn endpoint(path: &Path) -> Result<Endpoint> {
         };
         hash.update(unit.to_le_bytes());
     }
-    let name = wide(&format!(r"\\.\pipe\CoincideRust-{:x}", hash.finalize()));
+    let name = wide(&format!(
+        r"\\.\pipe\CoincideRust-{}",
+        crate::digest_hex::lower_hex(hash.finalize())
+    ));
     Ok(Endpoint {
         name,
         sid,

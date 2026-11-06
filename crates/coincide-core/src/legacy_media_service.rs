@@ -1059,7 +1059,7 @@ impl Worker {
     }
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::digest_hex::lower_hex(Sha256::digest(bytes))
 }
 fn thread_hash(thread: &Value) -> Result<String> {
     let bytes = serde_json::to_vec(thread)?;

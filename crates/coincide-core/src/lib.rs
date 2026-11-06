@@ -63,3 +63,5 @@ pub mod browser_history;
 pub mod firefox_cookie_import;
 
 pub(crate) mod codex_login_profiles;
+
+mod digest_hex;

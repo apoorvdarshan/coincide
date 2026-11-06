@@ -956,7 +956,7 @@ fn stage(
         hash.update(&buffer[..count]);
     }
     ensure!(
-        format!("{:x}", hash.finalize()) == release.sha256,
+        crate::digest_hex::lower_hex(hash.finalize()) == release.sha256,
         "Archive SHA-256 differs"
     );
     drop(input);
@@ -1225,7 +1225,8 @@ impl Updater {
             hash.update(&buffer[..size]);
         }
         ensure!(
-            count == stage.release.size && format!("{:x}", hash.finalize()) == stage.release.sha256,
+            count == stage.release.size
+                && crate::digest_hex::lower_hex(hash.finalize()) == stage.release.sha256,
             "Staged archive digest changed"
         );
         target.sync_all()?;
@@ -1847,7 +1848,7 @@ mod tests {
         json!({"channel":PREVIEW_CHANNEL,"bundle_id":PREVIEW_ID,"version":"0.2.0",
         "artifacts":[{"version":"0.2.0","platform":"macos","architecture":"arm64",
         "url":"https://updates.example/rust-preview/0.2.0/Coincide-Rust-macos-arm64.zip",
-        "size":bytes.len(),"sha256":format!("{:x}",Sha256::digest(bytes))}]})
+        "size":bytes.len(),"sha256":crate::digest_hex::lower_hex(Sha256::digest(bytes))}]})
     }
     impl Fixture {
         fn new() -> Self {
@@ -1987,7 +1988,7 @@ mod tests {
         assert!(!stage.install_authorized);
         let bytes = fs::read(stage.job.join("release.zip")).unwrap();
         assert_eq!(
-            format!("{:x}", Sha256::digest(&bytes)),
+            crate::digest_hex::lower_hex(Sha256::digest(&bytes)),
             stage.release.sha256
         );
         let receipt: Value =

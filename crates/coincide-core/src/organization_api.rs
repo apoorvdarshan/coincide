@@ -54,7 +54,7 @@ fn load(store: &Store) -> Result<Snapshot> {
     let document = source
         .clone()
         .unwrap_or(json!({"addedStarters":false,"bots":[],"starterLineup":1}));
-    let baseline = format!("{:x}", Sha256::digest(validate(&document)?));
+    let baseline = crate::digest_hex::lower_hex(Sha256::digest(validate(&document)?));
     Ok(Snapshot {
         source,
         document,
@@ -154,7 +154,7 @@ impl Engine {
         for (key, value) in patch {
             bot.insert(key, value);
         }
-        let baseline = format!("{:x}", Sha256::digest(validate(&snapshot.document)?));
+        let baseline = crate::digest_hex::lower_hex(Sha256::digest(validate(&snapshot.document)?));
         // Store repeats the comparison inside an IMMEDIATE transaction, covering
         // another Store/Engine connection changing the document after this read.
         self.store
