@@ -1747,12 +1747,44 @@ mod tests {
         let (_dir, _source, mut db) = setup();
         let v = json!({"id":ID,"items":[{"kind":"future","text":"Durable searchable transcript","future":42}],"title":"Before","draftContext":[{"kind":"new-kind","opaque":true}],"sessions":["codex",{"sessionID":"native","future":3}]});
         db.save(&v).unwrap();
+        // Observe the exact legitimate writes instead of assuming the derived
+        // cache has no maintenance. Any extra FTS writes still fail the bound.
+        db.connection().unwrap().execute_batch("CREATE TEMP TABLE patch_write_audit(table_name TEXT, operation TEXT);
+            CREATE TEMP TRIGGER audit_patch_thread AFTER UPDATE ON main.threads BEGIN
+                INSERT INTO patch_write_audit VALUES ('threads','update'); END;
+            CREATE TEMP TRIGGER audit_patch_summary AFTER UPDATE ON main.thread_summaries BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_summaries','update'); END;
+            CREATE TEMP TRIGGER audit_patch_navigation_delete AFTER DELETE ON main.thread_navigation BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_navigation','delete'); END;
+            CREATE TEMP TRIGGER audit_patch_navigation_insert AFTER INSERT ON main.thread_navigation BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_navigation','insert'); END;").unwrap();
         let before = db.connection().unwrap().total_changes();
         let changed = db
             .patch_thread(ID, &json!({"draft":"new draft","isPinned":true}))
             .unwrap();
-        // Two ordinary row updates; FTS maintenance would change additional rows.
-        assert_eq!(db.connection().unwrap().total_changes() - before, 2);
+        let audit: Vec<(String, String)> = db
+            .connection()
+            .unwrap()
+            .prepare(
+                "SELECT table_name,operation FROM patch_write_audit ORDER BY table_name,operation",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            audit,
+            vec![
+                ("thread_navigation".into(), "delete".into()),
+                ("thread_navigation".into(), "insert".into()),
+                ("thread_summaries".into(), "update".into()),
+                ("threads".into(), "update".into()),
+            ]
+        );
+        // Four observed writes plus their four temporary audit rows. Search
+        // maintenance would add unaccounted writes and violate this assertion.
+        assert_eq!(db.connection().unwrap().total_changes() - before, 8);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);
