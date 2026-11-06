@@ -23,11 +23,12 @@ pub fn enabled(settings: &Value, provider: &str) -> Result<bool> {
         let rows = entries
             .as_array()
             .context("Saved provider preferences are malformed")?;
+        let (pairs, remainder) = rows.as_chunks::<2>();
         ensure!(
-            rows.len() % 2 == 0 && rows.chunks_exact(2).all(|pair| pair[0].is_string()),
+            remainder.is_empty() && pairs.iter().all(|pair| pair[0].is_string()),
             "Saved provider preferences are malformed"
         );
-        let mut matches = rows.chunks_exact(2).filter(|pair| pair[0] == provider);
+        let mut matches = pairs.iter().filter(|pair| pair[0] == provider);
         let first = matches.next().map(|pair| &pair[1]).unwrap_or(&Value::Null);
         ensure!(
             matches.next().is_none(),
