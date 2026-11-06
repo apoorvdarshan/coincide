@@ -18,18 +18,27 @@ fn automatic_named_restore_is_authenticated_atomic_and_cancellable() {
     for name in ["home", "tmp"] {
         fs::create_dir(root.join(name)).unwrap();
     }
+    fs::create_dir(root.join("home/.codex")).unwrap();
+    fs::write(
+        root.join("home/.codex/models.json"),
+        json!([{"model":"synthetic-default"}]).to_string(),
+    )
+    .unwrap();
     let executable = root.join("fake-catalog");
     fs::write(&executable, r#"#!/usr/bin/env python3
 import json,os,sys,time
 from pathlib import Path
 root=Path(__file__).parent
-home=Path(os.environ['CODEX_HOME'])
-assert home.parent.name=='codex' and home.parent.parent.name=='providers'
-for key in ['OPENAI_API_KEY','CODEX_API_KEY','CODEX_ACCESS_TOKEN','OPENAI_BASE_URL','CHATGPT_BASE_URL','HTTPS_PROXY']:
- assert key not in os.environ,key
-assert 'cli_auth_credentials_store="file"' in sys.argv
-assert 'forced_login_method="chatgpt"' in sys.argv
-assert 'model_provider="openai"' in sys.argv
+home=Path(os.environ.get('CODEX_HOME',str(Path(os.environ['HOME'])/'.codex')))
+named=home.parent.name=='codex' and home.parent.parent.name=='providers'
+if named:
+ for key in ['OPENAI_API_KEY','CODEX_API_KEY','CODEX_ACCESS_TOKEN','OPENAI_BASE_URL','CHATGPT_BASE_URL','HTTPS_PROXY']:
+  assert key not in os.environ,key
+ assert 'cli_auth_credentials_store="file"' in sys.argv
+ assert 'forced_login_method="chatgpt"' in sys.argv
+ assert 'model_provider="openai"' in sys.argv
+else:assert sys.argv[1:]==['app-server']
+mode=(root/'default-mode').read_text() if not named and (root/'default-mode').exists() else ('deny' if not named else 'allow')
 def read():
  line=sys.stdin.readline()
  if not line:sys.exit(0)
@@ -40,9 +49,9 @@ def write(v):print(json.dumps(v),flush=True)
 r=read();assert r['method']=='initialize';write({'id':r['id'],'result':{}})
 assert read()['method']=='initialized'
 r=read();assert r['method']=='account/read' and r['params']=={'refreshToken':False}
-if (home/'block').exists():
+if (home/'block').exists() or mode=='block':
  (home/'blocked').write_text('ready');sys.stdin.readline();sys.exit(0)
-write({'id':r['id'],'result':{'requiresOpenaiAuth':True,'account':None if (home/'deny').exists() else {'type':'chatgpt','email':'synthetic@example.invalid','planType':'plus'}}})
+write({'id':r['id'],'result':{'requiresOpenaiAuth':True,'account':None if (home/'deny').exists() or mode=='deny' else {'type':'apiKey' if mode=='apiKey' else 'chatgpt','email':'synthetic@example.invalid','planType':'plus'}}})
 r=read();assert r['method']=='model/list'
 write({'id':r['id'],'result':{'data':json.loads((home/'models.json').read_text()),'nextCursor':None}})
 sys.stdin.readline()
@@ -221,6 +230,20 @@ fn assert_preserved(source: &Value, result: &Value) {
     want["rustProviderSelections"] = json!({"claude":source["selection"]});
     assert_eq!(result, &want);
 }
+fn finish_explicit(e: &mut Engine, source: &Value, pending: &Value, account: Value) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut params = retry(source, pending);
+        params["accountId"] = account.clone();
+        let response = call(e, "agent.provider.select", params);
+        if response["pending"] != true {
+            return response;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 #[test]
 #[ignore = "Outer test supplies only synthetic credentials and a private cleared HOME"]
 fn named_restore_child() {
@@ -337,7 +360,7 @@ fn named_restore_child() {
     let low = call(
         &mut f.engine,
         "providers.codex.profiles.models.select",
-        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":a["thread"]["selection"],"requestId":pending["requestId"],"model":"synthetic-low","rememberComposerChoice":true}),
+        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":a["thread"]["selection"],"requestId":pending["catalogRequestId"],"model":"synthetic-low","rememberComposerChoice":true}),
     );
     assert_eq!(low["selection"]["effort"], "low");
     assert_eq!(low["selection"]["speed"], Value::Null);
@@ -352,7 +375,7 @@ fn named_restore_child() {
     let high = call(
         &mut f.engine,
         "providers.codex.profiles.models.select",
-        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":low["selection"],"requestId":pending["requestId"],"model":"synthetic-a","rememberComposerChoice":true}),
+        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":low["selection"],"requestId":pending["catalogRequestId"],"model":"synthetic-a","rememberComposerChoice":true}),
     );
     a["thread"] = high;
     assert_eq!(a["thread"]["selection"]["effort"], "high");
@@ -420,6 +443,110 @@ fn named_restore_child() {
     );
     drain(&mut f.engine);
 
+    // Explicit account picks go directly from A's active model to B after
+    // B's observation, with no temporary default/wrong-account selection.
+    let mut f = fixture(&root, "direct-account");
+    let pending = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    let a = finish(&mut f.engine, &f.source, &pending)["thread"].clone();
+    let mut params = expected(&a, "codex");
+    params["accountId"] = json!(f.b);
+    let pending = call(&mut f.engine, "agent.provider.select", params);
+    assert_eq!(pending["pending"], true);
+    assert_eq!(f.engine.store.thread(a["id"].as_str().unwrap()).unwrap(), a);
+    let b = finish_explicit(&mut f.engine, &a, &pending, json!(f.b));
+    assert_eq!(b["thread"]["selection"]["accountID"], f.b);
+    assert_eq!(b["model"], "synthetic-b");
+    assert_eq!(b["explicitAccount"], true);
+    assert_eq!(b["fallback"], false);
+    drain(&mut f.engine);
+
+    // The remembered account is tried first. If unavailable, each candidate's
+    // readiness is actually checked. A default API-key account is distinct from
+    // named subscription homes and can legitimately be the first ready one.
+    for default_ready in [false, true] {
+        let mut f = fixture(
+            &root,
+            if default_ready {
+                "fallback-default"
+            } else {
+                "fallback-named"
+            },
+        );
+        fs::write(f.a_home.join("deny"), "synthetic").unwrap();
+        fs::write(
+            root.join("default-mode"),
+            if default_ready { "apiKey" } else { "deny" },
+        )
+        .unwrap();
+        let before = records(&root).len();
+        let pending = call(
+            &mut f.engine,
+            "agent.provider.select",
+            expected(&f.source, "codex"),
+        );
+        assert_eq!(
+            f.engine
+                .store
+                .thread(f.source["id"].as_str().unwrap())
+                .unwrap(),
+            f.source
+        );
+        let response = finish(&mut f.engine, &f.source, &pending);
+        assert_eq!(response["fallback"], true);
+        assert_eq!(response["requestedAccountID"], f.a);
+        assert_eq!(response["authenticationChecked"], true);
+        assert_eq!(
+            response["accountID"],
+            if default_ready {
+                json!("default")
+            } else {
+                json!(f.b)
+            }
+        );
+        assert_eq!(
+            response["model"],
+            if default_ready {
+                "synthetic-default"
+            } else {
+                "synthetic-b"
+            }
+        );
+        let calls = &records(&root)[before..];
+        let observed = calls
+            .iter()
+            .filter(|row| row["method"] == "account/read")
+            .map(|row| row["home"].clone())
+            .collect::<Vec<_>>();
+        let mut expected = vec![json!(f.a_home), json!(root.join("home/.codex"))];
+        if !default_ready {
+            expected.push(json!(f.b_home));
+        }
+        assert_eq!(
+            observed, expected,
+            "fallback order must come from actual bounded observations"
+        );
+        drain(&mut f.engine);
+    }
+    fs::write(root.join("default-mode"), "deny").unwrap();
+    let mut f = fixture(&root, "fallback-no-ready");
+    fs::write(f.a_home.join("deny"), "synthetic").unwrap();
+    fs::write(f.b_home.join("deny"), "synthetic").unwrap();
+    let pending = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    let result = finish(&mut f.engine, &f.source, &pending);
+    assert_eq!(result["model"], "default");
+    assert_eq!(result["authenticationChecked"], false);
+    assert_eq!(result["fallbackReason"], "no_authenticated_account_ready");
+    assert_eq!(result["thread"]["draft"], f.source["draft"]);
+    drain(&mut f.engine);
+
     for case in [
         "content-revert",
         "active-revert",
@@ -438,11 +565,11 @@ fn named_restore_child() {
         } else {
             fs::write(f.a_home.join("block"), "synthetic").unwrap();
         }
-        let pending = call(
-            &mut f.engine,
-            "agent.provider.select",
-            expected(&f.source, "codex"),
-        );
+        let mut start = expected(&f.source, "codex");
+        if case == "unauthenticated" {
+            start["accountId"] = json!(f.a);
+        }
+        let pending = call(&mut f.engine, "agent.provider.select", start);
         assert_eq!(pending["pending"], true);
         assert_eq!(f.engine.store.thread(&id).unwrap(), f.source);
         match case {
@@ -506,7 +633,11 @@ fn named_restore_child() {
             "unauthenticated" => {
                 let deadline = Instant::now() + Duration::from_secs(10);
                 loop {
-                    let response=f.engine.dispatch(json!({"method":"agent.provider.select","params":retry(&f.source,&pending)}));
+                    let mut params = retry(&f.source, &pending);
+                    params["accountId"] = json!(f.a);
+                    let response = f
+                        .engine
+                        .dispatch(json!({"method":"agent.provider.select","params":params}));
                     if response.get("error").is_some() {
                         break;
                     }

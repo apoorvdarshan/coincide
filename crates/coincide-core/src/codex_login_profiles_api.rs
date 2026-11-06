@@ -14,7 +14,7 @@ impl Engine {
                     "Codex profile status takes no parameters"
                 );
                 let configuration = profiles::configuration(&self.store)?;
-                let accounts = configuration["accounts"].as_object().unwrap().iter().map(|(id, _)| {
+                let accounts = profiles::ordered_accounts(&configuration)?.iter().map(|id| {
                     let account = profiles::account(&configuration, id)?;
                     Ok(json!({"id":id,"name":account["name"],"auth":"login","authenticationChecked":false,"accountIdentityVerified":false}))
                 }).collect::<Result<Vec<_>>>()?;
@@ -38,8 +38,11 @@ impl Engine {
                     "Too many Codex profiles"
                 );
                 let id = Uuid::new_v4().to_string();
+                let mut order = profiles::ordered_accounts(&configuration)?;
                 profiles::managed_home(&self.store.data_directory()?, &id, true)?;
+                order.push(id.clone());
                 configuration["accounts"][&id] = json!({"name":name,"auth":"login"});
+                configuration["order"] = json!(order);
                 self.store
                     .save_document(profiles::DOCUMENT, &configuration)?;
                 self.revision += 1;
@@ -102,7 +105,7 @@ impl Engine {
                     )?;
                     thread["selection"]["accountID"] = json!(account);
                 }
-                self.save_composer_choice(&source, &mut thread, &json!({}))?;
+                self.save_composer_choice(&source, &mut thread, p)?;
                 self.revision += 1;
                 Ok(thread)
             }

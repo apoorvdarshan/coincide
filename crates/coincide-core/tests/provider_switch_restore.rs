@@ -297,9 +297,9 @@ fn restore_fixture_child() {
         .remove("accountID");
     selected(&mut engine, &legacy, "synthetic-last-model");
     legacy["sessions"]["codex"]["accountID"] = json!(uuid::Uuid::new_v4());
-    engine.store.save(&legacy).unwrap();
-    // An unknown remembered account cannot silently borrow the default account.
-    refused(&mut engine, &root, &id, params(&legacy, "codex"));
+    // With no configured runnable accounts, Swift falls back to Provider
+    // default. No named model or readiness claim is borrowed by that fallback.
+    selected(&mut engine, &legacy, "default");
     let mut no_history = original.clone();
     no_history["items"] = json!([]);
     selected(&mut engine, &no_history, "default");

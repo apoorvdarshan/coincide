@@ -48,6 +48,8 @@ mod codex_tool_metadata;
 mod project_management_api;
 #[path = "composer_choices_api.rs"]
 mod composer_choices_api;
+#[path = "provider_restore_api.rs"]
+mod provider_restore_api;
 #[path = "provider_switch_api.rs"]
 mod provider_switch_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};

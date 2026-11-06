@@ -204,6 +204,20 @@ impl ModelCatalog {
         }
     }
 
+    pub(crate) fn ready_named_restore(&self, binding: &NamedBinding) -> Option<Value> {
+        binding.validate().ok()?;
+        let job = self
+            .order
+            .iter()
+            .rev()
+            .filter_map(|id| self.jobs.get(id))
+            .find(|job| same_scope(job.named.as_ref(), Some(binding)))?;
+        (job.named.as_ref() == Some(binding)
+            && job.response["state"] == "ready"
+            && job.response["authenticationChecked"] == true
+            && !job.cancelled.load(Ordering::Acquire))
+        .then(|| job.response.clone())
+    }
     pub(crate) fn refresh_named(&mut self, binding: NamedBinding) -> Result<Value> {
         binding.validate()?;
         let work_binding = binding.clone();
@@ -338,41 +352,7 @@ impl ModelCatalog {
                 .remove(key);
         }
         let (_, row) = self.named_model_row(&shape, binding, request)?;
-        let key = format!("codex/{}", binding.account());
-        let desired = thread["modelPreferences"].get(&key).cloned().unwrap_or_else(|| json!({"effort":thread["selection"]["effort"],"speed":thread["selection"]["speed"]}));
-        ensure!(
-            desired.is_object(),
-            "Saved account options are unsupported; choose them explicitly"
-        );
-        let efforts = row["reportedEfforts"].as_array();
-        let supported_effort = |effort: &Value| {
-            effort.is_string() && efforts.is_some_and(|choices| choices.contains(effort))
-        };
-        let effort = if supported_effort(&desired["effort"]) {
-            desired["effort"].clone()
-        } else if !astra_model(thread["selection"]["modelID"].as_str().unwrap_or(""))
-            && supported_effort(&row["reportedDefaultEffort"])
-        {
-            row["reportedDefaultEffort"].clone()
-        } else {
-            Value::Null
-        };
-        let speed = if desired["speed"].is_string()
-            && row["reportedSpeeds"].as_array().is_some_and(|choices| {
-                choices
-                    .iter()
-                    .any(|choice| choice["id"] == desired["speed"])
-            }) {
-            desired["speed"].clone()
-        } else {
-            Value::Null
-        };
-        for (option, value) in [("effort", effort), ("speed", speed)] {
-            if !value.is_null() || thread["selection"].get(option).is_some() {
-                thread["selection"][option] = value;
-            }
-        }
-        Ok(())
+        super::resolve_reported_preferences(thread, binding.account(), std::slice::from_ref(row))
     }
 
     pub(crate) fn named_model_proof(

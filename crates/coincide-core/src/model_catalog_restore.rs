@@ -28,6 +28,57 @@ impl ModelCatalog {
     }
 }
 
+pub(crate) fn resolve_reported_preferences(
+    thread: &mut Value,
+    account: &str,
+    rows: &[Value],
+) -> Result<()> {
+    let row = rows
+        .iter()
+        .find(|row| row["id"] == thread["selection"]["modelID"])
+        .context("Model is absent from the account observation")?;
+    let key = format!("codex/{account}");
+    let desired = thread["modelPreferences"]
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(
+            || json!({"effort":thread["selection"]["effort"],"speed":thread["selection"]["speed"]}),
+        );
+    ensure!(
+        desired.is_object(),
+        "Saved account options are unsupported; choose them explicitly"
+    );
+    let efforts = row["reportedEfforts"].as_array();
+    let supported_effort = |effort: &Value| {
+        effort.is_string() && efforts.is_some_and(|choices| choices.contains(effort))
+    };
+    let effort = if supported_effort(&desired["effort"]) {
+        desired["effort"].clone()
+    } else if !astra_model(thread["selection"]["modelID"].as_str().unwrap_or(""))
+        && supported_effort(&row["reportedDefaultEffort"])
+    {
+        row["reportedDefaultEffort"].clone()
+    } else {
+        Value::Null
+    };
+    let speed = if desired["speed"].is_string()
+        && row["reportedSpeeds"].as_array().is_some_and(|choices| {
+            choices
+                .iter()
+                .any(|choice| choice["id"] == desired["speed"])
+        }) {
+        desired["speed"].clone()
+    } else {
+        Value::Null
+    };
+    for (option, value) in [("effort", effort), ("speed", speed)] {
+        if !value.is_null() || thread["selection"].get(option).is_some() {
+            thread["selection"][option] = value;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

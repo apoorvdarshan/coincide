@@ -1,14 +1,7 @@
 //! Atomic provider switching. Historical preferences never grant execution authority.
 use super::*;
-use crate::model_catalog::NamedBinding;
 
-pub(super) struct RestoreIntent {
-    source: Value,
-    target: Value,
-    binding: NamedBinding,
-    request: String,
-    serial: u64,
-}
+pub(super) use super::provider_restore_api::RestoreIntent;
 
 const EXPECTED_FIELDS: [&str; 7] = [
     "id",
@@ -26,10 +19,15 @@ impl Engine {
             .as_object()
             .context("Provider selection must be an object")?;
         ensure!(
-            (3..=5).contains(&fields.len())
+            (3..=6).contains(&fields.len())
                 && fields.keys().all(|key| matches!(
                     key.as_str(),
-                    "threadId" | "provider" | "expected" | "restoreRequestId" | "restoreCurrent"
+                    "threadId"
+                        | "provider"
+                        | "expected"
+                        | "restoreRequestId"
+                        | "restoreCurrent"
+                        | "accountId"
                 )),
             "Provider selection requires threadId, provider and expected only"
         );
@@ -41,13 +39,18 @@ impl Engine {
             ensure!(
                 self.provider_restore
                     .as_ref()
-                    .is_some_and(|intent| intent.request == request),
+                    .is_some_and(|intent| intent.token == request),
                 "Provider restoration was cancelled or superseded; draft retained"
             );
         } else {
             self.cancel_provider_restore();
         }
         Provider::from_name(provider)?;
+        ensure!(
+            (p.get("accountId").is_none() && p.get("restoreCurrent").is_none())
+                || provider == "codex",
+            "Explicit account restoration is available only for Codex"
+        );
         ensure!(
             self.active_thread() == Some(id),
             "Active conversation changed; draft retained"
@@ -87,6 +90,7 @@ impl Engine {
         );
         ensure!(
             current["selection"]["provider"] != provider
+                || (provider == "codex" && p.get("accountId").is_some())
                 || (p.get("restoreCurrent") == Some(&json!(true))
                     && provider == "codex"
                     && !crate::composer_selection::default_account(
@@ -103,36 +107,27 @@ impl Engine {
                 )),
             "Finish or remove queued messages before changing provider"
         );
-        // A superseded intent is irreversibly cancelled before considering a new
-        // target. A later A -> B -> A action cannot resurrect the old catalog.
-        if self.provider_restore.as_ref().is_some_and(|intent| {
-            intent.source != current || intent.target["selection"]["provider"] != provider
-        }) {
-            self.cancel_provider_restore();
+        if provider == "codex" {
+            let configuration = crate::codex_login_profiles::configuration(&self.store)?;
+            if p.get("accountId").is_some()
+                || p.get("restoreCurrent").is_some()
+                || remembered_account(&current, provider).is_some()
+                || configuration["accounts"]
+                    .as_object()
+                    .is_some_and(|accounts| !accounts.is_empty())
+            {
+                return self.restore_provider_accounts(current, p);
+            }
         }
-        if p.get("restoreCurrent").is_some() {
-            ensure!(
-                p["restoreCurrent"] == true
-                    && provider == "codex"
-                    && current["selection"]["provider"] == "codex"
-                    && !crate::composer_selection::default_account(
-                        &current["selection"]["accountID"]
-                    ),
-                "Only a selected named Codex profile can restore its saved choice"
-            );
-        }
-        let remembered = if p.get("restoreCurrent") == Some(&json!(true)) {
-            current["selection"]["accountID"]
-                .as_str()
-                .map(str::to_owned)
-        } else {
-            remembered_account(&current, provider)
-        };
-        if provider == "codex"
-            && let Some(account) = remembered
-        {
-            return self.restore_named_provider(current, account);
-        }
+        self.select_default_provider(current, provider)
+    }
+
+    pub(super) fn select_default_provider(
+        &mut self,
+        current: Value,
+        provider: &str,
+    ) -> Result<Value> {
+        let id = required(&current, "id")?;
         if current["selection"]["provider"] == "codex"
             && !crate::composer_selection::default_account(&current["selection"]["accountID"])
         {
@@ -218,205 +213,6 @@ impl Engine {
         )
     }
 
-    pub(super) fn cancel_provider_restore(&mut self) {
-        if let Some(intent) = self.provider_restore.take() {
-            self.model_catalog.cancel_named_restore(&intent.request);
-        }
-    }
-
-    pub(super) fn poll_provider_restore(&mut self) {
-        let valid = self.provider_restore.as_ref().is_none_or(|intent| {
-            let id = intent.source["id"].as_str().unwrap_or("");
-            !self.admissions_frozen()
-                && self.active_thread() == Some(id)
-                && !self.runs.contains_key(id)
-                && !self.unsaved_threads.contains_key(id)
-                && self
-                    .store
-                    .mutation_serial()
-                    .is_ok_and(|serial| serial == intent.serial)
-                && self
-                    .store
-                    .thread(id)
-                    .is_ok_and(|thread| thread == intent.source)
-                && self
-                    .profile_model_binding(&intent.target)
-                    .is_ok_and(|binding| binding == intent.binding)
-        });
-        if !valid {
-            self.cancel_provider_restore();
-        }
-    }
-
-    fn restore_named_provider(&mut self, current: Value, account: String) -> Result<Value> {
-        let mut candidate = current.clone();
-        let preference = &current["rustProviderSelections"]["codex"];
-        let model = (current["selection"]["provider"] == "codex"
-            && current["selection"]["accountID"] == account)
-            .then(|| current["selection"]["modelID"].as_str())
-            .flatten()
-            .or_else(|| historical_account_model(&current, "codex", &json!(account)))
-            .or_else(|| {
-                (preference["accountID"] == account
-                    && !current["items"].as_array().is_some_and(|items| {
-                        items
-                            .iter()
-                            .any(|item| item["provider"] == "codex" && !item["modelID"].is_null())
-                    }))
-                .then(|| preference["modelID"].as_str())
-                .flatten()
-            })
-            .unwrap_or("default")
-            .to_owned();
-        candidate["selection"] = json!({"provider":"codex","accountID":account,"modelID":model});
-        if preference["accountID"] == account && preference["modelID"] == model {
-            for key in ["effort", "speed"] {
-                if let Some(value) = preference.get(key) {
-                    candidate["selection"][key] = value.clone();
-                }
-            }
-        }
-        if current["selection"]["provider"] == "codex"
-            && current["selection"]["accountID"] == account
-        {
-            for option in ["effort", "speed"] {
-                if let Some(value) = current["selection"].get(option) {
-                    candidate["selection"][option] = value.clone();
-                }
-            }
-        }
-        composer_choices_api::seed_preferences(&mut candidate, &current)?;
-        let desired = candidate.clone();
-        composer_choices_api::seed_preferences(&mut candidate, &desired)?;
-        let binding = self.profile_model_binding(&candidate)?;
-        // A still-live authenticated exact catalog is sufficient for a warm
-        // switch. A historical account/session alone is never sufficient.
-        if self.provider_restore.is_none() {
-            let mut warm = candidate.clone();
-            if model != "default"
-                && self
-                    .model_catalog
-                    .resolve_named_preferences(&mut warm, &binding, None)
-                    .is_ok()
-                && self
-                    .model_catalog
-                    .named_model_proof(&warm, &binding, None)
-                    .is_ok()
-            {
-                return self.commit_named_restore(current, warm, &binding, None);
-            }
-            let response = self.model_catalog.refresh_named(binding.clone())?;
-            let request = required(&response, "requestId")?.to_owned();
-            self.provider_restore = Some(RestoreIntent {
-                source: current,
-                target: candidate,
-                binding,
-                serial: self.store.mutation_serial()?,
-                request: request.clone(),
-            });
-            self.revision += 1;
-            return Ok(
-                json!({"pending":true,"requestId":request,"provider":"codex","accountID":account,"authenticationChecked":false}),
-            );
-        }
-        self.poll_provider_restore();
-        let intent = self
-            .provider_restore
-            .as_ref()
-            .context("Provider restoration was cancelled; draft retained")?;
-        ensure!(
-            intent.source == current && intent.binding == binding && intent.target == candidate,
-            "Provider restoration context changed; draft retained"
-        );
-        if self.model_catalog.poll() {
-            self.revision += 1;
-        }
-        let status = self.model_catalog.named_status(&intent.request, &binding)?;
-        if status["state"] == "loading" {
-            return Ok(
-                json!({"pending":true,"requestId":intent.request,"provider":"codex","accountID":account,"authenticationChecked":false}),
-            );
-        }
-        ensure!(
-            status["state"] == "ready" && status["authenticationChecked"] == true,
-            "The remembered account is not authenticated or its catalog lookup failed; draft retained"
-        );
-        // Match Swift's same-account first-model fallback, never an older model
-        // or another account's catalog. Desired options remain per-account
-        // metadata while the active model uses only its supported choices.
-        let rows = status["models"]
-            .as_array()
-            .context("Invalid profile catalog")?;
-        if !rows.iter().any(|row| row["id"] == model) {
-            candidate["selection"]["modelID"] = rows
-                .first()
-                .and_then(|row| row.get("id"))
-                .context("This account reported no available models")?
-                .clone();
-        }
-        let request = intent.request.clone();
-        self.model_catalog
-            .resolve_named_preferences(&mut candidate, &binding, Some(&request))?;
-        let result = self.commit_named_restore(current, candidate, &binding, Some(&request));
-        if result.is_ok() {
-            // Transfer the still-live job to ordinary selection authority. Do
-            // not cancel it, reset its revocation bit, or manufacture a proof.
-            self.provider_restore.take();
-        }
-        result
-    }
-
-    fn commit_named_restore(
-        &mut self,
-        current: Value,
-        mut candidate: Value,
-        binding: &NamedBinding,
-        request: Option<&str>,
-    ) -> Result<Value> {
-        let id = required(&current, "id")?;
-        ensure!(
-            self.active_thread() == Some(id)
-                && self.store.thread(id)? == current
-                && !self.runs.contains_key(id)
-                && !self.unsaved_threads.contains_key(id),
-            "Saved composer changed; command draft retained"
-        );
-        ensure!(
-            self.profile_model_binding(&candidate)? == *binding,
-            "Target profile changed; draft retained"
-        );
-        let proof = self
-            .model_catalog
-            .named_model_proof(&candidate, binding, request)?;
-        ensure!(
-            proof.is_some(),
-            "Automatic named restoration requires an authenticated explicit model"
-        );
-        crate::composer_policy::Policy::parse_named(
-            &candidate,
-            crate::composer_policy::Origin::Ordinary,
-            proof.as_ref(),
-        )?
-        .preflight()?;
-        remember_source(&mut candidate, &current)?;
-        if current["selection"]["provider"] == candidate["selection"]["provider"]
-            && current["selection"]["accountID"] == candidate["selection"]["accountID"]
-        {
-            // Reopening/refreshing a saved choice is not a new user preference.
-            self.store.save(&candidate)?;
-        } else {
-            self.save_composer_choice(
-                &current,
-                &mut candidate,
-                &json!({"rememberComposerChoice":true}),
-            )?;
-        }
-        self.revision += 1;
-        Ok(
-            json!({"thread":candidate,"model":candidate["selection"]["modelID"],"accountID":candidate["selection"]["accountID"],"restored":true,"provenance":"latest_authenticated_named_catalog","authenticationChecked":true,"accountRestored":true}),
-        )
-    }
-
     fn provider_switch_executable(&self, provider: &str) -> Option<PathBuf> {
         let variable = match provider {
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
@@ -434,7 +230,7 @@ impl Engine {
     }
 }
 
-fn remember_source(target: &mut Value, source: &Value) -> Result<()> {
+pub(super) fn remember_source(target: &mut Value, source: &Value) -> Result<()> {
     if target["rustProviderSelections"].is_null() {
         target["rustProviderSelections"] = json!({});
     }
@@ -444,10 +240,21 @@ fn remember_source(target: &mut Value, source: &Value) -> Result<()> {
     );
     let provider = required(&source["selection"], "provider")?;
     target["rustProviderSelections"][provider] = source["selection"].clone();
+    if !crate::composer_selection::default_account(&source["selection"]["accountID"]) {
+        if target["rustAccountSelections"].is_null() {
+            target["rustAccountSelections"] = json!({});
+        }
+        ensure!(
+            target["rustAccountSelections"].is_object(),
+            "Invalid saved account selections"
+        );
+        let key = composer_choices_api::account_key(&source["selection"])?;
+        target["rustAccountSelections"][key] = source["selection"].clone();
+    }
     Ok(())
 }
 
-fn remembered_account(thread: &Value, provider: &str) -> Option<String> {
+pub(super) fn remembered_account(thread: &Value, provider: &str) -> Option<String> {
     let reference = provider_session(thread, provider);
     let value = reference
         .and_then(|session| session.get("accountID"))
@@ -457,7 +264,7 @@ fn remembered_account(thread: &Value, provider: &str) -> Option<String> {
         .flatten()
 }
 
-fn provider_session<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
+pub(super) fn provider_session<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
     thread["sessions"]
         .as_object()
         .and_then(|rows| rows.get(provider))
@@ -472,23 +279,24 @@ fn provider_session<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> 
         })
 }
 
-fn historical_account_model<'a>(
+pub(super) fn historical_account_model<'a>(
     thread: &'a Value,
     provider: &str,
     account: &Value,
 ) -> Option<&'a str> {
-    let item = thread["items"]
-        .as_array()?
-        .iter()
-        .rev()
-        .find(|item| item["provider"] == provider && !item["modelID"].is_null())?;
-    // Do not skip a newer model from another account to find an older match.
-    let item_account = item
-        .get("accountID")
-        .or_else(|| provider_session(thread, provider)?.get("accountID"))?;
-    (item_account == account)
-        .then(|| item["modelID"].as_str())
-        .flatten()
+    let item = thread["items"].as_array()?.iter().rev().find(|item| {
+        if item["provider"] != provider || item["modelID"].is_null() {
+            return false;
+        }
+        item.get("accountID")
+            .or_else(|| provider_session(thread, provider)?.get("accountID"))
+            .is_some_and(|value| {
+                value == account
+                    || (crate::composer_selection::default_account(value)
+                        && crate::composer_selection::default_account(account))
+            })
+    })?;
+    item["modelID"].as_str()
 }
 
 fn historical_default_model<'a>(thread: &'a Value, provider: &str) -> Option<&'a str> {

@@ -506,3 +506,80 @@ fn named_restore_clears_only_exact_acknowledged_command() {
         }
     }
 }
+
+#[::core::prelude::v1::test]
+fn unavailable_source_catalog_does_not_block_switching_to_another_provider() {
+    let mut thread = json!({"id":"synthetic","draft":"/claude","selection":{"provider":"codex","modelID":"synthetic-a","accountID":"account-a","effort":"high"},"accessMode":"approval","interactionMode":"build"});
+    let pending = Submission::new(&thread, "/claude");
+    let mut caps = coincide_core::composer_selection::capabilities();
+    caps["locked"] = json!(true);
+    caps["lockReason"] = json!("Saved named catalog was revoked after restart");
+    let mut clears = 0;
+    let result = command_transaction(
+        &pending,
+        Command::Provider("claude"),
+        false,
+        None,
+        |method, params| match method {
+            "threads.read" => Ok(thread.clone()),
+            "agent.selection.capabilities" => Ok(caps.clone()),
+            "agent.provider.select" => {
+                thread["selection"] = json!({"provider":"claude","modelID":"default"});
+                Ok(
+                    json!({"thread":thread,"model":"default","restored":false,"accountRestored":false,"authenticationChecked":false,"provenance":"provider_default"}),
+                )
+            }
+            "threads.patch" => {
+                assert_eq!(params["patch"], json!({"draft":""}));
+                clears += 1;
+                thread["draft"] = json!("");
+                Ok(thread.clone())
+            }
+            _ => panic!("switch-away must not refresh the old account or start a turn"),
+        },
+    );
+    assert!(result.is_ok());
+    assert_eq!(clears, 1);
+    assert_eq!(thread["selection"]["provider"], "claude");
+}
+
+#[::core::prelude::v1::test]
+fn fallback_receipts_bind_original_intent_each_candidate_and_explicit_account_scope() {
+    let thread = json!({"id":"synthetic","selection":{"provider":"claude","modelID":"default"},"sessions":{"codex":{"accountID":"account-a"}}});
+    let pending = json!({"pending":true,"requestId":"intent-a","catalogRequestId":"observation-default","provider":"codex","accountID":"default","requestedAccountID":"account-a","explicitAccount":false,"candidateAccountIDs":["account-a","default","account-b"],"fallback":true,"authenticationChecked":false});
+    assert!(restore_receipt_scope(&pending, &thread, "codex", None, Some("intent-a")).is_ok());
+    for fault in ["token", "requested", "candidate", "explicit", "fallback"] {
+        let mut bad = pending.clone();
+        match fault {
+            "token" => bad["requestId"] = json!("another-intent"),
+            "requested" => bad["requestedAccountID"] = json!("account-b"),
+            "candidate" => bad["accountID"] = json!("unknown-account"),
+            "explicit" => bad["explicitAccount"] = json!(true),
+            "fallback" => bad["fallback"] = json!(false),
+            _ => unreachable!(),
+        }
+        assert!(
+            restore_receipt_scope(&bad, &thread, "codex", None, Some("intent-a")).is_err(),
+            "{fault}"
+        );
+    }
+    assert!(
+        restore_receipt_scope(
+            &pending,
+            &thread,
+            "codex",
+            Some(&json!("account-a")),
+            Some("intent-a")
+        )
+        .is_err(),
+        "an explicit account pick cannot silently fall back"
+    );
+    let ready = json!({"requestId":"intent-a","accountID":"account-b","requestedAccountID":"account-a","explicitAccount":false,"candidateAccountIDs":["account-a","default","account-b"],"fallback":true,"authenticationChecked":true,"accountRestored":true,"restored":true,"model":"synthetic-b","provenance":"latest_authenticated_named_catalog"});
+    assert_eq!(
+        restore_receipt_scope(&ready, &thread, "codex", None, Some("intent-a")).unwrap(),
+        json!("account-b")
+    );
+    let mut borrowed = ready;
+    borrowed["provenance"] = json!("latest_default_catalog");
+    assert!(restore_receipt_scope(&borrowed, &thread, "codex", None, Some("intent-a")).is_err());
+}

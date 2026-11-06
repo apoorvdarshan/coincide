@@ -504,8 +504,12 @@ fn command_params(
     capabilities: &Value,
     running: bool,
 ) -> Result<Option<Value>> {
-    if let Some(reason) = capability_lock(capabilities, running) {
-        anyhow::bail!(reason);
+    if command.provider().is_none() {
+        if let Some(reason) = capability_lock(capabilities, running) {
+            anyhow::bail!(reason);
+        }
+    } else {
+        anyhow::ensure!(!running, "Stop the current turn before changing provider");
     }
     if let Some(target) = command.provider() {
         anyhow::ensure!(
@@ -576,6 +580,101 @@ fn expected_restore_account(thread: &Value, provider: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn restore_account_id(value: &Value) -> Option<&str> {
+    default_account_id(value)
+}
+fn restore_receipt_scope(
+    response: &Value,
+    current: &Value,
+    provider: &str,
+    explicit: Option<&Value>,
+    request: Option<&str>,
+) -> Result<Value> {
+    let expected = explicit
+        .cloned()
+        .unwrap_or_else(|| expected_restore_account(current, provider));
+    let expected = restore_account_id(&expected).context("Invalid source account identity")?;
+    let actual = restore_account_id(&response["accountID"]).unwrap_or("default");
+    if let Some(request) = request {
+        anyhow::ensure!(
+            response["requestId"] == request,
+            "Account restoration request was superseded; draft retained"
+        );
+    }
+    if response.get("requestedAccountID").is_some() {
+        anyhow::ensure!(
+            provider == "codex"
+                && restore_account_id(&response["requestedAccountID"]) == Some(expected)
+                && response["explicitAccount"] == json!(explicit.is_some())
+                && response["fallback"] == json!(actual != expected),
+            "Account restoration request scope changed; draft retained"
+        );
+        if actual != expected {
+            anyhow::ensure!(
+                explicit.is_none()
+                    && (response["candidateAccountIDs"]
+                        .as_array()
+                        .is_some_and(|accounts| accounts
+                            .iter()
+                            .any(|account| restore_account_id(account) == Some(actual)))
+                        || (actual == "default"
+                            && response["fallbackReason"] == "no_authenticated_account_ready")),
+                "Account fallback was not part of this provider action; draft retained"
+            );
+        }
+    } else if response["pending"] == true || response["accountRestored"] == true {
+        anyhow::ensure!(
+            actual == expected,
+            "Account acknowledgement belongs to another account; draft retained"
+        );
+    }
+    if response["pending"] == true {
+        anyhow::ensure!(
+            provider == "codex"
+                && response["provider"] == provider
+                && response["authenticationChecked"] == false
+                && response["requestId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty()),
+            "Invalid pending account observation acknowledgement"
+        );
+    } else {
+        let model = response["model"]
+            .as_str()
+            .context("Missing restored model acknowledgement")?;
+        let named = actual != "default";
+        let authenticated = response["authenticationChecked"] == true;
+        anyhow::ensure!(
+            (authenticated
+                && provider == "codex"
+                && response["restored"] == true
+                && model != "default"
+                && response["accountRestored"] == json!(named)
+                && response["provenance"]
+                    == if named {
+                        "latest_authenticated_named_catalog"
+                    } else {
+                        "latest_authenticated_default_catalog"
+                    })
+                || (!authenticated
+                    && !named
+                    && response["accountRestored"] == false
+                    && ((response["restored"] == true
+                        && response["provenance"] == "latest_default_catalog"
+                        && model != "default")
+                        || (response["restored"] == false
+                            && response["provenance"] == "provider_default"
+                            && model == "default"))),
+            "Provider selection omitted its exact catalog acknowledgement; draft retained"
+        );
+    }
+    Ok(if actual == "default" {
+        Value::Null
+    } else {
+        json!(actual)
+    })
+}
+
 /// Invoked under one Engine try-lock. Only existing validated selection/draft
 /// endpoints and already-reported limits status are used, never Send/queue or
 /// provider refresh. Every rejection remains intercepted.
@@ -631,48 +730,19 @@ fn command_transaction(
             params["restoreRequestId"] = json!(request);
         }
         let response = invoke("agent.provider.select", params)?;
+        acknowledged_account = restore_receipt_scope(
+            &response,
+            &current,
+            provider,
+            None,
+            submission.restore_request.as_deref(),
+        )?;
         if response["pending"] == true {
-            anyhow::ensure!(
-                provider == "codex"
-                    && response["provider"] == provider
-                    && response["authenticationChecked"] == false
-                    && response["requestId"]
-                        .as_str()
-                        .is_some_and(|id| !id.is_empty())
-                    && response["accountID"] == expected_restore_account(&current, provider),
-                "Provider restoration omitted its source-bound pending acknowledgement; draft retained"
-            );
             return Ok(response);
         }
         let model = response["model"]
             .as_str()
-            .context("Provider selection omitted its model acknowledgement; draft retained")?;
-        let named = response["accountRestored"] == true;
-        anyhow::ensure!(
-            (named
-                && provider == "codex"
-                && response["authenticationChecked"] == true
-                && response["restored"] == true
-                && response["provenance"] == "latest_authenticated_named_catalog"
-                && response["accountID"] == expected_restore_account(&current, provider)
-                && response["accountID"]
-                    .as_str()
-                    .is_some_and(|account| account != "default" && !account.is_empty())
-                && model != "default")
-                || (!named
-                    && response["authenticationChecked"] == false
-                    && response["accountRestored"] == false
-                    && ((response["restored"] == true
-                        && response["provenance"] == "latest_default_catalog"
-                        && model != "default")
-                        || (response["restored"] == false
-                            && response["provenance"] == "provider_default"
-                            && model == "default"))),
-            "Provider selection omitted its scoped catalog acknowledgement; draft retained"
-        );
-        if named {
-            acknowledged_account = response["accountID"].clone();
-        }
+            .context("Provider omitted its model acknowledgement")?;
         acknowledged_model = Some(model.to_owned());
         response["thread"].clone()
     } else if let Some(params) = params {
@@ -780,6 +850,7 @@ pub(super) struct ComposerSelection {
 #[derive(Clone)]
 struct PickerRestore {
     provider: String,
+    account: Option<Value>,
     source: crate::composer_commands::Submission,
     ui_draft: String,
 }
@@ -1020,6 +1091,24 @@ impl Coincide {
         retry: Option<PickerRestore>,
         cx: &mut Context<Self>,
     ) {
+        let account = retry.as_ref().and_then(|pending| pending.account.clone());
+        self.switch_provider_account(provider, account, retry, cx);
+    }
+    pub(super) fn switch_codex_account_from_picker(
+        &mut self,
+        account: Value,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection_ui.pending_provider = None;
+        self.switch_provider_account("codex".into(), Some(account), None, cx);
+    }
+    fn switch_provider_account(
+        &mut self,
+        provider: String,
+        account: Option<Value>,
+        retry: Option<PickerRestore>,
+        cx: &mut Context<Self>,
+    ) {
         let retry_on_busy = retry.clone();
         let result = (|| -> Result<(Value, PickerRestore)> {
             let selected = self
@@ -1055,6 +1144,7 @@ impl Coincide {
                 );
                 PickerRestore {
                     provider: provider.clone(),
+                    account: account.clone(),
                     source: crate::composer_commands::Submission::new(
                         &current,
                         current["draft"].as_str().unwrap_or(""),
@@ -1067,7 +1157,11 @@ impl Coincide {
             if let Some(request) = &pending.source.restore_request {
                 params["restoreRequestId"] = json!(request);
             }
-            if current["selection"]["provider"] == provider
+            if let Some(account) = &pending.account {
+                params["accountId"] = account.clone();
+            }
+            if pending.account.is_none()
+                && current["selection"]["provider"] == provider
                 && provider == "codex"
                 && !coincide_core::composer_selection::default_account(
                     &current["selection"]["accountID"],
@@ -1076,14 +1170,14 @@ impl Coincide {
                 params["restoreCurrent"] = json!(true);
             }
             let response = selection_response(&mut engine, "agent.provider.select", params)?;
+            let acknowledged_account = restore_receipt_scope(
+                &response,
+                &current,
+                &provider,
+                pending.account.as_ref(),
+                pending.source.restore_request.as_deref(),
+            )?;
             if response["pending"] == true {
-                anyhow::ensure!(
-                    provider == "codex"
-                        && response["provider"] == provider
-                        && response["authenticationChecked"] == false
-                        && response["accountID"] == expected_restore_account(&current, &provider),
-                    "Invalid pending account restoration acknowledgement"
-                );
                 pending.source.restore_request = Some(
                     response["requestId"]
                         .as_str()
@@ -1096,37 +1190,12 @@ impl Coincide {
                     pending.source.same_content(ack, &pending.source.draft)
                         && ack["selection"]["provider"] == provider
                         && ack["selection"]["modelID"] == response["model"]
+                        && restore_account_id(&ack["selection"]["accountID"])
+                            == restore_account_id(&acknowledged_account)
                         && ack["accessMode"] == current["accessMode"]
                         && ack["interactionMode"] == current["interactionMode"],
-                    "Provider acknowledgement changed draft, content or modes"
+                    "Provider acknowledgement changed account, draft, content or modes"
                 );
-                if response["accountRestored"] == true {
-                    anyhow::ensure!(
-                        provider == "codex"
-                            && response["authenticationChecked"] == true
-                            && response["provenance"] == "latest_authenticated_named_catalog"
-                            && response["accountID"]
-                                == expected_restore_account(&current, &provider)
-                            && ack["selection"]["accountID"] == response["accountID"]
-                            && response["model"]
-                                .as_str()
-                                .is_some_and(|model| model != "default" && !model.is_empty()),
-                        "Provider acknowledgement belongs to another account"
-                    );
-                } else {
-                    anyhow::ensure!(
-                        response["accountRestored"] == false
-                            && response["authenticationChecked"] == false
-                            && default_account_id(&ack["selection"]["accountID"])
-                                == Some("default")
-                            && ((response["restored"] == true
-                                && response["provenance"] == "latest_default_catalog")
-                                || (response["restored"] == false
-                                    && response["provenance"] == "provider_default"
-                                    && response["model"] == "default")),
-                        "Provider acknowledgement omitted its catalog scope"
-                    );
-                }
             }
             Ok((response, pending))
         })();
