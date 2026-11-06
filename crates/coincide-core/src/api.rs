@@ -651,7 +651,7 @@ impl Engine {
             "projects.create"=>{let v=self.store.create_project(std::path::Path::new(required(p,"path")?),p["name"].as_str())?;self.revision+=1;Ok(v)}
             "projects.patch"=>{let v=self.store.patch_project(required(p,"projectId")?,&p["patch"])?;self.revision+=1;Ok(v)}
             "settings.read"=>Ok(provider_configuration::public_settings(self.store.document("settings.json")?.unwrap_or(json!({})))),
-            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"]);let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
+            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
             "threads.list" => Ok(serde_json::to_value(self.store.summaries(
                 p["query"].as_str().unwrap_or(""),
                 p["includeArchived"].as_bool().unwrap_or(false),
