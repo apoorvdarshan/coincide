@@ -198,6 +198,31 @@ pub(crate) fn account<'a>(configuration: &'a Value, id: &str) -> Result<&'a Valu
     );
     Ok(value)
 }
+/// The default CLI account precedes named accounts; named order is the user's
+/// creation order. Older registries without an order retain their stored order.
+pub(crate) fn ordered_accounts(configuration: &Value) -> Result<Vec<String>> {
+    let accounts = configuration["accounts"]
+        .as_object()
+        .context("Invalid profile registry")?;
+    let mut result = Vec::new();
+    if let Some(order) = configuration.get("order") {
+        for id in order.as_array().context("Invalid account order")? {
+            let id = id.as_str().context("Invalid ordered account identity")?;
+            ensure!(
+                accounts.contains_key(id) && !result.iter().any(|value| value == id),
+                "Invalid or duplicate ordered account"
+            );
+            result.push(id.to_owned());
+        }
+    }
+    for id in accounts.keys() {
+        if !result.contains(id) {
+            result.push(id.clone());
+        }
+    }
+    Ok(result)
+}
+
 pub(crate) fn validate_thread(thread: &Value) -> Result<()> {
     validate_model_thread(thread)?;
     ensure!(

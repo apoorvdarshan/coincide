@@ -14,12 +14,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "model_catalog_default_restore.rs"]
+mod default_restore;
 #[path = "model_catalog_effort.rs"]
 mod effort;
+pub(crate) use default_restore::DefaultBinding;
 #[path = "model_catalog_restore.rs"]
 mod restore;
 use effort::EffortExecutable;
 pub(crate) use effort::{CodexEffortProof, astra_default_needed, astra_model};
+pub(crate) use restore::resolve_reported_preferences;
 
 #[path = "model_catalog_limits.rs"]
 pub(crate) mod limits;
@@ -78,6 +82,7 @@ pub struct ModelCatalog {
     limits: limits::Owner,
     named_limits: profile_limits::Owner,
     jobs: HashMap<String, Job>,
+    default_restore: HashMap<String, DefaultBinding>,
     order: VecDeque<String>,
     workers: HashMap<String, Worker>,
     shutdown: ShutdownStatus,
@@ -91,6 +96,7 @@ impl Default for ModelCatalog {
             limits: limits::Owner::default(),
             named_limits: profile_limits::Owner::default(),
             jobs: HashMap::new(),
+            default_restore: HashMap::new(),
             order: VecDeque::new(),
             workers: HashMap::new(),
             shutdown: ShutdownStatus::default(),
@@ -105,6 +111,12 @@ impl Drop for ModelCatalog {
     }
 }
 impl ModelCatalog {
+    pub(crate) fn restore_admission_available(&mut self) -> bool {
+        self.workers.len()
+            + self.limits.shutdown_status().running
+            + self.named_limits.shutdown_status().running
+            < MAX_ACTIVE
+    }
     fn receive_completions(&mut self) -> bool {
         let mut changed = false;
         for (id, outcome) in self.rx.try_iter() {
@@ -113,7 +125,8 @@ impl ModelCatalog {
                     Ok(models) => {
                         job.response["state"] = json!("ready");
                         job.response["models"] = json!(models);
-                        job.response["authenticationChecked"] = json!(job.named.is_some());
+                        job.response["authenticationChecked"] =
+                            json!(job.named.is_some() || self.default_restore.contains_key(&id));
                     }
                     Err(error) => {
                         job.response["state"] = json!("failed");
@@ -237,6 +250,7 @@ impl ModelCatalog {
             job.response["provider"] == provider
                 && job.named == named
                 && job.response["state"] == "loading"
+                && !job.cancelled.load(Ordering::Acquire)
         }) {
             return Ok(job.response.clone());
         }
@@ -648,6 +662,16 @@ impl<'a> ProcessRpc<'a> {
         cancelled: &'a AtomicBool,
         named: Option<&NamedBinding>,
     ) -> Result<Self> {
+        Self::spawn_in_directory(provider, executable, timeout, cancelled, named, None)
+    }
+    fn spawn_in_directory(
+        provider: &str,
+        executable: PathBuf,
+        timeout: Duration,
+        cancelled: &'a AtomicBool,
+        named: Option<&NamedBinding>,
+        directory: Option<&std::path::Path>,
+    ) -> Result<Self> {
         use std::{
             os::{fd::AsRawFd, unix::process::CommandExt},
             process::{Command, Stdio},
@@ -708,7 +732,13 @@ impl<'a> ProcessRpc<'a> {
             _ => bail!("Read-only model discovery is unsupported for this provider"),
         }
         command
-            .current_dir(named.map_or_else(std::env::temp_dir, |named| named.cwd.clone()))
+            .current_dir(
+                directory
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| {
+                        named.map_or_else(std::env::temp_dir, |named| named.cwd.clone())
+                    }),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

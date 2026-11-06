@@ -46,8 +46,12 @@ mod codex_profile_login_api;
 mod codex_profile_models_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
+#[path = "composer_choices_api.rs"]
+mod composer_choices_api;
 #[path = "project_management_api.rs"]
 mod project_management_api;
+#[path = "provider_restore_api.rs"]
+mod provider_restore_api;
 #[path = "provider_switch_api.rs"]
 mod provider_switch_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
@@ -149,6 +153,7 @@ pub struct Engine {
     model_catalog: crate::model_catalog::ModelCatalog,
     catalog_shutdown_requested: bool,
     named_resume: crate::named_profile_resume::Registry,
+    provider_restore: Option<provider_switch_api::RestoreIntent>,
     github_threads: github_threads_engine::State,
     computer_use: computer_use_engine::State,
     pub store: Store,
@@ -224,6 +229,7 @@ impl Engine {
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             catalog_shutdown_requested: false,
             named_resume: crate::named_profile_resume::Registry::for_store(&store),
+            provider_restore: None,
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
             store,
@@ -550,7 +556,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
+                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -716,18 +722,24 @@ impl Engine {
                 Ok(result)
             }
             "agent.provider.select" => self.select_provider_from_history(p),
+            "agent.provider.cancelRestore" => {
+                ensure!(p.as_object().is_some_and(|fields| fields.is_empty()), "Restore cancellation takes no parameters");
+                self.cancel_provider_restore();
+                Ok(json!({"cancelled":true}))
+            },
             "agent.select" => {
                 let id = required(p, "threadId")?;
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
+                let source = v.clone();
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
                 ensure!(v["rustBotContext"].is_null() && v["botID"].is_null(),"Bot selection is fixed for this conversation; create a new bot conversation");
                 if p.get("effort").is_some_and(Value::is_null) && p.get("speed").is_some_and(Value::is_null)
                     && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&v)
                 {
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
@@ -735,14 +747,14 @@ impl Engine {
                 {
                     // This exact one-field repair needs no provider/catalog IO.
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 if p.get("speed").is_some_and(Value::is_null) && !v["selection"]["speed"].is_null()
                     && let Ok(selection) = crate::composer_selection::repair_clear_speed(p,&v)
                 {
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 let current_proof = self.composer_current_selection_proof(&v)?;
@@ -755,7 +767,7 @@ impl Engine {
                     || v["selection"]["accountID"] != selection["accountID"] { self.park_named_departure(&v)?; }
                 v["selection"] = selection;
                 crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
-                self.store.save(&v)?; self.revision += 1;
+                self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                 Ok(v)
             }
             "agent.pending" => {
@@ -1629,6 +1641,7 @@ impl Engine {
             })
     }
     pub fn poll(&mut self) {
+        self.poll_provider_restore();
         self.poll_codex_profile_login();
         self.poll_steering();
         self.provider_workers_status();

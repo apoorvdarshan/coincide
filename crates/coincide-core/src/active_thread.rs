@@ -50,6 +50,7 @@ impl Engine {
             self.park_named_departure(&arriving)?;
         }
         if self.active_thread != selected {
+            self.cancel_provider_restore();
             self.active_thread = selected;
             self.revision += 1;
         }

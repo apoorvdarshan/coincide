@@ -294,63 +294,27 @@ impl Coincide {
         })
         .detach();
     }
-    fn use_codex_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = &mut self.provider_settings.codex;
-        if state.busy || state.signing_in() {
+    fn use_codex_profile(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.provider_settings.codex.busy || self.provider_settings.codex.signing_in() {
             return;
         }
-        let Some(thread) = &self.selected else {
-            return;
-        };
-        let id = text(thread, "id");
-        let account = state.account.clone();
-        let baseline = thread["selection"].clone();
-        state.busy = true;
-        let engine = self.engine.clone();
-        let target = id.clone();
-        let task = cx.background_executor().spawn(async move {
-            coincide_core::api::call(
-                &engine,
-                "providers.codex.profiles.select",
-                json!({"threadId":target,"accountId":account,"expectedSelection":baseline}),
-            )
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.provider_settings.codex.busy = false;
-                match result {
-                    Ok(thread) => {
-                        if this
-                            .selected
-                            .as_ref()
-                            .is_some_and(|selected| selected["id"] == id)
-                        {
-                            this.accept_saved_provider_selection(thread);
-                            this.provider_settings.open = false;
-                            this.settings_open = false;
-                            this.focus_settings_route(window, cx);
-                            this.status =
-                                "Codex profile selected. Authentication is checked before sending."
-                                    .into();
-                        }
-                    }
-                    Err(error) => this.provider_settings.codex.message = error.to_string(),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        let account = self.provider_settings.codex.account.clone();
+        self.switch_codex_account_from_picker(
+            if account == "default" {
+                Value::Null
+            } else {
+                json!(account)
+            },
+            cx,
+        );
     }
     pub(super) fn codex_account_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let state = &self.provider_settings.codex;
         let busy = state.busy || state.signing_in();
         let eligible = self.selected.as_ref().is_some_and(|thread| {
-            thread["selection"]["provider"] == "codex"
-                && thread["selection"]["modelID"] == "default"
-                && thread["selection"]["effort"].is_null()
-                && thread["selection"]["speed"].is_null()
+            thread["botID"].is_null()
+                && thread["rustBotContext"].is_null()
+                && !self.running.contains(&text(thread, "id"))
         });
         let mut accounts = div().flex().flex_wrap().gap_2();
         let mut values = vec![("default".to_owned(), "Default CLI account".to_owned())];
@@ -394,8 +358,8 @@ impl Coincide {
             .when(state.signing_in(),|pane|pane.child(Button::new("codex-profile-cancel-sign-in").label("Cancel sign-in").disabled(state.cancel_requested).on_click(cx.listener(|this,_,_,cx| {this.provider_settings.codex.cancel();cx.notify();}))))
             .child(div().text_sm().child("Enter the code only on the OpenAI page you open from this sign-in. Device login avoids a shared local callback port. No prompt, model, turn or native-session resume is sent during enrollment; cancellation stops the owned CLI and waits for cleanup."))
             .child(div().text_lg().child("Use in this conversation"))
-            .child(Button::new("codex-profile-use").label("Use selected profile").disabled(busy||!eligible||self.selected.as_ref().is_some_and(|thread|self.running.contains(&text(thread,"id")))||state.account!="default"&&!state.configured()).on_click(cx.listener(|this,_,window,cx|this.use_codex_profile(window,cx))))
-            .child(div().text_sm().child(if eligible {"Choose a profile using Provider default and approval/build. In the conversation, refresh this profile’s models to choose an explicit model, advertised reasoning effort/speed, Plan and optional full access. Every turn checks authentication. Matching successful saved turns can resume within this app process; restart uses a fresh session and history replay. Read this selected profile’s limits explicitly in Settings Usage. Bots and imported execution remain unavailable."}else{"Choose Codex with Provider default, approval/build and no effort/speed in the conversation first. Profile selection keeps the current thread and checks that its selection has not changed."}))
+            .child(Button::new("codex-profile-use").label("Use account").disabled(busy||!eligible||self.selected.as_ref().is_some_and(|thread|self.running.contains(&text(thread,"id")))||state.account!="default"&&!state.configured()).on_click(cx.listener(|this,_,window,cx|this.use_codex_profile(window,cx))))
+            .child(div().text_sm().child(if eligible {"The account switches directly after its available models are checked. Your message draft stays in this conversation."}else{"Select an ordinary conversation and finish its current turn before choosing an account."}))
             .child(div().text_sm().child(state.message.clone())).into_any_element()
     }
 }
