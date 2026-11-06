@@ -62,6 +62,25 @@ fn main() -> Result<()> {
         Some(path) => path.clone(),
         None => control::data_directory()?.join("control.sock"),
     };
+    if cmd == "new" {
+        let mut params = invocation
+            .payload
+            .context("Missing prepared new-thread options")?;
+        if let Some(project) = &invocation.project {
+            let response = control::request(
+                &socket,
+                &json!({"id":1,"method":"projects.list","params":{}}),
+            )?;
+            if response.get("error").is_some() {
+                return output(response);
+            }
+            params["projectId"] = json!(project_id(project, &response["result"])?);
+        }
+        return output(control::request(
+            &socket,
+            &json!({"id":1,"method":"threads.create","params":params}),
+        )?);
+    }
     if matches!(
         cmd,
         "open"
@@ -242,7 +261,6 @@ fn main() -> Result<()> {
             "threads.read",
             json!({"threadId":argument(1)?,"itemLimit":100}),
         ),
-        "new" => ("threads.create", json!({"cwd":argument(1)?})),
         "fork" => ("threads.fork", json!({"threadId":argument(1)?})),
         "send" => (
             "agent.send",
@@ -334,7 +352,7 @@ fn main() -> Result<()> {
 }
 fn help() -> Result<()> {
     println!(
-        "Coincide Rust preview CLI (JSON output; --json accepted)\nGlobal: --json | --socket PATH | --socket=PATH (Rust protocol only); help aliases -h/--help\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID MESSAGE... | send ID - (UTF-8 stdin) | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID (alias unarchive) | approve ID REQUEST_ID | decline ID REQUEST_ID (alias deny)\nquestions ID  List authoritative pending user questions; opaque request IDs and fields are preserved\ndeny ID REQUEST_ID | deny ID --item REQUEST_ID (explicit Core request ID required)\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000 | --count=N] [--offset N | --offset=N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance; default remains its control.sock.\nAn explicit --socket is used for all requests; COINCIDE_CONTROL_SOCKET is not inherited.\nUse -- before message words that start with options. Busy/alternate follow-up delivery is not connected."
+        "Coincide Rust preview CLI (JSON output; --json accepted)\nGlobal: --json | --socket PATH | --socket=PATH (Rust protocol only); help aliases -h/--help\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew [DIRECTORY | --chat | --project ID|NAME|PATH] [--agent PROVIDER_ID] [--model MODEL_ID] [--effort E] [--access full|approval] [--plan] [--title TITLE]\nnew creates an unsent thread only; MESSAGE/stdin, --wait, --open and queue delivery are unsupported.\nfork ID | send ID MESSAGE... | send ID - (UTF-8 stdin) | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID (alias unarchive) | approve ID REQUEST_ID | decline ID REQUEST_ID (alias deny)\nquestions ID  List authoritative pending user questions; opaque request IDs and fields are preserved\ndeny ID REQUEST_ID | deny ID --item REQUEST_ID (explicit Core request ID required)\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000 | --count=N] [--offset N | --offset=N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance; default remains its control.sock.\nAn explicit --socket is used for all requests; COINCIDE_CONTROL_SOCKET is not inherited.\nUse -- before message words that start with options. Busy/alternate follow-up delivery is not connected."
     );
     Ok(())
 }
@@ -418,9 +436,9 @@ impl Invocation {
         let (minimum, maximum) = match command {
             "help" | "serve" | "quit" | "capabilities" | "projects" | "agents" | "providers"
             | "api" => (0, 0),
-            "status" | "threads" => (0, 1),
-            "read" | "open" | "new" | "fork" | "stop" | "pending" | "questions" | "archive"
-            | "restore" | "wait" | "git-status" => (1, 1),
+            "status" | "threads" | "new" => (0, 1),
+            "read" | "open" | "fork" | "stop" | "pending" | "questions" | "archive" | "restore"
+            | "wait" | "git-status" => (1, 1),
             "git-diff" | "files" => (1, 2),
             "send" => (2, usize::MAX),
             "attach" | "detach" | "draft" | "approve" | "decline" | "browser" => (2, 2),
@@ -448,6 +466,7 @@ impl Invocation {
         let mut literal = false;
         let mut seen = std::collections::HashSet::new();
         let mut request_id = None;
+        let mut creation = json!({});
         while let Some(arg) = args.next() {
             if !literal && arg == "--" {
                 literal = true;
@@ -459,7 +478,17 @@ impl Invocation {
                     .filter(|(name, _)| {
                         matches!(
                             (command, *name),
-                            ("read", "--count" | "--offset") | ("decline", "--item")
+                            ("read", "--count" | "--offset")
+                                | ("decline", "--item")
+                                | (
+                                    "new",
+                                    "--project"
+                                        | "--agent"
+                                        | "--model"
+                                        | "--effort"
+                                        | "--access"
+                                        | "--title"
+                                )
                         )
                     })
                     .map_or((arg.as_str(), None), |(name, value)| (name, Some(value)));
@@ -476,7 +505,26 @@ impl Invocation {
                             .with_context(|| format!("Missing value for {option}"))
                     };
                 match (command, option) {
-                    ("threads", "--project") => parsed.project = Some(value(&mut args)?),
+                    ("threads" | "new", "--project") => parsed.project = Some(value(&mut args)?),
+                    ("new", "--chat") => parsed.chats = true,
+                    ("new", "--agent") => {
+                        creation["selection"]["provider"] = json!(value(&mut args)?)
+                    }
+                    ("new", "--model") => {
+                        creation["selection"]["modelID"] = json!(value(&mut args)?)
+                    }
+                    ("new", "--effort") => {
+                        creation["selection"]["effort"] = json!(value(&mut args)?)
+                    }
+                    ("new", "--plan") => creation["interactionMode"] = json!("plan"),
+                    ("new", "--title") => creation["title"] = json!(value(&mut args)?),
+                    ("new", "--access") => {
+                        creation["accessMode"] = json!(match value(&mut args)?.as_str() {
+                            "full" | "fullAccess" => "fullAccess",
+                            "approval" | "ask" => "approval",
+                            _ => bail!("--access must be full, fullAccess, approval or ask"),
+                        });
+                    }
                     ("threads", "--chats") => parsed.chats = true,
                     ("threads", "--running") => parsed.running = true,
                     ("threads", "--active") => parsed.active = true,
@@ -526,8 +574,22 @@ impl Invocation {
         );
         anyhow::ensure!(
             !(parsed.chats && parsed.project.is_some()),
-            "Use --chats or --project, not both"
+            if command == "new" {
+                "Use --chat or --project, not both"
+            } else {
+                "Use --chats or --project, not both"
+            }
         );
+        if command == "new" {
+            anyhow::ensure!(
+                parsed.args.len() == 1 || !(parsed.chats || parsed.project.is_some()),
+                "DIRECTORY cannot be combined with --chat or --project; new does not send messages"
+            );
+            if let Some(cwd) = parsed.args.get(1) {
+                creation["cwd"] = json!(cwd);
+            }
+            parsed.payload = Some(creation);
+        }
         anyhow::ensure!(
             !(parsed.active && seen.contains("--archived")),
             "Use --active or --archived, not both"

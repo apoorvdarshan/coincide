@@ -631,3 +631,212 @@ fn malformed_alias_and_read_forms_reject_before_transport() {
     assert!(peer.requests().is_empty());
     peer.finish();
 }
+
+#[test]
+fn new_options_create_once_and_preserve_exact_deltas_without_default_inference() {
+    let peer = Peer::new();
+    let socket = peer.socket.to_str().unwrap();
+    let created = json!({"id":THREAD,"draft":"","selection":{"provider":"synthetic inherited","modelID":"exact inherited"},"future":{"preserve":[true,42]}});
+    peer.reply("threads.create", json!({"result":created}));
+    for (mut args, expected) in [
+        (vec!["new"], json!({})),
+        (vec!["new", "--chat"], json!({})),
+        (
+            vec!["new", "/synthetic/café folder"],
+            json!({"cwd":"/synthetic/café folder"}),
+        ),
+        (
+            vec!["new", "--agent", "codex"],
+            json!({"selection":{"provider":"codex"}}),
+        ),
+        (
+            vec!["new", "--model=opaque model::café"],
+            json!({"selection":{"modelID":"opaque model::café"}}),
+        ),
+        (
+            vec!["new", "--effort=low"],
+            json!({"selection":{"effort":"low"}}),
+        ),
+        (
+            vec![
+                "new",
+                "--chat",
+                "--agent=codex",
+                "--model",
+                "opaque model::café",
+                "--effort",
+                "low",
+                "--access=approval",
+                "--plan",
+                "--title",
+                "  Café \"quoted\" title  ",
+            ],
+            json!({"selection":{"provider":"codex","modelID":"opaque model::café","effort":"low"},"accessMode":"approval","interactionMode":"plan","title":"  Café \"quoted\" title  "}),
+        ),
+        (
+            vec!["new", "/synthetic/path", "--title=--json"],
+            json!({"cwd":"/synthetic/path","title":"--json"}),
+        ),
+    ] {
+        let before = peer.requests().len();
+        args.extend(["--socket", socket, "--json"]);
+        let (code, reply) = run(peer.command(&args), None);
+        assert_eq!(code, 0, "{args:?}: {reply}");
+        assert_eq!(reply, json!({"id":1,"result":created}));
+        let calls = peer.requests();
+        assert_eq!(
+            calls.len() - before,
+            1,
+            "Create must not perform Send/open/default reads"
+        );
+        assert_eq!(
+            calls.last().unwrap(),
+            &json!({"id":1,"method":"threads.create","params":expected})
+        );
+    }
+    for (alias, expected) in [
+        ("full", "fullAccess"),
+        ("fullAccess", "fullAccess"),
+        ("approval", "approval"),
+        ("ask", "approval"),
+    ] {
+        let (code, reply) = run(
+            peer.command(&["new", "--access", alias, "--socket", socket]),
+            None,
+        );
+        assert_eq!(code, 0, "{reply}");
+        assert_eq!(
+            peer.requests().last().unwrap()["params"],
+            json!({"accessMode":expected})
+        );
+    }
+    peer.finish();
+}
+
+#[test]
+fn new_project_lookup_requires_an_unambiguous_target_before_one_create() {
+    let peer = Peer::new();
+    let socket = peer.socket.to_str().unwrap();
+    let id = "ABCD0000-0000-4000-8000-000000000001";
+    let projects = json!([{"id":id,"name":"Exact café project","path":"/synthetic/project folder","future":{"keep":1}}]);
+    peer.reply("projects.list", json!({"result":projects}));
+    peer.reply(
+        "threads.create",
+        json!({"result":{"id":THREAD,"future":true}}),
+    );
+    for name in [
+        "abcd0000-0000-4000-8000-000000000001",
+        "Exact café project",
+        "/synthetic/project folder",
+    ] {
+        let before = peer.requests().len();
+        let (code, reply) = run(
+            peer.command(&[
+                "new",
+                "--project",
+                name,
+                "--title",
+                "Exact title",
+                "--socket",
+                socket,
+            ]),
+            None,
+        );
+        assert_eq!(code, 0, "{reply}");
+        assert_eq!(reply, json!({"id":1,"result":{"id":THREAD,"future":true}}));
+        let calls = peer.requests();
+        assert_eq!(calls.len() - before, 2);
+        assert_eq!(
+            calls[before],
+            json!({"id":1,"method":"projects.list","params":{}})
+        );
+        assert_eq!(
+            calls[before + 1],
+            json!({"id":1,"method":"threads.create","params":{"projectId":id,"title":"Exact title"}})
+        );
+    }
+    for response in [
+        json!({"result":[]}),
+        json!({"result":[{"id":id,"name":"Same"},{"id":"ABCD0000-0000-4000-8000-000000000002","name":"Same"}]}),
+        json!({"result":{"invalid":"project list"}}),
+    ] {
+        peer.reply("projects.list", response);
+        let before = peer.requests().len();
+        assert_eq!(
+            run(
+                peer.command(&["new", "--project=Same", "--socket", socket]),
+                None
+            )
+            .0,
+            1
+        );
+        let calls = peer.requests();
+        assert_eq!(calls.len() - before, 1);
+        assert_eq!(calls.last().unwrap()["method"], "projects.list");
+    }
+    let failure =
+        json!({"code":"notAllowed","message":"synthetic project read refusal","future":[1,true]});
+    peer.reply("projects.list", json!({"error":failure}));
+    let before = peer.requests().len();
+    assert_eq!(
+        run(
+            peer.command(&["new", "--project", "Same", "--socket", socket]),
+            None
+        ),
+        (1, json!({"id":1,"error":failure}))
+    );
+    assert_eq!(peer.requests().len() - before, 1);
+    let failure =
+        json!({"code":"notAllowed","message":"synthetic unsupported account/proof","future":42});
+    peer.reply("threads.create", json!({"error":failure}));
+    let before = peer.requests().len();
+    assert_eq!(
+        run(
+            peer.command(&[
+                "new", "--agent", "codex", "--model", "opaque", "--socket", socket
+            ]),
+            None
+        ),
+        (1, json!({"id":1,"error":failure}))
+    );
+    assert_eq!(
+        peer.requests().len() - before,
+        1,
+        "No partial create/repair/send retry"
+    );
+    peer.finish();
+}
+
+#[test]
+fn new_unsupported_effects_conflicts_and_duplicate_options_never_connect() {
+    let peer = Peer::new();
+    let socket = peer.socket.to_str().unwrap();
+    for mut args in [
+        vec!["new", "/path", "extra message"],
+        vec!["new", "--chat", "message"],
+        vec!["new", "--project", "Exact project", "message"],
+        vec!["new", "--chat", "--project", "Exact project"],
+        vec!["new", "--wait"],
+        vec!["new", "--open"],
+        vec!["new", "--queue"],
+        vec!["new", "--alternate"],
+        vec!["new", "--timeout", "1"],
+        vec!["new", "-"],
+        vec!["new", "--model=one", "--model", "two"],
+        vec!["new", "--agent", "codex", "--agent=claude"],
+        vec!["new", "--project=one", "--project", "two"],
+        vec!["new", "--title=one", "--title", "two"],
+        vec!["new", "--plan", "--plan"],
+        vec!["new", "--chat", "--chat"],
+        vec!["new", "--model="],
+        vec!["new", "--access", "unsupported"],
+        vec!["new", "--account", "unimplemented"],
+        vec!["new", "--speed", "unimplemented"],
+    ] {
+        args.extend(["--socket", socket]);
+        let (code, reply) = run(peer.command(&args), None);
+        assert_eq!(code, 2, "{args:?}: {reply}");
+    }
+    assert!(peer.requests().is_empty());
+    peer.finish();
+}
