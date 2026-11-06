@@ -320,19 +320,19 @@ mod tests {
         engine.store.save(&before).unwrap();
         assert!(
             engine
-                .prepare_native_thread_deletion(&[id.clone()])
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
                 .is_err(),
             "Archive-only route stays scoped"
         );
         let plan = engine
-            .prepare_native_conversation_deletion(&[id.clone()])
+            .prepare_native_conversation_deletion(std::slice::from_ref(&id))
             .unwrap();
         let undo = engine.apply_native_thread_deletion(plan).unwrap();
         assert!(engine.store.thread(&id).is_err());
         engine.undo_native_thread_deletion(&undo).unwrap();
         assert_eq!(engine.store.thread(&id).unwrap(), before);
         let plan = engine
-            .prepare_native_conversation_deletion(&[id.clone()])
+            .prepare_native_conversation_deletion(std::slice::from_ref(&id))
             .unwrap();
         let mut other = Store::open(&dir.path().join("data/state.sqlite")).unwrap();
         other

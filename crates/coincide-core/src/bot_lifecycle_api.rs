@@ -261,7 +261,7 @@ mod tests {
         thread["isArchived"] = json!(true);
         engine.store.save(&thread).unwrap();
         let archived = engine
-            .prepare_native_thread_deletion(&[id.clone()])
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
             .unwrap();
         let archived = engine.apply_native_thread_deletion(archived).unwrap();
         assert!(engine.store.local_document(&context).unwrap().is_some());

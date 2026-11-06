@@ -119,7 +119,7 @@ impl Engine {
                 && prepared.store == self.store.delete_source_identity()?,
             "Move belongs to another app or Store"
         );
-        self.archive_delete_admitted(&[prepared.row.id.clone()], false)?;
+        self.archive_delete_admitted(std::slice::from_ref(&prepared.row.id), false)?;
         prepared.from.validate()?;
         prepared.to.validate()?;
         self.store.validate_sidebar_row(&prepared.row)?;
@@ -127,7 +127,7 @@ impl Engine {
         self.park_named_departure(&prepared.original)?;
         self.cancel_provider_restore();
         self.model_catalog
-            .invalidate_deleted_threads(&[prepared.row.id.clone()]);
+            .invalidate_deleted_threads(std::slice::from_ref(&prepared.row.id));
         self.store.apply_sidebar_row(&prepared.row)?;
         self.computer_use_selection_changed(Uuid::parse_str(&prepared.row.id)?);
         self.revision += 1;
@@ -284,7 +284,7 @@ mod tests {
         assert!(engine.prepare_native_thread_move(&id, &b).is_err());
         assert!(
             engine
-                .prepare_native_conversation_deletion(&[id.clone()])
+                .prepare_native_conversation_deletion(std::slice::from_ref(&id))
                 .is_err()
         );
         assert_eq!(engine.store.thread(&id).unwrap(), before);
