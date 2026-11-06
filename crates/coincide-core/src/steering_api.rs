@@ -9,6 +9,8 @@ pub(super) struct Operation {
     ticket: Ticket,
     outcome: Option<Outcome>,
     persisted: bool,
+    resume_safe: Arc<std::sync::atomic::AtomicBool>,
+    uncertainty: Option<crate::store::NativeUncertainty>,
 }
 impl Engine {
     pub(super) fn steer_command(&mut self, method: &str, p: &Value) -> Result<Value> {
@@ -112,7 +114,22 @@ impl Engine {
                 .is_some_and(|context| context.matches(&stored)),
             "Stored selection or project differs from the running turn"
         );
-        let ticket = run.session.steer(text)?;
+        let identity = run.session.steering_identity()?;
+        let account = run.session.codex_profile_account().unwrap_or("default");
+        let uncertainty = self
+            .store
+            .mark_native_uncertain(thread, account, &identity.0)?;
+        let resume_safe = run.resume_safe.clone();
+        resume_safe.store(false, std::sync::atomic::Ordering::Release);
+        let ticket = match run.session.steer_exact(text, &identity) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                if self.store.clear_native_uncertainty(&uncertainty).is_ok() {
+                    resume_safe.store(true, std::sync::atomic::Ordering::Release);
+                }
+                return Err(error);
+            }
+        };
         let id = Uuid::new_v4().to_string();
         self.steering_operations.insert(
             id.clone(),
@@ -122,6 +139,8 @@ impl Engine {
                 ticket,
                 outcome: None,
                 persisted: false,
+                resume_safe,
+                uncertainty: Some(uncertainty),
             },
         );
         Ok(json!({"operationId":id,"threadId":thread,"status":"pending","persisted":false}))
@@ -134,6 +153,26 @@ impl Engine {
                     Err(TryRecvError::Disconnected) => Some(Outcome::Unknown),
                     Err(TryRecvError::Empty) => None,
                 };
+            }
+            if op.outcome == Some(Outcome::Unknown) {
+                // A missing ACK can hide a delivered user input. Keep the
+                // durable exact-account/native denial, and stop only this run.
+                if let Some(run) = self.runs.get_mut(&op.thread)
+                    && Arc::ptr_eq(&run.resume_safe, &op.resume_safe)
+                    && !run.cancelled
+                {
+                    run.cancelled = true;
+                    run.session.stop();
+                    self.enabled_queues.remove(&op.thread);
+                    self.notification_events.cancel_requests(&op.thread);
+                }
+            } else if op.outcome == Some(Outcome::Rejected)
+                && let Some(uncertainty) = op.uncertainty.as_ref()
+                && self.store.clear_native_uncertainty(uncertainty).is_ok()
+            {
+                op.uncertainty = None;
+                op.resume_safe
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
             if op.outcome != Some(Outcome::Accepted) || op.persisted {
                 continue;
@@ -174,6 +213,19 @@ impl Engine {
                     run.session.stop();
                 }
             } else {
+                // Late accepted echo after the primary already finished must
+                // start fresh: its earlier saved seen-prefix excluded this echo.
+                if self
+                    .runs
+                    .get(&op.thread)
+                    .is_some_and(|run| Arc::ptr_eq(&run.resume_safe, &op.resume_safe))
+                    && let Some(uncertainty) = op.uncertainty.as_ref()
+                    && self.store.clear_native_uncertainty(uncertainty).is_ok()
+                {
+                    op.uncertainty = None;
+                    op.resume_safe
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
                 op.persisted = true;
                 self.revision += 1;
             }

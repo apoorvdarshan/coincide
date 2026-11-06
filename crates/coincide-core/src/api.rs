@@ -13,6 +13,9 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "follow_up_api.rs"]
+mod follow_up_api;
+pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]
@@ -139,6 +142,7 @@ pub struct ProviderWorkersStatus {
 struct Running {
     usage_context: Option<agent::usage_capture::TurnContext>,
     session: Session,
+    resume_safe: Arc<std::sync::atomic::AtomicBool>,
     provider: String,
     transcript_start: usize,
     pending: HashMap<String, Value>,
@@ -199,6 +203,7 @@ pub struct Engine {
     pending_usage: HashMap<String, agent::usage_capture::Record>,
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
+    native_follow_up: follow_up_api::State,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -278,6 +283,7 @@ impl Engine {
             pending_usage: HashMap::new(),
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
+            native_follow_up: follow_up_api::State::default(),
         }
     }
     pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
@@ -844,6 +850,15 @@ impl Engine {
     }
     /// Trusted native UI entry point. Deliberately not part of the agent dispatcher.
     fn send_turn(&mut self, p: &Value, scheduled: bool) -> Result<Value> {
+        self.send_turn_if_unchanged(p, scheduled, None, false)
+    }
+    fn send_turn_if_unchanged(
+        &mut self,
+        p: &Value,
+        scheduled: bool,
+        expected_scope: Option<&Value>,
+        force_fresh: bool,
+    ) -> Result<Value> {
         self.require_admissions()?;
         let id = required(p, "threadId")?.to_owned();
         ensure!(
@@ -869,6 +884,15 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        let original = if let Some(expected) = expected_scope {
+            ensure!(
+                crate::composer_follow_up::scope(&v) == crate::composer_follow_up::scope(expected),
+                "Composer changed before replacement admission; draft retained"
+            );
+            Some(v.clone())
+        } else {
+            None
+        };
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"
@@ -995,12 +1019,19 @@ impl Engine {
             "Draft images exceed 20 MiB"
         );
         let saved_session = agent::provider_session(&v, &provider);
-        let allowed_session = self.unrevoked_provider_session(&v, &provider)?;
-        if codex_profile.is_some() && saved_session.is_some() && allowed_session.is_none() {
-            // Undo restores exact content, while deletion permanently consumes
-            // every old continuation opportunity, including private receipts.
+        let available_session = self.unrevoked_provider_session(&v, &provider)?;
+        // Only the private native Interrupt operation forces a fresh replacement.
+        // Public JSON cannot select this branch or create continuation authority.
+        let allowed_session = if force_fresh { None } else { available_session };
+        if let Some(profile) = codex_profile.as_ref()
+            && saved_session.is_some()
+            && allowed_session.is_none()
+        {
+            // Delete already consumes every slot. A denial of this native
+            // context (including uncertain steering) revokes only this account;
+            // independent parked accounts remain available.
             self.named_resume
-                .invalidate_threads(std::slice::from_ref(&id), &self.store)?;
+                .invalidate_account(&id, profile.account(), &self.store)?;
         }
         // Session JSON cannot authorize named resume. The private registry
         // and authenticated restart journal require a saved owned worker join.
@@ -1160,10 +1191,15 @@ impl Engine {
                 prompt.chars().take(70).collect::<String>()
             });
         }
-        self.store.save(&v)?;
+        if let Some(expected) = original.as_ref() {
+            self.store.save_native_follow_up_turn(expected, &v)?;
+        } else {
+            self.store.save(&v)?;
+        }
         self.insert_running(
             id,
             Running {
+                resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
                 session: Session::start_with_mode_policy_and_profile(
                     adapter,
@@ -1376,7 +1412,10 @@ impl Engine {
         use crate::message_queue::{self as queue, State};
         let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
         for id in ids {
-            if self.runs.contains_key(&id) || self.unsaved_threads.contains_key(&id) {
+            if self.runs.contains_key(&id)
+                || self.unsaved_threads.contains_key(&id)
+                || self.native_follow_up.pending_thread(&id)
+            {
                 continue;
             }
             let launched = (|| -> Result<bool> {
@@ -2008,6 +2047,9 @@ impl Engine {
                     && failure.is_none()
                     && !self.runs[&id].cancelled
                     && self.runs[&id].persistence_error.is_none()
+                    && self.runs[&id]
+                        .resume_safe
+                        .load(std::sync::atomic::Ordering::Acquire)
                     && let Some(ack) = self.runs[&id].session.take_named_completion()
                 {
                     self.named_resume.persisted(
@@ -2033,6 +2075,7 @@ impl Engine {
                 self.schedule_completions.push((claim, outcome, failure));
             }
         }
+        self.poll_native_follow_ups();
         self.poll_message_queues();
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);

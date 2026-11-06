@@ -1,0 +1,305 @@
+//! Native composer choices and owner-bound delivery tickets. Nothing here is a
+//! command/RPC route; only the visible editor's actions create a delivery.
+use super::*;
+use coincide_core::{
+    api::{NativeFollowUpStatus, NativeFollowUpTicket},
+    composer_follow_up::{self as choice, Behavior, Dispatch},
+};
+pub(super) struct PendingDelivery {
+    ticket: Option<NativeFollowUpTicket>,
+    thread: String,
+    draft: String,
+}
+#[derive(Clone, Default, PartialEq, gpui_kit::Action)]
+#[action(namespace = coincide_follow_up, no_json, no_register)]
+struct ModifiedSend;
+#[derive(Clone, Default, PartialEq, gpui_kit::Action)]
+#[action(namespace = coincide_follow_up, no_json, no_register)]
+struct ShiftModifiedSend;
+pub(super) fn init(cx: &mut App) {
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        KeyBinding::new(
+            &format!("{modifier}-enter"),
+            ModifiedSend,
+            Some("CoincideFileSuggestions > Input"),
+        ),
+        KeyBinding::new(
+            &format!("{modifier}-shift-enter"),
+            ShiftModifiedSend,
+            Some("CoincideFileSuggestions > Input"),
+        ),
+    ]);
+}
+impl Coincide {
+    pub(super) fn follow_up_key_scope(&self, scope: Div, cx: &mut Context<Self>) -> Div {
+        scope
+            .capture_action(cx.listener(|this, _: &ModifiedSend, window, cx| {
+                if !this.composer_send_visible() {
+                    return;
+                }
+                let alternate = this.settings["sendOnReturn"].as_bool().unwrap_or(true);
+                this.send_selected(alternate, window, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &ShiftModifiedSend, window, cx| {
+                if !this.composer_send_visible() {
+                    return;
+                }
+                if !this.settings["sendOnReturn"].as_bool().unwrap_or(true) {
+                    this.send_selected(true, window, cx);
+                } else {
+                    return;
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+    }
+    fn composer_send_visible(&self) -> bool {
+        self.selected.is_some()
+            && !self.settings_in_main_window()
+            && !self.schedules_open
+            && !self.workspace_open
+            && !self.session_import_open
+            && !self.composer_files.opened
+    }
+    pub(super) fn follow_up_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(thread) = self.selected.as_ref() else {
+            return div().into_any_element();
+        };
+        let behavior = choice::effective(
+            choice::selected(thread, &self.settings),
+            thread["selection"]["provider"] == "codex",
+        );
+        Button::new("selection-follow-up-disclosure")
+            .label(behavior.label())
+            .icon(behavior_icon(behavior))
+            .dropdown_caret(true)
+            .accessibility_label(format!("While the agent works: {}", behavior.label()))
+            .tooltip("Choose what Send does while the agent works")
+            .ghost()
+            .compact()
+            .xsmall()
+            .h(px(26.))
+            .rounded(px(7.))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.follow_up_picker = !this.follow_up_picker;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+    pub(super) fn follow_up_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.follow_up_picker {
+            return None;
+        }
+        let thread = self.selected.as_ref()?;
+        let chosen = choice::selected(thread, &self.settings);
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child("While the agent works");
+        for behavior in [Behavior::Steer, Behavior::Queue, Behavior::Interrupt] {
+            let unsupported =
+                behavior == Behavior::Steer && thread["selection"]["provider"] != "codex";
+            pane = pane.child(
+                Button::new(SharedString::from(format!("follow-up-{}", behavior.key())))
+                    .label(behavior.label())
+                    .icon(behavior_icon(behavior))
+                    .selected(chosen == behavior)
+                    .disabled(unsupported)
+                    .tooltip(if unsupported {
+                        "This provider does not support native steering yet"
+                    } else {
+                        behavior_help(behavior)
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.choose_follow_up(behavior, cx)),
+                    ),
+            );
+        }
+        Some(pane.into_any_element())
+    }
+    fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
+        if !self.flush_pending_drafts() {
+            self.status = "Save the current draft before changing follow-up behavior.".into();
+            cx.notify();
+            return;
+        }
+        let Some(thread) = self.selected.clone() else {
+            return;
+        };
+        let result = (|| -> Result<(Value, Value)> {
+            let mut engine = self.engine.try_lock().map_err(|_| EngineBusy)?;
+            let current = engine.store.thread(&text(&thread, "id"))?;
+            let saved = engine.choose_native_follow_up(&current, behavior)?;
+            let settings = engine
+                .store
+                .document("settings.json")?
+                .unwrap_or_else(|| json!({}));
+            Ok((saved, settings))
+        })();
+        match result {
+            Ok((thread, settings)) => {
+                self.selected = Some(thread);
+                self.settings = settings;
+                self.follow_up_picker = false;
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        cx.notify();
+    }
+    pub(super) fn send_follow_up(&mut self, alternate: bool, cx: &mut Context<Self>) {
+        if !self.flush_pending_drafts() {
+            self.status = "Draft persistence is recovering; message retained.".into();
+            cx.notify();
+            return;
+        }
+        let Some(thread) = self.selected.clone() else {
+            return;
+        };
+        let id = text(&thread, "id");
+        if self.attachment_import_threads.contains(&id) {
+            self.status = "Wait for image imports to finish before sending a follow-up.".into();
+            cx.notify();
+            return;
+        }
+        let draft = self.composer.read(cx).value().to_string();
+        let result = self
+            .engine
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!(EngineBusy))
+            .and_then(|mut engine| engine.send_native_follow_up(&thread, alternate));
+        match result {
+            Ok(ticket) => {
+                self.follow_up_deliveries.push(PendingDelivery {
+                    ticket: Some(ticket),
+                    thread: id,
+                    draft,
+                });
+                self.status =
+                    "Delivering follow-up; draft retained until delivery is confirmed.".into();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        cx.notify();
+    }
+    pub(super) fn poll_composer_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut retained = Vec::new();
+        for mut delivery in std::mem::take(&mut self.follow_up_deliveries) {
+            let result = match self.engine.try_lock() {
+                Err(_) => None,
+                Ok(mut engine) => match engine
+                    .native_follow_up_status(delivery.ticket.as_ref().expect("owned native ticket"))
+                {
+                    Ok(NativeFollowUpStatus::Pending) => Some(NativeFollowUpStatus::Pending),
+                    Ok(status) => {
+                        let ticket = delivery.ticket.take().expect("owned native ticket");
+                        match engine.collect_native_follow_up(ticket) {
+                            Ok(()) => Some(status),
+                            Err(error) => Some(NativeFollowUpStatus::Retained(error.to_string())),
+                        }
+                    }
+                    Err(error) => Some(NativeFollowUpStatus::Retained(error.to_string())),
+                },
+            };
+            match result {
+                None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
+                Some(status) => {
+                    let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
+                    self.status = match &status {
+                        NativeFollowUpStatus::Retained(reason) => reason.clone(),
+                        NativeFollowUpStatus::Delivered {
+                            dispatch,
+                            draft_cleared,
+                        } => format!(
+                            "{}{}",
+                            dispatch_label(*dispatch),
+                            if *draft_cleared {
+                                ""
+                            } else {
+                                "; draft cleanup did not complete. Do not submit it again."
+                            }
+                        ),
+                        NativeFollowUpStatus::Pending => unreachable!(),
+                    };
+                    if delivered
+                        && self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| thread["id"] == delivery.thread)
+                        && self.composer.read(cx).value().as_ref() == delivery.draft
+                        && let Ok(thread) = call(
+                            &self.engine,
+                            "threads.read",
+                            json!({"threadId":delivery.thread}),
+                        )
+                        && thread["draft"] == ""
+                    {
+                        self.pending_drafts.remove(&delivery.thread);
+                        self.selected = Some(thread);
+                        self.composer
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                    }
+                    self.refresh_queue(cx);
+                    cx.notify();
+                }
+            }
+        }
+        self.follow_up_deliveries = retained;
+    }
+    pub(super) fn composer_send_dispatch(&self, alternate: bool) -> Dispatch {
+        let Some(thread) = self.selected.as_ref() else {
+            return Dispatch::Send;
+        };
+        self.engine
+            .try_lock()
+            .ok()
+            .and_then(|engine| engine.native_follow_up_dispatch(thread, alternate).ok())
+            .unwrap_or(if self.running.contains(&text(thread, "id")) {
+                Dispatch::Queue
+            } else {
+                Dispatch::Send
+            })
+    }
+}
+pub(super) fn dispatch_icon(dispatch: Dispatch) -> gpui_kit::assets::IconName {
+    use gpui_kit::assets::IconName;
+    match dispatch {
+        Dispatch::Send => IconName::ArrowUp,
+        Dispatch::Steer => IconName::CornerUpRight,
+        Dispatch::Queue => IconName::ListPlus,
+        Dispatch::Interrupt => IconName::SkipForward,
+    }
+}
+pub(super) fn dispatch_label(dispatch: Dispatch) -> &'static str {
+    match dispatch {
+        Dispatch::Send => "Send message",
+        Dispatch::Steer => "Steer message",
+        Dispatch::Queue => "Queue message",
+        Dispatch::Interrupt => "Stop the turn and send message",
+    }
+}
+fn behavior_icon(behavior: Behavior) -> gpui_kit::assets::IconName {
+    dispatch_icon(match behavior {
+        Behavior::Steer => Dispatch::Steer,
+        Behavior::Queue => Dispatch::Queue,
+        Behavior::Interrupt => Dispatch::Interrupt,
+    })
+}
+fn behavior_help(behavior: Behavior) -> &'static str {
+    match behavior {
+        Behavior::Steer => {
+            "Send text into the running turn; if it cannot receive now, send it next"
+        }
+        Behavior::Queue => "Wait for this turn to finish before sending",
+        Behavior::Interrupt => {
+            "Stop the current turn, wait for its worker to return and save, then send"
+        }
+    }
+}
