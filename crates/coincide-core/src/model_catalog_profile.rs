@@ -71,6 +71,16 @@ impl NamedBinding {
     pub(crate) fn thread(&self) -> &str {
         &self.thread
     }
+    /// A native UI retry key, never account/model or continuation authority.
+    /// Captured file/project context changes need a fresh automatic warmup,
+    /// while catalog jobs and unrelated Store writes must not restart one.
+    pub(crate) fn readiness_generation(&self) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        digest.update(b"coincide/named-readiness/v1\0");
+        digest.update(serde_json::to_vec(self)?);
+        Ok(format!("{:x}", digest.finalize()))
+    }
     pub(crate) fn validate(&self) -> Result<()> {
         self.profile.validate()?;
         ensure!(
@@ -80,6 +90,10 @@ impl NamedBinding {
         Ok(())
     }
 }
+
+#[cfg(all(test, any(unix, windows)))]
+#[path = "model_catalog_readiness_tests.rs"]
+mod readiness_tests;
 pub(super) fn same_scope(a: Option<&NamedBinding>, b: Option<&NamedBinding>) -> bool {
     match (a, b) {
         (None, None) => true,

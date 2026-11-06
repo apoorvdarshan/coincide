@@ -198,6 +198,13 @@ impl Engine {
             .validate_delete_rows(prepared.version, &prepared.rows)?;
         // Revocations are intentionally before SQL. A later SQL rollback may
         // discard an optional continuation opportunity, but never removes data.
+        if let Some(active) = self.active_thread().and_then(|id| Uuid::parse_str(id).ok())
+            && ids
+                .iter()
+                .any(|id| Uuid::parse_str(id).ok() == Some(active))
+        {
+            self.cancel_provider_restore();
+        }
         self.model_catalog.invalidate_deleted_threads(&ids);
         let revoked = self.named_resume.invalidate_threads(&ids, &self.store)?;
         for (thread, native) in revoked {
