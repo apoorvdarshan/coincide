@@ -46,6 +46,16 @@ pub struct ImportReport {
 }
 
 impl Store {
+    /// Runtime-only durable authority binding. Never exposed as a document or
+    /// populated by imports; the journal also binds the live Store inode.
+    #[cfg(any(unix, windows))]
+    pub(crate) fn resume_source_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .context("Store has no filesystem location")?;
+        Ok(Path::new(path).canonicalize()?)
+    }
     fn connection(&self) -> Result<&Connection> {
         self.db.as_ref().context("Store is closed")
     }
@@ -86,6 +96,13 @@ impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             let existed = parent.exists();
+            #[cfg(windows)]
+            if !existed {
+                if let Some(ancestor) = parent.parent() {
+                    fs::create_dir_all(ancestor)?;
+                }
+                crate::private_fs::windows::create_directory(parent)?;
+            }
             fs::create_dir_all(parent)?;
             #[cfg(unix)]
             if !existed {

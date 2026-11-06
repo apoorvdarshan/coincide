@@ -10,14 +10,14 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) const DOCUMENT: &str = "rust-codex-login-profiles.json";
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct LaunchContext {
     account: String,
     home: PathBuf,
     root: PathBuf,
-    home_identity: (u64, u64),
+    home_identity: crate::private_fs::Identity,
     executable: PathBuf,
-    executable_identity: (u64, u64, u64, std::time::SystemTime),
+    executable_identity: (crate::private_fs::Identity, u64, std::time::SystemTime),
 }
 impl LaunchContext {
     pub(crate) fn capture(root: &Path, account: &str, executable: &Path) -> Result<Self> {
@@ -34,11 +34,14 @@ impl LaunchContext {
             account: account.into(),
             root: root.into(),
             home: home.clone(),
-            home_identity: identity(&fs::symlink_metadata(home)?)?,
-            executable,
+            home_identity: crate::private_fs::identity(&home)?,
+            executable: executable.clone(),
             executable_identity: {
-                let (device, inode) = identity(&metadata)?;
-                (device, inode, metadata.len(), metadata.modified()?)
+                (
+                    crate::private_fs::identity(&executable)?,
+                    metadata.len(),
+                    metadata.modified()?,
+                )
             },
         };
         value.validate()?;
@@ -59,7 +62,7 @@ impl LaunchContext {
             "Codex profile home changed"
         );
         ensure!(
-            identity(&fs::symlink_metadata(&self.home)?)? == self.home_identity,
+            crate::private_fs::identity(&self.home)? == self.home_identity,
             "Codex profile home was replaced"
         );
         // This first slice admits only a dedicated auth home, never a provider
@@ -85,6 +88,8 @@ impl LaunchContext {
                     "Codex profile auth file has unsafe owner or permissions"
                 );
             }
+            #[cfg(windows)]
+            crate::private_fs::windows::verify_inherited(&self.home.join("auth.json"), false)?;
         } else {
             ensure!(
                 fs::symlink_metadata(self.home.join("auth.json"))
@@ -93,11 +98,10 @@ impl LaunchContext {
             );
         }
         let metadata = fs::metadata(&self.executable)?;
-        let (device, inode) = identity(&metadata)?;
+        let identity = crate::private_fs::identity(&self.executable)?;
         ensure!(
             metadata.is_file()
-                && self.executable_identity
-                    == (device, inode, metadata.len(), metadata.modified()?),
+                && self.executable_identity == (identity, metadata.len(), metadata.modified()?),
             "Codex executable changed after profile admission"
         );
         Ok(())
@@ -126,8 +130,20 @@ impl LaunchContext {
         // external bearer tokens and arbitrary configured auth-command variables.
         command.env_clear();
         for key in [
-            "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR",
-            "TMP", "TEMP",
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "SystemRoot",
+            "SYSTEMROOT",
+            "WINDIR",
         ] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
@@ -243,15 +259,6 @@ pub(crate) fn validation_view(thread: &Value) -> Value {
     value
 }
 #[cfg(unix)]
-fn identity(metadata: &fs::Metadata) -> Result<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    Ok((metadata.dev(), metadata.ino()))
-}
-#[cfg(not(unix))]
-fn identity(_: &fs::Metadata) -> Result<(u64, u64)> {
-    anyhow::bail!("Named Codex profiles are not supported on this platform")
-}
-#[cfg(unix)]
 fn private_directory(path: &Path, create: bool) -> Result<()> {
     if create {
         match fs::create_dir(path) {
@@ -283,10 +290,22 @@ fn private_directory(path: &Path, create: bool) -> Result<()> {
     }
     Ok(())
 }
-#[cfg(not(unix))]
-fn private_directory(_: &Path, _: bool) -> Result<()> {
-    anyhow::bail!("Named Codex profiles are not supported on this platform")
+#[cfg(windows)]
+fn private_directory(path: &Path, create: bool) -> Result<()> {
+    if create {
+        crate::private_fs::windows::create_directory(path)?;
+    }
+    ensure!(
+        fs::symlink_metadata(path)?.is_dir(),
+        "Profile container is not a directory"
+    );
+    crate::private_fs::windows::verify_inherited(path, true)
 }
+#[cfg(not(any(unix, windows)))]
+fn private_directory(_: &Path, _: bool) -> Result<()> {
+    anyhow::bail!("Private profiles unavailable")
+}
+
 pub(crate) fn managed_home(root: &Path, id: &str, create: bool) -> Result<PathBuf> {
     canonical_id(id)?;
     private_directory(root, false)?;

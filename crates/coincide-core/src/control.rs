@@ -24,6 +24,11 @@ use std::{
     },
     thread,
 };
+#[cfg(windows)]
+pub(crate) use windows::{
+    current_sid, private_descriptor, private_directory_descriptor, verify_file_owner,
+    verify_private_path,
+};
 const MAX_FRAME: u64 = 4 * 1024 * 1024;
 /// Observation of the retained control worker, not application quiescence or
 /// proof that every operating-system resource has been released.
