@@ -774,7 +774,20 @@ pub(crate) fn effective_var(name: &str) -> Option<std::ffi::OsString> {
         .with(|slot| {
             slot.borrow()
                 .as_ref()
-                .and_then(|scope| scope.record.environment.get(name))
+                .and_then(|scope| {
+                    scope
+                        .record
+                        .environment
+                        .iter()
+                        .find(|(key, _)| {
+                            if cfg!(windows) {
+                                key.eq_ignore_ascii_case(name)
+                            } else {
+                                key.as_str() == name
+                            }
+                        })
+                        .map(|(_, value)| value)
+                })
                 .map(std::ffi::OsString::from)
         })
         .or_else(|| std::env::var_os(name))
