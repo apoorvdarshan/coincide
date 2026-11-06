@@ -75,7 +75,7 @@ impl InstructionsPanel {
         };
         cx.notify();
     }
-    fn choose_instruction_copy(
+    pub(super) fn choose_instruction_copy(
         &mut self,
         new_file: bool,
         window: &mut Window,
@@ -100,8 +100,12 @@ impl InstructionsPanel {
                 self.setup.picker_pending = false;
                 return;
             };
+            let picker_lease = self.edit_lease.pending_native_action();
+            let picker_owner = cx.entity().clone();
             let picker = cx.prompt_for_new_path(&directory, Some("Instructions-copy.md"));
             self.setup.picker = Some(cx.spawn_in(window, async move |this, cx| {
+                let _picker_lease = picker_lease;
+                let _picker_owner = picker_owner;
                 let result: Result<_> = async { picker.await? }.await;
                 let _ = this.update_in(cx, |this, window, cx| {
                     this.setup.picker_pending = false;
@@ -125,6 +129,8 @@ impl InstructionsPanel {
                 });
             }));
         } else {
+            let picker_lease = self.edit_lease.pending_native_action();
+            let picker_owner = cx.entity().clone();
             let picker = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
                 directories: false,
@@ -132,6 +138,8 @@ impl InstructionsPanel {
                 prompt: Some("Choose instruction copy".into()),
             });
             self.setup.picker = Some(cx.spawn_in(window, async move |this, cx| {
+                let _picker_lease = picker_lease;
+                let _picker_owner = picker_owner;
                 let result: Result<_> = async { picker.await? }.await;
                 let _ = this.update_in(cx, |this, window, cx| {
                     this.setup.picker_pending = false;
@@ -210,7 +218,12 @@ impl InstructionsPanel {
         };
         cx.notify();
     }
-    fn apply_copy_sync(&mut self, keep: Option<Keep>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn apply_copy_sync(
+        &mut self,
+        keep: Option<Keep>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.dirty(cx) {
             self.setup.status = "Save or discard editor changes before applying copy sync.".into();
             cx.notify();

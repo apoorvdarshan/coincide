@@ -76,6 +76,16 @@ impl State {
         self.workers.status()
     }
 }
+fn native_git_runner() -> Result<Runner> {
+    #[cfg(test)]
+    {
+        Runner::isolated()
+    }
+    #[cfg(not(test))]
+    {
+        Runner::system()
+    }
+}
 fn admitted(
     admission: &crate::worker_owner::Admission,
     epoch: &AtomicU64,
@@ -91,7 +101,7 @@ fn admitted(
     Ok(())
 }
 impl InstructionsPanel {
-    fn choose_git_repository(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn choose_git_repository(&mut self, cx: &mut Context<Self>) {
         if !self.setup_clean(cx) || self.setup.git.busy() {
             return;
         }
@@ -108,6 +118,8 @@ impl InstructionsPanel {
         self.setup.git.picker = true;
         self.setup.git.invalidate();
         let expected = self.setup.git.epoch.load(Ordering::Acquire);
+        let picker_lease = self.edit_lease.pending_native_action();
+        let picker_owner = cx.entity().clone();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -115,6 +127,8 @@ impl InstructionsPanel {
             prompt: Some("Choose instruction copy repository".into()),
         });
         self.setup.picker = Some(cx.spawn(async move |this, cx| {
+            let _picker_lease = picker_lease;
+            let _picker_owner = picker_owner;
             let result: Result<_> = async { picker.await? }.await;
             let _ = this.update(cx, |this, cx| {
                 this.setup.git.picker = false;
@@ -197,7 +211,7 @@ impl InstructionsPanel {
                     copy,
                     source,
                     baseline.clone(),
-                    Runner::system()?,
+                    native_git_runner()?,
                     &cancel,
                     validate,
                 )
@@ -217,7 +231,7 @@ impl InstructionsPanel {
         }
         cx.notify();
     }
-    fn apply_git_copy(&mut self, push: bool, cx: &mut Context<Self>) {
+    pub(super) fn apply_git_copy(&mut self, push: bool, cx: &mut Context<Self>) {
         if self.dirty(cx) || self.setup.git.busy() {
             self.setup.git.status =
                 "Save or discard master edits and wait for Git cleanup first.".into();

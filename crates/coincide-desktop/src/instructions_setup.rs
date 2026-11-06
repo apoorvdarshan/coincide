@@ -120,6 +120,17 @@ impl InstructionsPanel {
             cx.notify();
             return false;
         }
+        // Constructor discovery is nonblocking; a busy Engine must not leave
+        // native setup permanently unusable after the owner becomes available.
+        if self.setup.metadata.is_none()
+            && let Err(error) = self.setup.refresh()
+        {
+            self.setup.status = format!(
+                "Instruction configuration is not ready: {error}. Try again when the current operation finishes."
+            );
+            cx.notify();
+            return false;
+        }
         true
     }
     fn bind_native_source(
@@ -272,6 +283,18 @@ impl InstructionsPanel {
         if !self.setup_clean(cx) {
             return;
         }
+        // A native click may begin a new review, but the asynchronous dialog
+        // must retain this exact document baseline through its eventual save.
+        if let Err(error) = self.setup.refresh() {
+            self.setup.status = format!("Master chooser could not start: {error}");
+            cx.notify();
+            return;
+        }
+        let baseline = self
+            .setup
+            .metadata
+            .clone()
+            .expect("refresh captured metadata");
         self.setup.review = None;
         self.setup.review_editor = None;
         self.setup.picker_pending = true;
@@ -279,6 +302,8 @@ impl InstructionsPanel {
         self.setup.copy.invalidate();
         self.setup.git.invalidate();
         let generation = self.setup.generation;
+        let picker_lease = self.edit_lease.pending_native_action();
+        let picker_owner = cx.entity().clone();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -286,6 +311,8 @@ impl InstructionsPanel {
             prompt: Some("Choose instruction master".into()),
         });
         self.setup.picker = Some(cx.spawn_in(window, async move |this, cx| {
+            let _picker_lease = picker_lease;
+            let _picker_owner = picker_owner;
             let result: Result<_> = async { picker.await? }.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.setup.picker_pending = false;
@@ -310,17 +337,12 @@ impl InstructionsPanel {
                     scope.choose_master_native(paths[0].clone(), &owner.store)?;
                     // The native chooser supplied this path; importing metadata
                     // alone never reaches this configuration/write capability.
-                    let baseline = this
-                        .setup
-                        .metadata
-                        .as_ref()
-                        .context("Refresh instruction configuration")?;
                     let enabled = baseline
                         .configuration(this.setup.project_root.as_deref())?
                         .is_some_and(|c| c.enabled);
                     this.setup.metadata = Some(scope.persist_configuration_native(
                         &mut owner.store,
-                        baseline,
+                        &baseline,
                         enabled,
                     )?);
                     Ok(Some(scope))
@@ -840,3 +862,7 @@ impl InstructionsPanel {
         pane.child(self.copy_review(cx)).into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "instructions_headless_tests.rs"]
+mod headless_tests;
