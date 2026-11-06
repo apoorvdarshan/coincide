@@ -1105,6 +1105,9 @@ impl Coincide {
             return;
         }
         self.record_appshot_interaction();
+        if self.edit_last_queued_key(event, window, cx) {
+            return;
+        }
         if self.record_shortcut_event(event, window, cx) {
             return;
         }
