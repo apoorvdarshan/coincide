@@ -21,10 +21,7 @@ use x11rb::{
     connection::Connection,
     protocol::{composite::ConnectionExt as _, xproto::*},
     reexports::x11rb_protocol::{parse_display, xauth},
-    rust_connection::{
-        RustConnection,
-        stream::{DefaultStream, PollMode, Stream},
-    },
+    rust_connection::{DefaultStream, PollMode, RustConnection, Stream},
     utils::RawFdContainer,
 };
 
@@ -788,7 +785,6 @@ fn inspect_accessibility(
     result
 }
 pub(super) fn sound() {
-    use gtk::gdk::prelude::DisplayExt;
     if let Some(display) = gtk::gdk::Display::default() {
         display.beep();
     }

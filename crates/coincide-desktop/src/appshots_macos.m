@@ -26,7 +26,8 @@ static char *ASJSON(NSDictionary *value) {
 }
 static OSStatus ASHotKey(EventHandlerCallRef next, EventRef event, void *context) {
   (void)next;(void)context; EventHotKeyID id={0};
-  if(GetEventParameter(event,kEventParamDirectObject,typeEventHotKeyID,NULL,sizeof(id),NULL,&id)==noErr && id.signature=='Asht') atomic_store(&pending,true);
+  if(GetEventParameter(event,kEventParamDirectObject,typeEventHotKeyID,NULL,sizeof(id),NULL,&id)!=noErr || id.signature!='Asht') return eventNotHandledErr;
+  atomic_store(&pending,true);
   return noErr;
 }
 static void ASFlags(NSEvent *event) {
