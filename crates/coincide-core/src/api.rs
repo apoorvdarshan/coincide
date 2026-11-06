@@ -17,6 +17,9 @@ use uuid::Uuid;
 mod appshots_api;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
+#[path = "queue_dispatch.rs"]
+mod queue_dispatch;
+
 #[path = "follow_up_api.rs"]
 mod follow_up_api;
 #[path = "project_defaults.rs"]
@@ -159,6 +162,21 @@ pub struct ProviderWorkersStatus {
     pub returned: u64,
     pub panicked: u64,
     pub unclassified: u64,
+}
+/// Closed owner-selected origin. A queued origin contains a durable native
+/// claim; callers cannot select it with JSON or impersonate a scheduled turn.
+enum SendOrigin {
+    Ordinary,
+    Scheduled,
+    Queued(queue_dispatch::QueueClaim),
+}
+impl SendOrigin {
+    fn consumes_composer(&self) -> bool {
+        matches!(self, Self::Ordinary)
+    }
+    fn scheduled(&self) -> bool {
+        matches!(self, Self::Scheduled)
+    }
 }
 struct Running {
     configuration: Option<provider_configuration::Stamp>,
@@ -844,7 +862,7 @@ impl Engine {
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "composer.context.edit" => self.edit_composer_context(p),
             "composer.context.attachTerminalSelection" => self.attach_terminal_selection(p),
-            "agent.send" => self.send_turn(p,false),
+            "agent.send" => self.send_turn(p,SendOrigin::Ordinary),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
                 Ok(json!({"requested":true}))
@@ -882,14 +900,15 @@ impl Engine {
             _ => bail!("Unsupported method: {method}"),
         }
     }
-    /// Trusted native UI entry point. Deliberately not part of the agent dispatcher.
-    fn send_turn(&mut self, p: &Value, scheduled: bool) -> Result<Value> {
-        self.send_turn_if_unchanged(p, scheduled, None, false)
+    /// JSON sends always select Ordinary. Only the owning queue/scheduler
+    /// control paths can supply the other closed send origins.
+    fn send_turn(&mut self, p: &Value, origin: SendOrigin) -> Result<Value> {
+        self.send_turn_if_unchanged(p, &origin, None, false)
     }
     fn send_turn_if_unchanged(
         &mut self,
         p: &Value,
-        scheduled: bool,
+        origin: &SendOrigin,
         expected_scope: Option<&Value>,
         force_fresh: bool,
     ) -> Result<Value> {
@@ -903,7 +922,7 @@ impl Engine {
             !self.runs.contains_key(&id),
             "This thread is already running"
         );
-        if !scheduled {
+        if origin.consumes_composer() {
             ensure!(
                 !self.attachment_operations.iter().any(|operation| self
                     .workspace_pending
@@ -925,7 +944,16 @@ impl Engine {
         }
         let _provider_configuration_scope = provider_configuration::enter(native_configuration);
         self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
-        let original = if let Some(expected) = expected_scope {
+        if let SendOrigin::Queued(claim) = origin {
+            ensure!(
+                expected_scope.is_none() && !force_fresh,
+                "Queued dispatch cannot borrow replacement authority"
+            );
+            claim.validate(self.thread_bulk_owner, &id, prompt, &v)?;
+        }
+        let original = if let SendOrigin::Queued(_) = origin {
+            Some(v.clone())
+        } else if let Some(expected) = expected_scope {
             ensure!(
                 crate::composer_follow_up::scope(&v) == crate::composer_follow_up::scope(expected),
                 "Composer changed before replacement admission; draft retained"
@@ -939,7 +967,7 @@ impl Engine {
             "Attach references through composer.context.edit before sending"
         );
         // Scheduled/queued turns never consume the user's unrelated composer.
-        let context = if scheduled {
+        let context = if !origin.consumes_composer() {
             Value::Null
         } else {
             v["draftContext"].clone()
@@ -953,8 +981,8 @@ impl Engine {
             )?;
         }
         ensure!(
-            codex_profile.is_none() || !scheduled,
-            "Named Codex profiles are not connected to queued/scheduled dispatch"
+            codex_profile.is_none() || !origin.scheduled(),
+            "Named Codex profiles are not connected to scheduled dispatch"
         );
         let validation_thread = if codex_profile.is_some() {
             crate::codex_login_profiles::validation_view(&v)
@@ -994,7 +1022,7 @@ impl Engine {
             None
         };
         let draft_images: Vec<crate::attachments::StoredImage> =
-            if scheduled || v["rustDraftImages"].is_null() {
+            if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
                 Vec::new()
             } else {
                 ensure!(
@@ -1224,7 +1252,7 @@ impl Engine {
             v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
                 serde_json::to_value(&draft_images)?;
         }
-        if !scheduled {
+        if origin.consumes_composer() {
             v["rustDraftImages"] = json!([]);
             v["draft"] = json!("");
             v.as_object_mut().unwrap().remove("draftContext");
@@ -1246,6 +1274,12 @@ impl Engine {
         } else {
             self.store.save(&v)?;
         }
+        // The durable claim and this exact runtime owner are both selected
+        // before Session starts its worker. No post-launch claim lookup exists.
+        let queue_claim = match origin {
+            SendOrigin::Queued(claim) => Some(claim.id().to_owned()),
+            _ => None,
+        };
         self.insert_running(
             id,
             Running {
@@ -1270,7 +1304,7 @@ impl Engine {
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
                 pending: HashMap::new(),
                 schedule_claim: None,
-                queue_claim: None,
+                queue_claim,
                 cancelled: false,
                 events: VecDeque::new(),
                 persistence_error: None,
@@ -1460,7 +1494,6 @@ impl Engine {
         if self.admissions_frozen() {
             return;
         }
-        use crate::message_queue::{self as queue, State};
         let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
         for id in ids {
             if self.runs.contains_key(&id)
@@ -1469,43 +1502,31 @@ impl Engine {
             {
                 continue;
             }
+            if self
+                .store
+                .thread(&id)
+                .ok()
+                .is_some_and(|thread| self.named_resume.waiting_for_join(&thread))
+            {
+                continue;
+            }
             let launched = (|| -> Result<bool> {
-                let mut thread = self.store.thread(&id)?;
-                ensure!(
-                    !self.store.is_imported(&id)? && thread["isArchived"] != true,
-                    "Queued thread is unavailable"
-                );
-                let mut messages = queue::read(&thread)?;
-                let Some(index) = messages.iter().position(|m| m.state == State::Pending) else {
+                let Some(claim) = self.claim_next_queue_turn(&id)? else {
                     return Ok(false);
                 };
-                ensure!(
-                    !messages.iter().any(|m| m.state == State::Dispatching),
-                    "Queue has an unconfirmed dispatch; resume it explicitly"
-                );
-                // Model/account changes must not silently redirect already queued work.
-                ensure!(
-                    messages[index].selection == thread["selection"],
-                    "Provider selection changed; remove and requeue this message"
-                );
-                messages[index].state = State::Dispatching;
-                let message = messages[index].clone();
-                queue::write(&mut thread, &messages)?;
-                self.store.save(&thread)?;
-                self.revision += 1;
-                match self.send_turn(&json!({"threadId":id,"text":message.text}), true) {
-                    Ok(_) => {
-                        self.runs.get_mut(&id).unwrap().queue_claim = Some(message.id);
-                        Ok(true)
-                    }
+                let prompt = claim.text().to_owned();
+                let origin = SendOrigin::Queued(claim);
+                match self.send_turn_if_unchanged(
+                    &json!({"threadId":id,"text":prompt}),
+                    &origin,
+                    None,
+                    false,
+                ) {
+                    Ok(_) => Ok(true),
                     Err(error) => {
-                        queue::finish(
-                            &mut thread,
-                            &message.id,
-                            State::Failed,
-                            Some(&error.to_string()),
-                        )?;
-                        self.store.save(&thread)?;
+                        if let SendOrigin::Queued(claim) = &origin {
+                            self.fail_queue_claim(claim, &error.to_string())?;
+                        }
                         Err(error)
                     }
                 }
@@ -1517,8 +1538,9 @@ impl Engine {
                 if let Err(error) = launched
                     && let Ok(mut thread) = self.store.thread(&id)
                 {
+                    let source = thread.clone();
                     thread["rustQueueError"] = json!(error.to_string());
-                    let _ = self.store.save(&thread);
+                    let _ = self.store.save_native_follow_up_turn(&source, &thread);
                 }
             }
         }
@@ -1632,7 +1654,10 @@ impl Engine {
                 );
                 id
             };
-            self.send_turn(&json!({"threadId":thread,"text":claim.prompt}), true)?;
+            self.send_turn(
+                &json!({"threadId":thread,"text":claim.prompt}),
+                SendOrigin::Scheduled,
+            )?;
             self.runs
                 .get_mut(&thread)
                 .context("Scheduled turn did not start")?

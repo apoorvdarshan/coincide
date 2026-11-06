@@ -68,6 +68,11 @@ fn fixture(root: &Path) {
         "providers.codex.profiles.create",
         json!({"name":"Synthetic follow-up account"}),
     );
+    fs::write(
+        root.join("expected-account"),
+        account["id"].as_str().unwrap(),
+    )
+    .unwrap();
     call(
         &mut engine,
         "providers.codex.profiles.select",
@@ -325,6 +330,116 @@ fn fixture(root: &Path) {
         "synthetic unrelated original resume"
     );
     assert_eq!(engine.provider_workers_status().returned, 2);
+    // Named queued text must use the same authenticated private model/policy,
+    // exact native session and unseen delta as an ordinary continuation. Queue
+    // dispatch is not permission to consume the unrelated current composer.
+    let queued = call(
+        &mut engine,
+        "agent.queue.add",
+        json!({"threadId":id,"text":"synthetic named queued delta"}),
+    );
+    let queued_id = queued["message"]["id"].as_str().unwrap().to_owned();
+    let mut unrelated = engine.store.thread(&id).unwrap();
+    unrelated["draft"] = json!("Unsent unrelated named draft 👩🏽‍💻");
+    unrelated["draftContext"] = json!([{"id":uuid::Uuid::new_v4(),"kind":"file","path":"/synthetic/never-read-reference","future":7}]);
+    unrelated["rustDraftImages"] =
+        json!([{"future":"Unrelated image metadata must not be opened by a queued-text turn"}]);
+    unrelated["rustMessageQueue"][0]["future"] = json!({"keep":8});
+    unrelated["future"] = json!({"keep":9});
+    engine.store.save(&unrelated).unwrap();
+    wait(
+        &mut engine,
+        "actual named queued delta, saved claim and owned provider join",
+        |engine| {
+            let saved = engine.store.thread(&id).unwrap();
+            saved["rustMessageQueue"].as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row["id"] == queued_id && row["state"] == "completed")
+            }) && engine.provider_workers_status().running == 0
+        },
+    );
+    let queued_saved = engine.store.thread(&id).unwrap();
+    for field in ["draft", "draftContext", "rustDraftImages", "future"] {
+        assert_eq!(
+            queued_saved[field], unrelated[field],
+            "queued turn preserved {field}"
+        );
+    }
+    assert_eq!(
+        queued_saved["rustMessageQueue"][0]["future"],
+        json!({"keep":8})
+    );
+    let queued_user = queued_saved["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "user" && item["text"] == "synthetic named queued delta")
+        .unwrap();
+    assert!(queued_user["context"].is_null() && queued_user["rustImages"].is_null());
+    let wire: Vec<Value> = fs::read_to_string(root.join("wire.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let turns: Vec<_> = wire
+        .iter()
+        .filter(|frame| frame["method"] == "turn/start")
+        .collect();
+    assert_eq!(turns.len(), 6);
+    assert_eq!(
+        turns[5]["params"]["input"][0]["text"], "synthetic named queued delta",
+        "proven native queue resumes with only unseen delta"
+    );
+    let resumes: Vec<_> = wire
+        .iter()
+        .filter(|frame| frame["method"] == "thread/resume")
+        .collect();
+    assert_eq!(resumes.len(), 2);
+    assert_eq!(resumes[1]["params"]["threadId"], first_native);
+    assert_eq!(engine.provider_workers_status().returned, 3);
+    // A frozen selection is never silently redirected into another account.
+    let second_account = call(
+        &mut engine,
+        "providers.codex.profiles.create",
+        json!({"name":"Synthetic queue mismatch account"}),
+    );
+    let mismatch = call(
+        &mut engine,
+        "threads.create",
+        json!({"projectId":project["id"]}),
+    );
+    let mismatch_id = text(&mismatch, "id");
+    let mut mismatch = engine.store.thread(&mismatch_id).unwrap();
+    mismatch["selection"] = queued_saved["selection"].clone();
+    engine.store.save(&mismatch).unwrap();
+    call(
+        &mut engine,
+        "agent.queue.add",
+        json!({"threadId":mismatch_id,"text":"synthetic must not redirect accounts"}),
+    );
+    let mut mismatch = engine.store.thread(&mismatch_id).unwrap();
+    mismatch["selection"]["accountID"] = second_account["id"].clone();
+    engine.store.save(&mismatch).unwrap();
+    engine.poll();
+    let mismatched = engine.store.thread(&mismatch_id).unwrap();
+    assert!(
+        mismatched["rustQueueError"]
+            .as_str()
+            .unwrap()
+            .contains("Provider selection changed")
+    );
+    assert_eq!(mismatched["rustMessageQueue"][0]["state"], "pending");
+    let uncertain_queue = call(
+        &mut engine,
+        "threads.create",
+        json!({"projectId":project["id"]}),
+    );
+    let uncertain_queue_id = text(&uncertain_queue, "id");
+    let mut uncertain_queue = engine.store.thread(&uncertain_queue_id).unwrap();
+    coincide_core::message_queue::add(&mut uncertain_queue, "synthetic uncertain queued request")
+        .unwrap();
+    uncertain_queue["rustMessageQueue"][0]["state"] = json!("dispatching");
+    engine.store.save(&uncertain_queue).unwrap();
     engine.request_core_owner_shutdown().unwrap();
     wait(&mut engine, "cold owned shutdown", |engine| {
         engine
@@ -332,13 +447,53 @@ fn fixture(root: &Path) {
             .is_ok_and(|status| status.rust_owners_drained())
     });
     engine.close_store_after_core_shutdown().unwrap();
+    drop(engine);
+    let before = fs::read(root.join("wire.jsonl")).unwrap();
+    let mut engine = Engine::new(Store::open(&root.join("state/state.sqlite")).unwrap());
+    engine.poll();
+    assert_eq!(
+        engine.store.thread(&uncertain_queue_id).unwrap()["rustMessageQueue"][0]["state"],
+        "dispatching"
+    );
+    call(
+        &mut engine,
+        "agent.queue.resume",
+        json!({"threadId":uncertain_queue_id}),
+    );
+    engine.poll();
+    assert_eq!(
+        engine.store.thread(&uncertain_queue_id).unwrap()["rustMessageQueue"][0]["state"],
+        "interrupted"
+    );
+    assert_eq!(
+        fs::read(root.join("wire.jsonl")).unwrap(),
+        before,
+        "unconfirmed queued claims never replay after restart"
+    );
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        queued_saved["draft"]
+    );
+    engine.request_core_owner_shutdown().unwrap();
+    wait(&mut engine, "queue restart owned shutdown", |engine| {
+        engine
+            .poll_core_owner_shutdown()
+            .is_ok_and(|status| status.rust_owners_drained())
+    });
+    engine.close_store_after_core_shutdown().unwrap();
     println!(
-        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; five saved/joined provider returns PASS"
+        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; named queued delta/account boundary/unrelated composer preserved; restart queue claim never replayed; six saved/joined provider returns PASS"
     );
 }
 fn provider() {
     let home = PathBuf::from(std::env::var_os("CODEX_HOME").expect("isolated named home"));
     let root = home.ancestors().nth(4).unwrap();
+    let expected = fs::read_to_string(root.join("expected-account")).unwrap();
+    assert_eq!(
+        home.file_name().unwrap().to_string_lossy(),
+        expected,
+        "actual fake subprocess must receive only its intended private account home"
+    );
     for key in [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
@@ -396,6 +551,41 @@ fn provider() {
                 return; // Deliberately lose the steering ACK.
             }
             "turn/start" => {
+                if frame["params"]["input"][0]["text"] == "synthetic named queued delta" {
+                    let db = rusqlite::Connection::open_with_flags(
+                        root.join("state/state.sqlite"),
+                        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                    )
+                    .unwrap();
+                    let mut query = db.prepare("SELECT document FROM threads").unwrap();
+                    let documents = query
+                        .query_map([], |row| row.get::<_, String>(0))
+                        .unwrap()
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .unwrap();
+                    let persisted = documents
+                        .iter()
+                        .map(|raw| serde_json::from_str::<Value>(raw).unwrap())
+                        .find(|thread| {
+                            thread["rustMessageQueue"].as_array().is_some_and(|rows| {
+                                rows.iter().any(|message| {
+                                    message["text"] == "synthetic named queued delta"
+                                })
+                            })
+                        })
+                        .unwrap();
+                    assert!(
+                        persisted["rustMessageQueue"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|message| message["text"] == "synthetic named queued delta"
+                                && message["state"] == "dispatching"),
+                        "actual worker must observe the durable exact queue claim before starting"
+                    );
+                    assert_eq!(persisted["selection"]["accountID"], expected);
+                    assert_eq!(persisted["draft"], "Unsent unrelated named draft 👩🏽‍💻");
+                }
                 uncertain = frame["params"]["input"][0]["text"] == "synthetic uncertain primary";
                 first = frame["params"]["input"][0]["text"] == "synthetic first turn";
                 println!(
