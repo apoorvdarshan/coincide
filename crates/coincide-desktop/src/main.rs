@@ -60,8 +60,8 @@ mod presentation;
 mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
-mod provider_settings;
 mod provider_configuration_ui;
+mod provider_settings;
 mod queue;
 mod quit_mount;
 mod scheduling;
@@ -751,7 +751,9 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
-                if this.block_provider_configuration_close(window, cx) { return false; }
+                if this.block_provider_configuration_close(window, cx) {
+                    return false;
+                }
                 if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
                     this.prompt_instruction_close(false, window, cx);
                     return false;
@@ -768,7 +770,11 @@ impl Coincide {
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
                 cx.notify();
-                drafts_saved && media_ready && cookies_ready && this.computer_use_shutdown_ready() && this.appshots.drained()
+                drafts_saved
+                    && media_ready
+                    && cookies_ready
+                    && this.computer_use_shutdown_ready()
+                    && this.appshots.drained()
             })
             .unwrap_or(false)
         });
@@ -798,7 +804,14 @@ impl Coincide {
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        let provider_configuration_panel = cx.new(|cx| provider_configuration_ui::Panel::new(engine.clone(), native_editors.clone(), window, cx));
+        let provider_configuration_panel = cx.new(|cx| {
+            provider_configuration_ui::Panel::new(
+                engine.clone(),
+                native_editors.clone(),
+                window,
+                cx,
+            )
+        });
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),
@@ -2818,7 +2831,7 @@ impl Coincide {
             return;
         }
         self.poll_app_menu(window, cx);
-        self.poll_appshots(window,cx);
+        self.poll_appshots(window, cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
@@ -4162,7 +4175,10 @@ impl Render for Coincide {
             .on_children_prepainted(self.media_layout_observer(cx))
             .flex_1()
             .min_h(px(120.))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, _| this.record_appshot_interaction()))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.record_appshot_interaction()),
+            )
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
                     entity.update(cx, |this, cx| this.message(index, window, cx))

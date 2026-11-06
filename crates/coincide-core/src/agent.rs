@@ -32,14 +32,14 @@ mod cursor;
 mod grok;
 #[path = "provider_images.rs"]
 mod images;
+#[path = "provider_metadata_capture.rs"]
+pub(crate) mod metadata_capture;
 #[path = "native_instruction_git_process.rs"]
 pub mod native_instruction_git;
 #[path = "provider_opencode.rs"]
 mod opencode;
 #[path = "provider_transport.rs"]
 mod transport;
-#[path="provider_metadata_capture.rs"]
-pub(crate) mod metadata_capture;
 #[cfg(windows)]
 #[path = "provider_job_windows.rs"]
 mod windows_job;
