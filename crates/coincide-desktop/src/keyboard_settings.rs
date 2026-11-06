@@ -242,7 +242,11 @@ fn overrides(settings: &Value) -> Result<Option<&serde_json::Map<String, Value>>
         })
         .transpose()
 }
-pub(super) fn shortcut_label(settings:&Value,command:Command)->Option<String> { binding(settings,command).shortcut.map(|shortcut|shortcut.label()) }
+pub(super) fn shortcut_label(settings: &Value, command: Command) -> Option<String> {
+    binding(settings, command)
+        .shortcut
+        .map(|shortcut| shortcut.label())
+}
 fn binding(settings: &Value, command: Command) -> Binding {
     let (id, _, default) = command.spec();
     let fallback = Shortcut::parse(default);
