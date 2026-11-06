@@ -215,8 +215,9 @@ impl Picker {
     fn poll(&mut self) -> Option<(AttachedFileReference, bool, Option<mentions::Ticket>)> {
         let status = self.workers.status();
         self.unjoined = status.unjoined != 0;
-        if status.panicked != 0 || status.unclassified != 0 {
+        if !self.ambiguous && (status.panicked != 0 || status.unclassified != 0) {
             self.ambiguous = true;
+            self.invalidate();
             self.status =
                 "File worker completion is ambiguous; further actions are disabled.".into();
         }
@@ -249,11 +250,22 @@ impl Picker {
                 } else {
                     "That project path reference was already attached.".into()
                 };
+                if self.ambiguous {
+                    self.status.push_str(
+                        " Worker completion is ambiguous; further file actions are disabled.",
+                    );
+                }
                 Some((result, fresh, self.pending_mention.take()))
             }
             Err(error) => {
+                self.invalidate();
                 self.pending_mention = None;
                 self.status = error;
+                if self.ambiguous {
+                    self.status.push_str(
+                        " Worker completion is ambiguous; further file actions are disabled.",
+                    );
+                }
                 None
             }
         }
@@ -363,7 +375,9 @@ impl Coincide {
                 thread["draftContext"] = result.context;
             }
             if let Some(ticket) = mention {
-                if fresh && live_before_projection.as_ref() == Some(&ticket) {
+                if self.composer_files.ambiguous {
+                    self.composer_files.status="Reference attached. Worker completion is ambiguous; the draft and @query were kept and further file actions are disabled.".into();
+                } else if fresh && live_before_projection.as_ref() == Some(&ticket) {
                     if let Some((expected, range_utf16)) =
                         mentions::removal(&ticket.binding.draft, ticket.range.clone())
                     {
@@ -755,12 +769,12 @@ impl Coincide {
             .gap_1();
         if state.files.is_empty() {
             results = results
-                .child(if state.automatic {
+                .child(div().flex_shrink_0().text_xs().child(state.status.clone()))
+                .child(div().flex_shrink_0().child(if state.automatic {
                     "Choose a path reference to complete this @query. File contents are not read."
                 } else {
                     "Choose a path reference. Message text and file contents stay unchanged."
-                })
-                .child(div().text_xs().child(state.status.clone()));
+                }));
         }
         if !state.directory.is_empty() {
             let counts = format!(
