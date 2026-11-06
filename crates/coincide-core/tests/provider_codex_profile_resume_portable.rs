@@ -27,6 +27,9 @@ fn wait(engine: &mut Engine, description: &str, mut condition: impl FnMut(&mut E
     }
 }
 fn refresh(engine: &mut Engine, id: &str) {
+    refresh_account_catalog(engine, id, true);
+}
+fn refresh_account_catalog(engine: &mut Engine, id: &str, select_explicit_model: bool) {
     let thread = engine.store.thread(id).unwrap();
     let request = call(
         engine,
@@ -47,6 +50,9 @@ fn refresh(engine: &mut Engine, id: &str) {
         ready = response;
         true
     });
+    if !select_explicit_model {
+        return;
+    }
     call(
         engine,
         "providers.codex.profiles.models.select",
@@ -184,7 +190,7 @@ fn slots_phase(root: &Path, phase: &str) {
             "providers.codex.profiles.select",
             json!({"threadId":id,"accountId":account,"expectedSelection":thread["selection"]}),
         );
-        refresh(engine, &id);
+        refresh_account_catalog(engine, &id, false);
     };
     let turn = |engine: &mut Engine,
                 account: &str,
@@ -261,7 +267,7 @@ fn slots_phase(root: &Path, phase: &str) {
         .unwrap();
     } else {
         let saved: Value = serde_json::from_slice(&fs::read(&saved_path).unwrap()).unwrap();
-        refresh(&mut engine, &id);
+        refresh_account_catalog(&mut engine, &id, false);
         turn(
             &mut engine,
             &a,
@@ -436,6 +442,6 @@ fn main() {
         );
     }
     println!(
-        "portable native continuation: two fresh OS processes, exact resume ID, only new input, saved/joined shutdown: PASS"
+        "portable native continuation: explicit-model restart plus Provider-default A/B/A/restart, exact resolved model/native ID/delta once, saved/joined shutdown: PASS"
     );
 }
