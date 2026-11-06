@@ -635,14 +635,14 @@ impl Coincide {
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                 this.composer_file_bound_key(keys::Key::Escape, window, cx)
             }))
-            .capture_key_down(cx.listener(|this, event, window, cx| {
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if !event.prefer_character_input
                     && let Some(key) = keys::Key::named(&event.keystroke.key)
                 {
                     this.composer_file_key(key, event.keystroke.modifiers.modified(), window, cx);
                 }
             }))
-            .capture_key_up(cx.listener(|this, event, _, _| {
+            .capture_key_up(cx.listener(|this, event: &KeyUpEvent, _, _| {
                 if let Some(key) = keys::Key::named(&event.keystroke.key) {
                     this.composer_files.keys.release(key);
                 }
