@@ -2,8 +2,8 @@
 //! synthetic panels. No Coincide constructor, native WebView/PTY, Git or network.
 use super::{Panel, columns};
 use gpui_kit::{
-    App, AppContext, Bounds, Context, Entity, Focusable, IntoElement, ParentElement, Pixels,
-    Render, Styled, TestAppContext, Window, WindowBounds, WindowOptions,
+    App, AppContext, Bounds, Context, Entity, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, Styled, TestAppContext, Window, WindowBounds, WindowOptions,
     component::input::{Textarea, TextareaState},
     div, point, px, size,
 };
