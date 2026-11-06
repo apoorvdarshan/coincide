@@ -1038,7 +1038,7 @@ impl Coincide {
                     .flex_col()
                     .gap_3()
                     .p_3()
-                    .bg(self.color(0x141821))
+                    .bg(self.color(0x151922))
                     .border_r_1()
                     .border_color(self.color(0x29303d))
                     .child(Input::new(&self.settings_search))

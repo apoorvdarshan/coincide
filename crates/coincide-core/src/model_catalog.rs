@@ -35,6 +35,9 @@ mod profile;
 mod profile_limits;
 pub(crate) use profile::{NamedBinding, NamedModelProof};
 pub(crate) use profile_limits::LimitsBinding;
+#[path = "model_catalog_resume.rs"]
+mod resume;
+pub(crate) use resume::{NamedCatalogFence, NamedResumeAdmission};
 #[cfg(windows)]
 #[path = "model_catalog_windows.rs"]
 mod windows;
@@ -52,6 +55,16 @@ const DEADLINE: Duration = Duration::from_secs(15);
 
 type Completion = (String, Result<Vec<Value>, String>);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshReuse {
+    Loading,
+    AuthenticatedReadyOrLoading,
+    Never,
+}
+
+#[cfg(all(test, any(unix, windows)))]
+#[path = "model_catalog_restore_poll_tests.rs"]
+mod restore_poll_tests;
 #[cfg(test)]
 #[path = "model_catalog_shutdown_tests.rs"]
 mod shutdown_tests;
@@ -242,15 +255,37 @@ impl ModelCatalog {
         named: Option<NamedBinding>,
         work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
     ) -> Result<Value> {
+        self.refresh_scoped_reusing(provider, binding, named, RefreshReuse::Loading, work)
+    }
+    fn refresh_scoped_reusing(
+        &mut self,
+        provider: &str,
+        binding: Option<EffortExecutable>,
+        named: Option<NamedBinding>,
+        reuse: RefreshReuse,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         crate::agent::Provider::from_name(provider)?;
         self.poll();
-        if let Some(job) = self.jobs.values().find(|job| {
-            job.response["provider"] == provider
-                && job.named == named
-                && job.response["state"] == "loading"
-                && !job.cancelled.load(Ordering::Acquire)
-        }) {
+        if reuse != RefreshReuse::Never
+            && let Some(job) = self
+                .order
+                .iter()
+                .rev()
+                .filter_map(|id| self.jobs.get(id))
+                .find(|job| {
+                    job.response["provider"] == provider
+                        && profile::same_scope(job.named.as_ref(), named.as_ref())
+                })
+            && job.named == named
+            && !job.cancelled.load(Ordering::Acquire)
+            && (job.response["state"] == "loading"
+                || (reuse == RefreshReuse::AuthenticatedReadyOrLoading
+                    && named.is_some()
+                    && job.response["state"] == "ready"
+                    && job.response["authenticationChecked"] == true))
+        {
             return Ok(job.response.clone());
         }
         let supported = supported(provider);
@@ -1037,10 +1072,64 @@ mod tests {
     #[cfg(unix)]
     fn executable(dir: &std::path::Path, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::symlink;
+        assert!(dir.is_absolute());
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = dir.join(format!("fixture-{}", uuid::Uuid::new_v4()));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let body_path = PathBuf::from(format!("{}.body", path.display()));
+        // Another concurrent fork may temporarily retain this writer's open
+        // description after fs::write returns. Read the dynamic body as data;
+        // never exec it. The tracked launcher has no transient test writer.
+        std::fs::write(&body_path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let launcher = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/model_catalog_launcher.sh");
+        symlink(launcher, &path).unwrap();
         path
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn immutable_launcher_executes_while_a_fork_equivalent_body_writer_is_retained() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = executable(
+            dir.path(),
+            r#"
+IFS= read -r line || exit 1
+printf '%s\n' '{"id":1,"result":{}}'
+IFS= read -r line || exit 1
+IFS= read -r line || exit 1
+printf '%s\n' '{"id":2,"result":{"data":[{"model":"held-writer"}],"nextCursor":null}}'
+"#,
+        );
+        let body = PathBuf::from(format!("{}.body", path.display()));
+        std::fs::set_permissions(&body, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let writer = std::fs::OpenOptions::new().write(true).open(&body).unwrap();
+        let inherited = writer.try_clone().unwrap();
+        drop(writer);
+        // dup and fork retain the same writable open-file description. Prove
+        // the original executable-body fixture would fail, without a retry.
+        match std::process::Command::new(&body)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Err(error) => assert_eq!(error.raw_os_error(), Some(libc::ETXTBSY)),
+            Ok(mut child) => {
+                child.wait().unwrap();
+                panic!("retained executable writer must reproduce ETXTBUSY");
+            }
+        }
+        let models = discover(
+            "codex",
+            path,
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(models[0]["id"], "held-writer");
+        assert!(
+            inherited.metadata().is_ok(),
+            "Success must precede the inherited writer's release"
+        );
     }
     #[cfg(unix)]
     #[test]

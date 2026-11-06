@@ -2,7 +2,6 @@
 //! a provider or discovers/authenticates models. Explicit Apply and acknowledged
 //! standalone mode commands use the same validated selection endpoint.
 use super::*;
-use anyhow::Context as _;
 use std::collections::HashMap;
 #[path = "composer_selection_cache.rs"]
 mod capability_cache;
@@ -866,6 +865,7 @@ pub(super) struct ComposerSelection {
     capability_cache: capability_cache::CapabilityCache,
     capabilities: Value,
     accounts: Value,
+    codex_accounts: Value,
     error: String,
     pub(super) catalog: Value,
     catalog_request: Option<CatalogRequest>,
@@ -879,6 +879,7 @@ pub(super) struct ComposerSelection {
     automatic_profile_quiet: Option<(Value, Instant)>,
     expanded: bool,
     pub(super) facet: PickerFacet,
+    favorites_only: bool,
 }
 #[derive(Clone)]
 struct PickerRestore {
@@ -887,6 +888,16 @@ struct PickerRestore {
     observation_only: bool,
     source: crate::composer_commands::Submission,
     ui_draft: String,
+}
+impl ComposerSelection {
+    pub(super) fn close_capability_reads(&mut self) {
+        self.capability_cache.request_shutdown();
+    }
+    pub(super) fn capability_read_shutdown_status(
+        &mut self,
+    ) -> crate::worker_owner::ShutdownStatus {
+        self.capability_cache.shutdown_status()
+    }
 }
 #[derive(Clone, Debug)]
 struct CatalogRequest {
@@ -979,6 +990,96 @@ fn account_label(account: &Value) -> String {
     }
 }
 
+fn picker_view_scope(thread: &Value) -> Value {
+    json!({"id":thread["id"],"selection":thread["selection"],
+        "accessMode":thread.get("accessMode"),"accessPresent":thread.get("accessMode").is_some(),
+        "interactionMode":thread.get("interactionMode"),"interactionPresent":thread.get("interactionMode").is_some(),
+        "projectID":thread["projectID"],"worktreePath":thread["worktreePath"]})
+}
+fn model_marked(settings: &Value, key: &str, provider: &str, model: &str) -> bool {
+    settings[key].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["provider"] == provider && row["modelID"] == model)
+    })
+}
+fn filtered_picker_models<'a>(
+    settings: &Value,
+    catalog: &'a Value,
+    provider: &str,
+    selected: &str,
+    query: &str,
+    favorites_only: bool,
+) -> Vec<&'a Value> {
+    let query = query.to_lowercase();
+    let words = query.split_whitespace().collect::<Vec<_>>();
+    let mut rows = catalog["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            let id = row["id"].as_str().unwrap_or_default();
+            if id.is_empty()
+                || (model_marked(settings, "hiddenModels", provider, id) && id != selected)
+                || (favorites_only && !model_marked(settings, "favoriteModels", provider, id))
+            {
+                return false;
+            }
+            let label = format!("{} {}", id, row["displayName"].as_str().unwrap_or_default())
+                .to_lowercase();
+            words.iter().all(|word| label.contains(word))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| {
+        !model_marked(
+            settings,
+            "favoriteModels",
+            provider,
+            row["id"].as_str().unwrap_or_default(),
+        )
+    });
+    rows.truncate(200);
+    rows
+}
+fn reported_picker_model_label(thread: &Value, catalog: &Value) -> Option<String> {
+    let selection = &thread["selection"];
+    if catalog["state"] != "ready"
+        || catalog["provider"] != selection["provider"]
+        || restore_account_id(&catalog["accountID"]) != restore_account_id(&selection["accountID"])
+        || (!coincide_core::composer_selection::default_account(&selection["accountID"])
+            && catalog["threadId"] != thread["id"])
+        || (catalog["threadId"].is_string() && catalog["threadId"] != thread["id"])
+    {
+        return None;
+    }
+    let row = catalog["models"]
+        .as_array()?
+        .iter()
+        .find(|row| row["id"] == selection["modelID"])?;
+    row["displayName"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .map(|_| footer_value(&row["displayName"], ""))
+}
+fn effort_picker_title(value: &Value) -> String {
+    let raw = footer_value(value, "Auto");
+    match raw.as_str() {
+        "none" | "off" => "Off".into(),
+        "auto" => "Auto".into(),
+        "minimal" => "Minimal".into(),
+        "low" => "Low".into(),
+        "medium" => "Medium".into(),
+        "high" => "High".into(),
+        "xhigh" | "extra-high" | "extra_high" => "Extra High".into(),
+        "max" | "maximum" => "Max".into(),
+        _ => {
+            let mut chars = raw.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or(raw)
+        }
+    }
+}
 struct FooterSummary {
     saved: String,
     annotation: Option<String>,
@@ -1553,7 +1654,6 @@ impl Coincide {
             self.running.contains(&id),
         );
         self.selection_ui.context = Some(scope.clone());
-        self.selection_ui.capability_cache.invalidate();
         let result = self
             .selection_ui
             .capability_cache
@@ -1584,16 +1684,45 @@ impl Coincide {
         } else {
             Value::Null
         };
+        let codex_accounts = if read_accounts {
+            call(&self.engine, "providers.codex.profiles.status", json!({}))
+                .map(|status| status["accounts"].clone())
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
         let changed = self.selection_ui.capabilities != capabilities
             || self.selection_ui.error != error
-            || self.selection_ui.accounts != accounts;
+            || self.selection_ui.accounts != accounts
+            || self.selection_ui.codex_accounts != codex_accounts;
         self.selection_ui.capabilities = capabilities;
         self.selection_ui.error = error;
         self.selection_ui.accounts = accounts;
+        self.selection_ui.codex_accounts = codex_accounts;
         // A pending handoff uses the existing tick/next actual UI update.
         // Repeated lock contention must not create a notify/render retry loop.
         if changed {
             cx.notify();
+        }
+    }
+    pub(super) fn invalidate_native_conversation_view(&mut self) {
+        self.selection_ui.capability_cache.invalidate();
+        self.selection_ui.context = None;
+        self.selection_ui.automatic_profile_context = None;
+        self.selection_ui.automatic_profile_quiet = None;
+        self.selection_ui.pending_provider = None;
+        self.selection_ui.pending_provider_picker = None;
+        self.selection_ui.expanded = false;
+    }
+    pub(super) fn retry_selected_account_readiness(&mut self) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(named_models::named_thread)
+        {
+            self.selection_ui.capability_cache.invalidate();
+            self.selection_ui.automatic_profile_context = None;
+            self.selection_ui.automatic_profile_quiet = None;
         }
     }
     pub(super) fn selection_model_changed(&mut self, cx: &mut Context<Self>) {
@@ -2159,10 +2288,24 @@ impl Coincide {
         let model = if selection["modelID"] == "default" {
             "Provider default".to_owned()
         } else {
-            footer_value(&selection["modelID"], "Choose model")
+            reported_picker_model_label(thread, &self.selection_ui.catalog)
+                .unwrap_or_else(|| footer_value(&selection["modelID"], "Choose model"))
         };
-        let effort = footer_value(&selection["effort"], "Default");
-        let speed = footer_value(&selection["speed"], "Standard");
+        let effort = effort_picker_title(&selection["effort"]);
+        let speed = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|provider| provider["provider"] == selection["provider"])
+            .and_then(|provider| provider["speed"]["choices"].as_array())
+            .and_then(|choices| {
+                choices
+                    .iter()
+                    .find(|choice| choice["id"] == selection["speed"])
+            })
+            .and_then(|choice| choice["name"].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| footer_value(&selection["speed"], "Standard"));
         let access = if thread["accessMode"] == "fullAccess" {
             "Full access"
         } else {
@@ -2256,6 +2399,139 @@ impl Coincide {
     pub(super) fn composer_selection_expanded(&self) -> bool {
         self.selection_ui.expanded
     }
+    fn model_picker_filter_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(Input::new(&self.model_picker_search).w_full())
+            .child(
+                Button::new("picker-favorites-only")
+                    .label("Favorites only")
+                    .icon(gpui_kit::assets::IconName::Star)
+                    .compact()
+                    .ghost()
+                    .when(self.selection_ui.favorites_only, |button| button.primary())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.favorites_only = !this.selection_ui.favorites_only;
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+    fn visible_picker_models<'a>(
+        &self,
+        catalog: &'a Value,
+        thread: &Value,
+        cx: &App,
+    ) -> Vec<&'a Value> {
+        filtered_picker_models(
+            &self.settings,
+            catalog,
+            thread["selection"]["provider"].as_str().unwrap_or_default(),
+            thread["selection"]["modelID"].as_str().unwrap_or_default(),
+            &self.model_picker_search.read(cx).value(),
+            self.selection_ui.favorites_only,
+        )
+    }
+    fn composer_provider_tabs(&self, thread: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let source = Arc::new(picker_view_scope(thread));
+        let mut tabs = div().flex().flex_wrap().gap_1();
+        for provider in self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let id = text(provider, "provider");
+            let source = source.clone();
+            tabs = tabs.child(
+                Button::new(SharedString::from(format!("selection-provider-{id}")))
+                    .label(text(provider, "displayName"))
+                    .compact()
+                    .ghost()
+                    .when(thread["selection"]["provider"] == id, |button| {
+                        button.primary()
+                    })
+                    .disabled(self.running.contains(&text(thread, "id")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| picker_view_scope(thread) == *source)
+                        {
+                            this.status =
+                                "The conversation changed. Open the model picker again.".into();
+                            cx.notify();
+                            return;
+                        }
+                        if this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| thread["selection"]["provider"] == id)
+                        {
+                            return;
+                        }
+                        this.selection_ui.pending_provider = None;
+                        this.switch_provider_from_history(id.clone(), None, cx);
+                    })),
+            );
+        }
+        tabs.into_any_element()
+    }
+    fn composer_codex_accounts(&self, thread: &Value, cx: &mut Context<Self>) -> AnyElement {
+        if thread["selection"]["provider"] != "codex" {
+            return div().into_any_element();
+        }
+        let mut accounts = vec![(Value::Null, "Default account".to_owned())];
+        for row in self
+            .selection_ui
+            .codex_accounts
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = row["id"].as_str() {
+                accounts.push((
+                    json!(id),
+                    row["name"].as_str().unwrap_or("Account").to_owned(),
+                ));
+            }
+        }
+        let source = Arc::new(picker_view_scope(thread));
+        let mut chips = div().flex().flex_wrap().gap_1();
+        for (account, label) in accounts {
+            let source = source.clone();
+            let id = restore_account_id(&account).unwrap_or("default").to_owned();
+            let selected = restore_account_id(&thread["selection"]["accountID"])
+                == restore_account_id(&account);
+            chips = chips.child(
+                Button::new(SharedString::from(format!("picker-codex-account-{id}")))
+                    .label(label)
+                    .compact()
+                    .ghost()
+                    .when(selected, |button| button.primary())
+                    .disabled(self.running.contains(&text(thread, "id")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| picker_view_scope(thread) == *source)
+                        {
+                            this.status =
+                                "The conversation changed. Open the model picker again.".into();
+                            cx.notify();
+                            return;
+                        }
+                        if selected {
+                            return;
+                        }
+                        this.selection_ui.pending_provider = None;
+                        this.switch_codex_account_from_picker(account.clone(), cx);
+                    })),
+            );
+        }
+        chips.into_any_element()
+    }
     pub(super) fn composer_selection_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         if !self.selection_ui.expanded {
             return div().into_any_element();
@@ -2264,7 +2540,20 @@ impl Coincide {
             return div().into_any_element();
         };
         if named_models::named_thread(thread) {
-            return self.named_profile_model_pane(thread, cx);
+            let pane = self.named_profile_model_pane(thread, cx);
+            return if self.selection_ui.facet == PickerFacet::Model {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(self.composer_provider_tabs(thread, cx))
+                    .child(self.composer_codex_accounts(thread, cx))
+                    .child(self.model_picker_filter_bar(cx))
+                    .child(pane)
+                    .into_any_element()
+            } else {
+                pane
+            };
         }
         let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
             return div().child("Loading selection…").into_any_element();
@@ -2293,25 +2582,7 @@ impl Coincide {
                 &self.selection_ui.capabilities,
                 self.running.contains(&text(thread, "id")),
             );
-        let mut providers = div().flex().flex_wrap().gap_2();
-        for provider in self.selection_ui.capabilities["providers"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            let id = text(provider, "provider");
-            let selected = id == draft.provider;
-            providers = providers.child(
-                Button::new(SharedString::from(format!("selection-provider-{id}")))
-                    .label(text(provider, "displayName"))
-                    .when(selected, |button| button.primary())
-                    .disabled(model_disabled)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.selection_ui.pending_provider = None;
-                        this.switch_provider_from_history(id.clone(), None, cx)
-                    })),
-            );
-        }
+        let providers = self.composer_provider_tabs(thread, cx);
         let provider = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
@@ -2628,7 +2899,9 @@ impl Coincide {
         }
         let mut pane = div().flex().flex_col().gap_2().mb_2().child(providers)
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
-            .child(accounts)
+            .when(draft.provider == "codex", |view|view.child(self.composer_codex_accounts(thread,cx)))
+            .when(draft.provider != "codex", |view|view.child(accounts))
+            .child(self.model_picker_filter_bar(cx))
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
@@ -2640,14 +2913,14 @@ impl Coincide {
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("selection-apply").label("Apply selection").disabled(apply_disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some() || draft_speed_problem.is_some())
                     .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
-                .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|this.refresh_selection_capabilities(cx))))
+                .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|{ this.selection_ui.capability_cache.invalidate(); this.refresh_selection_capabilities(cx); })))
                 .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
                 .child(Button::new("provider-antigravity-setup").accessibility_id("provider-antigravity-setup").label("Antigravity accounts")
                     .on_click(cx.listener(|this,_,window,cx|{
                         this.bots_open=false;this.notifications_open=false;this.transcription_open=false;this.credentials_open=false;
                         this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
                     }))))
-            .child(div().text_xs().child("Changing a provider keeps the draft model, account and modes until you explicitly choose replacements."));
+            .child(div().text_xs().child("Your previous account and model are restored when available. Your message stays here."));
         if let Some(reason) = draft_mode_problem {
             pane = pane.child(div().text_sm().child(reason));
         }
@@ -2722,8 +2995,9 @@ impl Coincide {
                 .flex()
                 .flex_col()
                 .gap_1();
-            if let Some(rows) = catalog["models"].as_array() {
-                for model in rows.iter().take(200) {
+            if catalog["models"].is_array() {
+                let rows = self.visible_picker_models(catalog, thread, cx);
+                for model in &rows {
                     let id = text(model, "id");
                     if id.is_empty() {
                         continue;
@@ -2747,13 +3021,7 @@ impl Coincide {
                     );
                 }
                 if rows.is_empty() {
-                    models = models.child(div().child("The provider reported no models."));
-                }
-                if rows.len() > 200 {
-                    models =
-                        models.child(div().child(
-                            "Showing the first 200 models. Custom model IDs remain available.",
-                        ));
+                    models = models.child(div().child("No models match the current filters."));
                 }
             }
             pane = pane.child(models);
@@ -2774,6 +3042,62 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
+        let settings = json!({"favoriteModels":[{"provider":"codex","modelID":"b"},{"provider":"codex","modelID":"not-reported"}],"hiddenModels":[{"provider":"codex","modelID":"a"},{"provider":"claude","modelID":"c"}]});
+        let catalog = json!({"models":[{"id":"a","displayName":"Alpha","opaque":{"retained":true}},{"id":"b","displayName":"Beta"},{"id":"c","displayName":"Gamma"}]});
+        let before = catalog.clone();
+        let all = filtered_picker_models(&settings, &catalog, "codex", "a", "", false);
+        assert_eq!(
+            all.iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["b", "a", "c"]
+        );
+        assert_eq!(all[1]["opaque"], json!({"retained":true}));
+        let favorites = filtered_picker_models(&settings, &catalog, "codex", "c", "BE ta", true);
+        assert_eq!(
+            favorites
+                .iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        assert!(
+            filtered_picker_models(&settings, &catalog, "codex", "c", "alpha", false).is_empty()
+        );
+        assert_eq!(catalog, before);
+    }
+    #[::core::prelude::v1::test]
+    fn picker_display_name_never_borrows_another_account_or_thread_catalog() {
+        let thread = json!({"id":"A","selection":{"provider":"codex","accountID":"named-a","modelID":"reported-id"}});
+        let mut catalog = json!({"state":"ready","provider":"codex","accountID":"named-a","threadId":"A","models":[{"id":"reported-id","displayName":"Friendly name"}]});
+        assert_eq!(
+            reported_picker_model_label(&thread, &catalog).as_deref(),
+            Some("Friendly name")
+        );
+        catalog["accountID"] = json!("named-b");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+        catalog["accountID"] = json!("named-a");
+        catalog["threadId"] = json!("B");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+        catalog["threadId"] = json!("A");
+        catalog["state"] = json!("loading");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+    }
+    #[::core::prelude::v1::test]
+    fn effort_labels_follow_the_swift_menu_without_changing_saved_values() {
+        for (raw, label) in [
+            (Value::Null, "Auto"),
+            (json!("xhigh"), "Extra High"),
+            (json!("ultra"), "Ultra"),
+            (json!("off"), "Off"),
+            (json!("max"), "Max"),
+        ] {
+            assert_eq!(effort_picker_title(&raw), label);
+        }
+    }
+
     #[::core::prelude::v1::test]
     fn footer_reports_saved_values_while_proposed_choices_remain_pending() {
         let thread = json!({"id":"t","selection":{"provider":"codex","modelID":"saved-model","effort":"high","speed":"priority","accountID":"named-account"},"accessMode":"approval","interactionMode":"build"});

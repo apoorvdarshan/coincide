@@ -90,6 +90,9 @@ impl Engine {
                     account.is_null() || account.is_string(),
                     "Codex profile accountId must be text or null"
                 );
+                if &thread["selection"]["accountID"] != account {
+                    self.park_named_departure(&thread)?;
+                }
                 if crate::composer_selection::default_account(account) {
                     thread["selection"]
                         .as_object_mut()

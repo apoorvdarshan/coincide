@@ -23,6 +23,8 @@ mod terminal_context_store;
 #[path = "thread_bulk_store.rs"]
 mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;
+#[path = "store_native_ui_selection.rs"]
+mod native_ui_selection;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
 use store_thread_delete::ensure_not_deleted;

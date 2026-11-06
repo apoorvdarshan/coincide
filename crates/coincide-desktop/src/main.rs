@@ -433,9 +433,12 @@ struct Coincide {
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
+    pending_native_selection: Option<Option<String>>,
+    startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
+    model_picker_search: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
@@ -659,6 +662,27 @@ impl Coincide {
             self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
     }
+    fn flush_native_selection(&mut self) -> bool {
+        let Some(selected) = self.pending_native_selection.as_ref() else {
+            return true;
+        };
+        let Ok(mut engine) = self.engine.try_lock() else {
+            return false;
+        };
+        match engine
+            .store
+            .remember_native_selected_thread(selected.as_deref())
+        {
+            Ok(_) => {
+                self.pending_native_selection = None;
+                true
+            }
+            Err(error) => {
+                self.status = format!("Unable to remember conversation selection: {error}");
+                false
+            }
+        }
+    }
     fn flush_pending_drafts(&mut self) -> bool {
         for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
             self.save_pending_draft(&id);
@@ -751,6 +775,8 @@ impl Coincide {
         });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
+        let model_picker_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -1000,6 +1026,11 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.push(cx.subscribe(&model_picker_search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         subscriptions.extend(models_settings.subscriptions(cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
@@ -1143,9 +1174,12 @@ impl Coincide {
             project_picker_open: false,
             project_path,
             selected: None,
+            pending_native_selection: None,
+            startup_selection_pending: true,
             pending_drafts: Default::default(),
             composer,
             model_input,
+            model_picker_search,
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
@@ -1171,11 +1205,53 @@ impl Coincide {
             _subscriptions: subscriptions,
         };
         this.apply_appearance(window, cx);
-        if let Some(id) = this.threads.first().map(|t| t.id.clone()) {
-            this.select(&id, window, cx);
-        }
+        this.restore_startup_selection(window, cx);
         this.poll_computer_use(cx);
         this
+    }
+    fn restore_startup_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.startup_selection_pending {
+            return;
+        }
+        let snapshot = (|| -> Result<(Vec<ThreadSummary>, Option<String>)> {
+            let mut engine = try_state(&self.engine)?;
+            let requested = engine.requested_open.clone();
+            let remembered = engine.store.native_last_selected_thread()?;
+            let response = engine.dispatch(json!({"method":"threads.list","params":{}}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!(
+                    "{}",
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("Unable to load conversations")
+                );
+            }
+            Ok((
+                serde_json::from_value(response["result"].clone())?,
+                requested.or(remembered),
+            ))
+        })();
+        match snapshot {
+            Ok((threads, remembered)) => {
+                let target = remembered
+                    .filter(|id| threads.iter().any(|thread| &thread.id == id))
+                    .or_else(|| threads.first().map(|thread| thread.id.clone()));
+                self.threads = threads;
+                if let Some(id) = target {
+                    self.select(&id, window, cx);
+                    self.startup_selection_pending = self
+                        .selected
+                        .as_ref()
+                        .is_none_or(|thread| thread["id"] != id);
+                } else {
+                    self.startup_selection_pending = false;
+                }
+            }
+            Err(error) if engine_busy(&error) => {}
+            Err(error) => {
+                self.status = format!("Saved conversation selection unavailable: {error}")
+            }
+        }
     }
     fn poll_computer_use(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -1557,6 +1633,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
         self.dismiss_palette(window, cx);
@@ -1587,6 +1664,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
                     self.image_assets
@@ -1625,6 +1703,7 @@ impl Coincide {
                     self.browser_address
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
+                self.pending_native_selection = Some(Some(id.to_owned()));
                 let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
                     if engine.active_thread() != Some(id)
                         && let Err(error) = engine.set_active_thread(Some(id.into()))
@@ -1632,6 +1711,13 @@ impl Coincide {
                         let _ = engine.set_active_thread(None);
                         self.status =
                             format!("Selected conversation authority unavailable: {error}");
+                    }
+                    match engine.store.remember_native_selected_thread(Some(id)) {
+                        Ok(_) => self.pending_native_selection = None,
+                        Err(error) => {
+                            self.status =
+                                format!("Unable to remember conversation selection: {error}")
+                        }
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
@@ -2074,6 +2160,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.startup_selection_pending = false;
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
             // bot. The user chooses a saved bot in its existing native editor.
@@ -2588,9 +2675,25 @@ impl Coincide {
                 self.media.shutdown_requested = true;
                 return;
             }
+            if let Some(selected) = &self.pending_native_selection {
+                match engine
+                    .store
+                    .remember_native_selected_thread(selected.as_deref())
+                {
+                    Ok(_) => self.pending_native_selection = None,
+                    Err(error) => {
+                        self.status = format!("Unable to remember conversation selection: {error}");
+                    }
+                }
+            }
             engine.ui_available = self.browser.is_some();
             let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
-            if engine.active_thread() != selected.as_deref()
+            let pending_open_compatible = engine
+                .requested_open
+                .as_ref()
+                .is_none_or(|requested| Some(requested.as_str()) == selected.as_deref());
+            if pending_open_compatible
+                && engine.active_thread() != selected.as_deref()
                 && let Err(error) = engine.set_active_thread(selected)
             {
                 let _ = engine.set_active_thread(None);
@@ -2600,6 +2703,7 @@ impl Coincide {
                 self.attachment_root = engine.store.data_directory().ok();
             }
         }
+        self.restore_startup_selection(window, cx);
         self.refresh_awake_status(cx);
         self.apply_appearance(window, cx);
         if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {
@@ -3212,6 +3316,7 @@ impl Coincide {
             }
         }
         if self.selection_send_blocked() {
+            self.retry_selected_account_readiness();
             self.status = self.selected_account_wait_status().into();
             cx.notify();
             return;
@@ -3251,7 +3356,10 @@ impl Coincide {
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }
-                Err(e) => self.status = e.to_string(),
+                Err(e) => {
+                    self.retry_selected_account_readiness();
+                    self.status = e.to_string();
+                }
             }
         }
         cx.notify();
