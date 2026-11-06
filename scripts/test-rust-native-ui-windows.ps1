@@ -83,8 +83,32 @@ public static class NativeUiSmoke {
         // the focused GPUI text handler to process each input in order.
         foreach(char c in text){Send(window,process,new[]{new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=4}}},new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=6}}}});System.Threading.Thread.Sleep(20);}
     }
-    public static void ComposerClick(IntPtr window,uint process) {
-        Owned(window,process);Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");var point=new Point((rect.right-rect.left)/2,rect.bottom-190);if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target native composer");Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
+    public static int[] ComposerClick(IntPtr window,uint process,string evidence) {
+        Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Composer target is not the active owned window");
+        Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");
+        int width=rect.right-rect.left,height=rect.bottom-rect.top,left=width*4/10,right=width*9/10;
+        var origin=new Point(0,0);if(!ClientToScreen(window,ref origin))throw new Exception("Missing client origin");
+        var edges=new List<int>();int lastEdgeRow=-1000;
+        using(var image=new Bitmap(width,height)) {
+            using(var graphics=Graphics.FromImage(image)){graphics.CopyFromScreen(origin,Point.Empty,new Size(width,height));}
+            image.Save(evidence,ImageFormat.Png);
+            // The private smoke starts with the light native theme. Locate the
+            // rounded composer's two long neutral border edges in actual pixels;
+            // glyphs/text do not form a long continuous horizontal segment.
+            for(int y=height/2;y<height-3;y++) {
+                int run=0,longest=0;
+                for(int x=left;x<right;x++) {
+                    var c=image.GetPixel(x,y);int maximum=Math.Max(c.R,Math.Max(c.G,c.B)),minimum=Math.Min(c.R,Math.Min(c.G,c.B));
+                    run=maximum<247 && maximum-minimum<25 ? run+1 : 0;longest=Math.Max(longest,run);
+                }
+                if(longest >= (right-left)*65/100){if(y>lastEdgeRow+2)edges.Add(y);lastEdgeRow=y;}
+            }
+        }
+        if(edges.Count!=2 || edges[1]-edges[0]<60)throw new Exception("Expected exactly one rendered native composer border pair");
+        int top=edges[0],bottom=edges[1];var point=new Point((left+right)/2,top+24);
+        if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target observed native composer");
+        Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
+        return new[]{left,top,right,bottom};
     }
     public static void Capture(IntPtr window,uint process,string path) {
         Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Capture target is not the active owned native window");
@@ -200,7 +224,7 @@ try {
     Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null
     Wait-Condition 'native thread became active' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
     Capture-Owned $main 'conversation'
-    [NativeUiSmoke]::ComposerClick($main,[uint32]$script:OwnedProcess.Id)
+    $Report.composerInputBounds=@([NativeUiSmoke]::ComposerClick($main,[uint32]$script:OwnedProcess.Id,(Join-Path $Artifacts "composer-locator.png")))
     # A click is not a text-handler readiness acknowledgement. Retain the
     # focused native frame before delivering keyboard input.
     Capture-Owned $main 'focused-composer'
