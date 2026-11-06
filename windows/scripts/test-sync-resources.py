@@ -36,6 +36,22 @@ class ResourceLabels(unittest.TestCase):
         finally:
             MODULE.ROOT = original
 
+    def test_terminal_button_uses_display_label(self):
+        original = MODULE.ROOT
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                MODULE.ROOT = Path(directory)
+                app = MODULE.ROOT / 'App'
+                app.mkdir()
+                (app / 'TerminalPanel.h').write_text('make_button(L"Use selection in message", L"TerminalUseSelection", [](auto&){}); make_command(L"Split", L"TerminalSplit", [](auto&){});', encoding='utf-8')
+                values = MODULE.labels()
+                self.assertEqual(values[MODULE.ui_key('Use selection in message')], 'Use selection in message')
+                self.assertNotIn('TerminalUseSelection', values.values())
+                self.assertEqual(values[MODULE.ui_key('Split')], 'Split')
+                self.assertNotIn('TerminalSplit', values.values())
+        finally:
+            MODULE.ROOT = original
+
 
 if __name__ == '__main__':
     unittest.main()

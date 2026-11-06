@@ -258,7 +258,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto result=coincide::tests::run_ui_test(native_ui_suite,question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
                 window.Close();xaml::Application::Current().Exit();
             });});
-            if(native_ui_suite=="browser-tool-panel")window.AppWindow().Resize({1100,1150});window.Activate();if(native_ui_suite!="browser-tool-panel")window.AppWindow().Hide();return;
+            if(native_ui_suite=="browser-tool-panel")window.AppWindow().Resize({1100,1150});window.Activate();if(native_ui_suite!="browser-tool-panel"&&native_ui_suite!="terminal-panel")window.AppWindow().Hide();return;
         }
         try{
             preferences_store=std::make_unique<coincide::PreferencesStore>(data_directory());preferences=preferences_store->open();preferences_writable=true;
@@ -1647,7 +1647,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(selected.empty()||!writable)return;
         try{
             if(repository_busy(workspace.thread(selected)))throw std::runtime_error("Wait for the repository operation to finish before opening a terminal.");
-            if(!terminal_panel){terminal_panel=coincide::TerminalPanel::create(data_directory(),fixture_preview);const auto weak=get_weak();terminal_panel->set_command_guard([weak](const auto& id,const auto&){const auto self=weak.get();if(!self||self->closing||self->quitting)return false;try{return !self->repository_busy(self->workspace.thread(id));}catch(...){return false;}});tool_views.Children().Append(terminal_panel->view());}
+            if(!terminal_panel){terminal_panel=coincide::TerminalPanel::create(data_directory(),fixture_preview);const auto weak=get_weak();terminal_panel->set_command_guard([weak](const auto& id,const auto&){const auto self=weak.get();if(!self||self->closing||self->quitting)return false;try{return !self->repository_busy(self->workspace.thread(id));}catch(...){return false;}});
+                terminal_panel->set_selection_callback([weak](const std::string& id,const std::string&,const std::string& text){const auto self=weak.get();if(!self||self->closing||self->quitting||self->dialog_open||!self->writable||self->selected!=id||!self->composer.IsEnabled()||self->workspace.thread(id).deleted_at)throw std::runtime_error("The original conversation composer is unavailable.");
+                    const auto draft=coincide::composer_context::terminal_selection(winrt::to_string(self->composer.Text()),text,winrt::to_string(coincide::ui_text(L"Terminal selection")));self->composer.Text(winrt::to_hstring(draft));self->composer.SelectionStart(static_cast<int>(self->composer.Text().size()));self->composer.Focus(xaml::FocusState::Keyboard);
+                });tool_views.Children().Append(terminal_panel->view());}
             terminal_panel->select_thread(selected,working_directory(workspace.thread(selected)));select_tool("terminal",terminal_panel->view(),label(L"Terminal",L"Terminal"));
         }catch(...){report_exception();}
     }

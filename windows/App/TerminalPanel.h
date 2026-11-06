@@ -1,5 +1,6 @@
 #pragma once
 #include "../Core/TerminalScreen.h"
+#include "../Core/ComposerContext.h"
 #include "../Runtime/ConPtySession.h"
 #include "NativeStrings.h"
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -60,8 +61,8 @@ private:bool content_{};
 };
 // The immutable identity avoids equal-row lookup cycles and builds a visual only for realized rows.
 struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
-    Row(TerminalLine cells,double cell_width,double line_height,std::optional<std::size_t> cursor,std::shared_ptr<std::string> selected)
-        :cells_(std::move(cells)),cell_width_(cell_width),line_height_(line_height),cursor_(cursor),selected_(std::move(selected)){}
+    Row(TerminalLine cells,double cell_width,double line_height,std::optional<std::size_t> cursor,std::shared_ptr<std::string> selected,std::function<void()> selection_changed={})
+        :cells_(std::move(cells)),cell_width_(cell_width),line_height_(line_height),cursor_(cursor),selected_(std::move(selected)),selection_changed_(std::move(selection_changed)){}
     xaml::Data::ICustomProperty GetCustomProperty(const winrt::hstring& name)const{
         if(name==L"Text")return winrt::make<RowProperty>();if(name==L"Content")return winrt::make<RowProperty>(true);return nullptr;
     }
@@ -77,8 +78,11 @@ struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
         ui::RichTextBlock text;text.FontFamily(xaml::Media::FontFamily(L"Consolas"));text.FontSize(14);
         text.LineHeight(line_height_);text.LineStackingStrategy(xaml::LineStackingStrategy::BlockLineHeight);
         text.TextWrapping(xaml::TextWrapping::NoWrap);text.IsTextSelectionEnabled(true);identify(text,L"TerminalRowText");
-        text.SelectionChanged([selected=selected_](const auto& sender,const auto&){
-            const auto value=sender.template as<ui::RichTextBlock>().SelectedText();if(!value.empty())*selected=winrt::to_string(value);
+        // RichTextBlock raises SelectionChanged before notifying SelectedText.
+        // Observe the published property so programmatic/UIA selections cannot
+        // leave our context cache one selection behind the native control.
+        text.RegisterPropertyChangedCallback(ui::RichTextBlock::SelectedTextProperty(),[selected=selected_,changed=selection_changed_](const auto& sender,const auto&){
+            const auto value=sender.template as<ui::RichTextBlock>().SelectedText();if(!value.empty()){*selected=winrt::to_string(value);if(changed)changed();}
         });
         docs::Paragraph paragraph;paragraph.Margin({0,0,0,0});
         for(std::size_t first=0;first<cells_.size();){
@@ -109,7 +113,7 @@ struct Row:winrt::implements<Row,xaml::Data::ICustomPropertyProvider>{
     }
 private:
     TerminalLine cells_;double cell_width_,line_height_;std::optional<std::size_t> cursor_;
-    std::shared_ptr<std::string> selected_;ui::Grid content_{nullptr};
+    std::shared_ptr<std::string> selected_;std::function<void()> selection_changed_;ui::Grid content_{nullptr};
 };
 inline Inspectable row_content(const Inspectable& target){return winrt::get_self<Row>(target.as<xaml::Data::ICustomPropertyProvider>())->content();}
 } // namespace terminal_ui
@@ -124,6 +128,14 @@ public:
     }
     terminal_ui::ui::Grid view()const{return root_;}
     void set_command_guard(std::function<bool(const std::string&,const std::filesystem::path&)> guard){command_guard_=std::move(guard);}
+    void set_selection_callback(std::function<void(const std::string&,const std::string&,const std::string&)> callback){selection_callback_=std::move(callback);}
+    void use_selection(){
+        if(closed_||!visible_)throw std::runtime_error("Open this conversation's terminal first.");
+        const auto pane=active_pane();if(!pane||pane->closed||pane->thread_id!=selected_thread_)throw std::runtime_error("The selected terminal pane is unavailable.");
+        const auto text=*pane->selection;(void)composer_context::terminal_selection({},text);
+        if(!selection_callback_)throw std::runtime_error("The conversation composer is unavailable.");
+        selection_callback_(pane->thread_id,pane->id,text);
+    }
     void select_thread(std::string id,std::filesystem::path cwd){
         if(id.empty()){selected_thread_.clear();show_active();return;}
         if(id.size()!=36&&id.size()!=38)throw std::invalid_argument("Invalid terminal conversation identity");
@@ -213,6 +225,7 @@ private:
     std::filesystem::path base_;bool fixture_{},visible_{},closed_{},refreshing_{};std::string selected_thread_;
     std::unordered_map<std::string,ThreadTabs> threads_;std::vector<std::shared_ptr<Pane>> retired_;
     std::function<bool(const std::string&,const std::filesystem::path&)> command_guard_;
+    std::function<void(const std::string&,const std::string&,const std::string&)> selection_callback_;
     std::vector<std::string> displayed_tabs_;
     terminal_ui::ui::Grid root_{nullptr},panes_view_{nullptr};terminal_ui::ui::ComboBox tabs_{nullptr};terminal_ui::ui::TextBlock status_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
@@ -240,20 +253,26 @@ private:
         value.Click([weak=weak_from_this(),action=std::move(action)](const auto&,const auto&){if(const auto self=weak.lock())try{action(*self);}catch(const std::exception& error){self->show_error(error.what());}catch(const winrt::hresult_error& error){self->show_error(winrt::to_string(error.message()));}});
         return value;
     }
+    terminal_ui::ui::AppBarButton make_command(const wchar_t* text,const wchar_t* id,std::function<void(TerminalPanel&)> action){
+        terminal_ui::ui::AppBarButton value;value.Label(ui_text(text));terminal_ui::identify(value,id);
+        value.Click([weak=weak_from_this(),action=std::move(action)](const auto&,const auto&){if(const auto self=weak.lock())try{action(*self);}catch(const std::exception& error){self->show_error(error.what());}catch(const winrt::hresult_error& error){self->show_error(winrt::to_string(error.message()));}});return value;
+    }
     void build_view(){
         namespace xaml=terminal_ui::xaml;namespace ui=terminal_ui::ui;
         root_=ui::Grid{};root_.RowSpacing(6);root_.Visibility(xaml::Visibility::Collapsed);terminal_ui::identify(root_,L"TerminalPanel");
         for(const auto unit:{xaml::GridUnitType::Auto,xaml::GridUnitType::Star,xaml::GridUnitType::Auto}){ui::RowDefinition row;row.Height({1,unit});root_.RowDefinitions().Append(row);}
-        ui::StackPanel toolbar;toolbar.Orientation(ui::Orientation::Horizontal);toolbar.Spacing(6);
-        tabs_=ui::ComboBox{};tabs_.MinWidth(150);tabs_.MaxWidth(300);terminal_ui::identify(tabs_,L"TerminalTabs");
+        ui::CommandBar toolbar;toolbar.DefaultLabelPosition(ui::CommandBarDefaultLabelPosition::Right);toolbar.IsDynamicOverflowEnabled(true);terminal_ui::identify(toolbar,L"TerminalToolbar");
+        tabs_=ui::ComboBox{};tabs_.MinWidth(150);tabs_.MaxWidth(220);terminal_ui::identify(tabs_,L"TerminalTabs");
         tabs_.SelectionChanged([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->refreshing_){const auto at=self->tabs_.SelectedIndex();if(at>=0&&static_cast<std::size_t>(at)<self->displayed_tabs_.size()){self->threads_.at(self->selected_thread_).selected=self->displayed_tabs_[at];self->show_active();}}});
-        toolbar.Children().Append(tabs_);toolbar.Children().Append(make_button(L"New Tab",L"TerminalNewTab",[](auto& self){self.new_tab();}));
-        toolbar.Children().Append(make_button(L"Split",L"TerminalSplit",[](auto& self){self.split();}));
-        toolbar.Children().Append(make_button(L"Close Tab",L"TerminalCloseTab",[](auto& self){self.close_tab();}));
-        toolbar.Children().Append(make_button(L"Paste",L"TerminalPaste",[](auto& self){if(const auto pane=self.active_pane())self.paste(pane);}));
-        toolbar.Children().Append(make_button(L"Copy",L"TerminalCopy",[](auto& self){if(const auto pane=self.active_pane())self.copy(pane);}));
-        toolbar.Children().Append(make_button(L"Stop",L"TerminalStop",[](auto& self){if(const auto pane=self.active_pane();pane&&pane->session)pane->session->stop();}));
-        root_.Children().Append(toolbar);panes_view_=ui::Grid{};panes_view_.ColumnSpacing(4);panes_view_.RowSpacing(4);ui::Grid::SetRow(panes_view_,1);root_.Children().Append(panes_view_);
+        toolbar.Content(tabs_);toolbar.PrimaryCommands().Append(make_command(L"New Tab",L"TerminalNewTab",[](auto& self){self.new_tab();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Split",L"TerminalSplit",[](auto& self){self.split();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Close Tab",L"TerminalCloseTab",[](auto& self){self.close_tab();}));
+        toolbar.PrimaryCommands().Append(make_command(L"Paste",L"TerminalPaste",[](auto& self){if(const auto pane=self.active_pane())self.paste(pane);}));
+        toolbar.PrimaryCommands().Append(make_command(L"Copy",L"TerminalCopy",[](auto& self){if(const auto pane=self.active_pane())self.copy(pane);}));
+        toolbar.PrimaryCommands().Append(make_command(L"Stop",L"TerminalStop",[](auto& self){if(const auto pane=self.active_pane();pane&&pane->session)pane->session->stop();}));
+        ui::StackPanel toolbar_rows;toolbar_rows.Spacing(6);toolbar_rows.Children().Append(toolbar);
+        toolbar_rows.Children().Append(make_button(L"Use selection in message",L"TerminalUseSelection",[](auto& self){self.use_selection();}));
+        root_.Children().Append(toolbar_rows);panes_view_=ui::Grid{};panes_view_.ColumnSpacing(4);panes_view_.RowSpacing(4);ui::Grid::SetRow(panes_view_,1);root_.Children().Append(panes_view_);
         status_=ui::TextBlock{};status_.Text(ui_text(L"Open a terminal for this conversation."));status_.TextWrapping(xaml::TextWrapping::Wrap);terminal_ui::identify(status_,L"TerminalPanelStatus");ui::Grid::SetRow(status_,2);root_.Children().Append(status_);
         timer_=root_.DispatcherQueue().CreateTimer();timer_.Interval(std::chrono::milliseconds(40));
         timer_.Tick([weak=weak_from_this()](const auto&,const auto&){if(const auto self=weak.lock())self->tick();});timer_.Start();
@@ -339,6 +358,9 @@ private:
         pane->input.GotFocus([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock()){value->selection->clear();if(const auto tab=self->active_tab())tab->active=value->id;}});
         pane->input.Loaded([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock();value&&value->pending_focus&&self->visible_){value->pending_focus=false;value->input.Focus(xaml::FocusState::Programmatic);}});
         pane->output.SizeChanged([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock())self->resize_pane(value);});
+        // SizeChanged may precede Loaded while the tool's parent is collapsed. Fit
+        // the first realized viewport as well, before following the buffer tail.
+        pane->output.Loaded([weak=weak_from_this(),weak_pane](const auto&,const auto&){if(const auto self=weak.lock())if(const auto value=weak_pane.lock())self->resize_pane(value);});
     }
     bool send(const std::shared_ptr<Pane>& pane,std::string bytes){
         if(closed_||pane->closed||pane->exited)return false;
@@ -421,7 +443,8 @@ private:
         const auto append=[&](const TerminalLine& row){
             const bool cursor_changed=(pane->rendered_cursor&&*pane->rendered_cursor==index)||(cursor_row&&*cursor_row==index);
             if(index>=pane->rendered.size()||pane->rendered[index]!=row||cursor_changed){
-                auto item=winrt::make<terminal_ui::Row>(row,pane->cell_width,pane->line_height,cursor_row&&*cursor_row==index?std::optional<std::size_t>(cursor.column):std::nullopt,pane->selection);
+                auto item=winrt::make<terminal_ui::Row>(row,pane->cell_width,pane->line_height,cursor_row&&*cursor_row==index?std::optional<std::size_t>(cursor.column):std::nullopt,pane->selection,
+                    [weak=weak_from_this(),source=std::weak_ptr<Pane>(pane)]{const auto self=weak.lock();const auto value=source.lock();if(!self||!value||!self->visible_||self->closed_||value->closed||value->thread_id!=self->selected_thread_)return;const auto tab=self->active_tab();if(tab&&std::find(tab->panes.begin(),tab->panes.end(),value)!=tab->panes.end())tab->active=value->id;});
                 if(index<pane->rendered.size()){pane->rendered[index]=row;pane->output.Items().SetAt(static_cast<std::uint32_t>(index),item);}
                 else{pane->rendered.push_back(row);pane->output.Items().Append(item);}
             }

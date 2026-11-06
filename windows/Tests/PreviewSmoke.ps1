@@ -386,7 +386,7 @@ try {
             return $null
         }
         $observed=@{control=$null;more=$null;scrollIssued=$false}
-        $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests')
+        $toolbarCommand=$id -in @('OpenPasswords','OpenPullRequests','OpenTerminal')
         Wait-Until {
             $observed.control=Find-Invokable $script:window $id
             $observed.more=$null
@@ -533,13 +533,20 @@ try {
     if ($box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'next draft') { throw 'Stopping lost the draft typed during the turn.' }
     $checks += 'Stop interrupts the active turn and preserves the next draft'
 
+    $beforeUntitledIDs = @((Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json).threads.id)
     Invoke-Control 'NewChat'
     Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The second untitled conversation did not open.'
-    $list = Find-Control $script:window 'Threads'
     $sameTitle = New-Object Windows.Automation.AndCondition(
         (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem)),
         (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $codex[0].title)))
-    if ($list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -ne 2) { throw 'Identical conversation titles do not have separate accessible rows.' }
+    # The previous conversation already has a Codex status. Observe the new saved
+    # identity and realized UIA rows before accepting the queued New Chat action.
+    Wait-Until {
+        $current = Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $created = @($current.threads | Where-Object {$_.provider -eq 'codex' -and $_.id -notin $beforeUntitledIDs})
+        $list = Find-Control $script:window 'Threads'
+        $created.Count -eq 1 -and $list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -eq 2
+    } 'Identical conversation titles do not have separate accessible rows.'
     $checks += 'Identical conversation titles retain separate accessible sidebar rows'
 
     $scheduledFile = Join-Path $data "threads\$scheduledThread.json"
@@ -618,6 +625,29 @@ try {
         $current=Get-Content (Join-Path $data "threads\$first.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if($current.draft -ne 'Draft Smoke A'){throw 'Opening password or pull request tools changed the conversation draft.'}
         $checks += 'Password and pull request tools open in the app without changing the conversation draft'
+        Invoke-Control 'OpenTerminal'
+        $selection=@{range=$null}
+        Wait-Until {
+            $rows=$script:window.FindAll([Windows.Automation.TreeScope]::Descendants,
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,'TerminalRowText')))
+            foreach($row in $rows){
+                if($row.Current.IsOffscreen){continue}
+                try{$pattern=$row.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern);$range=$pattern.DocumentRange;if($range.GetText(-1) -like '*TERMINAL_FIXTURE_READY*'){$selection.range=$range;return $true}}catch [Windows.Automation.ElementNotAvailableException]{}catch [InvalidOperationException]{}
+            }
+            return $false
+        } 'The owned terminal fixture did not expose its native selectable output.'
+        $selection.range.Select()
+        Invoke-Control 'TerminalUseSelection'
+        Wait-Until {
+            $text=(Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value
+            $text.StartsWith('Draft Smoke A') -and $text -like '*TERMINAL_FIXTURE_READY*' -and $text.Contains('```text')
+        } 'Explicit terminal selection did not append quoted context to the current draft.'
+        $current=Get-Content (Join-Path $data "threads\$first.json") -Raw -Encoding UTF8|ConvertFrom-Json
+        if($current.messages.Count -ne 1500 -or @($current.sessions).Count){throw 'Quoting terminal text started a provider or changed saved history.'}
+        Set-Message 'Draft Smoke A'
+        Invoke-Control 'CloseTools'
+        $checks += 'Explicit native terminal selection appends quoted composer context without sending or changing history'
+
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
