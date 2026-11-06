@@ -11,7 +11,7 @@ pub(crate) struct SidebarRow {
 }
 impl Store {
     pub(crate) fn capture_sidebar_row(&self, source: &Value, target: &Value) -> Result<SidebarRow> {
-        let id = validate_thread(source)?;
+        let id = validate_thread(source)?.to_owned();
         ensure!(
             validate_thread(target)? == id,
             "Conversation identity changed"
