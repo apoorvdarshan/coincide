@@ -538,12 +538,14 @@ fn run(
             transport.next()?
         };
         if let Some(frame) = frame {
-            if profile.is_some() && frame["id"].as_u64() == Some(ACCOUNT_REQUEST) {
+            if let Some(profile) = profile.as_ref()
+                && frame["id"].as_u64() == Some(ACCOUNT_REQUEST)
+            {
                 ensure!(
                     account_pending && stage == 1 && frame.get("error").is_none(),
                     "Codex profile authentication check failed"
                 );
-                profile.as_ref().unwrap().admit_account(&frame["result"])?;
+                profile.admit_account(&frame["result"])?;
                 account_pending = false;
                 write_thread_request(&mut transport, &launch, instructions.as_deref())?;
                 stage = 2;

@@ -232,8 +232,7 @@ fn codex_profile_fixture_child() {
     );
     let repeated = calls
         .iter()
-        .filter(|v| v["home"] == json!(home_a) && v.get("turn").is_some())
-        .last()
+        .rfind(|v| v["home"] == json!(home_a) && v.get("turn").is_some())
         .unwrap();
     assert!(
         repeated["turn"]["input"][0]["text"]

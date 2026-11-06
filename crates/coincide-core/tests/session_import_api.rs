@@ -55,6 +55,10 @@ fn public_import_changes_revision_once_preserves_source_and_cannot_execute() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    // poll applies discovery completions after its limits-context phase. Once
+    // discovery is visible, settle that dependent context before measuring the
+    // import itself; otherwise its next dispatch also advances that context.
+    engine.poll();
     let revision = engine.revision;
     let imported = call(&mut engine, "cli.sessions.import", params.clone());
     assert!(imported["error"].is_null(), "{imported}");

@@ -142,7 +142,7 @@ impl Coincide {
             prompt: Some("Choose project folder".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            let picked = picker.await;
+            let picked: Result<_> = async { picker.await? }.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if !this.project_ui_admitted()
                     || !this.project_picker_open

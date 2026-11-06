@@ -48,6 +48,41 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [ ] Real-account acceptance, full test parity and data cutover rehearsal.
 - [ ] Remove superseded Swift/C++ desktop implementation and build tooling.
 
+## Latest combined checkpoint (2026-11-06)
+
+The broad inventory remains 7 of 32 accepted areas. Partial source and scoped
+native results do not close a full feature row.
+
+- Integrated Rust-owned Codex login profiles with private launch homes, captured
+  account/session binding and pre-turn subscription authentication. Six profile
+  units, the captured-session unit and the actual isolated fake Engine/app-server
+  integration passed. The parent exercised its intentionally ignored child.
+  Native enrollment/account Settings and named model/catalog/limits parity remain
+  open; no real login or provider submission was performed.
+- Integrated native project add/rename/relocate and explicit counted removal with
+  transactional raw recovery and Restore, plus profile-bound history review,
+  import, restart persistence, saved list and explicit new-tab open. The combined
+  Core unit run passed 560 tests (seven intentional ignored fixtures); full
+  integration, desktop and combined native acceptance are in progress.
+- The ordinary transcript fixture on exact 5b5a9a2 passed user/assistant layouts,
+  reasoning/tool Expand/Collapse, hidden-tail Find and Next/Previous, visible
+  Unicode selection, full assistant Copy and one real Edit branch. A real Core
+  HistoryPlan comparison verified that branch before a native paste verified the
+  full copied source. Original raw rows/documents and all frozen files remained
+  exact; normal Quit exited zero. Three denied fake Git probes, zero provider or
+  vault calls. Exact selected-range clipboard and native AX focus remain open.
+- Explicit Codex commandExecution display metadata passed five focused tests and
+  strict Core feature Clippy. The historical image viewer now declares a Dialog
+  role and label; this semantic correction passed desktop compilation but does
+  not establish native focus restoration.
+- Exact 5b5a9a2 passed all six Rust jobs, packaging, general CI and iOS tests.
+  Both completed Linux main-archive provisioning samples took 47 seconds, versus
+  prior 23-second and 15m09s Azure samples. The bounded mirror change retains all
+  packages/checks; runner variance prevents a fixed runtime promise.
+- Updater/cutover remains blocked by unresolved authoritative identity of two
+  existing processes. The strict guard remains closed; no install or rollback
+  success is claimed. The active Swift application/data remain authoritative.
+
 ## Current UI parity slices
 
 These narrower results do not close the broad UI/UX row above.
@@ -60,8 +95,8 @@ These narrower results do not close the broad UI/UX row above.
 | Assistant body-first layout and compact signature/actions | Integrated and tested in the combined suite | Scoped ordinary-build pass |
 | Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | V5 passed full-image containment at wide/minimum/widened sizes, Escape/Close, normal Quit and exact preservation; focused-element proof remains unverified |
 | Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Foreground min/max, narrow/wide behavior and restart preservation passed; content geometry measured approximately from screenshots |
-| User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble native check queued |
-| Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Fresh native Copy/Edit/disclosure/Find fixture prepared and seeded through actual Store APIs; pending |
+| User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble/actions observed in the ordinary roles fixture |
+| Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
 ## Overnight checkpoint (2026-11-05)
 
@@ -83,7 +118,7 @@ Latest verification and current gates:
   ultimately passed all six jobs; its completed log confirms Azure archive
   downloads took 14m52s and full provisioning 15m09s. The first main-archive
   experiment completed provisioning in 47s and passed Linux compilation/tests;
-  its second timing sample remains pending. All packages and checks are retained.
+  its second completed sample also took 47s. All packages and checks are retained.
 - The work-card follow-up passed 385 desktop unit tests and every integration
   target (19, 10, 14, 11), including explicit-status/neutral-unknown/Unicode-title
   cases. Thinking/Thought labels require explicit stored status; raw tool text

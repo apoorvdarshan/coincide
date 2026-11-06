@@ -3,7 +3,7 @@ mod codex_limits_view;
 mod usage_history_mount;
 mod usage_history_view;
 mod worker_owner;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 mod app_menu;
 mod app_menu_mount;
 mod assets;

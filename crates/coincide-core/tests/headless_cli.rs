@@ -277,8 +277,30 @@ fn headless_cli_project_thread_edits_survive_server_restart() {
     let empty_path = fixture.dir.path().join("empty project");
     fs::create_dir(&empty_path).unwrap();
     let empty = fixture.api("projects.create", json!({"path":empty_path}));
-    fixture.api("projects.remove", json!({"projectId":empty["id"]}));
+    let refused = fixture
+        .run(
+            &["api"],
+            Some(json!({"method":"projects.remove","params":{"projectId":empty["id"]}})),
+        )
+        .failure();
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("ticket")
+    );
+    assert_eq!(fixture.cli(&["projects"]).as_array().unwrap().len(), 2);
+    let review = fixture.api(
+        "projects.prepare",
+        json!({"projectId":empty["id"],"action":"remove"}),
+    );
+    assert_eq!(review["threadCount"], 0);
+    let removed = fixture.api("projects.remove", json!({"projectId":empty["id"],"ticket":review["ticket"],"confirmed":true,"confirmedThreadCount":0}));
     assert_eq!(fixture.cli(&["projects"]).as_array().unwrap().len(), 1);
+    assert!(
+        empty_path.is_dir(),
+        "Removal must retain the project folder"
+    );
     fixture.cli(&["quit"]);
     server.wait_stopped();
     drop(server);
@@ -289,6 +311,25 @@ fn headless_cli_project_thread_edits_survive_server_restart() {
     assert_eq!(restored["isArchived"], false);
     assert_eq!(restored["projectID"], project_id);
     assert_eq!(fixture.cli(&["projects"])[0]["name"], "Renamed");
+    let recoveries = fixture.api("projects.recovery", json!({}));
+    assert_eq!(recoveries.as_array().unwrap().len(), 1);
+    assert_eq!(recoveries[0]["id"], removed["archiveId"]);
+    let review = fixture.api(
+        "projects.prepare",
+        json!({"projectId":removed["archiveId"],"action":"restore"}),
+    );
+    assert_eq!(review["threadCount"], 0);
+    fixture.api("projects.restore", json!({"projectId":removed["archiveId"],"ticket":review["ticket"],"confirmed":true,"confirmedThreadCount":0}));
+    assert_eq!(fixture.cli(&["projects"]).as_array().unwrap().len(), 2);
+    assert!(
+        fixture
+            .api("projects.recovery", json!({}))
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(empty_path.is_dir());
+    assert_eq!(fixture.cli(&["read", id]), restored);
     fixture.cli(&["quit"]);
     server.wait_stopped();
     assert!(!fixture.run(&["status"], None).status.success());
