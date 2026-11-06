@@ -144,6 +144,7 @@ impl Coincide {
             conversations = conversations.child(group);
         }
         div()
+            .track_focus(&self.thread_list_focus)
             .flex()
             .flex_col()
             .w(px(280.))

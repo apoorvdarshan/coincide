@@ -41,7 +41,7 @@ impl Coincide {
                         this.thread_list_open = !this.thread_list_open;
                         // Do not leave keyboard input targeting a hidden search field.
                         if !this.thread_list_open
-                            && this.search.read(cx).focus_handle(cx).is_focused(window)
+                            && this.thread_list_focus.contains_focused(window, cx)
                         {
                             this.navigation_focus.focus(window, cx);
                         }
