@@ -9,12 +9,15 @@
 //! Mode-sensitive input is encoded by terminal.input in core; native IME preedit
 //! is local to a revocable per-pane focus session and never edits shell output.
 use crate::terminal_selection::TerminalSelection;
+#[path = "terminal_context.rs"]
+mod context;
 use anyhow::{Result, ensure};
 use coincide_core::{
     api::SharedEngine,
     store::text,
     terminal::{KeyModifiers, TerminalInput, TerminalPoint, TerminalScroll},
 };
+pub(crate) use context::{ComposerBaseline, SelectionRequest, TerminalContextEvent};
 use gpui_kit::{base::Disableable, component::button::*, prelude::FluentBuilder, *};
 use serde_json::{Value, json};
 use std::{
@@ -22,7 +25,7 @@ use std::{
     ops::Range,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -570,6 +573,7 @@ enum Command {
     Create(PaneId),
     Watch(Vec<PaneId>),
     Copy(PaneId, u64, u64, TerminalPoint, TerminalPoint),
+    AttachSelection(SelectionRequest, ComposerBaseline),
     Act(PaneId, u64, Action),
 }
 enum Update {
@@ -578,6 +582,11 @@ enum Update {
     Frame(PaneId, u64, Result<Option<Value>>),
     Closed(PaneId, u64, Result<()>),
     Copied(PaneId, u64, u64, Result<String>),
+    ContextAttached(
+        SelectionRequest,
+        ComposerBaseline,
+        std::result::Result<Value, String>,
+    ),
     // Command failure is not a frame: later input tickets must not hide it.
     ActionFailed(PaneId, String),
 }
@@ -596,6 +605,7 @@ fn worker(
     tx: SyncSender<Update>,
     stop: Arc<AtomicBool>,
 ) {
+    let context_engine = engine.clone();
     run_worker(
         thread,
         rx,
@@ -608,6 +618,17 @@ fn worker(
             Err(error) if crate::engine_busy(&error) => Ok(None),
             result => result,
         },
+        |request, baseline| {
+            let mut engine = context_engine
+                .lock()
+                .map_err(|_| anyhow::anyhow!("App owner is unavailable"))?;
+            // Recheck revocation after Engine acquisition, immediately before admission.
+            ensure!(
+                request.current(),
+                "Terminal or composer changed; select again"
+            );
+            engine.attach_terminal_selection(&request.params(baseline))
+        },
     );
 }
 
@@ -618,6 +639,7 @@ fn run_worker(
     stop: &AtomicBool,
     mut call: impl FnMut(&str, Value) -> Result<Value>,
     mut read: impl FnMut(&str) -> Result<Option<Value>>,
+    mut attach: impl FnMut(&SelectionRequest, &ComposerBaseline) -> Result<Value>,
 ) {
     if stop.load(Ordering::Acquire) {
         return;
@@ -668,6 +690,27 @@ fn run_worker(
                     );
                 }
                 if !send(&tx, Update::Bound(key, result)) {
+                    return;
+                }
+            }
+            Ok(Command::AttachSelection(request, baseline)) => {
+                let result = (|| -> Result<Value> {
+                    let binding = bound
+                        .get(&request.pane)
+                        .ok_or_else(|| anyhow::anyhow!("Pane has no terminal"))?;
+                    ensure!(
+                        baseline.thread == thread
+                            && request.thread == thread
+                            && binding.terminal == request.terminal
+                            && binding.ticket == request.ticket
+                            && request.current(),
+                        "Terminal pane or composer changed; select again"
+                    );
+                    attach(&request, &baseline)
+                })()
+                .map_err(|error| error.to_string());
+                // A successful commit is always returned, even after later revocation.
+                if !send(&tx, Update::ContextAttached(request, baseline, result)) {
                     return;
                 }
             }
@@ -776,6 +819,9 @@ pub struct TerminalWorkspace {
     tx: SyncSender<Command>,
     rx: Receiver<Update>,
     notice: String,
+    context_epoch: Arc<AtomicU64>,
+    context_pending: bool,
+    context_shutdown_receipts: Vec<std::result::Result<Value, String>>,
     visible: bool,
     watch_dirty: bool,
     stopping: Arc<AtomicBool>,
@@ -819,6 +865,9 @@ impl TerminalWorkspace {
             tx,
             rx,
             notice: String::new(),
+            context_epoch: Arc::new(AtomicU64::new(0)),
+            context_pending: false,
+            context_shutdown_receipts: vec![],
             visible: true,
             watch_dirty: false,
             stopping,
@@ -830,13 +879,25 @@ impl TerminalWorkspace {
     pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
         self.stopping.store(true, Ordering::Release);
         self.set_visible(false, cx);
-        for _ in self.rx.try_iter().take(32) {}
+        self.drain_context_shutdown();
     }
     pub fn shutdown_status(&mut self) -> coincide_core::agent::WorkerThreadStatus {
         // Release a publisher blocked by the bounded mailbox without applying
         // old frames, copy commands or input callbacks during shutdown.
-        for _ in self.rx.try_iter().take(32) {}
-        self.completion.status()
+        self.drain_context_shutdown();
+        let status = self.completion.status();
+        if status == coincide_core::agent::WorkerThreadStatus::Returned {
+            // A normal joined worker cannot still publish. Any unexecuted queued
+            // request was revoked before admission; preserve this classified receipt.
+            self.drain_context_shutdown();
+            if self.context_pending {
+                self.context_shutdown_receipts.push(Err(
+                    "Queued terminal selection cancelled before admission".into(),
+                ));
+                self.context_pending = false;
+            }
+        }
+        status
     }
     /// Parent must not rebind this entity to another thread. Cache one entity per
     /// thread; old queued input can only address that entity's original PTYs.
@@ -864,6 +925,7 @@ impl TerminalWorkspace {
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         let visible = visible && !self.stopping.load(Ordering::Acquire);
         if !visible {
+            self.invalidate_context();
             self.revoke_inputs(cx);
         }
         self.visible = visible;
@@ -958,6 +1020,7 @@ impl TerminalWorkspace {
             cx.notify();
             return false;
         }
+        self.context_epoch.fetch_add(1, Ordering::AcqRel);
         pane.ticket = ticket;
         pane.selection.clear();
         pane.blink = Instant::now();
@@ -980,6 +1043,7 @@ impl TerminalWorkspace {
         true
     }
     fn remove(&mut self, key: PaneId) {
+        self.invalidate_context();
         self.panes.remove(&key);
         self.tabs = self
             .tabs
@@ -1007,7 +1071,7 @@ impl TerminalWorkspace {
     }
     fn drain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.stopping.load(Ordering::Acquire) {
-            for _ in self.rx.try_iter().take(32) {}
+            self.drain_context_shutdown();
             return;
         }
         let mut changed = false;
@@ -1017,6 +1081,20 @@ impl TerminalWorkspace {
             };
             changed = true;
             match update {
+                Update::ContextAttached(request, baseline, result) => {
+                    self.context_pending = false;
+                    let fresh = self.selection_request_current(&request);
+                    self.notice = match &result {
+                        Ok(_) => "Terminal selection attached to its original conversation.".into(),
+                        Err(error) => format!("Terminal selection was not attached: {error}"),
+                    };
+                    cx.emit(TerminalContextEvent::Completed {
+                        request,
+                        baseline,
+                        result,
+                        fresh,
+                    });
+                }
                 Update::ActionFailed(key, message) => {
                     if let Some(pane) = self.panes.get_mut(&key) {
                         // Do not discard a lost-input warning because newer
@@ -1185,6 +1263,7 @@ impl TerminalWorkspace {
         }
     }
     fn focus(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        self.invalidate_context();
         if !self.visible || !self.ids().contains(&key) {
             return;
         }
@@ -1298,6 +1377,7 @@ impl TerminalWorkspace {
         if !self.visible || !self.ids().contains(&key) {
             return;
         }
+        self.invalidate_context();
         let k = &event.keystroke;
         let command = k.modifiers.platform || (k.modifiers.control && k.modifiers.shift);
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("v") {
@@ -1613,6 +1693,7 @@ impl TerminalWorkspace {
                                                 offset + row_index,
                                                 col,
                                             ) {
+                                                this.context_epoch.fetch_add(1, Ordering::AcqRel);
                                                 cx.notify();
                                             }
                                         },
@@ -1688,6 +1769,25 @@ impl TerminalWorkspace {
                         .is_none_or(|f| !pane.selection.has_selection(&id, f)),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.copy(key, cx))),
+        );
+        footer = footer.child(
+            Button::new(SharedString::from(format!("use-selection-{key}")))
+                .label("Use selection in message")
+                .tooltip(
+                    "Attach selected visible terminal output as a reference; no message is sent",
+                )
+                .disabled(
+                    self.context_pending
+                        || !self.visible
+                        || pane.closing
+                        || pane
+                            .frame
+                            .as_ref()
+                            .is_none_or(|f| !pane.selection.has_selection(&id, f)),
+                )
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.request_context_selection(key, cx)),
+                ),
         );
         if let Some(frame) = &pane.frame {
             footer = footer.child(div().child(format!(
@@ -2039,6 +2139,7 @@ mod tests {
                     Ok(json!([]))
                 },
                 |_| unreachable!(),
+                |_, _| unreachable!(),
             );
         });
         let completion = coincide_core::agent::WorkerCompletion::observe(worker);
@@ -2247,6 +2348,7 @@ mod tests {
                         })
                     },
                     |terminal| Ok(Some(json!({"terminalId":terminal,"revision":7}))),
+                    |_, _| anyhow::bail!("No attach allocated in this worker fixture"),
                 );
             });
             let worker = Self {

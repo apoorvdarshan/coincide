@@ -54,6 +54,7 @@ mod scheduling;
 mod session_import;
 mod settings;
 mod shutdown_runtime;
+mod terminal_context_mount;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
@@ -946,7 +947,7 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();}
+                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
                 {
@@ -3625,19 +3626,28 @@ impl Coincide {
             workspace.update(cx, |workspace, cx| workspace.set_visible(false, cx));
         }
         if let Some(thread) = target {
-            let workspace = self
-                .terminal_workspaces
-                .entry(thread.clone())
-                .or_insert_with(|| {
-                    cx.new(|cx| {
-                        terminal_workspace::TerminalWorkspace::new(
-                            self.engine.clone(),
-                            thread.clone(),
-                            window,
-                            cx,
-                        )
-                    })
+            let workspace = if let Some(workspace) = self.terminal_workspaces.get(&thread) {
+                workspace.clone()
+            } else {
+                let workspace = cx.new(|cx| {
+                    terminal_workspace::TerminalWorkspace::new(
+                        self.engine.clone(),
+                        thread.clone(),
+                        window,
+                        cx,
+                    )
                 });
+                self._subscriptions.push(cx.subscribe_in(
+                    &workspace,
+                    window,
+                    |this, workspace, event, window, cx| {
+                        this.terminal_context_event(workspace, event, window, cx)
+                    },
+                ));
+                self.terminal_workspaces
+                    .insert(thread.clone(), workspace.clone());
+                workspace
+            };
             debug_assert_eq!(workspace.read(cx).thread_id(), thread);
             workspace.update(cx, |workspace, cx| workspace.set_visible(true, cx));
             self.terminal_visible_thread = Some(thread);

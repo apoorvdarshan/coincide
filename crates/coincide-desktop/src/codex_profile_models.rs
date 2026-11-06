@@ -56,6 +56,7 @@ impl Coincide {
         selection: &Value,
         model: &str,
         request: Option<&str>,
+        access: Option<(&str, &Value, &Value)>,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.selected.as_ref().filter(|thread| {
@@ -67,6 +68,11 @@ impl Coincide {
         if let Some(request) = request {
             params["requestId"] = json!(request);
         }
+        if let Some((access, expected_access, expected_interaction)) = access {
+            params["accessMode"] = json!(access);
+            params["expectedAccessMode"] = expected_access.clone();
+            params["expectedInteractionMode"] = expected_interaction.clone();
+        }
         match call(
             &self.engine,
             "providers.codex.profiles.models.select",
@@ -75,7 +81,7 @@ impl Coincide {
             Ok(thread) => {
                 self.accept_saved_provider_selection(thread);
                 self.status =
-                    "Profile model saved. This profile is authenticated again before every turn."
+                    "Profile model/access saved. This profile is authenticated again before every turn."
                         .into();
             }
             Err(error) => self.status = format!("Profile model was not changed: {error}"),
@@ -100,12 +106,15 @@ impl Coincide {
         let refresh_selection = selection.clone();
         let default_id = id.clone();
         let default_selection = selection.clone();
+        let elevated = thread["accessMode"] == "fullAccess";
+        let default_access = thread["accessMode"].clone();
+        let default_interaction = thread["interactionMode"].clone();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
-            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Effort, speed, Plan, full access, bots and native resume are unavailable for named profiles."))
+            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Full access requires this profile’s refreshed explicit model. Effort, speed, Plan, bots and native resume remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("named-profile-model-default").label("Provider default").disabled(disabled)
-                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,cx))))
+                .child(Button::new("named-profile-model-default").label(if elevated {"Provider default and approval"} else {"Provider default"}).disabled(disabled)
+                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated {Some(("approval",&default_access,&default_interaction))} else {None},cx))))
                 .child(Button::new("named-profile-model-refresh").label("Refresh profile models").disabled(disabled || self.selection_ui.catalog_request.is_some())
                     .on_click(cx.listener(move |this,_,_,cx|this.refresh_named_profile_models(&refresh_id,&refresh_selection,cx)))));
         if let Some(reason) = self.selection_ui.capabilities["lockReason"].as_str() {
@@ -153,6 +162,7 @@ impl Coincide {
                                     &row_selection,
                                     &chosen,
                                     Some(&request),
+                                    None,
                                     cx,
                                 )
                             })),
@@ -168,6 +178,45 @@ impl Coincide {
             } else if let Some(error) = catalog["error"].as_str() {
                 pane = pane.child(div().text_xs().child(error.to_owned()));
             }
+        }
+        let model = text(&thread["selection"], "modelID");
+        let request = text(catalog, "requestId");
+        let access_ready = !disabled
+            && caps["fullAccessSupported"] == true
+            && catalog_scope(catalog, thread)
+            && catalog["state"] == "ready"
+            && catalog["authenticationChecked"] == true;
+        let mut access_controls = div().flex().flex_wrap().gap_2();
+        for (access, label) in [
+            ("approval", "Approval required"),
+            ("fullAccess", "Full access (no app approvals)"),
+        ] {
+            let row_id = id.clone();
+            let row_selection = selection.clone();
+            let row_model = model.clone();
+            let row_request = request.clone();
+            let expected_access = thread["accessMode"].clone();
+            let expected_interaction = thread["interactionMode"].clone();
+            access_controls = access_controls.child(
+                Button::new(SharedString::from(format!("named-profile-access-{access}")))
+                    .label(label)
+                    .disabled(!access_ready)
+                    .when(thread["accessMode"] == access, |button| button.primary())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_named_profile_model(
+                            &row_id,
+                            &row_selection,
+                            &row_model,
+                            Some(&row_request),
+                            Some((access, &expected_access, &expected_interaction)),
+                            cx,
+                        )
+                    })),
+            );
+        }
+        pane = pane.child(access_controls);
+        if elevated {
+            pane = pane.child(div().text_xs().child("Full access lets Codex run without app approval prompts. The saved model must retain this profile’s current catalog proof; authentication is checked before every turn. Changing this setting sends no message."));
         }
         pane.into_any_element()
     }

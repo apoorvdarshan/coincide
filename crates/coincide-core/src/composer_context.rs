@@ -198,6 +198,27 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     validate(&result)?;
     Ok(result)
 }
+/// Selected visible terminal output is bounded data; never truncate or accept blank/hidden-only text.
+pub(crate) fn append_terminal_selection(raw: &Value, text: &str) -> Result<Value> {
+    validate(raw)?;
+    ensure!(
+        !text.is_empty() && text.len() <= 32 * 1024 && text.chars().any(|ch| !ch.is_whitespace()),
+        "Select nonblank terminal output of at most 32 KiB"
+    );
+    ensure!(
+        !text
+            .chars()
+            .any(|ch| ch.is_control() && ch != '\n' && ch != '\t'),
+        "Terminal reference contains non-display controls"
+    );
+    let mut rows = raw.as_array().cloned().unwrap_or_default();
+    rows.push(
+        json!({"id":Uuid::new_v4(),"kind":"terminal","terminal":"Terminal selection","text":text}),
+    );
+    let next = Value::Array(rows);
+    validate(&next)?;
+    Ok(next)
+}
 /// This picker supplies literal project-relative path data, never @ syntax or read authority.
 pub(crate) fn validate_file_reference_path(path: &str) -> Result<()> {
     use std::path::{Component, Path};

@@ -61,6 +61,30 @@ pub struct Terminal {
     pub title: String,
 }
 impl Terminal {
+    /// Test-only display engine: actual Alacritty parsing/filtering with no PTY, child or IO worker.
+    #[cfg(test)]
+    pub(crate) fn fixture_output(rows: u16, cols: u16, bytes: &[u8]) -> Self {
+        let (output_tx, output) = mpsc::sync_channel(1);
+        output_tx.send(bytes.to_vec()).unwrap();
+        let (sender, events) = mpsc::channel();
+        Self {
+            master: None,
+            child: None,
+            writer: Some(mpsc::sync_channel(1).0),
+            output: Some(output),
+            events,
+            term: Term::new(Config::default(), &Size { rows, cols }, Listener(sender)),
+            processor: Processor::new(),
+            shell: Default::default(),
+            shell_anchors: Default::default(),
+            history_limit: Config::default().scrolling_history,
+            _shell_launch: None,
+            reader_worker: None,
+            writer_worker: None,
+            revision: 0,
+            title: "Terminal".into(),
+        }
+    }
     pub fn spawn(cwd: &Path, shell: &str, rows: u16, cols: u16) -> Result<Self> {
         ensure!(cwd.is_dir(), "Terminal working directory does not exist");
         check_size(rows, cols)?;
