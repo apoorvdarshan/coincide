@@ -158,6 +158,7 @@ fn provider_commands_engine_child() {
     assert_eq!(command, Command::Provider("codex"));
     let actual = engine_command_transaction(&mut f.engine, &pending, command, false, None).unwrap();
     let mut expected = before.clone();
+    expected["rustProviderSelections"] = json!({"claude": before["selection"]});
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!("default");
     expected["draft"] = json!("");
@@ -180,7 +181,8 @@ fn provider_commands_engine_child() {
         None,
     )
     .unwrap();
-    let mut expected = t;
+    let mut expected = t.clone();
+    expected["rustProviderSelections"] = json!({"claude": t["selection"]});
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!("default");
     expected["draft"] = json!("");
@@ -405,5 +407,102 @@ fn restored_model_receipt_must_match_saved_selection_before_draft_clear() {
                 .count(),
             usize::from(!mismatched)
         );
+    }
+}
+
+#[::core::prelude::v1::test]
+fn named_restore_pending_retains_command_and_retry_binds_exact_request() {
+    let thread = json!({"id":"synthetic","draft":"/codex","selection":{"provider":"claude","modelID":"default"},"sessions":{"codex":{"accountID":"synthetic-account-a","sessionID":"old-native"}},"accessMode":"approval","interactionMode":"build"});
+    let mut pending = Submission::new(&thread, "/codex");
+    for retry in [false, true] {
+        if retry {
+            pending.restore_request = Some("synthetic-request".into());
+        }
+        let mut calls = Vec::new();
+        let result = command_transaction(&pending, Command::Provider("codex"), false, None, |method, params| {
+            calls.push(method.to_owned());
+            match method {
+                "threads.read" => Ok(thread.clone()),
+                "agent.selection.capabilities" => Ok(coincide_core::composer_selection::capabilities()),
+                "agent.provider.select" => {
+                    assert_eq!(params["expected"], pending.thread);
+                    assert_eq!(params["restoreRequestId"], if retry { json!("synthetic-request") } else { Value::Null });
+                    Ok(json!({"pending":true,"requestId":"synthetic-request","provider":"codex","accountID":"synthetic-account-a","authenticationChecked":false}))
+                }
+                _ => panic!("a pending restoration must not clear, send, queue or discover independently"),
+            }
+        }).unwrap();
+        assert_eq!(result["pending"], true);
+        assert_eq!(
+            calls,
+            vec![
+                "threads.read",
+                "agent.selection.capabilities",
+                "agent.provider.select"
+            ]
+        );
+        assert_eq!(thread["draft"], "/codex");
+    }
+}
+
+#[::core::prelude::v1::test]
+fn named_restore_clears_only_exact_acknowledged_command() {
+    for mismatch in [
+        "none",
+        "account",
+        "receipt-account",
+        "model",
+        "authentication",
+        "mode",
+        "content",
+        "provenance",
+    ] {
+        let mut thread = json!({"id":"synthetic","draft":" /codex\n","selection":{"provider":"claude","modelID":"default"},"sessions":{"codex":{"accountID":"synthetic-account-a","sessionID":"old-native"}},"accessMode":"approval","interactionMode":"build","future":{"keep":true}});
+        let pending = Submission::new(&thread, " /codex\n");
+        let mut clears = 0;
+        let result = command_transaction(
+            &pending,
+            Command::Provider("codex"),
+            false,
+            None,
+            |method, params| match method {
+                "threads.read" => Ok(thread.clone()),
+                "agent.selection.capabilities" => {
+                    Ok(coincide_core::composer_selection::capabilities())
+                }
+                "agent.provider.select" => {
+                    thread["selection"] = json!({"provider":"codex","modelID":"synthetic-a","accountID":"synthetic-account-a"});
+                    if mismatch == "account" {
+                        thread["selection"]["accountID"] = json!("synthetic-account-b");
+                    }
+                    if mismatch == "model" {
+                        thread["selection"]["modelID"] = json!("synthetic-b");
+                    }
+                    if mismatch == "mode" {
+                        thread["accessMode"] = json!("fullAccess");
+                    }
+                    if mismatch == "content" {
+                        thread["draft"] = json!("newer unsent text");
+                    }
+                    Ok(
+                        json!({"thread":thread,"accountID":if mismatch=="receipt-account"{"synthetic-account-b"}else{"synthetic-account-a"},"model":"synthetic-a","restored":true,"accountRestored":true,"authenticationChecked":mismatch!="authentication","provenance":if mismatch=="provenance"{"latest_default_catalog"}else{"latest_authenticated_named_catalog"}}),
+                    )
+                }
+                "threads.patch" => {
+                    assert_eq!(mismatch, "none");
+                    assert_eq!(params["patch"], json!({"draft":""}));
+                    clears += 1;
+                    thread["draft"] = json!("");
+                    Ok(thread.clone())
+                }
+                _ => panic!("restore completion must not launch or refresh a provider"),
+            },
+        );
+        assert_eq!(result.is_ok(), mismatch == "none", "{mismatch}");
+        assert_eq!(clears, usize::from(mismatch == "none"), "{mismatch}");
+        assert_eq!(thread["future"], json!({"keep":true}));
+        if mismatch != "none" && mismatch != "content" {
+            assert_eq!(thread["draft"], " /codex\n");
+        }
     }
 }

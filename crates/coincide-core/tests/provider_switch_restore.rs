@@ -167,6 +167,7 @@ fn selected(engine: &mut Engine, original: &Value, model: &str) {
     assert_eq!(result["authenticationChecked"], false);
     assert_eq!(result["accountRestored"], false);
     let mut expected = original.clone();
+    expected["rustProviderSelections"] = json!({"claude": original["selection"]});
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!(model);
     expected["selection"]

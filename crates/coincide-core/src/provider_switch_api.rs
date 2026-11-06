@@ -146,6 +146,17 @@ impl Engine {
         });
         let model = restored.as_deref().unwrap_or("default");
         let mut selection = json!({"threadId":id,"provider":provider,"model":model,"accountId":null,"effort":null,"speed":null});
+        let preference = &current["rustProviderSelections"][provider];
+        if restored.is_some()
+            && crate::composer_selection::default_account(&preference["accountID"])
+            && preference["modelID"] == model
+        {
+            for key in ["effort", "speed"] {
+                if let Some(value) = preference.get(key) {
+                    selection[key] = value.clone();
+                }
+            }
+        }
         for key in ["accessMode", "interactionMode"] {
             if !current[key].is_null() {
                 selection[key] = current[key].clone();
@@ -215,9 +226,14 @@ impl Engine {
         let preference = &current["rustProviderSelections"]["codex"];
         let model = historical_account_model(&current, "codex", &json!(account))
             .or_else(|| {
-                (preference["accountID"] == account)
-                    .then(|| preference["modelID"].as_str())
-                    .flatten()
+                (preference["accountID"] == account
+                    && !current["items"].as_array().is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| item["provider"] == "codex" && !item["modelID"].is_null())
+                    }))
+                .then(|| preference["modelID"].as_str())
+                .flatten()
             })
             .unwrap_or("default")
             .to_owned();

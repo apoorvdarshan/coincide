@@ -750,7 +750,14 @@ pub(super) struct ComposerSelection {
         crate::composer_commands::Command,
         crate::composer_commands::Submission,
     )>,
+    pending_provider_picker: Option<PickerRestore>,
     expanded: bool,
+}
+#[derive(Clone)]
+struct PickerRestore {
+    provider: String,
+    source: crate::composer_commands::Submission,
+    ui_draft: String,
 }
 #[derive(Clone, Debug)]
 struct CatalogRequest {
@@ -983,6 +990,138 @@ impl Coincide {
             )
         })
     }
+    fn switch_provider_from_history(
+        &mut self,
+        provider: String,
+        retry: Option<PickerRestore>,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<(Value, PickerRestore)> {
+            let selected = self
+                .selected
+                .as_ref()
+                .context("Select a conversation first")?;
+            let id = text(selected, "id");
+            anyhow::ensure!(
+                !self.running.contains(&id) && !self.attachment_import_threads.contains(&id),
+                "Finish the current turn or attachment import before switching provider"
+            );
+            let ui_draft = self.composer.read(cx).value().to_string();
+            let mut engine = try_state(&self.engine)?;
+            let current = selection_response(
+                &mut engine,
+                "threads.read",
+                json!({"threadId":id,"itemLimit":0}),
+            )?;
+            let mut pending = if let Some(pending) = retry {
+                anyhow::ensure!(
+                    pending.ui_draft == ui_draft
+                        && pending.source.same_selection(selected)
+                        && pending.source.same_content(&current, &pending.source.draft),
+                    "Composer changed; provider restoration cancelled"
+                );
+                pending
+            } else {
+                anyhow::ensure!(
+                    selected["selection"] == current["selection"]
+                        && selected["accessMode"] == current["accessMode"]
+                        && selected["interactionMode"] == current["interactionMode"],
+                    "Saved selection changed; reload before switching provider"
+                );
+                PickerRestore {
+                    provider: provider.clone(),
+                    source: crate::composer_commands::Submission::new(
+                        &current,
+                        current["draft"].as_str().unwrap_or(""),
+                    ),
+                    ui_draft,
+                }
+            };
+            let mut params =
+                json!({"threadId":id,"provider":provider,"expected":pending.source.thread});
+            if let Some(request) = &pending.source.restore_request {
+                params["restoreRequestId"] = json!(request);
+            }
+            let response = selection_response(&mut engine, "agent.provider.select", params)?;
+            if response["pending"] == true {
+                anyhow::ensure!(
+                    provider == "codex"
+                        && response["provider"] == provider
+                        && response["authenticationChecked"] == false
+                        && response["accountID"] == expected_restore_account(&current, &provider),
+                    "Invalid pending account restoration acknowledgement"
+                );
+                pending.source.restore_request = Some(
+                    response["requestId"]
+                        .as_str()
+                        .context("Missing restoration request")?
+                        .to_owned(),
+                );
+            } else {
+                let ack = &response["thread"];
+                anyhow::ensure!(
+                    pending.source.same_content(ack, &pending.source.draft)
+                        && ack["selection"]["provider"] == provider
+                        && ack["selection"]["modelID"] == response["model"]
+                        && ack["accessMode"] == current["accessMode"]
+                        && ack["interactionMode"] == current["interactionMode"],
+                    "Provider acknowledgement changed draft, content or modes"
+                );
+                if response["accountRestored"] == true {
+                    anyhow::ensure!(
+                        provider == "codex"
+                            && response["authenticationChecked"] == true
+                            && response["provenance"] == "latest_authenticated_named_catalog"
+                            && response["accountID"]
+                                == expected_restore_account(&current, &provider)
+                            && ack["selection"]["accountID"] == response["accountID"]
+                            && response["model"]
+                                .as_str()
+                                .is_some_and(|model| model != "default" && !model.is_empty()),
+                        "Provider acknowledgement belongs to another account"
+                    );
+                } else {
+                    anyhow::ensure!(
+                        response["accountRestored"] == false
+                            && response["authenticationChecked"] == false
+                            && default_account_id(&ack["selection"]["accountID"])
+                                == Some("default")
+                            && ((response["restored"] == true
+                                && response["provenance"] == "latest_default_catalog")
+                                || (response["restored"] == false
+                                    && response["provenance"] == "provider_default"
+                                    && response["model"] == "default")),
+                        "Provider acknowledgement omitted its catalog scope"
+                    );
+                }
+            }
+            Ok((response, pending))
+        })();
+        match result {
+            Ok((response, pending)) if response["pending"] == true => {
+                self.selection_ui.pending_provider_picker = Some(pending);
+                self.status =
+                    "Checking the previous account's models. Your draft is retained.".into();
+            }
+            Ok((response, _)) => {
+                self.selection_ui.pending_provider_picker = None;
+                self.accept_saved_provider_selection(response["thread"].clone());
+                self.status =
+                    "Previous provider account and available model selected. No message was sent."
+                        .into();
+            }
+            Err(error) => {
+                self.selection_ui.pending_provider_picker = None;
+                if let Ok(mut engine) = try_state(&self.engine) {
+                    let _ =
+                        selection_response(&mut engine, "agent.provider.cancelRestore", json!({}));
+                }
+                self.status = format!("Provider was not changed; draft retained: {error}");
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn perform_composer_command(
         &mut self,
         command: crate::composer_commands::Command,
@@ -1120,6 +1259,9 @@ impl Coincide {
         self.selection_ui.bound = None;
     }
     pub(super) fn sync_composer_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = self.selection_ui.pending_provider_picker.take() {
+            self.switch_provider_from_history(pending.provider.clone(), Some(pending), cx);
+        }
         if let Some((command, submission)) = self.selection_ui.pending_provider.take() {
             let current = self.composer.read(cx).value().to_string();
             if self.selected.as_ref().is_some_and(|thread| {
@@ -1844,7 +1986,8 @@ impl Coincide {
                     .when(selected, |button| button.primary())
                     .disabled(model_disabled)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.edit_selection(|draft| draft.provider = id.clone(), cx)
+                        this.selection_ui.pending_provider = None;
+                        this.switch_provider_from_history(id.clone(), None, cx)
                     })),
             );
         }
