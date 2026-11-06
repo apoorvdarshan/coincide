@@ -13,6 +13,10 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "appshots_api.rs"]
+mod appshots_api;
+pub use appshots_api::{AppshotTicket, PreparedAppshot};
+
 #[path = "follow_up_api.rs"]
 mod follow_up_api;
 #[path = "project_defaults.rs"]

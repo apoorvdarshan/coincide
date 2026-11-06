@@ -16,6 +16,7 @@ pub(super) enum SettingsSection {
     Voice,
     Accounts,
     Browser,
+    Appshots,
     Media,
     ComputerUse,
     Usage,
@@ -37,6 +38,7 @@ impl SettingsSection {
             Self::Voice => "voice",
             Self::Accounts => "accounts",
             Self::Browser => "browser",
+            Self::Appshots => "appshots",
             Self::Media => "media",
             Self::ComputerUse => "computer-use",
             Self::Usage => "usage",
@@ -58,6 +60,7 @@ impl SettingsSection {
             Self::Voice => "Voice",
             Self::Accounts => "Providers",
             Self::Browser => "Browser",
+            Self::Appshots => "Appshots",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
             Self::Usage => "Usage",
@@ -447,6 +450,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        self.appshots.sync(&self.settings);
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }
@@ -1095,6 +1099,8 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.record_appshot_shortcut(event, window, cx) { return; }
+        self.record_appshot_interaction();
         if self.record_shortcut_event(event, window, cx) {
             return;
         }
