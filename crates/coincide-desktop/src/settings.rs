@@ -847,8 +847,9 @@ impl Coincide {
                     .child(
                         Button::new("settings-done")
                             .label("Done")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.settings_open = false;
+                                this.focus_settings_route(window, cx);
                                 this.credential_panel
                                     .update(cx, |panel, cx| panel.cancel(cx));
                                 this.sync_transcription_binding(cx);
@@ -999,6 +1000,7 @@ impl Coincide {
                 self.credential_panel
                     .update(cx, |panel, cx| panel.cancel(cx));
                 self.settings_open = !self.settings_open;
+                self.focus_settings_route(window, cx);
                 self.sync_transcription_binding(cx);
                 cx.notify();
             }

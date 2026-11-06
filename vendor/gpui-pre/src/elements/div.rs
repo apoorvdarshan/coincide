@@ -5532,6 +5532,147 @@ mod tests {
         .unwrap();
     }
 
+    /// Mirrors a persistent app capture/rail with mutually exclusive Settings
+    /// and composer subtrees. The hidden handles remain owned by the view.
+    struct SettingsRouteFocusView {
+        settings_open: Rc<Cell<bool>>,
+        navigation: FocusHandle,
+        settings: FocusHandle,
+        composer: FocusHandle,
+        commands: Rc<Cell<usize>>,
+        hidden_input: Rc<Cell<usize>>,
+    }
+    impl Render for SettingsRouteFocusView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let commands = self.commands.clone();
+            let hidden_input = self.hidden_input.clone();
+            div()
+                .size_full()
+                .flex()
+                .capture_key_down(move |event, _, cx| {
+                    if event.keystroke.key == "l" && event.keystroke.modifiers.shift {
+                        commands.set(commands.get() + 1);
+                        cx.stop_propagation();
+                    }
+                })
+                .child(div().w(px(60.)).h_full().track_focus(&self.navigation))
+                .when(self.settings_open.get(), |view| {
+                    view.child(
+                        div()
+                            .w(px(200.))
+                            .h(px(100.))
+                            .track_focus(&self.settings)
+                            .on_key_down(move |_, _, _| {
+                                hidden_input.set(hidden_input.get() + 1);
+                            }),
+                    )
+                })
+                .when(!self.settings_open.get(), |view| {
+                    view.child(div().w(px(200.)).h(px(100.)).track_focus(&self.composer))
+                })
+        }
+    }
+    struct SettingsRouteFocusFixture {
+        cx: TestAppContext,
+        window: AnyWindowHandle,
+        settings_open: Rc<Cell<bool>>,
+        navigation: FocusHandle,
+        settings: FocusHandle,
+        composer: FocusHandle,
+        commands: Rc<Cell<usize>>,
+        hidden_input: Rc<Cell<usize>>,
+    }
+    impl SettingsRouteFocusFixture {
+        fn new(settings_open: bool) -> Self {
+            let mut cx = TestAppContext::single();
+            let (navigation, settings, composer) =
+                cx.update(|cx| (cx.focus_handle(), cx.focus_handle(), cx.focus_handle()));
+            let settings_open = Rc::new(Cell::new(settings_open));
+            let commands = Rc::new(Cell::new(0));
+            let hidden_input = Rc::new(Cell::new(0));
+            let window = cx
+                .add_window({
+                    let (navigation, settings, composer) =
+                        (navigation.clone(), settings.clone(), composer.clone());
+                    let settings_open = settings_open.clone();
+                    let commands = commands.clone();
+                    let hidden_input = hidden_input.clone();
+                    move |_, _| SettingsRouteFocusView {
+                        settings_open,
+                        navigation,
+                        settings,
+                        composer,
+                        commands,
+                        hidden_input,
+                    }
+                })
+                .into();
+            Self {
+                cx,
+                window,
+                settings_open,
+                navigation,
+                settings,
+                composer,
+                commands,
+                hidden_input,
+            }
+        }
+        fn draw(&mut self) {
+            self.cx
+                .update_window(self.window, |_, window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                })
+                .unwrap();
+            self.cx.run_until_parked();
+        }
+    }
+
+    #[test]
+    fn settings_route_focus_close_restores_app_dispatch_without_composer_focus() {
+        let mut fixture = SettingsRouteFocusFixture::new(true);
+        focus_and_draw(&mut fixture.cx, fixture.window, &fixture.settings);
+        // Historical failure: Done hides the route while its restored focus
+        // handle stays alive. The root app capture is outside the fallback path.
+        fixture.settings_open.set(false);
+        fixture.draw();
+        key_down(&mut fixture.cx, fixture.window, "cmd-shift-l");
+        assert_eq!(fixture.commands.get(), 0);
+        assert_eq!(fixture.hidden_input.get(), 0);
+        // Same focused owner used by the application route callbacks: the rail
+        // exists before and after Settings, so no editor click is necessary.
+        focus_and_draw(&mut fixture.cx, fixture.window, &fixture.navigation);
+        key_down(&mut fixture.cx, fixture.window, "cmd-shift-l");
+        assert_eq!(fixture.commands.get(), 1);
+        let navigation = fixture.navigation.clone();
+        let composer = fixture.composer.clone();
+        assert!(
+            fixture
+                .cx
+                .update_window(fixture.window, |_, window, _| {
+                    navigation.is_focused(window) && !composer.is_focused(window)
+                })
+                .unwrap()
+        );
+        key_down(&mut fixture.cx, fixture.window, "x");
+        assert_eq!(fixture.hidden_input.get(), 0);
+    }
+
+    #[test]
+    fn settings_route_focus_open_keeps_app_dispatch_when_composer_is_hidden() {
+        let mut fixture = SettingsRouteFocusFixture::new(false);
+        focus_and_draw(&mut fixture.cx, fixture.window, &fixture.composer);
+        fixture.settings_open.set(true);
+        fixture.draw();
+        key_down(&mut fixture.cx, fixture.window, "cmd-shift-l");
+        assert_eq!(fixture.commands.get(), 0);
+        focus_and_draw(&mut fixture.cx, fixture.window, &fixture.navigation);
+        key_down(&mut fixture.cx, fixture.window, "cmd-shift-l");
+        assert_eq!(fixture.commands.get(), 1);
+        assert_eq!(fixture.hidden_input.get(), 0);
+    }
+
     /// Pressing and releasing Enter on the same focused element fires a click.
     #[test]
     fn keyboard_activation_fires_click_on_same_element() {

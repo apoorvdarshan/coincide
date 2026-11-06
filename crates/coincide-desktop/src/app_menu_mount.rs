@@ -16,6 +16,7 @@ impl Coincide {
         self.schedules_open = false;
         self.workspace_open = false;
         self.session_import_open = false;
+        self.focus_settings_route(window, cx);
         self.refresh_settings(window, cx);
     }
 
