@@ -36,6 +36,8 @@ mod browser_history_api;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
+#[path = "codex_profile_limits_api.rs"]
+mod codex_profile_limits_api;
 #[path = "codex_profile_login_api.rs"]
 mod codex_profile_login_api;
 #[path = "codex_profile_models_api.rs"]
@@ -56,6 +58,11 @@ mod composer_astra_api_tests;
 mod composer_context_api;
 #[path = "composer_file_reference.rs"]
 mod composer_file_reference;
+#[path = "terminal_context_api.rs"]
+mod terminal_context_api;
+#[cfg(test)]
+#[path = "terminal_context_tests.rs"]
+mod terminal_context_tests;
 pub use composer_file_reference::{
     AttachedFileReference, FileReference, FileReferenceList, FileReferenceScope,
 };
@@ -313,6 +320,7 @@ impl Engine {
                 self.revision += 1;
                 Ok(result)
             }
+            "providers.codex.profiles.limits.refresh" | "providers.codex.profiles.limits.status" => self.codex_profile_limits_command(method,p),
             "providers.codex.profiles.models.refresh" | "providers.codex.profiles.models.status" | "providers.codex.profiles.models.select" => self.codex_profile_model_command(method,p),
             "providers.codex.profiles.status" | "providers.codex.profiles.create" | "providers.codex.profiles.select" => self.codex_login_profile_command(method,p),
             "providers.codex.profiles.login.start" | "providers.codex.profiles.login.status" | "providers.codex.profiles.login.cancel" => self.codex_profile_login_command(method,p),
@@ -540,12 +548,14 @@ impl Engine {
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
                     "providers.codex.profiles.login.start", "providers.codex.profiles.login.status", "providers.codex.profiles.login.cancel",
                     "providers.codex.profiles.models.refresh", "providers.codex.profiles.models.status", "providers.codex.profiles.models.select",
+                    "providers.codex.profiles.limits.refresh", "providers.codex.profiles.limits.status",
                 ]);
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
+                methods.push("composer.context.attachTerminalSelection");
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
@@ -762,6 +772,7 @@ impl Engine {
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "composer.context.edit" => self.edit_composer_context(p),
+            "composer.context.attachTerminalSelection" => self.attach_terminal_selection(p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
@@ -866,10 +877,21 @@ impl Engine {
         } else {
             self.composer_thread_effort_proof(&validation_thread)?
         };
-        crate::composer_selection::validate_thread_with_proof(
-            &validation_thread,
-            effort_proof.as_ref(),
-        )?;
+        let named_policy = if codex_profile.is_some() {
+            let policy = crate::composer_policy::Policy::parse_named(
+                &v,
+                crate::composer_policy::Origin::Ordinary,
+                named_model_proof.as_ref(),
+            )?;
+            policy.preflight()?;
+            Some(policy)
+        } else {
+            crate::composer_selection::validate_thread_with_proof(
+                &validation_thread,
+                effort_proof.as_ref(),
+            )?;
+            None
+        };
         let draft_images: Vec<crate::attachments::StoredImage> =
             if scheduled || v["rustDraftImages"].is_null() {
                 Vec::new()
@@ -901,11 +923,15 @@ impl Engine {
         ensure!(cwd.is_dir(), "Working directory does not exist");
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
         let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
-            Some(crate::composer_policy::Policy::parse_with_effort_proof(
-                &validation_thread,
-                crate::composer_policy::Origin::Ordinary,
-                effort_proof.as_ref(),
-            )?)
+            Some(if let Some(policy) = named_policy {
+                policy
+            } else {
+                crate::composer_policy::Policy::parse_with_effort_proof(
+                    &validation_thread,
+                    crate::composer_policy::Origin::Ordinary,
+                    effort_proof.as_ref(),
+                )?
+            })
         } else {
             None
         };
@@ -1549,7 +1575,9 @@ impl Engine {
         self.provider_workers_status();
         self.computer_use_expire();
         let limits_executable = self.codex_limits_executable();
-        let limits_changed = self.model_catalog.limits_context(limits_executable);
+        let named_limits = self.current_profile_limits_binding();
+        let limits_changed = self.model_catalog.limits_context(limits_executable)
+            | self.model_catalog.named_limits_context(named_limits);
         if self.model_catalog.poll() | limits_changed {
             self.revision += 1;
         }

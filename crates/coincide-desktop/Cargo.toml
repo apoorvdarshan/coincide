@@ -37,3 +37,6 @@ objc2-user-notifications = { version = "=0.3.2", optional = true, default-featur
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 cc = "=1.11.0"
+
+[dev-dependencies]
+gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }

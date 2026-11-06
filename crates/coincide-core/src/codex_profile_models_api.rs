@@ -10,7 +10,7 @@ pub(super) fn named_thread(thread: &Value) -> bool {
         && !crate::composer_selection::default_account(&thread["selection"]["accountID"])
 }
 impl Engine {
-    fn profile_model_binding(&self, thread: &Value) -> Result<NamedBinding> {
+    pub(super) fn profile_model_binding(&self, thread: &Value) -> Result<NamedBinding> {
         let id = required(thread, "id")?;
         ensure!(
             self.active_thread().and_then(|id| Uuid::parse_str(id).ok())
@@ -29,6 +29,17 @@ impl Engine {
         // an unsupported stored model or clear any other selection field.
         let mut shape = thread.clone();
         shape["selection"]["modelID"] = json!("default");
+        // Read/repair binding grants no option authority. Retained effort must
+        // not trap Refresh after restart or after its catalog was revoked.
+        shape["selection"]
+            .as_object_mut()
+            .context("Invalid profile selection")?
+            .remove("effort");
+        // Binding capture grants no model/access authority. Keep refresh and
+        // explicit approval repair available for a saved, now-unproved mode.
+        if shape["accessMode"] == "fullAccess" {
+            shape["accessMode"] = json!("approval");
+        }
         let profile = self
             .codex_login_context(&shape)?
             .context("Missing named Codex profile")?;
@@ -55,27 +66,40 @@ impl Engine {
         } else {
             binding.as_ref().err().map(ToString::to_string)
         };
-        let proof_reason = binding
+        let proof = binding
             .as_ref()
             .ok()
-            .and_then(|binding| self.profile_model_proof(thread, binding, None).err())
-            .map(|error| error.to_string());
+            .map(|binding| self.profile_model_proof(thread, binding, None));
+        let proof_reason = proof
+            .as_ref()
+            .and_then(|proof| proof.as_ref().err())
+            .map(ToString::to_string);
+        let full_access = base_reason.is_none() && matches!(proof, Some(Ok(Some(_))));
+        let effort = binding
+            .as_ref()
+            .map(|binding| self.model_catalog.named_effort_capability(thread, binding))
+            .unwrap_or_else(
+                |error| json!({"supported":false,"choices":[],"reason":error.to_string()}),
+            );
         let reason = base_reason.clone().or(proof_reason);
         result["locked"] = json!(reason.is_some());
         result["lockReason"] = json!(reason);
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
             "refreshAllowed":base_reason.is_none(),"reason":base_reason,"authenticationChecked":false,
-            "accountIdentityVerified":false,"effortSupported":false,"speedSupported":false,"nativeResumeSupported":false});
+            "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":false,"nativeResumeSupported":false,"fullAccessSupported":full_access});
         if let Some(codex) = result["providers"]
             .as_array_mut()
             .and_then(|rows| rows.iter_mut().find(|row| row["provider"] == "codex"))
         {
             codex["accountPolicy"] = json!("configured_codex_profile");
             codex["customModel"] = json!({"supported":false,"reason":"Choose a model reported by this exact profile's refreshed catalog"});
-            codex["accessModes"] = json!(["approval"]);
+            codex["accessModes"] = if full_access {
+                json!(["approval", "fullAccess"])
+            } else {
+                json!(["approval"])
+            };
             codex["interactionModes"] = json!(["build"]);
-            codex["effort"] =
-                json!({"supported":false,"reason":"Named-profile effort is not connected"});
+            codex["effort"] = effort;
             codex["speed"] =
                 json!({"supported":false,"reason":"Named-profile speed is not connected"});
         }
@@ -97,6 +121,10 @@ impl Engine {
                 "expectedSelection",
                 "requestId",
                 "model",
+                "accessMode",
+                "effort",
+                "expectedAccessMode",
+                "expectedInteractionMode",
             ][..],
             _ => bail!("Unknown profile model operation"),
         };
@@ -130,18 +158,59 @@ impl Engine {
         }
         let model = required(p, "model")?;
         crate::composer_selection::validate_model(model)?;
+        let clear_only = p.get("effort").is_some_and(Value::is_null)
+            && !thread["selection"]["effort"].is_null()
+            && thread["selection"]["modelID"] == model
+            && !fields.contains_key("accessMode");
+        if fields.contains_key("accessMode") || fields.contains_key("effort") {
+            ensure!(
+                fields.contains_key("expectedAccessMode")
+                    && fields.contains_key("expectedInteractionMode")
+                    && p.get("expectedAccessMode") == thread.get("accessMode")
+                    && p.get("expectedInteractionMode") == thread.get("interactionMode"),
+                "Conversation modes changed; reload profile controls"
+            );
+        } else {
+            ensure!(
+                !fields.contains_key("expectedAccessMode")
+                    && !fields.contains_key("expectedInteractionMode"),
+                "Expected modes require an explicit access mode or effort"
+            );
+        }
+        if let Some(access) = p.get("accessMode") {
+            ensure!(access.is_string(), "Access mode must be text");
+            thread["accessMode"] = access.clone();
+        }
+        if let Some(effort) = p.get("effort") {
+            thread["selection"]["effort"] = effort.clone();
+        }
         thread["selection"]["modelID"] = json!(model);
         profiles::validate_model_thread(&thread)?;
-        crate::composer_selection::validate_thread_with_proof(
-            &profiles::validation_view(&thread),
-            None,
-        )?;
-        let request = if model == "default" {
-            None
+        if clear_only {
+            ensure!(
+                !fields.contains_key("requestId"),
+                "Effort repair does not accept catalog authority"
+            );
+            // Only removes this exact stored option. An unproved model or mode
+            // remains locked by the ordinary named turn preflight after save.
+            crate::composer_selection::validate_thread_with_proof(
+                &profiles::validation_view(&thread),
+                None,
+            )?;
         } else {
-            Some(required(p, "requestId")?)
-        };
-        self.profile_model_proof(&thread, &binding, request)?;
+            let request = if model == "default" {
+                None
+            } else {
+                Some(required(p, "requestId")?)
+            };
+            let proof = self.profile_model_proof(&thread, &binding, request)?;
+            crate::composer_policy::Policy::parse_named(
+                &thread,
+                crate::composer_policy::Origin::Ordinary,
+                proof.as_ref(),
+            )?
+            .preflight()?;
+        }
         self.store.save(&thread)?;
         self.revision += 1;
         Ok(thread)

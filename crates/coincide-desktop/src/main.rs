@@ -54,6 +54,7 @@ mod scheduling;
 mod session_import;
 mod settings;
 mod shutdown_runtime;
+mod terminal_context_mount;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
@@ -778,6 +779,7 @@ impl Coincide {
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
+                this.codex_limits.set_context(this.selected.as_ref(), cx);
                 this.codex_limits.refresh(cx);
             }),
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
@@ -946,7 +948,7 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();}
+                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
                 {
@@ -2559,6 +2561,7 @@ impl Coincide {
             cx.notify();
         }
         self.usage_history.poll(cx);
+        self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
             self.steering
@@ -3625,19 +3628,28 @@ impl Coincide {
             workspace.update(cx, |workspace, cx| workspace.set_visible(false, cx));
         }
         if let Some(thread) = target {
-            let workspace = self
-                .terminal_workspaces
-                .entry(thread.clone())
-                .or_insert_with(|| {
-                    cx.new(|cx| {
-                        terminal_workspace::TerminalWorkspace::new(
-                            self.engine.clone(),
-                            thread.clone(),
-                            window,
-                            cx,
-                        )
-                    })
+            let workspace = if let Some(workspace) = self.terminal_workspaces.get(&thread) {
+                workspace.clone()
+            } else {
+                let workspace = cx.new(|cx| {
+                    terminal_workspace::TerminalWorkspace::new(
+                        self.engine.clone(),
+                        thread.clone(),
+                        window,
+                        cx,
+                    )
                 });
+                self._subscriptions.push(cx.subscribe_in(
+                    &workspace,
+                    window,
+                    |this, workspace, event, window, cx| {
+                        this.terminal_context_event(workspace, event, window, cx)
+                    },
+                ));
+                self.terminal_workspaces
+                    .insert(thread.clone(), workspace.clone());
+                workspace
+            };
             debug_assert_eq!(workspace.read(cx).thread_id(), thread);
             workspace.update(cx, |workspace, cx| workspace.set_visible(true, cx));
             self.terminal_visible_thread = Some(thread);
@@ -4363,6 +4375,7 @@ fn main() -> Result<()> {
         .with_assets(assets::CoincideAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            composer_file_picker::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
