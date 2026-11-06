@@ -2,6 +2,8 @@
 use super::*;
 use crate::codex_login_profiles::LaunchContext;
 use std::{fs, path::Path, time::SystemTime};
+#[path = "model_catalog_instructions.rs"]
+mod instructions;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct FileStamp {
@@ -27,6 +29,7 @@ pub(crate) struct NamedBinding {
     canonical_cwd: PathBuf,
     cwd_identity: crate::private_fs::Identity,
     auth: Option<FileStamp>,
+    instructions: instructions::ContextStamp,
 }
 impl NamedBinding {
     pub(crate) fn capture(profile: LaunchContext, thread: &str, cwd: &Path) -> Result<Self> {
@@ -40,6 +43,7 @@ impl NamedBinding {
             "Model catalog requires the actual project directory"
         );
         let canonical_cwd = cwd.canonicalize()?;
+        let instructions = instructions::ContextStamp::capture(profile.home(), &canonical_cwd)?;
         let auth = match FileStamp::read(&profile.home().join("auth.json")) {
             Ok(stamp) => Some(stamp),
             Err(error)
@@ -58,6 +62,7 @@ impl NamedBinding {
             cwd_identity: crate::private_fs::identity(&canonical_cwd)?,
             canonical_cwd,
             auth,
+            instructions,
         })
     }
     pub(crate) fn account(&self) -> &str {
@@ -70,7 +75,7 @@ impl NamedBinding {
         self.profile.validate()?;
         ensure!(
             Self::capture(self.profile.clone(), &self.thread, &self.cwd)? == *self,
-            "Codex profile, authentication file or project directory changed; refresh this profile's catalog"
+            "Codex profile, authentication, instructions or project directory changed; refresh this profile's catalog"
         );
         Ok(())
     }
