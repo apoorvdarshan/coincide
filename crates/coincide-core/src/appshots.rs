@@ -130,6 +130,31 @@ impl BothPrimary {
         false
     }
 }
+/// Native Windows/X11 adapters provide bounded RGBA pixels; reuse the core PNG
+/// codec rather than temporary screen files or a shell screenshot command.
+pub fn encode_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<u8>> {
+    use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
+    ensure!(
+        width > 0
+            && height > 0
+            && width <= 8192
+            && height <= 8192
+            && u64::from(width) * u64::from(height) <= 16_000_000,
+        "Capture dimensions exceed limits"
+    );
+    ensure!(
+        rgba.len() == width as usize * height as usize * 4,
+        "Invalid capture pixel length"
+    );
+    let mut bytes = Vec::new();
+    PngEncoder::new(&mut bytes).write_image(&rgba, width, height, ExtendedColorType::Rgba8)?;
+    ensure!(
+        bytes.len() <= 20 * 1024 * 1024,
+        "Captured image exceeds 20 MiB"
+    );
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,29 +203,4 @@ mod tests {
         d.update(false, false, false);
         assert!(d.update(true, true, false));
     }
-}
-
-/// Native Windows/X11 adapters provide bounded RGBA pixels; reuse the core PNG
-/// codec rather than temporary screen files or a shell screenshot command.
-pub fn encode_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<u8>> {
-    use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
-    ensure!(
-        width > 0
-            && height > 0
-            && width <= 8192
-            && height <= 8192
-            && u64::from(width) * u64::from(height) <= 16_000_000,
-        "Capture dimensions exceed limits"
-    );
-    ensure!(
-        rgba.len() == width as usize * height as usize * 4,
-        "Invalid capture pixel length"
-    );
-    let mut bytes = Vec::new();
-    PngEncoder::new(&mut bytes).write_image(&rgba, width, height, ExtendedColorType::Rgba8)?;
-    ensure!(
-        bytes.len() <= 20 * 1024 * 1024,
-        "Captured image exceeds 20 MiB"
-    );
-    Ok(bytes)
 }
