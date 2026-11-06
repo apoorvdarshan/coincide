@@ -56,6 +56,22 @@ impl Engine {
             }
             return Ok(reply);
         }
+        self.begin_steering(p, None)
+    }
+    pub(super) fn steer_owned_queue(
+        &mut self,
+        id: &str,
+        claim: &super::queue_dispatch::QueueClaim,
+    ) -> Result<Value> {
+        self.begin_steering(&json!({"threadId":id,"text":claim.text()}), Some(claim))
+    }
+    fn begin_steering(
+        &mut self,
+        p: &Value,
+        queued: Option<&super::queue_dispatch::QueueClaim>,
+    ) -> Result<Value> {
+        self.require_admissions()?;
+        let thread = required(p, "threadId")?;
         ensure!(
             self.steering_operations.len() < 32,
             "Collect earlier steering results before submitting more"
@@ -84,11 +100,16 @@ impl Engine {
             !self.store.is_imported(thread)?,
             "Imported conversations are read-only for agent execution until cutover; fork first"
         );
-        for key in ["draftContext", "rustDraftImages"] {
-            ensure!(
-                stored[key].is_null() || stored[key].as_array().is_some_and(Vec::is_empty),
-                "Text-only steering cannot deliver attached context or images; send them separately"
-            );
+        if let Some(claim) = queued {
+            claim.validate(self.thread_bulk_owner, thread, text, &stored)?;
+        }
+        if queued.is_none() {
+            for key in ["draftContext", "rustDraftImages"] {
+                ensure!(
+                    stored[key].is_null() || stored[key].as_array().is_some_and(Vec::is_empty),
+                    "Text-only steering cannot deliver attached context or images; send them separately"
+                );
+            }
         }
         self.validate_native_follow_up_policy(&stored)?;
         ensure!(

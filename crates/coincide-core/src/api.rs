@@ -948,7 +948,7 @@ impl Engine {
         self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
         if let SendOrigin::Queued(claim) = origin {
             ensure!(
-                expected_scope.is_none() && !force_fresh,
+                expected_scope.is_none() && (!force_fresh || claim.permits_fresh_replacement()),
                 "Queued dispatch cannot borrow replacement authority"
             );
             claim.validate(self.thread_bulk_owner, &id, prompt, &v)?;

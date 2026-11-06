@@ -9,6 +9,7 @@ pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
     thread: String,
     draft: String,
+    queued: bool,
 }
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
 #[action(namespace = coincide_follow_up, no_json, no_register)]
@@ -32,6 +33,15 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 impl Coincide {
+    pub(super) fn track_queued_delivery(&mut self, ticket: NativeFollowUpTicket, thread: String) {
+        self.follow_up_deliveries.push(PendingDelivery {
+            ticket: Some(ticket),
+            thread,
+            draft: String::new(),
+            queued: true,
+        });
+    }
+
     pub(super) fn follow_up_key_scope(&self, scope: Div, cx: &mut Context<Self>) -> Div {
         scope
             .capture_action(cx.listener(|this, _: &ModifiedSend, window, cx| {
@@ -49,7 +59,7 @@ impl Coincide {
                 }
                 if !this.settings["sendOnReturn"].as_bool().unwrap_or(true) {
                     this.send_selected(true, window, cx);
-                } else {
+                } else if !this.send_next_queued_now(cx) {
                     return;
                 }
                 window.prevent_default();
@@ -177,6 +187,7 @@ impl Coincide {
                     ticket: Some(ticket),
                     thread: id,
                     draft,
+                    queued: false,
                 });
                 self.status =
                     "Delivering follow-up; draft retained until delivery is confirmed.".into();
@@ -216,7 +227,9 @@ impl Coincide {
                         } => format!(
                             "{}{}",
                             dispatch_label(*dispatch),
-                            if *draft_cleared {
+                            if delivery.queued {
+                                "; separate draft preserved"
+                            } else if *draft_cleared {
                                 ""
                             } else {
                                 "; draft cleanup did not complete. Do not submit it again."
@@ -225,6 +238,7 @@ impl Coincide {
                         NativeFollowUpStatus::Pending => unreachable!(),
                     };
                     if delivered
+                        && !delivery.queued
                         && self
                             .selected
                             .as_ref()
