@@ -67,3 +67,4 @@ pub(crate) mod codex_login_profiles;
 mod digest_hex;
 
 mod named_profile_resume;
+mod private_fs;

@@ -36,6 +36,11 @@ mod images;
 mod opencode;
 #[path = "provider_transport.rs"]
 mod transport;
+#[cfg(windows)]
+#[path = "provider_job_windows.rs"]
+mod windows_job;
+#[cfg(windows)]
+pub(crate) use transport::CatalogTransport;
 #[path = "usage_capture.rs"]
 pub(crate) mod usage_capture;
 pub use images::{ImageAttachment, validate_images};
@@ -441,7 +446,7 @@ fn validate_instructions(provider: &Provider, instructions: Option<&str>) -> Res
     Ok(())
 }
 
-struct OwnedChild(Child);
+struct OwnedChild(Child, #[cfg(windows)] Option<windows_job::Job>);
 impl OwnedChild {
     fn spawn(command: &mut Command) -> Result<Self> {
         #[cfg(unix)]
@@ -450,11 +455,28 @@ impl OwnedChild {
             // A dedicated group lets cancellation terminate tools and shells too.
             command.process_group(0);
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+            let mut child = command.spawn()?;
+            match windows_job::Job::attach_and_resume(&child) {
+                Ok(job) => Ok(Self(child, Some(job))),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Err(error)
+                }
+            }
+        }
+        #[cfg(not(windows))]
         Ok(Self(command.spawn()?))
     }
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        drop(self.1.take());
         #[cfg(unix)]
         {
             // Only groups created by OwnedChild::spawn are owned here. Negative

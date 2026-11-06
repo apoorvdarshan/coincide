@@ -7,8 +7,7 @@ use std::{fs, path::Path, time::SystemTime};
 struct FileStamp {
     length: u64,
     modified: SystemTime,
-    #[cfg(unix)]
-    identity: (u64, u64),
+    identity: crate::private_fs::Identity,
 }
 impl FileStamp {
     fn read(path: &Path) -> Result<Self> {
@@ -16,11 +15,7 @@ impl FileStamp {
         Ok(Self {
             length: metadata.len(),
             modified: metadata.modified()?,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
+            identity: crate::private_fs::identity(path)?,
         })
     }
 }
@@ -30,8 +25,7 @@ pub(crate) struct NamedBinding {
     thread: String,
     pub(super) cwd: PathBuf,
     canonical_cwd: PathBuf,
-    #[cfg(unix)]
-    cwd_identity: (u64, u64),
+    cwd_identity: crate::private_fs::Identity,
     auth: Option<FileStamp>,
 }
 impl NamedBinding {
@@ -61,12 +55,7 @@ impl NamedBinding {
             profile,
             thread: thread.into(),
             cwd: cwd.into(),
-            #[cfg(unix)]
-            cwd_identity: {
-                use std::os::unix::fs::MetadataExt;
-                let metadata = fs::metadata(&canonical_cwd)?;
-                (metadata.dev(), metadata.ino())
-            },
+            cwd_identity: crate::private_fs::identity(&canonical_cwd)?,
             canonical_cwd,
             auth,
         })
@@ -377,7 +366,7 @@ impl ModelCatalog {
         Ok(Some(proof))
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn validate_notification(frame: &Value) -> Result<()> {
     ensure!(
         frame["method"].as_str().is_none_or(
@@ -387,7 +376,7 @@ pub(super) fn validate_notification(frame: &Value) -> Result<()> {
     );
     Ok(())
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn discover_named(binding: &NamedBinding, cancelled: &AtomicBool) -> Result<Vec<Value>> {
     binding.validate()?;
     let mut rpc = ProcessRpc::spawn_scoped(
@@ -406,7 +395,7 @@ fn discover_named(binding: &NamedBinding, cancelled: &AtomicBool) -> Result<Vec<
     binding.validate()?;
     Ok(models)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn discover_named(_: &NamedBinding, _: &AtomicBool) -> Result<Vec<Value>> {
     bail!("Named model discovery is unsupported on this platform")
 }

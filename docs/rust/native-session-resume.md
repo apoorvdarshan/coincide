@@ -30,9 +30,13 @@ Stores, and corrupt receipt rows fail closed to a new session where normal
 admission is otherwise valid. Journal-consumption errors block launch rather
 than risk reusing authority. Original Store tables, imported bytes, search data and unknown
 JSON fields are not migrated or rewritten for this journal. The optional
-journal is currently enabled only on Unix with verified private ownership,
-permissions, no symlinks/hardlinks and an exclusive flock. Unverified non-Unix
-ACL behavior does not grant durable authority. A local user who can read and
+journal uses verified Unix ownership/permissions and an exclusive flock, or
+Windows protected owner-only DACLs, exact volume/file IDs and the standard
+exclusive file lock. Symlinks/reparse points and hardlinks are rejected.
+Existing Windows application containers may grant SYSTEM/Administrators access;
+new private children and auth files grant only their owning user. Windows
+providers start suspended, enter a kill-on-close Job, then resume, so cancellation
+owns descendants before joining pipe workers. A local user who can read and
 replace both the private key state and database is outside this boundary.
 
 Validation targets are `named_profile_resume`, its private journal unit tests,
@@ -40,5 +44,8 @@ and `provider_codex_profile_resume`. The latter launches distinct fresh OS
 processes and requires actual `thread/resume` with unchanged native identity
 and only the new prompt. Compilation passed at the second draft checkpoint.
 Focused execution found temporary test directories with insufficient privacy;
-fixtures now explicitly set mode 0700 without relaxing production guards.
-Automated retesting and native candidate Quit/reopen acceptance remain pending.
+fixtures now explicitly set mode 0700 without relaxing production guards. The
+Unix checkpoint passed 11 focused units, its multi-process integration and strict
+Core Clippy. A portable Rust fixture now covers real native protocol continuation
+in distinct processes without POSIX scripts; Windows foundation execution and
+native candidate Quit/reopen acceptance remain pending at this checkpoint.

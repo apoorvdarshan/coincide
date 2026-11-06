@@ -8,6 +8,41 @@ const MAX_INBOUND_FRAME: usize = 32 * 1024 * 1024;
 const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 const WRITE_DEADLINE: Duration = Duration::from_secs(10);
 
+/// Read-only catalog transport reuses the same owned child/pipe join boundary
+/// as turns, with a stricter per-frame allocation cap. No runtime JSON path can
+/// construct this adapter or supply a named profile.
+#[cfg(windows)]
+pub(crate) struct CatalogTransport(Transport);
+#[cfg(windows)]
+impl CatalogTransport {
+    pub(crate) fn spawn(
+        launch: &Launch,
+        args: &[String],
+        remove_env: &[&str],
+        environment: &[(std::ffi::OsString, std::ffi::OsString)],
+        profile: Option<&crate::codex_login_profiles::LaunchContext>,
+    ) -> Result<Self> {
+        Ok(Self(Transport::spawn_bounded(
+            launch,
+            args,
+            remove_env,
+            environment,
+            false,
+            profile,
+            1024 * 1024,
+        )?))
+    }
+    pub(crate) fn write(&mut self, frame: Value) -> Result<()> {
+        self.0.write(&frame)
+    }
+    pub(crate) fn next(&mut self) -> Result<Option<Value>> {
+        self.0.next()
+    }
+    pub(crate) fn flushed(&mut self) -> Result<bool> {
+        self.0.is_flushed()
+    }
+}
+
 struct PendingWrite {
     sequence: u64,
     bytes: usize,
@@ -128,6 +163,25 @@ impl Transport {
         antigravity: bool,
         codex_profile: Option<&crate::codex_login_profiles::LaunchContext>,
     ) -> Result<Self> {
+        Self::spawn_bounded(
+            launch,
+            args,
+            remove_env,
+            environment,
+            antigravity,
+            codex_profile,
+            MAX_INBOUND_FRAME,
+        )
+    }
+    fn spawn_bounded(
+        launch: &Launch,
+        args: &[String],
+        remove_env: &[&str],
+        environment: &[(std::ffi::OsString, std::ffi::OsString)],
+        antigravity: bool,
+        codex_profile: Option<&crate::codex_login_profiles::LaunchContext>,
+        frame_limit: usize,
+    ) -> Result<Self> {
         ensure!(
             launch.cwd.is_dir(),
             "Agent working directory does not exist"
@@ -153,7 +207,11 @@ impl Transport {
         let mut stdin = child.0.stdin.take().context("Missing provider stdin")?;
         let stdout = child.0.stdout.take().context("Missing provider stdout")?;
         // A small bounded queue prevents an agent from flooding retained output.
-        let (tx, frames) = mpsc::sync_channel(8);
+        let (tx, frames) = mpsc::sync_channel(if frame_limit < MAX_INBOUND_FRAME {
+            2
+        } else {
+            8
+        });
         let (writes, queued) = mpsc::sync_channel::<(u64, Vec<u8>)>(4);
         let (acknowledge, written) = mpsc::channel();
         let stderr = child.0.stderr.take();
@@ -216,11 +274,11 @@ impl Transport {
                         let mut line = Vec::new();
                         let result = match reader
                             .by_ref()
-                            .take(MAX_INBOUND_FRAME as u64 + 1)
+                            .take(frame_limit as u64 + 1)
                             .read_until(b'\n', &mut line)
                         {
                             Ok(0) => break,
-                            Ok(n) if n <= MAX_INBOUND_FRAME => {
+                            Ok(n) if n <= frame_limit => {
                                 if line.iter().all(u8::is_ascii_whitespace) {
                                     continue;
                                 }

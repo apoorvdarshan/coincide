@@ -1,12 +1,12 @@
 //! Explicit Codex limits read. Intended as a child of `model_catalog`, reusing
 //! its bounded process transport; no credentials, account/read or turn RPCs.
 //! A returned snapshot describes one observation, not live account readiness.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::ProcessRpc;
 use super::Rpc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 
@@ -258,7 +258,7 @@ fn protocol(rpc: &mut impl Rpc) -> Result<Snapshot, Failure> {
 /// Blocking worker-side read ONLY; host must retain/join its worker and poll
 /// during shutdown. Uses existing transport limits, cancellation and child reaping.
 /// Host supplies trusted configured executable, never a request JSON path.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn read(executable: Option<PathBuf>, cancelled: &AtomicBool) -> Result<Snapshot, Failure> {
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err(Failure::Cancelled);
@@ -272,7 +272,7 @@ pub fn read(executable: Option<PathBuf>, cancelled: &AtomicBool) -> Result<Snaps
     }
     result
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn read(_: Option<PathBuf>, _: &AtomicBool) -> Result<Snapshot, Failure> {
     Err(Failure::UnsupportedPlatform)
 }

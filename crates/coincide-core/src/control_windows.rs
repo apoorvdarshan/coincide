@@ -33,7 +33,7 @@ use windows_sys::Win32::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
         Authorization::{
             ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            GetSecurityInfo, SDDL_REVISION_1, SE_KERNEL_OBJECT,
+            GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT, SE_KERNEL_OBJECT, SE_OBJECT_TYPE,
         },
         DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl, GetTokenInformation,
         OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
@@ -78,7 +78,7 @@ fn owned(handle: HANDLE) -> io::Result<OwnedHandle> {
         Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 }
-struct LocalAllocation(*mut c_void);
+pub(crate) struct LocalAllocation(pub(crate) *mut c_void);
 impl Drop for LocalAllocation {
     fn drop(&mut self) {
         if !self.0.is_null() {
@@ -104,7 +104,7 @@ fn sid_string(sid: PSID) -> Result<String> {
     drop(allocation);
     Ok(result)
 }
-fn current_sid() -> Result<String> {
+pub(crate) fn current_sid() -> Result<String> {
     let mut token = null_mut();
     win_ok(unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) })?;
     let token = owned(token)?;
@@ -208,8 +208,14 @@ fn endpoint(path: &Path) -> Result<Endpoint> {
         _directory: directory,
     })
 }
-fn private_descriptor(sid: &str) -> Result<LocalAllocation> {
-    let text = wide(&format!("O:{sid}D:P(A;;GA;;;{sid})"));
+pub(crate) fn private_descriptor(sid: &str) -> Result<LocalAllocation> {
+    descriptor_text(&format!("O:{sid}D:P(A;;GA;;;{sid})"))
+}
+pub(crate) fn private_directory_descriptor(sid: &str) -> Result<LocalAllocation> {
+    descriptor_text(&format!("O:{sid}D:P(A;OICI;FA;;;{sid})"))
+}
+fn descriptor_text(text: &str) -> Result<LocalAllocation> {
+    let text = wide(text);
     let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
     win_ok(unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -222,13 +228,71 @@ fn private_descriptor(sid: &str) -> Result<LocalAllocation> {
     Ok(LocalAllocation(descriptor))
 }
 fn verify_owner(handle: HANDLE, sid: &str) -> Result<()> {
+    verify_owner_kind(handle, sid, SE_KERNEL_OBJECT, 0)
+}
+pub(crate) fn verify_file_owner(handle: HANDLE, directory: bool) -> Result<()> {
+    verify_owner_kind(
+        handle,
+        &current_sid()?,
+        SE_FILE_OBJECT,
+        if directory { 3 } else { 0 },
+    )
+}
+/// Existing application containers may inherit SYSTEM/Administrators grants;
+/// private children accept only their owner, including inherited owner ACEs.
+pub(crate) fn verify_private_path(handle: HANDLE, container: bool) -> Result<()> {
+    let sid = current_sid()?;
     let mut owner: PSID = null_mut();
     let mut dacl: *mut ACL = null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
     let error = unsafe {
         GetSecurityInfo(
             handle,
-            SE_KERNEL_OBJECT,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            &mut dacl,
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    ensure!(error == 0, "Cannot inspect private file ACL");
+    let _allocation = LocalAllocation(descriptor);
+    ensure!(
+        sid_string(owner)? == sid && !dacl.is_null(),
+        "Private file belongs to another owner or has no DACL"
+    );
+    let count = unsafe { (*dacl).AceCount };
+    ensure!(count > 0 && count <= 32, "Invalid private file ACL");
+    for index in 0..count {
+        let mut ace = null_mut();
+        win_ok(unsafe { GetAce(dacl, index as u32, &mut ace) })?;
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        ensure!(
+            header.AceType == 0
+                && header.AceFlags & !0x13 == 0
+                && header.AceSize as usize >= size_of::<ACCESS_ALLOWED_ACE>(),
+            "Unexpected private file ACL entry"
+        );
+        let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        let allowed = sid_string((&ace.SidStart as *const u32).cast_mut().cast())?;
+        ensure!(
+            allowed == sid
+                || (container && matches!(allowed.as_str(), "S-1-5-18" | "S-1-5-32-544")),
+            "Private file grants another user access"
+        );
+    }
+    Ok(())
+}
+fn verify_owner_kind(handle: HANDLE, sid: &str, kind: SE_OBJECT_TYPE, flags: u8) -> Result<()> {
+    let mut owner: PSID = null_mut();
+    let mut dacl: *mut ACL = null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    let error = unsafe {
+        GetSecurityInfo(
+            handle,
+            kind,
             OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &mut owner,
             null_mut(),
@@ -259,7 +323,7 @@ fn verify_owner(handle: HANDLE, sid: &str) -> Result<()> {
     // in for the single explicit owner grant created above.
     ensure!(
         header.AceType == 0
-            && header.AceFlags == 0
+            && header.AceFlags == flags
             && header.AceSize as usize >= size_of::<ACCESS_ALLOWED_ACE>(),
         "Unexpected control endpoint ACL"
     );

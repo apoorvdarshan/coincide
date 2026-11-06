@@ -1,11 +1,11 @@
 //! Private continuation journal, deliberately outside Store documents/imports.
 //! This authenticates app-minted receipts; it is not a defence against a local
 //! user who can replace both this database and its private authentication key.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use anyhow::Context as _;
 use anyhow::{Result, ensure};
 use ring::hmac;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
@@ -16,8 +16,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(unix)]
-use std::{fs::OpenOptions, io::Read};
+#[cfg(any(unix, windows))]
+use std::io::Read;
 const MAX_RECORD: usize = 32 * 1024;
 pub(super) struct Journal {
     db: Connection,
@@ -27,22 +27,21 @@ pub(super) struct Journal {
     lease: File,
     key_path: PathBuf,
     db_path: PathBuf,
-    key_identity: (u64, u64),
-    db_identity: (u64, u64),
+    key_identity: crate::private_fs::Identity,
+    db_identity: crate::private_fs::Identity,
     source: Value,
     tickets: HashMap<String, String>,
 }
 impl Journal {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn open(store: &crate::store::Store) -> Result<Self> {
-        use std::os::{
-            fd::AsRawFd,
-            unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-        };
         let source_path = store.resume_source_path()?;
-        let source_meta = fs::symlink_metadata(&source_path)?;
+        let source_identity = crate::private_fs::identity(&source_path)?;
         let parent = source_path.parent().context("Missing Store directory")?;
+        #[cfg(unix)]
         private(parent, true)?;
+        #[cfg(windows)]
+        crate::private_fs::windows::verify_inherited(parent, true)?;
         // Full filename is included: independent Stores in one directory must
         // never share a key, lease, namespace or continuation receipt.
         let name = source_path
@@ -51,21 +50,11 @@ impl Journal {
             .to_str()
             .context("Invalid Store filename")?;
         let directory = parent.join(format!(".{name}.native-resume-v1"));
-        match fs::create_dir(&directory) {
-            Ok(()) => fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
+        create_directory(&directory)?;
         private(&directory, true)?;
         let key_path = directory.join("authority.key");
         let db_path = directory.join("receipts.sqlite");
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        let mut lease = match options.create_new(true).open(&key_path) {
+        let mut lease = match open_file(&key_path, true) {
             Ok(mut file) => {
                 // A missing key beside an old journal is never permission to
                 // adopt it. Keep the old bytes for diagnosis; start fresh only.
@@ -79,18 +68,17 @@ impl Journal {
                 file.sync_all()?;
                 file
             }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                options.create_new(false).open(&key_path)?
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                open_file(&key_path, false)?
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
         private(&key_path, false)?;
-        // SAFETY: the descriptor is live and the nonblocking exclusive flock
-        // has no borrowed pointers. Closing the retained file releases it.
-        ensure!(
-            unsafe { libc::flock(lease.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "Continuation journal belongs to another Engine"
-        );
+        lock(&lease)?;
         ensure!(
             (34..=MAX_RECORD as u64).contains(&lease.metadata()?.len()),
             "Invalid continuation authority state"
@@ -109,21 +97,23 @@ impl Journal {
         );
         let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
         secret.fill(0);
-        let key_identity = identity(&lease.metadata()?);
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        let file = options.open(&db_path)?;
+        let key_identity = crate::private_fs::file_identity(&lease)?;
+        let file = match open_file(&db_path, true) {
+            Ok(file) => file,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                open_file(&db_path, false)?
+            }
+            Err(error) => return Err(error),
+        };
         private(&db_path, false)?;
-        let db_identity = identity(&file.metadata()?);
+        let db_identity = crate::private_fs::file_identity(&file)?;
         let db = Connection::open(&db_path)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, document BLOB NOT NULL, mac BLOB NOT NULL);")?;
-        let source = serde_json::json!({"path":source_path,"device":source_meta.dev(),"inode":source_meta.ino(),"version":1});
+        let source = serde_json::json!({"path":source_path,"identity":source_identity,"version":1});
         Ok(Self {
             db,
             key,
@@ -136,19 +126,18 @@ impl Journal {
             tickets,
         })
     }
-    // Non-Unix file ACLs/locking have not been established for this authority
-    // path. Fail closed rather than treating a permissive key as trusted.
-    #[cfg(not(unix))]
+    // Unknown platforms cannot substitute unverified file ownership for authority.
+    #[cfg(not(any(unix, windows)))]
     pub(super) fn open(_: &crate::store::Store) -> Result<Self> {
-        anyhow::bail!("Durable named continuation requires Unix private file ownership")
+        anyhow::bail!("Durable named continuation requires private file ownership support")
     }
     fn validate(&self) -> Result<()> {
         private(&self.key_path, false)?;
         private(&self.db_path, false)?;
         ensure!(
-            identity(&self.lease.metadata()?) == self.key_identity
-                && identity(&fs::symlink_metadata(&self.key_path)?) == self.key_identity
-                && identity(&fs::symlink_metadata(&self.db_path)?) == self.db_identity,
+            crate::private_fs::file_identity(&self.lease)? == self.key_identity
+                && crate::private_fs::identity(&self.key_path)? == self.key_identity
+                && crate::private_fs::identity(&self.db_path)? == self.db_identity,
             "Continuation journal identity changed"
         );
         Ok(())
@@ -228,15 +217,71 @@ impl Journal {
         Ok(())
     }
 }
-#[cfg(unix)]
-fn identity(metadata: &fs::Metadata) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (metadata.dev(), metadata.ino())
+fn create_directory(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        crate::private_fs::windows::create_directory(path)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        anyhow::bail!("Private authority unavailable")
+    }
 }
-#[cfg(not(unix))]
-fn identity(_: &fs::Metadata) -> (u64, u64) {
-    (0, 0)
+fn open_file(path: &Path, new: bool) -> Result<File> {
+    #[cfg(windows)]
+    {
+        crate::private_fs::windows::open_file(path, new)
+    }
+    #[cfg(unix)]
+    {
+        use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .create_new(new);
+        Ok(options.open(path)?)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, new);
+        anyhow::bail!("Private authority unavailable")
+    }
 }
+fn lock(file: &File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        ensure!(
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+            "Continuation journal belongs to another Engine"
+        );
+    }
+    #[cfg(windows)]
+    file.try_lock()
+        .context("Continuation journal belongs to another Engine")?;
+    Ok(())
+}
+#[cfg(windows)]
+fn private(path: &Path, directory: bool) -> Result<()> {
+    crate::private_fs::windows::verify(path, directory)
+}
+#[cfg(not(windows))]
 fn private(path: &Path, directory: bool) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
@@ -262,16 +307,19 @@ fn private(path: &Path, directory: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod tests {
     use super::*;
     use crate::store::Store;
     use serde_json::json;
     fn fixture() -> (tempfile::TempDir, Store, Journal) {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let store = Store::open(&dir.path().join("state.sqlite")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = Store::open(&dir.path().join("data/state.sqlite")).unwrap();
         let journal = Journal::open(&store).unwrap();
         (dir, store, journal)
     }
@@ -328,9 +376,9 @@ mod tests {
     }
     #[test]
     fn independent_store_identity_and_exclusive_engine_lease() {
-        let (dir, store, mut a) = fixture();
+        let (_dir, store, mut a) = fixture();
         assert!(Journal::open(&store).is_err());
-        let other = Store::open(&dir.path().join("other.sqlite")).unwrap();
+        let other = Store::open(&store.data_directory().unwrap().join("other.sqlite")).unwrap();
         let mut b = Journal::open(&other).unwrap();
         a.put("thread", &json!({"native":"synthetic-a"})).unwrap();
         b.put("thread", &json!({"native":"synthetic-b"})).unwrap();
@@ -339,13 +387,13 @@ mod tests {
     }
     #[test]
     fn copied_whole_journal_cannot_bind_another_store() {
-        let (dir, _store, mut journal) = fixture();
+        let (_dir, store, mut journal) = fixture();
         journal
             .put("thread", &json!({"native":"synthetic-owned"}))
             .unwrap();
         let original_key = journal.key_path.clone();
         let original_db = journal.db_path.clone();
-        let other = Store::open(&dir.path().join("other.sqlite")).unwrap();
+        let other = Store::open(&store.data_directory().unwrap().join("other.sqlite")).unwrap();
         let b = Journal::open(&other).unwrap();
         let key = b.key_path.clone();
         let db = b.db_path.clone();
@@ -388,6 +436,7 @@ mod tests {
             "Private ticket was already durably consumed before failed DELETE"
         );
     }
+    #[cfg(unix)]
     #[test]
     fn missing_key_unsafe_permissions_and_symlinks_fail_closed() {
         use std::os::unix::fs::{PermissionsExt, symlink};
