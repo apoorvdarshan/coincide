@@ -204,6 +204,9 @@ impl ModelCatalog {
         request: Option<&str>,
     ) -> Result<(&Job, &Value)> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
+        // Binding capture is intentionally broader for read/repair. Advertised
+        // execution options must still satisfy the actual supported model shape.
+        crate::codex_login_profiles::validate_model_thread(thread)?;
         binding.validate()?;
         ensure!(
             thread["id"] == binding.thread()
@@ -503,6 +506,12 @@ mod tests {
                 .named_model_proof(&changed, &binding, Some("a"))
                 .is_err()
         );
+        // An unreported but syntactically valid saved effort must remain
+        // repairable through this same model's advertised options.
+        assert_eq!(
+            catalog.named_effort_capability(&changed, &binding)["supported"],
+            true
+        );
         changed = document.clone();
         changed["selection"]["modelID"] = json!("synthetic-b");
         assert!(
@@ -521,6 +530,22 @@ mod tests {
             catalog.named_effort_capability(&changed, &binding)["supported"],
             false
         );
+        catalog.jobs.get_mut("a").unwrap().response["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"gpt-6-astra","reportedEfforts":["high"]}));
+        for effort in [Value::Null, json!("high")] {
+            changed["selection"]["modelID"] = json!("gpt-6-astra");
+            changed["selection"]["effort"] = effort;
+            let capability = catalog.named_effort_capability(&changed, &binding);
+            assert_eq!(capability["supported"], false);
+            assert_eq!(capability["choices"], json!([]));
+            assert!(
+                catalog
+                    .named_model_proof(&changed, &binding, Some("a"))
+                    .is_err()
+            );
+        }
         catalog.jobs["a"].cancelled.store(true, Ordering::Release);
         assert!(policy.preflight().is_err());
         assert!(

@@ -356,6 +356,45 @@ fn effort_fixture_child() {
         json!({"threadId":id,"accountId":a,"expectedSelection":chosen["selection"],"model":"synthetic-a","requestId":second["requestId"]}),
     );
     assert_eq!(same, chosen);
+    // Restored unsupported model metadata must never make advertised effort
+    // buttons eligible, even when this exact private catalog reports that row.
+    // Identity-only Refresh stays usable and does not mutate the saved record.
+    let supported = e.store.thread(&id).unwrap();
+    let supported_raw = raw(&root);
+    let mut astra = supported.clone();
+    astra["selection"]["modelID"] = json!("gpt-6-astra");
+    e.store.save(&astra).unwrap();
+    let astra_raw = raw(&root);
+    for after_refresh in [false, true] {
+        if after_refresh {
+            assert_eq!(refresh(&mut e, &id)["state"], "ready");
+        }
+        let caps = call(
+            &mut e,
+            "agent.selection.capabilities",
+            json!({"threadId":id}),
+        );
+        assert_eq!(caps["namedModels"]["refreshAllowed"], true);
+        assert_eq!(caps["namedModels"]["effortSupported"], false);
+        let effort = &caps["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["provider"] == "codex")
+            .unwrap()["effort"];
+        assert_eq!(effort["supported"], false);
+        assert_eq!(effort["choices"], json!([]));
+        assert_eq!(raw(&root), astra_raw);
+        refuse(
+            &mut e,
+            &root,
+            "agent.send",
+            json!({"threadId":id,"text":"Restored Astra stays unavailable"}),
+        );
+    }
+    e.store.save(&supported).unwrap();
+    e.poll();
+    assert_eq!(raw(&root), supported_raw);
     e.set_active_thread(Some(text(&other, "id"))).unwrap();
     let p = params(&e, &id, "synthetic-a", json!("high"), Some(&second));
     refuse(&mut e, &root, SELECT, p);
