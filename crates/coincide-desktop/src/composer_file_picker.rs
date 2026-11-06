@@ -293,6 +293,9 @@ fn query_at_caret(text: &str, selection: std::ops::Range<usize>) -> Option<Strin
     let query = prefix[start..].strip_prefix('@')?;
     (query.len() <= 256 && !query.chars().any(char::is_control)).then(|| query.to_owned())
 }
+pub(super) fn init(cx: &mut App) {
+    capture::init(cx);
+}
 impl Coincide {
     fn file_reference_route(&self, cx: &Context<Self>) -> bool {
         if !self.microphone_window_active
@@ -634,8 +637,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let modified = capture::bound_modified(key, window.modifiers());
-        self.composer_file_key(key, modified, window, cx);
+        // These private actions come only from our exact unmodified bindings;
+        // cached Window modifier flags do not describe the matched event.
+        self.composer_file_key(key, false, window, cx);
     }
     fn composer_file_key(
         &mut self,

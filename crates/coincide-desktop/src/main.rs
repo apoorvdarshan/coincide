@@ -4363,6 +4363,7 @@ fn main() -> Result<()> {
         .with_assets(assets::CoincideAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            composer_file_picker::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);

@@ -141,13 +141,7 @@ impl Harness {
         }
     }
     fn bound(&mut self, key: keys::Key, window: &mut Window, cx: &mut Context<Self>) {
-        self.key(
-            "bound",
-            key,
-            capture::bound_modified(key, window.modifiers()),
-            window,
-            cx,
-        );
+        self.key("bound", key, false, window, cx);
     }
     fn raw(&mut self, key: keys::Key, modified: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.key("raw", key, modified, window, cx);
@@ -244,7 +238,10 @@ fn setup(cx: &mut TestAppContext, wired: bool) -> (Entity<Harness>, &mut VisualT
         Ok("1"),
         "run the private-child wrapper only"
     );
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        super::init(cx);
+    });
     let (view, cx) = cx.add_window_view(|window, cx| Harness::new(wired, window, cx));
     cx.update(|window, cx| {
         window.activate_window();
@@ -355,6 +352,31 @@ fn press(cx: &mut VisualTestContext, key: &str, native_fn: bool) {
                 cx,
             );
         }
+        render_frame(window, cx);
+    });
+    cx.run_until_parked();
+}
+fn key_down(cx: &mut VisualTestContext, key: &str, is_held: bool) {
+    cx.update(|window, cx| {
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        render_frame(window, cx);
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke,
+                is_held,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        render_frame(window, cx);
+    });
+    cx.run_until_parked();
+}
+fn key_up(cx: &mut VisualTestContext, key: &str) {
+    cx.update(|window, cx| {
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         render_frame(window, cx);
     });
     cx.run_until_parked();
@@ -623,6 +645,182 @@ fn headless_event_arrows_are_independent_of_stale_cached_modifiers(cx: &mut Test
     }
 }
 
+#[gpui_kit::test]
+#[ignore = "invoked only by actual_textarea_capture_in_private_child with cleared environment"]
+fn headless_builtin_alias_programmatic_and_inactive_ime_fallbacks(cx: &mut TestAppContext) {
+    use gpui_kit::component::input::{Enter, MoveUp};
+    // An explicit alternate binding to the public Input action must not become
+    // a file-suggestion action. Ctrl-P is a fixture alias, not a default claim.
+    let (view, vcx) = setup(cx, true);
+    vcx.update(|_, cx| cx.bind_keys([gpui_kit::KeyBinding::new("ctrl-p", MoveUp, Some("Input"))]));
+    let before = read(&view, vcx);
+    press(vcx, "ctrl-p", false);
+    let alias = read(&view, vcx);
+    eprintln!("alternate builtin MoveUp binding: {before:#?} -> {alias:#?}");
+    assert!(alias.callbacks.is_empty());
+    assert_eq!(alias.selected, Some(0));
+    assert!(alias.activated.is_empty());
+    assert!(alias.selection.end <= TEXT.find('\n').unwrap());
+    assert!(alias.revision > before.revision);
+    assert_eq!(alias.draft, TEXT);
+
+    for enter in [false, true] {
+        let (view, vcx) = setup(cx, true);
+        let before = read(&view, vcx);
+        vcx.update(|window, cx| {
+            if enter {
+                window.dispatch_action(
+                    Box::new(Enter {
+                        secondary: false,
+                        shift: false,
+                    }),
+                    cx,
+                );
+            } else {
+                window.dispatch_action(Box::new(MoveUp), cx);
+            }
+        });
+        vcx.run_until_parked();
+        vcx.update(render_frame);
+        let after = read(&view, vcx);
+        eprintln!("programmatic builtin action, enter={enter}: {before:#?} -> {after:#?}");
+        assert!(after.callbacks.is_empty());
+        assert!(after.activated.is_empty());
+        assert_eq!(after.selected, Some(0));
+        assert_eq!(after.draft, TEXT);
+        if enter {
+            assert_eq!(after.press_enter, 1);
+            assert_eq!(after.selection, before.selection);
+        } else {
+            assert!(after.selection.end <= TEXT.find('\n').unwrap());
+            assert!(after.revision > before.revision);
+            assert_eq!(after.press_enter, 0);
+        }
+    }
+
+    let (view, vcx) = setup(cx, true);
+    let before = read(&view, vcx);
+    vcx.deactivate_window();
+    vcx.update(|window, cx| {
+        assert!(
+            !window.is_window_active(),
+            "actual test-platform deactivation must precede input"
+        );
+        render_frame(window, cx);
+    });
+    press(vcx, "up", false);
+    let inactive = read(&view, vcx);
+    eprintln!("actual inactive Window fallback: {before:#?} -> {inactive:#?}");
+    assert!(
+        inactive
+            .callbacks
+            .iter()
+            .any(|c| c.source == "bound" && !c.route)
+    );
+    assert!(
+        inactive
+            .callbacks
+            .iter()
+            .all(|c| c.decision == keys::Decision::Pass)
+    );
+    assert!(inactive.activated.is_empty());
+    assert_eq!(inactive.selected, Some(0));
+    assert!(inactive.selection.end <= TEXT.find('\n').unwrap());
+    assert!(inactive.revision > before.revision);
+    assert_eq!(inactive.draft, TEXT);
+
+    // Compare wired IME fallback with the real unwired Textarea, avoiding an
+    // invented caret/composition policy in the test harness.
+    let mut ime = Vec::new();
+    for wired in [false, true] {
+        let (view, vcx) = setup(cx, wired);
+        vcx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.input.update(cx, |input, cx| {
+                    EntityInputHandler::replace_and_mark_text_in_range(
+                        input,
+                        None,
+                        "候",
+                        Some(1..1),
+                        window,
+                        cx,
+                    )
+                });
+            })
+        });
+        vcx.run_until_parked();
+        let before = read(&view, vcx);
+        press(vcx, "up", false);
+        let after = read(&view, vcx);
+        eprintln!("real IME Input fallback, wired={wired}: {before:#?} -> {after:#?}");
+        assert!(after.activated.is_empty());
+        assert_eq!(after.selected, Some(0));
+        if wired {
+            assert!(after.callbacks.iter().any(|c| c.source == "bound" && c.ime));
+            assert!(
+                after
+                    .callbacks
+                    .iter()
+                    .all(|c| c.decision == keys::Decision::Pass)
+            );
+        }
+        ime.push((before, after));
+    }
+    assert_eq!(ime[0].0.draft, ime[1].0.draft);
+    assert_eq!(ime[0].1.draft, ime[1].1.draft);
+    assert_eq!(ime[0].1.selection, ime[1].1.selection);
+    assert_eq!(
+        ime[0].1.revision - ime[0].0.revision,
+        ime[1].1.revision - ime[1].0.revision
+    );
+    assert_eq!(ime[0].1.press_enter, ime[1].1.press_enter);
+}
+
+#[gpui_kit::test]
+#[ignore = "invoked only by actual_textarea_capture_in_private_child with cleared environment"]
+fn headless_closed_pane_keeps_held_activation_until_real_key_up(cx: &mut TestAppContext) {
+    for key in ["enter", "tab"] {
+        let (view, vcx) = setup(cx, true);
+        let before = read(&view, vcx);
+        key_down(vcx, key, false);
+        let chosen = read(&view, vcx);
+        assert_eq!(chosen.activated, vec![0]);
+        for _ in 0..3 {
+            key_down(vcx, key, true);
+        }
+        let held = read(&view, vcx);
+        eprintln!("held {key} through closed pane: {held:#?}");
+        assert_eq!(held.activated, vec![0]);
+        assert_eq!(held.press_enter, 0);
+        assert_eq!(held.changes, 0);
+        assert_eq!(held.draft, TEXT);
+        assert_eq!(held.selection, before.selection);
+        assert_eq!(held.revision, before.revision);
+        assert!(
+            held.callbacks
+                .iter()
+                .filter(|c| c.source == "bound" && c.decision == keys::Decision::Consume)
+                .count()
+                >= 3
+        );
+        key_up(vcx, key);
+        // After physical release the still-closed pane must not keep the key:
+        // Enter reaches PressEnter, Tab reaches the real native indent action.
+        press(vcx, key, false);
+        let released = read(&view, vcx);
+        eprintln!("released {key} on closed pane: {released:#?}");
+        assert_eq!(released.activated, vec![0]);
+        if key == "enter" {
+            assert_eq!(released.press_enter, 1);
+            assert_eq!(released.draft, TEXT);
+        } else {
+            assert_ne!(released.draft, TEXT);
+            assert!(released.changes > 0);
+            assert_eq!(released.press_enter, 0);
+        }
+    }
+}
+
 #[::core::prelude::v1::test]
 fn actual_textarea_capture_in_private_child() {
     use std::{fs, process::Command};
@@ -665,7 +863,7 @@ fn actual_textarea_capture_in_private_child() {
         "actual headless dispatch child failed\n{stdout}\n{stderr}"
     );
     assert!(
-        stdout.contains("5 passed"),
-        "all five actual-dispatch cases must run\n{stdout}\n{stderr}"
+        stdout.contains("7 passed"),
+        "all seven actual-dispatch cases must run\n{stdout}\n{stderr}"
     );
 }
