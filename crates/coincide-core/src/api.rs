@@ -35,6 +35,8 @@ mod browser_bookmarks_api;
 mod codex_login_profiles_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
+#[path = "project_management_api.rs"]
+mod project_management_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
@@ -114,6 +116,7 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
     github_threads: github_threads_engine::State,
     computer_use: computer_use_engine::State,
@@ -183,6 +186,7 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
@@ -268,6 +272,9 @@ impl Engine {
         }
         if organization_api::METHODS.contains(&method) {
             return self.organization_command(method, p);
+        }
+        if project_management_api::METHODS.contains(&method) {
+            return self.project_command(method, p);
         }
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
@@ -494,7 +501,7 @@ impl Engine {
                 "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
-                "projects.list", "projects.create", "projects.patch", "projects.remove", "settings.read", "settings.patch",
+                "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",
                 "threads.list", "threads.resolve_id",
                 "threads.read",
                 "threads.open",
@@ -506,6 +513,7 @@ impl Engine {
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
                 ];
+                methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
@@ -529,7 +537,6 @@ impl Engine {
             "projects.list" => self.store.projects(),
             "projects.create"=>{let v=self.store.create_project(std::path::Path::new(required(p,"path")?),p["name"].as_str())?;self.revision+=1;Ok(v)}
             "projects.patch"=>{let v=self.store.patch_project(required(p,"projectId")?,&p["patch"])?;self.revision+=1;Ok(v)}
-            "projects.remove"=>{self.store.remove_project(required(p,"projectId")?)?;self.revision+=1;Ok(json!({"removed":true}))}
             "settings.read"=>Ok(self.store.document("settings.json")?.unwrap_or(json!({}))),
             "settings.patch"=>{let v=self.store.patch_document("settings.json",&p["patch"])?;self.revision+=1;Ok(v)}
             "threads.list" => Ok(serde_json::to_value(self.store.summaries(

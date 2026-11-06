@@ -43,6 +43,8 @@ mod notification_runtime;
 mod notification_settings;
 mod notifications;
 mod presentation;
+mod project_management;
+mod project_management_mount;
 mod provider_settings;
 mod queue;
 mod quit_mount;
@@ -404,6 +406,7 @@ struct Coincide {
     rename_target: Option<String>,
     rename_input: Entity<InputState>,
     archive_confirmation: Option<String>,
+    project_management: project_management_mount::Projects,
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
@@ -1070,6 +1073,7 @@ impl Coincide {
             rename_target: None,
             rename_input,
             archive_confirmation: None,
+            project_management: project_management_mount::Projects::new(window, cx),
             project_picker_open: false,
             project_path,
             selected: None,
@@ -2036,20 +2040,63 @@ impl Coincide {
         }
     }
     fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let path = self.project_path.read(cx).value().to_string();
-        match call(&self.engine, "projects.create", json!({"path":path.trim()})) {
-            Ok(project) => {
-                self.selected_project = Some(text(&project, "id"));
-                self.project_path
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.status = format!("Selected project {}", text(&project, "name"));
-                self.refresh(cx);
-            }
-            Err(error) => {
-                self.status = format!("Project could not be added: {error}");
-                cx.notify();
+        if !self.project_ui_admitted() {
+            return;
+        }
+        let paths = self.project_management.folders.clone();
+        if paths.is_empty() {
+            return;
+        }
+        let mut first = None;
+        let mut added = 0;
+        let mut failure = None;
+        for path in &paths {
+            match call(&self.engine, "projects.create", json!({"path":path})) {
+                Ok(project) => {
+                    if first.is_none() {
+                        first = Some(project);
+                    }
+                    added += 1;
+                }
+                Err(error) => {
+                    failure = Some(error.to_string());
+                    break;
+                }
             }
         }
+        self.refresh(cx);
+        self.status = format!("Added {added} folders.");
+        if let Some(project) = first {
+            let id = text(&project, "id");
+            self.selected_project = Some(id.clone());
+            match call(
+                &self.engine,
+                "projects.latest-thread",
+                json!({"projectId":id}),
+            ) {
+                Ok(value) => {
+                    if let Some(thread) = value["threadId"].as_str() {
+                        self.select(thread, window, cx);
+                    } else {
+                        self.new_thread_in_project(&id, window, cx);
+                    }
+                }
+                Err(error) => {
+                    self.status = format!(
+                        "Project added, but its latest conversation could not be opened: {error}"
+                    )
+                }
+            }
+        }
+        if let Some(error) = failure {
+            self.project_management.session.error = format!(
+                "Added {added} of {} folders. The remaining folder was not added: {error}. Already-added folders will be reused on review.",
+                paths.len()
+            );
+        } else {
+            self.close_project_form(window, cx);
+        }
+        cx.notify();
     }
     fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {

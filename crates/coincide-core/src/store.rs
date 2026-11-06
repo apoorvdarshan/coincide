@@ -1,4 +1,7 @@
+#[path = "project_management.rs"]
+mod project_management;
 use anyhow::{Context, Result, bail, ensure};
+pub(crate) use project_management::{PreparedProject, ProjectAction};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1005,8 +1008,9 @@ impl Store {
             entries[index]["isChats"] != true && entries[index]["isBots"] != true,
             "Cannot remove a system project"
         );
-        entries.remove(index);
-        self.save_document("projects.json", &projects)
+        let prepared = self.prepare_project_action(id, ProjectAction::Remove)?;
+        self.apply_project_action(&prepared, None)?;
+        Ok(())
     }
 }
 

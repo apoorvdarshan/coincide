@@ -222,8 +222,11 @@ impl Coincide {
                     .h(px(32.))
                     .accessibility_label(format!("Project: {project_label}"))
                     .child(sidebar_button_label(format!("Project: {project_label}")))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.project_picker_open = !this.project_picker_open;
+                        if !this.project_picker_open {
+                            this.close_project_form(window, cx);
+                        }
                         cx.notify();
                     })),
             )
@@ -286,6 +289,12 @@ impl Coincide {
                                             let id = text(project, "id");
                                             Button::new(SharedString::from(format!("project-{id}")))
                                                 .label(text(project, "name"))
+                                                .accessibility_label(format!(
+                                                    "Project {}: {}",
+                                                    text(project, "name"),
+                                                    text(project, "path")
+                                                ))
+                                                .tooltip(text(project, "path"))
                                                 .when(
                                                     self.selected_project.as_ref() == Some(&id),
                                                     |b| b.primary(),
@@ -297,14 +306,52 @@ impl Coincide {
                                         }),
                                 ),
                         )
-                        .child(Input::new(&self.project_path))
+                        .child(Button::new("project-add").label("Add folders…").on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.open_project_form(
+                                    project_management::Mode::Add,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            }),
+                        ))
                         .child(
-                            Button::new("project-add")
-                                .label("Add existing folder")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_project(window, cx)),
-                                ),
-                        ),
+                            Button::new("project-manage-selected")
+                                .label("Manage selected project…")
+                                .disabled(self.selected_project.as_ref().is_none_or(|id| {
+                                    !self.projects.iter().any(|p| {
+                                        p["id"] == *id
+                                            && p["isChats"] != true
+                                            && p["isBots"] != true
+                                            && *id != NO_PROJECT
+                                            && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+                                    })
+                                }))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_project_form(
+                                        project_management::Mode::Manage,
+                                        this.selected_project.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                        )
+                        .child(
+                            Button::new("project-recovery")
+                                .label("Removed projects…")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_project_form(
+                                        project_management::Mode::Recovery,
+                                        None,
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                        )
+                        .when_some(self.project_management_form(cx), |view, form| {
+                            view.child(form)
+                        }),
                 )
             })
             .child(Input::new(&self.search))
