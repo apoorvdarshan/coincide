@@ -477,29 +477,37 @@ fn read_record(payload: &Value, provider: &str) -> Result<Option<Record>> {
 }
 /// Public JSON responses never return legacy provider environment values. Native
 /// editing reads its separate typed private store; raw imported documents stay intact.
-pub(super) fn public_settings(mut settings: Value) -> Value {
-    match settings.get_mut("providers") {
-        Some(Value::Object(providers)) => {
-            for provider in providers.values_mut() {
-                if let Some(fields) = provider.as_object_mut() {
+fn redact_provider_environment(provider: &mut Value) {
+    if let Some(fields) = provider.as_object_mut() {
+        fields.remove("environment");
+        if let Some(accounts) = fields.get_mut("accounts").and_then(Value::as_array_mut) {
+            for account in accounts {
+                if let Some(fields) = account.as_object_mut() {
                     fields.remove("environment");
                 }
             }
         }
+    }
+}
+pub(super) fn public_settings(mut settings: Value) -> Value {
+    match settings.get_mut("providers") {
+        Some(Value::Object(providers)) => {
+            for provider in providers.values_mut() {
+                redact_provider_environment(provider);
+            }
+        }
         Some(Value::Array(providers)) => {
             for provider in providers {
-                if let Some(fields) = provider.as_object_mut() {
-                    fields.remove("environment");
-                }
+                redact_provider_environment(provider);
             }
         }
         _ => {}
     }
     settings
 }
-fn legacy_environment(settings: &Value, provider: &str) -> Option<Value> {
+fn legacy_provider<'a>(settings: &'a Value, provider: &str) -> Option<&'a Value> {
     let providers = &settings["providers"];
-    let configuration = if let Some(providers) = providers.as_object() {
+    if let Some(providers) = providers.as_object() {
         providers.get(provider)
     } else {
         providers
@@ -507,29 +515,65 @@ fn legacy_environment(settings: &Value, provider: &str) -> Option<Value> {
             .chunks(2)
             .find(|pair| pair.len() == 2 && pair[0].as_str() == Some(provider))
             .map(|pair| &pair[1])
-    }?;
-    configuration.get("environment").cloned()
+    }
+}
+fn legacy_environment(settings: &Value, provider: &str) -> Option<Value> {
+    legacy_provider(settings, provider)?
+        .get("environment")
+        .cloned()
 }
 /// Retain omitted legacy secrets when clients edit a redacted provider response,
 /// including Swift's whole-array dictionary encoding. An explicit environment
 /// field remains caller-supplied inert legacy data, never a native launch grant.
-pub(super) fn retain_legacy_environment(current: &Value, patch: &Value) -> Value {
+pub(super) fn retain_legacy_environment(current: &Value, patch: &Value) -> Result<Value> {
     let mut patch = patch.clone();
-    let retain = |id: &str, configuration: &mut Value| {
+    let retain = |id: &str, configuration: &mut Value| -> Result<()> {
         let Some(fields) = configuration.as_object_mut() else {
-            return;
+            return Ok(());
         };
-        if fields.contains_key("environment") {
-            return;
-        }
-        if let Some(environment) = legacy_environment(current, id) {
+        let previous = legacy_provider(current, id);
+        if !fields.contains_key("environment")
+            && let Some(environment) = previous
+                .and_then(|provider| provider.get("environment"))
+                .cloned()
+        {
             fields.insert("environment".into(), environment);
         }
+        if let Some(accounts) = fields.get_mut("accounts").and_then(Value::as_array_mut) {
+            for account in accounts {
+                let Some(fields) = account.as_object_mut() else {
+                    continue;
+                };
+                if fields.contains_key("environment") {
+                    continue;
+                }
+                let Some(id) = fields.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let mut matching = previous
+                    .and_then(|provider| provider["accounts"].as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter(|account| account["id"] == id);
+                let saved = matching.next();
+                ensure!(
+                    matching.next().is_none(),
+                    "Saved account identity is ambiguous; preserve its raw environment before editing"
+                );
+                if let Some(environment) = saved
+                    .and_then(|account| account.get("environment"))
+                    .cloned()
+                {
+                    fields.insert("environment".into(), environment);
+                }
+            }
+        }
+        Ok(())
     };
     match patch.get_mut("providers") {
         Some(Value::Object(providers)) => {
             for (id, configuration) in providers {
-                retain(id, configuration);
+                retain(id, configuration)?;
             }
         }
         Some(Value::Array(providers)) => {
@@ -537,14 +581,14 @@ pub(super) fn retain_legacy_environment(current: &Value, patch: &Value) -> Value
                 if pair.len() == 2 {
                     let (id, configuration) = pair.split_first_mut().unwrap();
                     if let Some(id) = id.as_str() {
-                        retain(id, &mut configuration[0]);
+                        retain(id, &mut configuration[0])?;
                     }
                 }
             }
         }
         _ => {}
     }
-    patch
+    Ok(patch)
 }
 
 fn provider_id(provider: &str) -> Result<()> {
@@ -1186,6 +1230,67 @@ pub(crate) mod tests {
                     .is_none()
             );
         }
+    }
+    #[test]
+    fn redacted_named_account_edits_preserve_private_legacy_environment_by_identity() {
+        for array in [false, true] {
+            let (_root, mut engine, _binary) = fixture();
+            let account = json!({"id":"legacy-account","name":"Original","auth":"login","environment":{"SYNTHETIC_PRIVATE_VALUE":"fixture"},"opaque":47});
+            let config = json!({"accounts":[account],"environment":{"SYNTHETIC_PROVIDER_VALUE":"fixture-provider"}});
+            let providers = if array {
+                json!(["claude", config])
+            } else {
+                json!({"claude":config})
+            };
+            let raw = json!({"providers":providers});
+            engine.store.save_document("settings.json", &raw).unwrap();
+            let public = engine.execute("settings.read", &json!({})).unwrap();
+            assert!(
+                legacy_provider(&public, "claude").unwrap()["accounts"][0]
+                    .get("environment")
+                    .is_none()
+            );
+            let mut patch = public.clone();
+            if array {
+                patch["providers"][1]["accounts"][0]["name"] = json!("Renamed");
+            } else {
+                patch["providers"]["claude"]["accounts"][0]["name"] = json!("Renamed");
+            }
+            let response = engine
+                .execute("settings.patch", &json!({"patch":patch}))
+                .unwrap();
+            assert_eq!(response, patch);
+            let saved = engine.store.document("settings.json").unwrap().unwrap();
+            let account = &legacy_provider(&saved, "claude").unwrap()["accounts"][0];
+            assert_eq!(account["name"], "Renamed");
+            assert_eq!(account["opaque"], 47);
+            assert_eq!(
+                account["environment"],
+                json!({"SYNTHETIC_PRIVATE_VALUE":"fixture"})
+            );
+            assert!(
+                engine
+                    .provider_launch_configuration("claude")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    #[test]
+    fn ambiguous_redacted_account_replacement_never_erases_saved_environments() {
+        let (_root, mut engine, _binary) = fixture();
+        let raw = json!({"providers":{"claude":{"accounts":[{"id":"duplicate","environment":{"ONE":"fixture"}},{"id":"duplicate","environment":{"TWO":"fixture"}}]}}});
+        engine.store.save_document("settings.json", &raw).unwrap();
+        let public = engine.execute("settings.read", &json!({})).unwrap();
+        assert!(
+            engine
+                .execute("settings.patch", &json!({"patch":public}))
+                .is_err()
+        );
+        assert_eq!(
+            engine.store.document("settings.json").unwrap().unwrap(),
+            raw
+        );
     }
     #[test]
     fn imported_values_are_visible_native_drafts_until_explicit_pinned_save() {
