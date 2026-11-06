@@ -3,11 +3,13 @@ use super::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
     #[default]
+    General,
     All,
     Appearance,
     Keyboard,
     Conversation,
     Automation,
+    Voice,
     Accounts,
     Browser,
     Media,
@@ -17,11 +19,13 @@ pub(super) enum SettingsSection {
 impl SettingsSection {
     fn id(self) -> &'static str {
         match self {
+            Self::General => "general",
             Self::All => "all",
             Self::Appearance => "appearance",
             Self::Keyboard => "keyboard",
             Self::Conversation => "conversation",
             Self::Automation => "automation",
+            Self::Voice => "voice",
             Self::Accounts => "accounts",
             Self::Browser => "browser",
             Self::Media => "media",
@@ -31,12 +35,14 @@ impl SettingsSection {
     }
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::All => "All settings",
+            Self::General => "General",
+            Self::All => "Search results",
             Self::Appearance => "Appearance",
             Self::Keyboard => "Keyboard",
             Self::Conversation => "Conversation",
             Self::Automation => "Automation and alerts",
-            Self::Accounts => "Providers and passwords",
+            Self::Voice => "Voice",
+            Self::Accounts => "Providers",
             Self::Browser => "Browser",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
@@ -50,7 +56,14 @@ fn settings_match(
     query: &str,
     terms: &str,
 ) -> bool {
-    if selected != SettingsSection::All && selected != section {
+    let general = selected == SettingsSection::General
+        && matches!(
+            section,
+            SettingsSection::Appearance
+                | SettingsSection::Conversation
+                | SettingsSection::Automation
+        );
+    if selected != SettingsSection::All && selected != section && !general {
         return false;
     }
     let text = format!("{} {terms}", section.label()).to_lowercase();
@@ -663,24 +676,26 @@ impl Coincide {
     pub(super) fn settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         use SettingsSection as S;
         let query = self.settings_search.read(cx).value().to_string();
-        let matches =
-            |section, terms| settings_match(self.settings_section, section, &query, terms);
+        let filtering = if query.trim().is_empty() {
+            self.settings_section
+        } else {
+            S::All
+        };
+        let matches = |section, terms| settings_match(filtering, section, &query, terms);
         let setting =
             |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
         // Match the Swift Settings sidebar: destinations remain fixed while
         // the selected pane scrolls independently on every desktop platform.
         let mut nav = div().flex().flex_col().gap_1();
         for section in [
-            S::All,
-            S::Appearance,
-            S::Keyboard,
-            S::Conversation,
-            S::Automation,
-            S::Accounts,
-            S::Browser,
-            S::Media,
-            S::ComputerUse,
+            S::General,
             S::Usage,
+            S::Keyboard,
+            S::Voice,
+            S::Browser,
+            S::ComputerUse,
+            S::Media,
+            S::Accounts,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -870,7 +885,7 @@ impl Coincide {
                 "bots bot instructions automation",
             ),
             (
-                S::Automation,
+                S::Voice,
                 "transcription",
                 "Local transcription",
                 "local transcription microphone recording speech audio",
@@ -912,7 +927,7 @@ impl Coincide {
                 "browser profiles imports cookies privacy passwords passkeys",
             ),
             (
-                S::Accounts,
+                S::Browser,
                 "passwords",
                 "Password managers",
                 "password managers bitwarden 1password credentials vault",
@@ -1000,7 +1015,7 @@ impl Coincide {
                             .flex()
                             .justify_between()
                             .items_center()
-                            .child(div().text_xl().child(self.settings_section.label()))
+                            .child(div().flex_1().min_w_0().text_xl().child(filtering.label()))
                             .child(Button::new("settings-done").label("Done").on_click(
                                 cx.listener(|this, _, window, cx| {
                                     this.close_settings_panel(window, cx);

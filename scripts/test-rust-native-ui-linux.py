@@ -142,21 +142,21 @@ def main():
         time.sleep(0.6)
         settings_window = wait_for("separate Settings window", lambda: command(
             "xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
-            "--name", "^All settings$", env=env).splitlines()[0])
+            "--name", "^General$", env=env).splitlines()[0])
         assert settings_window != window, "Settings must leave the conversation in its own window"
-        capture(settings_window, "settings", "All settings")
+        capture(settings_window, "settings", "General")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
         time.sleep(0.5)
         matches = command("xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
-                          "--name", "^All settings$", env=env).splitlines()
+                          "--name", "^General$", env=env).splitlines()
         assert matches == [settings_window], "Opening Settings again must reuse its existing window"
         command("xdotool", "windowfocus", "--sync", settings_window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+w", env=env)
         def settings_closed():
             result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
-                                     "--name", "^All settings$"], capture_output=True, text=True, env=env)
+                                     "--name", "^General$"], capture_output=True, text=True, env=env)
             return result.returncode == 1 and not result.stdout.strip()
         wait_for("Settings closed independently", settings_closed)
         assert process.poll() is None and rpc("threads.read", threadId=thread_id)["draft"] == draft

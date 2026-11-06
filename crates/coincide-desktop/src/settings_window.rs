@@ -212,8 +212,11 @@ impl Coincide {
                         })
                         .ok();
                     handle
-                        .update(cx, |_, window, _| {
+                        .update(cx, |_, window, cx| {
                             window.activate_window();
+                            owner
+                                .update(cx, |owner, cx| owner.settings_focus.focus(window, cx))
+                                .ok();
                             window.refresh();
                         })
                         .ok();
