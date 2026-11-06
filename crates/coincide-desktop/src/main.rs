@@ -1191,8 +1191,9 @@ impl Coincide {
                 Button::new("computer-use-settings-back")
                     .label("Back to Settings")
                     .disabled(self.media.close_requested || self.media.shutdown_requested)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.computer_use_open = false;
+                        this.focus_settings_route(window, cx);
                         cx.notify();
                     })),
             )
@@ -3810,10 +3811,11 @@ impl Render for Coincide {
                     .child(
                         Button::new("extra-settings-back")
                             .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.bots_open = false;
                                 this.transcription_open = false;
                                 this.notifications_open = false;
+                                this.focus_settings_route(window,cx);
                                 this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
@@ -3862,8 +3864,9 @@ impl Render for Coincide {
                     .child(
                         Button::new("browser-settings-back")
                             .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.browser_settings_open = false;
+                                this.focus_settings_route(window,cx);
                                 this.credential_panel
                                     .update(cx, |panel, cx| panel.cancel(cx));
                                 this.sync_transcription_binding(cx);
@@ -3895,8 +3898,9 @@ impl Render for Coincide {
                     .child(
                         Button::new("password-settings-back")
                             .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.credentials_open = false;
+                                this.focus_settings_route(window, cx);
                                 this.credential_panel
                                     .update(cx, |panel, cx| panel.cancel(cx));
                                 this.sync_transcription_binding(cx);

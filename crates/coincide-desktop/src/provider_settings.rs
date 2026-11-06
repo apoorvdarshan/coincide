@@ -102,6 +102,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.focus_settings_route(window, cx);
         self.provider_settings.open = true;
         self.provider_settings.codex_open = false;
         self.settings_open = true;
@@ -302,7 +303,7 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn use_antigravity_account(&mut self, cx: &mut Context<Self>) {
+    fn use_antigravity_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.provider_settings.busy || self.provider_settings.has_unsaved_changes(cx) {
             return;
         }
@@ -327,6 +328,7 @@ impl Coincide {
                 self.accept_saved_provider_selection(thread);
                 self.provider_settings.open = false;
                 self.settings_open = false;
+                self.focus_settings_route(window, cx);
                 self.status = "Antigravity account selected. Send a message when ready.".into();
             }
             Err(error) => self.provider_settings.message = error.to_string(),
@@ -347,7 +349,7 @@ impl Coincide {
             .is_some_and(|thread| self.running.contains(&text(thread, "id")));
         let mut pane=div().id("antigravity-settings").flex_1().min_h_0().overflow_y_scroll().p_4().flex().flex_col().gap_3()
             .child(div().flex().justify_between().items_center().child(div().text_xl().child("Antigravity"))
-                .child(Button::new("antigravity-done").label("Done").on_click(cx.listener(|this,_,_,cx|{this.provider_settings.open=false;cx.notify();}))))
+                .child(Button::new("antigravity-done").label("Done").on_click(cx.listener(|this,_,window,cx|{this.provider_settings.open=false;this.focus_settings_route(window,cx);cx.notify();}))))
             .child(div().rounded_md().border_1().border_color(rgb(0xa66b21)).p_3().flex().flex_col().gap_2()
                 .child(div().text_lg().child("⚠ Antigravity Account Risk"))
                 .child(div().text_sm().child(RISK_NOTICE))
@@ -355,7 +357,7 @@ impl Coincide {
                 .child(Button::new("antigravity-terms").label("Read Google’s terms").on_click(|_,_,cx|cx.open_url("https://antigravity.google/terms")))
                 .when(!acknowledged,|view|view.child(div().flex().gap_2()
                     .child(Button::new("antigravity-acknowledge").label("I Understand").disabled(state.busy).on_click(cx.listener(|this,_,_,cx|this.acknowledge_antigravity_risk(cx))))
-                    .child(Button::new("antigravity-risk-cancel").label("Cancel").on_click(cx.listener(|this,_,_,cx|{this.provider_settings.open=false;cx.notify();})))))
+                    .child(Button::new("antigravity-risk-cancel").label("Cancel").on_click(cx.listener(|this,_,window,cx|{this.provider_settings.open=false;this.focus_settings_route(window,cx);cx.notify();})))))
                 .when(acknowledged,|view|view.child(div().text_sm().child("Account risk acknowledged."))))
             .child(div().text_sm().child("Use an existing Google subscription profile. This Rust preview does not install the runtime, start Google sign-in, or support API-key accounts yet."));
         let mut accounts = div().flex().flex_wrap().gap_2();
@@ -444,7 +446,7 @@ impl Coincide {
             .child(div().text_lg().child("Use in this conversation"))
             .child(Input::new(&state.model).disabled(state.busy))
             .child(div().text_sm().child("Leave the model empty for the account default. An explicit model must be offered by Antigravity when the session starts."))
-            .child(Button::new("antigravity-use-account").label("Use selected account").primary().disabled(state.busy||unsaved||!acknowledged||!configured||self.selected.is_none()||running).on_click(cx.listener(|this,_,_,cx|this.use_antigravity_account(cx))))
+            .child(Button::new("antigravity-use-account").label("Use selected account").primary().disabled(state.busy||unsaved||!acknowledged||!configured||self.selected.is_none()||running).on_click(cx.listener(|this,_,window,cx|this.use_antigravity_account(window,cx))))
             .child(div().text_sm().child(if running{"Stop the current turn before changing provider."}else if self.selected.is_none(){"Open a conversation to select this provider."}else if !configured{"Save this account’s configuration first."}else if unsaved{"Save your configuration changes before selecting this account."}else if !acknowledged{"Read and acknowledge the account risk first."}else{"Selecting this provider does not send a prompt or start sign-in."}))
             .child(div().text_sm().child(state.message.clone())).into_any_element()
     }

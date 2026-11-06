@@ -816,8 +816,9 @@ impl Coincide {
                                     this.open_antigravity_settings(window, cx);
                                 } else if id == "codex-accounts" {
                                     this.open_codex_account_settings(window, cx);
+                                } else {
+                                    this.focus_settings_route(window, cx);
                                 }
-                                window.blur(cx);
                                 this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
