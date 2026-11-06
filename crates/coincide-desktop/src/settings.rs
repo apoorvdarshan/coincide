@@ -37,7 +37,7 @@ impl SettingsSection {
             Self::Browser => "Browser",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
-            Self::Usage => "Saved usage",
+            Self::Usage => "Usage and limits",
         }
     }
 }
@@ -569,11 +569,11 @@ impl Coincide {
         let mut count = 0;
         if matches(
             S::Usage,
-            "saved local usage history tokens provider reports cost counters",
+            "saved local usage history tokens provider reports cost counters live codex limits quota credits",
         ) {
             count += 1;
             if self.settings_section == S::Usage {
-                content = content.child(
+                content = content.child(self.codex_limits.panel.clone()).child(
                     div()
                         .h(px(460.))
                         .min_h(px(260.))
@@ -582,7 +582,7 @@ impl Coincide {
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")
-                        .label("View saved usage history")
+                        .label("View usage and Codex limits")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.settings_section = S::Usage;
                             cx.notify();

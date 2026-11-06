@@ -1,3 +1,5 @@
+mod codex_limits_mount;
+mod codex_limits_view;
 mod usage_history_mount;
 mod usage_history_view;
 mod worker_owner;
@@ -332,6 +334,7 @@ struct Coincide {
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
     usage_history: usage_history_mount::Mount,
+    codex_limits: codex_limits_mount::Mount,
     steering: composer_steering::SteeringController,
     computer_use_mount: Option<computer_use_mount::Mount>,
     computer_use_open: bool,
@@ -692,6 +695,7 @@ impl Coincide {
             notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
         });
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
+        let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
@@ -751,6 +755,9 @@ impl Coincide {
             engine.ui_available = browser.is_some();
         }
         let mut subscriptions = vec![
+            cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
+                this.codex_limits.refresh(cx);
+            }),
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
                 this.usage_history.load(event, cx);
             }),
@@ -988,6 +995,7 @@ impl Coincide {
             settings_search,
             settings_section: Default::default(),
             usage_history,
+            codex_limits,
             steering,
             computer_use_mount,
             computer_use_open: false,
@@ -2389,6 +2397,7 @@ impl Coincide {
             cx.notify();
         }
         self.usage_history.poll(cx);
+        self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
             self.steering
                 .observe_draft(&text(thread, "id"), self.composer.read(cx).value().as_ref());
