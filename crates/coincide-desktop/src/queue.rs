@@ -107,9 +107,7 @@ impl Coincide {
             || key.modifiers.control
             || key.modifiers.shift
             || self.settings_open
-            || self.schedules_open
-            || self.workspace_open
-            || self.session_import_open
+            || !self.chat_visible()
             || self.composer_files.opened
             || !self.composer.read(cx).focus_handle(cx).is_focused(window)
         {

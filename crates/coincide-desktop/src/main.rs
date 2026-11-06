@@ -15,6 +15,7 @@ mod assets;
 mod bot_settings;
 mod browser;
 mod browser_settings;
+mod chat_inspector;
 mod chat_layout;
 mod command_palette;
 mod composer_attachments;
@@ -94,6 +95,7 @@ pub mod updater_helper_transport;
 mod updater_lifecycle;
 mod updater_settings;
 mod workspace;
+mod workspace_inspector;
 use browser::BrowserController;
 use coincide_core::{
     api::{Engine, SharedEngine},
@@ -518,11 +520,9 @@ impl Coincide {
             });
         self.github_panel
             .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
-        let threads_context = if self.workspace_open
+        let threads_context = if self.chat_inspector_panel()
+            == Some(chat_inspector::Panel::Workspace)
             && self.github_threads_open
-            && !self.settings_in_main_window()
-            && !self.schedules_open
-            && !self.session_import_open
             && !self.command_palette.read(cx).is_open()
             && !self.github_threads_scope_stale
         {
@@ -1056,9 +1056,7 @@ impl Coincide {
                 if matches!(event, InputEvent::PressEnter { shift: false, .. })
                     && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
                     && !this.settings_open
-                    && !this.schedules_open
-                    && !this.workspace_open
-                    && !this.session_import_open
+                    && this.chat_visible()
                 {
                     this.send(window, cx);
                 }
@@ -1487,6 +1485,9 @@ impl Coincide {
         self.browser_action(BrowserAction::Navigate { url }, None, cx);
     }
     fn toggle_browser(&mut self, cx: &mut Context<Self>) {
+        if self.global_schedules_route() {
+            self.close_schedule_surface();
+        }
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
         };
@@ -1506,16 +1507,20 @@ impl Coincide {
         let image_viewer_open = self.historical_image_is_open();
         let terminal_right = self.terminal_on_right();
         let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
-        let Some(browser) = &mut self.browser else {
-            return;
-        };
         let mut changed = !requests.is_empty();
-        for request in requests {
+        // Presentation arbitration precedes native WebView reconciliation. Work
+        // for a background thread cannot replace the foreground chat route.
+        for request in &requests {
             match &request.action {
                 BrowserAction::Show => {
-                    if terminal_right && selected_id.as_deref() == Some(request.thread_id.as_str())
+                    if selected_id.as_deref() == Some(request.thread_id.as_str())
+                        && self.chat_visible()
                     {
-                        self.terminal_open = false;
+                        self.workspace_open = false;
+                        self.close_schedule_surface();
+                        if terminal_right {
+                            self.terminal_open = false;
+                        }
                     }
                     self.browser_panels.insert(request.thread_id.clone());
                 }
@@ -1524,13 +1529,26 @@ impl Coincide {
                 }
                 _ => {}
             }
+        }
+        if requests.iter().any(|request| {
+            matches!(&request.action, BrowserAction::Show)
+                && selected_id.as_deref() == Some(request.thread_id.as_str())
+        }) && self.chat_visible()
+        {
+            self.ensure_inspector_space(window);
+        }
+        let browser_is_panel = self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
+        let Some(browser) = &mut self.browser else {
+            return;
+        };
+        for request in requests {
             browser.execute(request, window, cx);
         }
         changed |= browser.poll(window, cx);
         let selected = self.selected.as_ref().map(|v| text(v, "id"));
-        let visible = selected
-            .as_deref()
-            .filter(|thread| self.browser_panels.contains(*thread) && !image_viewer_open);
+        let visible = selected.as_deref().filter(|thread| {
+            browser_is_panel && self.browser_panels.contains(*thread) && !image_viewer_open
+        });
         // API work for another thread may create a native surface; reconcile it
         // before yielding to the run loop so it never covers this conversation.
         browser.set_thread_visible(visible, cx);
@@ -1632,8 +1650,8 @@ impl Coincide {
             div()
                 .flex()
                 .flex_col()
-                .w(px(500.))
-                .flex_shrink_0()
+                .flex_1()
+                .min_w_0()
                 .h_full()
                 .border_l_1()
                 .border_color(self.color(0x29303d))
@@ -1826,9 +1844,7 @@ impl Coincide {
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
-                if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
-                    self.schedule_editor.open = false;
-                }
+                self.rebind_conversation_schedule_editor(id);
                 let section = if v["botID"].is_string() {
                     "bots"
                 } else if v["isPinned"] == true {
@@ -1909,11 +1925,7 @@ impl Coincide {
         cx.notify();
     }
     fn find_context_available(&self) -> bool {
-        self.selected.is_some()
-            && !self.settings_in_main_window()
-            && !self.schedules_open
-            && !self.workspace_open
-            && !self.session_import_open
+        self.chat_visible()
     }
     fn clear_find_reveal(&mut self, cx: &mut Context<Self>) {
         if let Some((thread, item, _)) = self.find_revealed.take()
@@ -2719,10 +2731,8 @@ impl Coincide {
         }
     }
     fn sync_notification_activity(&self, window: &Window, cx: &App) {
-        let visible_thread = (!self.settings_in_main_window()
-            && !self.schedules_open
-            && !self.workspace_open
-            && !self.session_import_open)
+        let visible_thread = self
+            .chat_visible()
             .then(|| {
                 self.selected.as_ref().and_then(|thread| {
                     thread["id"]
@@ -3523,7 +3533,7 @@ impl Coincide {
     }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
         // A hidden composer may retain focus after opening the Git pane.
-        if self.workspace_open || self.session_import_open {
+        if !self.chat_visible() {
             return;
         }
         if let Some(thread) = &self.selected {
@@ -3994,6 +4004,8 @@ impl Coincide {
         }
         self.terminal_open = !self.terminal_open;
         if self.terminal_open && self.terminal_on_right() {
+            self.workspace_open = false;
+            self.close_schedule_surface();
             self.ensure_terminal_space(window);
             if self
                 .selected
@@ -4019,12 +4031,24 @@ impl Coincide {
         cx.notify();
     }
     fn sync_terminal_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Placement changes move the retained entity. This callback has the
+        // actual main window, unlike an edit made inside native Settings.
+        if self
+            .terminal_layout
+            .observe_placement(terminal_layout::placement(&self.settings))
+            && self.terminal_open
+            && self.terminal_on_right()
+        {
+            self.workspace_open = false;
+            self.close_schedule_surface();
+            self.hide_selected_browser_surface(cx);
+            self.ensure_inspector_space(window);
+        }
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
         let visible = self.terminal_open
-            && !self.settings_in_main_window()
-            && !self.schedules_open
-            && !self.workspace_open
-            && !self.session_import_open
+            && self.chat_visible()
+            && (!self.terminal_on_right()
+                || self.chat_inspector_panel() == Some(chat_inspector::Panel::Terminal))
             && !self.command_palette.read(cx).is_open()
             && !self.historical_image_is_open()
             && window.is_window_active()
@@ -4260,129 +4284,30 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
-        } else if self.schedules_open {
+        } else if self.global_schedules_route() {
             self.schedules_pane(cx)
-        } else if self.workspace_open {
-            // The outer column has a finite window height. A zero flex basis
-            // keeps the workspace entity bounded and lets its own body scroll.
-            div()
-                .id("workspace-surface")
-                .flex_1()
-                .flex_basis(px(0.))
-                .min_h_0()
-                .min_w_0()
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .p_2()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new("workspace-local-tab")
-                                .label("Local Git")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github_open = false;
-                                    this.github_threads_open = false;
-                                    this.sync_github_context(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("workspace-github-tab")
-                                .label("GitHub pull requests")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github_open = true;
-                                    this.github_threads_open = false;
-                                    this.sync_workspace_context(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(Button::new("workspace-github-threads-tab").label("Inline review threads")
-                            .on_click(cx.listener(|this,_,window,cx|{
-                                this.github_open=false;this.github_threads_open=true;this.github_threads_scope_stale=false;
-                                this.sync_workspace_context(cx);
-                                let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
-                                this.github_threads_seed=loaded.clone();
-                                if let Some((repository,number,head))=loaded {
-                                    this.github_threads_panel.update(cx,|panel,cx|panel.set_pr(repository,number,head,window,cx));
-                                }
-                                cx.notify();
-                            }))),
-                )
-                .child(if self.github_threads_open {
-                    div().flex_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden().flex().flex_col()
-                        .when(self.github_threads_scope_stale,|view|view.child(div().p_2().text_sm().child("PR detail changed. Reopen Inline review threads to bind the new loaded scope, or return to Local Git.")))
-                        .child(self.github_threads_panel.clone()).into_any_element()
-                } else if self.github_open {
-                    div()
-                        .flex_1()
-                        .flex_basis(px(0.))
-                        .min_h_0()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .child(self.github_panel.clone())
-                        .into_any_element()
-                } else {
-                    div()
-                        .flex_1()
-                        .flex_basis(px(0.))
-                        .min_h_0()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .child(self.workspace_panel.clone())
-                        .into_any_element()
-                })
-                .into_any_element()
         } else {
             transcript.into_any_element()
         };
-        let browser_pane = self.browser_pane(cx);
-        let pending_pane = if self.workspace_open || self.session_import_open {
-            None
-        } else {
+        self.sync_inspector_browser_visibility(cx);
+        let inspector_pane = self.chat_inspector_surface(window, cx);
+        let pending_pane = if self.chat_visible() {
             self.pending_pane(cx)
-        };
-        let draft_images = if self.schedules_open
-            || self.settings_in_main_window()
-            || self.workspace_open
-            || self.session_import_open
-        {
-            None
         } else {
-            self.draft_images(window, cx)
+            None
         };
-        let show_composer = !self.schedules_open
-            && !self.settings_in_main_window()
-            && !self.workspace_open
-            && !self.session_import_open;
+        let draft_images = if self.chat_visible() {
+            self.draft_images(window, cx)
+        } else {
+            None
+        };
+        let show_composer = self.chat_visible();
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
-        let terminal_right = self.terminal_surface(true, window, cx);
-        div()
-            .relative()
-            .capture_key_down(
-                cx.listener(|this, event, window, cx| {
-                    if !this.context_details_shortcut(event, window, cx)
-                        && !this.project_defaults_key(event, window, cx)
-                        && !this.historical_image_shortcut(event, window, cx)
-                        && !this.reply_selection_shortcut(event, window, cx) {
-                        this.app_shortcut(event, window, cx);
-                    }
-                }),
-            )
-            .on_action(cx.listener(|this,_:&app_menu::AddSelectionToComposer,window,cx|this.add_selection_to_composer(window,cx)))
-            .flex()
-            .size_full()
-            .bg(self.color(0x10141c))
-            .text_color(self.color(0xe4e9f2))
-            .child(navigation_rail)
-            .when_some(sidebar, |view, sidebar| view.child(sidebar))
-            .child(
-                div()
+
+        let chat_column = div()
                     .flex()
                     .flex_col()
                     .flex_1()
@@ -4608,13 +4533,37 @@ impl Render for Coincide {
                                         )),
                                 ),
                         )
-                    }),
+                    }).into_any_element();
+        div()
+            .relative()
+            .capture_key_down(cx.listener(|this, event, window, cx| {
+                if !this.context_details_shortcut(event, window, cx)
+                    && !this.project_defaults_key(event, window, cx)
+                    && !this.historical_image_shortcut(event, window, cx)
+                    && !this.reply_selection_shortcut(event, window, cx)
+                {
+                    this.app_shortcut(event, window, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &app_menu::AddSelectionToComposer, window, cx| {
+                    this.add_selection_to_composer(window, cx)
+                }),
             )
-            .when_some(terminal_right,|view,pane|view.child(pane))
-            .when_some(browser_pane, |view, pane| view.child(pane))
+            .flex()
+            .size_full()
+            .bg(self.color(0x10141c))
+            .text_color(self.color(0xe4e9f2))
+            .child(navigation_rail)
+            .when_some(sidebar, |view, sidebar| view.child(sidebar))
+            .child(chat_inspector::columns(chat_column, inspector_pane))
             .when_some(historical_image, |view, image| view.child(image))
-            .when_some(self.project_defaults_form(cx), |view, form| view.child(form))
-            .when_some(self.context_details_overlay(cx), |view, details| view.child(details))
+            .when_some(self.project_defaults_form(cx), |view, form| {
+                view.child(form)
+            })
+            .when_some(self.context_details_overlay(cx), |view, details| {
+                view.child(details)
+            })
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()
