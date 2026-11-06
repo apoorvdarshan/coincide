@@ -47,7 +47,8 @@ fn setup(cx: &mut TestAppContext) -> (Entity<Harness>, &mut VisualTestContext) {
     vcx.update(|window, cx| {
         window.activate_window();
         let state = view.read(cx).state.clone();
-        state.read(cx).focus_handle().focus(window, cx);
+        let focus = state.read(cx).focus_handle().clone();
+        focus.focus(window, cx);
         draw(window, cx);
         state.update(cx, |state, cx| state.select_all(cx));
         draw(window, cx);
@@ -108,7 +109,8 @@ fn headless_native_focus_selection_reparse_and_semantic_rebind_revoke_the_projec
     );
     vcx.update(|window, cx| {
         let state = view.read(cx).state.clone();
-        state.read(cx).focus_handle().focus(window, cx);
+        let focus = state.read(cx).focus_handle().clone();
+        focus.focus(window, cx);
         state.update(cx, |state, cx| state.select_all(cx));
         draw(window, cx);
     });
