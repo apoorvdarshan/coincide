@@ -3565,11 +3565,16 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
-        let transcript = list(self.transcript_list.clone(), move |index, window, cx| {
-            entity.update(cx, |this, cx| this.message(index, window, cx))
-        })
-        .flex_1()
-        .min_h(px(120.));
+        let transcript = div()
+            .on_children_prepainted(self.media_layout_observer(cx))
+            .flex_1()
+            .min_h(px(120.))
+            .child(
+                list(self.transcript_list.clone(), move |index, window, cx| {
+                    entity.update(cx, |this, cx| this.message(index, window, cx))
+                })
+                .size_full(),
+            );
         let conversation_content = if self.session_import_open {
             div()
                 .id("session-import-surface")

@@ -2,6 +2,8 @@
 //! No media path is opened here; source/copy/verification remains on the service
 //! worker. GPUI images are built from verified encoded bytes on a worker too.
 use super::*;
+#[path = "legacy_media_visibility.rs"]
+mod visibility;
 use coincide_core::legacy_media_service::{
     ReceiptId, SelectionToken, ServiceConfig, ValidatedRenderEntry,
 };
@@ -38,6 +40,8 @@ pub(super) struct ParentMedia {
     draft_pending: bool,
     context: Option<(Option<String>, u64, Vec<String>)>,
     images: Vec<DisplayImage>,
+    layout_visibility: visibility::CompletedLayout,
+    layout_sequence: std::rc::Rc<std::cell::Cell<u64>>,
     viewer: historical_image_view::Viewer,
     viewer_focus: FocusHandle,
     viewer_restore: Option<FocusHandle>,
@@ -74,6 +78,8 @@ impl ParentMedia {
             draft_pending: false,
             context: None,
             images: Vec::new(),
+            layout_visibility: visibility::CompletedLayout::default(),
+            layout_sequence: std::rc::Rc::new(std::cell::Cell::new(0)),
             viewer: historical_image_view::Viewer::default(),
             viewer_focus: cx.focus_handle(),
             viewer_restore: None,
@@ -243,6 +249,7 @@ impl Coincide {
         cx.notify();
     }
     fn invalidate_media_images(&mut self, cx: &mut Context<Self>) {
+        self.media.layout_visibility.clear();
         self.remove_media_images(cx);
         self.media.epoch = self.media.epoch.wrapping_add(1);
         self.media.pending_render = None;
@@ -272,35 +279,102 @@ impl Coincide {
         let thread = (!stopping)
             .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
             .flatten();
-        let mut visible = Vec::new();
-        if !stopping
-            && self.find_context_available()
-            && !self.command_palette.read(cx).is_open()
-            && let Some(items) = self
-                .selected
-                .as_ref()
-                .and_then(|thread| thread["items"].as_array())
-        {
-            let viewport = self.transcript_list.viewport_bounds();
-            let top = self.transcript_list.logical_scroll_top().item_ix;
-            for (index, item) in items.iter().enumerate().skip(top).take(200) {
-                if self
-                    .transcript_list
-                    .bounds_for_item(index)
-                    .is_some_and(|row| row_intersects(row, viewport))
-                {
-                    visible.push(text(item, "id"));
-                    if visible.len() == 20 {
-                        break;
-                    }
-                }
-            }
-        }
+        // A splice deliberately makes ListState rows temporarily unmeasured.
+        // Only a completed actual list layout can change the visible IDs.
+        let layout_binding = self.media_layout_binding(cx);
+        self.media.layout_visibility.set_context(layout_binding);
+        let visible = self.media.layout_visibility.visible();
         let context = (thread, self.media.revision, visible);
         if self.media.context.as_ref() != Some(&context) {
             self.media.context = Some(context.clone());
             self.media.panel.update(cx, |panel, cx| {
                 panel.set_context(context.0, context.1, context.2, cx)
+            });
+        }
+    }
+    fn media_layout_binding(&self, cx: &App) -> Option<visibility::Binding> {
+        if self.media.close_requested
+            || self.media.shutdown_requested
+            || !self.find_context_available()
+            || self.command_palette.read(cx).is_open()
+            || self.media.draft_pending
+            || self.media.source != self.selected
+        {
+            return None;
+        }
+        let thread = self.selected.as_ref()?.get("id")?.as_str()?;
+        if self.pending_drafts.contains_key(thread) {
+            return None;
+        }
+        Some(visibility::Binding {
+            thread: thread.to_owned(),
+            revision: self.media.revision,
+            epoch: self.media.epoch,
+        })
+    }
+    /// Runs after the actual List child prepaint has installed its measured
+    /// bounds. Defer parent mutation until traversal and its borrows finish.
+    pub(super) fn media_layout_observer(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static {
+        let binding = self.media_layout_binding(cx);
+        let list = self.transcript_list.clone();
+        let items = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["items"].as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .enumerate()
+                    .skip(list.logical_scroll_top().item_ix)
+                    .take(200)
+                    .map(|(index, item)| (index, text(item, "id")))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let parent = cx.entity().downgrade();
+        let sequence = self.media.layout_sequence.clone();
+        move |_, _, cx| {
+            let Some(binding) = binding.clone() else {
+                return;
+            };
+            let next = sequence.get().checked_add(1);
+            if let Some(next) = next {
+                sequence.set(next);
+            }
+            let viewport = list.viewport_bounds();
+            let visible = items
+                .iter()
+                .filter(|(index, _)| {
+                    list.bounds_for_item(*index)
+                        .is_some_and(|row| row_intersects(row, viewport))
+                })
+                .take(20)
+                .map(|(_, id)| id.clone())
+                .collect::<Vec<_>>();
+            let parent = parent.clone();
+            cx.defer(move |cx| {
+                let _ = parent.update(cx, |this, cx| {
+                    let current = this.media_layout_binding(cx);
+                    this.media.layout_visibility.set_context(current.clone());
+                    if current.as_ref() != Some(&binding) {
+                        return;
+                    }
+                    let changed = if let Some(next) = next {
+                        this.media
+                            .layout_visibility
+                            .complete(&binding, next, visible)
+                    } else {
+                        this.media.layout_visibility.clear();
+                        true
+                    };
+                    if changed {
+                        this.sync_media_context(cx);
+                        cx.notify();
+                    }
+                });
             });
         }
     }
