@@ -37,8 +37,7 @@ fn fixture(root: &Path) -> Fixture {
     .unwrap();
     let id = text(&thread, "id");
     let mut thread = thread;
-    thread["selection"] =
-        json!({"provider":"claude","modelID":"previous-model","future":{"opaque":17}});
+    thread["selection"] = json!({"provider":"claude","modelID":"previous-model"});
     thread["accessMode"] = json!("approval");
     thread["interactionMode"] = json!("build");
     thread["draft"] = json!(" /CoDeX\n");
@@ -181,6 +180,7 @@ fn provider_commands_engine_child() {
         "configured-target",
         "unsupported-target",
         "named-source",
+        "unknown-selection",
         "effort",
         "speed",
         "stale-draft",
@@ -198,6 +198,11 @@ fn provider_commands_engine_child() {
             "named-source" => {
                 let mut t = saved(&f);
                 t["selection"]["accountID"] = json!(uuid::Uuid::new_v4());
+                f.engine.store.save(&t).unwrap();
+            }
+            "unknown-selection" => {
+                let mut t = saved(&f);
+                t["selection"]["future"] = json!({"opaque":17});
                 f.engine.store.save(&t).unwrap();
             }
             "effort" => {
@@ -227,7 +232,10 @@ fn provider_commands_engine_child() {
             "closing" => f.engine.freeze_admissions(),
             _ => {}
         }
-        let pending = if matches!(case, "named-source" | "effort" | "speed") {
+        let pending = if matches!(
+            case,
+            "named-source" | "unknown-selection" | "effort" | "speed"
+        ) {
             submission(&f)
         } else {
             pending
