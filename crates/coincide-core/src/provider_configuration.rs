@@ -667,9 +667,6 @@ impl LaunchConfiguration {
             .map(|binary| binary.requested.clone())
             .unwrap_or(fallback)
     }
-    pub(crate) fn stamp(&self) -> Stamp {
-        self.stamp.clone()
-    }
 }
 
 pub(crate) fn current_executable(fallback: PathBuf) -> PathBuf {
@@ -745,7 +742,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let engine = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        let engine = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
     }
     fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
@@ -812,7 +809,7 @@ mod tests {
                 BTreeMap::new(),
             )
             .unwrap();
-        let mut second = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        let mut second = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         save(&mut second, "codex", &binary, "fixture-not-a-real-key");
         assert!(first.apply_native_provider_configuration(stale).is_err());
         assert_eq!(
@@ -827,16 +824,16 @@ mod tests {
             .provider_launch_configuration("codex")
             .unwrap()
             .unwrap()
-            .stamp();
+            .stamp.clone();
         drop(first);
         drop(second);
-        let reopened = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        let reopened = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         assert_eq!(
             reopened
                 .provider_launch_configuration("codex")
                 .unwrap()
                 .unwrap()
-                .stamp(),
+                .stamp.clone(),
             stamp
         );
     }
@@ -856,7 +853,7 @@ mod tests {
                 .provider_launch_configuration(provider)
                 .unwrap()
                 .unwrap();
-            let stamp = first.stamp();
+            let stamp = first.stamp.clone();
             {
                 let _scope = enter(Some(first));
                 let mut child = Command::new(&binary);
@@ -876,7 +873,7 @@ mod tests {
                     .provider_launch_configuration(provider)
                     .unwrap()
                     .unwrap()
-                    .stamp(),
+                    .stamp.clone(),
                 stamp
             );
             // No global environment setter exists in production or this test.
@@ -902,7 +899,7 @@ mod tests {
                     "codex",
                     "thread",
                     "native-session",
-                    Some(&first.stamp()),
+                    Some(&first.stamp.clone()),
                 )
                 .unwrap();
             assert!(
@@ -942,7 +939,7 @@ mod tests {
         let _scope = enter(Some(captured));
         assert!(apply_to_child(&mut Command::new(&binary), false).is_err());
         drop(_scope);
-        let path = directory(&root.path().join("state.sqlite"))
+        let path = directory(&root.path().join("private/state.sqlite"))
             .unwrap()
             .join("configuration.json");
         let mut envelope: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -955,7 +952,7 @@ mod tests {
     fn removing_an_approved_private_record_never_restores_ambient_path_authority() {
         let (root, mut engine, binary) = fixture();
         save(&mut engine, "codex", &binary, "fixture-first");
-        let directory = directory(&root.path().join("state.sqlite")).unwrap();
+        let directory = directory(&root.path().join("private/state.sqlite")).unwrap();
         fs::remove_file(directory.join("configuration.json")).unwrap();
         assert!(engine.provider_launch_configuration("codex").is_err());
         let snapshot = engine.native_provider_configuration("codex").unwrap();
@@ -1010,7 +1007,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            !directory(&root.path().join("state.sqlite"))
+            !directory(&root.path().join("private/state.sqlite"))
                 .unwrap()
                 .exists()
         );
