@@ -70,7 +70,7 @@ impl Engine {
                 // edits apply only to future workers and cannot rebind its proofs.
                 run.configuration.clone()
             } else {
-                self.provider_launch_configuration(&provider)?
+                self.provider_launch_configuration_for_thread(thread)?
             };
         let _configuration_scope = provider_configuration::enter(configuration);
         self.require_provider_enabled(&text(&thread["selection"], "provider"))?;

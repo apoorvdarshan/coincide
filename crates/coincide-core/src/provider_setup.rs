@@ -462,6 +462,7 @@ fn consume_with(
                 Ok::<_, anyhow::Error>(LaunchConfiguration {
                     stamp,
                     record,
+                    profile: None,
                     derived_executable: None,
                     derived_companion: None,
                 })
