@@ -387,7 +387,7 @@ impl Drop for Owner {
     }
 }
 impl Owner {
-    pub(super) fn context(&mut self, executable: Option<PathBuf>) {
+    pub(super) fn context(&mut self, executable: Option<PathBuf>) -> bool {
         if self.context != executable {
             self.context = executable;
             self.observations.invalidate();
@@ -397,7 +397,9 @@ impl Owner {
                     .cancelled
                     .store(true, std::sync::atomic::Ordering::Release);
             }
+            return true;
         }
+        false
     }
     pub(super) fn refresh(&mut self, executable: Option<PathBuf>) -> anyhow::Result<Value> {
         self.refresh_with(executable, read)
@@ -791,6 +793,26 @@ mod tests {
         assert!(status["snapshot"].is_null());
         assert_eq!(owner.shutdown_status().panicked, 1);
         assert_eq!(owner.shutdown_status().running, 0);
+    }
+    #[test]
+    fn ready_context_revocation_is_published_without_new_work() {
+        let mut owner = Owner::default();
+        let path = Some(PathBuf::from("/synthetic-a"));
+        let response = owner
+            .refresh_with(path.clone(), |_, _| parse(&sample()))
+            .unwrap();
+        joined(&owner.workers[0].completion.clone());
+        owner.poll();
+        let id = response["requestId"].as_str().unwrap();
+        assert_eq!(owner.status(id).unwrap()["state"], "ready");
+        assert!(!owner.context(path));
+        assert!(owner.context(Some(PathBuf::from("/synthetic-b"))));
+        assert!(owner.status(id).is_err());
+        assert!(owner.observations.current().is_none());
+        assert!(!owner.poll());
+        assert_eq!(owner.shutdown_status().running, 0);
+        assert_eq!(owner.shutdown_status().returned, 1);
+        assert!(!owner.context(Some(PathBuf::from("/synthetic-b"))));
     }
     #[test]
     fn context_loss_revokes_worker_result_and_shutdown_rejects_without_spawning() {

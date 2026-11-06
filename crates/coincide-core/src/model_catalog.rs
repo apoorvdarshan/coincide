@@ -268,8 +268,8 @@ impl ModelCatalog {
         }
         Ok(response)
     }
-    pub(crate) fn limits_context(&mut self, executable: Option<PathBuf>) {
-        self.limits.context(executable);
+    pub(crate) fn limits_context(&mut self, executable: Option<PathBuf>) -> bool {
+        self.limits.context(executable)
     }
     pub(crate) fn refresh_limits(&mut self, executable: Option<PathBuf>) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");

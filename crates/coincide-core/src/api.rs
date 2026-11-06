@@ -586,8 +586,8 @@ impl Engine {
             "usage.codexLimits.status" => {
                 let id = crate::model_catalog::status_id(p)?;
                 let executable = self.codex_limits_executable();
-                self.model_catalog.limits_context(executable);
-                if self.model_catalog.poll() { self.revision += 1; }
+                let changed = self.model_catalog.limits_context(executable);
+                if self.model_catalog.poll() | changed { self.revision += 1; }
                 self.model_catalog.limits_status(id)
             }
             "agent.models.refresh" => {
@@ -1449,18 +1449,24 @@ impl Engine {
         }
     }
     fn codex_limits_executable(&self) -> Option<PathBuf> {
-        std::env::var_os("COINCIDE_CODEX_EXECUTABLE").map(PathBuf::from).or_else(|| {
-            self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
-                .find(|entry| entry["provider"] == "codex")?["executable"].as_str().map(PathBuf::from)
-        })
+        std::env::var_os("COINCIDE_CODEX_EXECUTABLE")
+            .map(PathBuf::from)
+            .or_else(|| {
+                self.provider_discovery.as_ref()?["providers"]
+                    .as_array()?
+                    .iter()
+                    .find(|entry| entry["provider"] == "codex")?["executable"]
+                    .as_str()
+                    .map(PathBuf::from)
+            })
     }
     pub fn poll(&mut self) {
         self.poll_steering();
         self.provider_workers_status();
         self.computer_use_expire();
         let limits_executable = self.codex_limits_executable();
-        self.model_catalog.limits_context(limits_executable);
-        if self.model_catalog.poll() {
+        let limits_changed = self.model_catalog.limits_context(limits_executable);
+        if self.model_catalog.poll() | limits_changed {
             self.revision += 1;
         }
         self.poll_workspace_completions();
