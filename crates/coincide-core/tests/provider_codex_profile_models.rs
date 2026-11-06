@@ -15,6 +15,13 @@ use std::{
 };
 #[test]
 fn named_profile_models_use_actual_isolated_auth_catalog_and_turn_paths() {
+    run_fixture_child("profile_models_fixture_child");
+}
+#[test]
+fn named_profile_full_access_uses_captured_policy_and_exact_catalog() {
+    run_fixture_child("profile_access_fixture_child");
+}
+fn run_fixture_child(child: &str) {
     let dir = tempfile::tempdir().unwrap();
     let executable = dir.path().join("fake-profile-models");
     fs::write(&executable,r#"#!/usr/bin/env python3
@@ -30,6 +37,7 @@ assert 'forced_login_method="chatgpt"' in sys.argv
 assert 'model_provider="openai"' in sys.argv
 assert 'coincide-unbound-' in os.environ['COINCIDE_CONTROL_SOCKET']
 mode=(home/'fixture-mode').read_text() if (home/'fixture-mode').exists() else 'allow'
+access=(home/'fixture-access').read_text() if (home/'fixture-access').exists() else 'approval'
 model=(home/'fixture-model').read_text()
 def record(value):
  with (root/'models-calls.jsonl').open('a') as out:out.write(json.dumps({'home':str(home),'cwd':os.getcwd(),**value})+'\n')
@@ -54,21 +62,26 @@ if r['method']=='model/list':
  write({'id':r['id'],'result':{'data':[{'model':model},{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
 assert r['method']=='thread/start' and r['params']['model']==model
+assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
 native=home.name+'-fresh-model-thread'
+if mode=='revoke-after-start':
+ (home/'auth.json').write_text('synthetic revocation marker, not credentials');(home/'auth.json').chmod(0o600)
 write({'id':r['id'],'result':{'thread':{'id':native},'model':'wrong-resolved' if mode=='wrong-model' else model}})
 r=read();assert r['method']=='turn/start' and r['params']['model']==model
+assert r['params']['approvalPolicy']==('never' if access=='fullAccess' else 'untrusted')
+assert r['params']['sandboxPolicy']=={'type':'dangerFullAccess' if access=='fullAccess' else 'readOnly'}
+assert r['params']['approvalsReviewer']=='user'
+assert r['params']['collaborationMode']=={'mode':'default','settings':{'model':model,'reasoning_effort':None,'developer_instructions':None}}
+assert 'effort' not in r['params']
 write({'id':r['id'],'result':{'turn':{'id':'synthetic-turn'}}})
+if mode=='hold-turn':
+ (home/'turn-held').write_text('ready');sys.stdin.readline();sys.exit(0)
 write({'method':'turn/completed','params':{'threadId':native,'turn':{'id':'synthetic-turn','status':'completed'}}})
 sys.stdin.readline()
 "#).unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "profile_models_fixture_child",
-            "--nocapture",
-        ])
+        .args(["--ignored", "--exact", child, "--nocapture"])
         .env("COINCIDE_MODEL_FIXTURE_ROOT", dir.path())
         .env("COINCIDE_CODEX_EXECUTABLE", &executable)
         .env("CODEX_HOME", dir.path().join("hostile-default-home"))
@@ -423,4 +436,366 @@ fn profile_models_fixture_child() {
     // A/B native session IDs and full-replay launches remain separate.
     let saved = engine.store.thread(&id).unwrap();
     assert_profile_sessions(&saved, &a, &b);
+}
+
+fn access_request(
+    thread: &Value,
+    account: &str,
+    model: &str,
+    request: Option<&str>,
+    access: &str,
+) -> Value {
+    let mut p = json!({"threadId":thread["id"],"accountId":account,"expectedSelection":thread["selection"],"model":model,
+        "accessMode":access,"expectedAccessMode":thread["accessMode"],"expectedInteractionMode":thread["interactionMode"]});
+    if let Some(request) = request {
+        p["requestId"] = json!(request);
+    }
+    p
+}
+#[test]
+#[ignore = "Isolated fake child; outer test supplies only synthetic environment"]
+fn profile_access_fixture_child() {
+    let root = PathBuf::from(std::env::var_os("COINCIDE_MODEL_FIXTURE_ROOT").unwrap());
+    let db = root.join("state/state.sqlite");
+    let mut engine = Engine::new(Store::open(&db).unwrap());
+    let project = call(
+        &mut engine,
+        "projects.create",
+        json!({"path":root,"name":"Owned access project"}),
+    );
+    let original = call(
+        &mut engine,
+        "threads.create",
+        json!({"projectId":project["id"]}),
+    );
+    let id = text(&original, "id");
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let account = call(
+        &mut engine,
+        "providers.codex.profiles.create",
+        json!({"name":"Synthetic access A"}),
+    );
+    let account = text(&account, "id");
+    let other = call(
+        &mut engine,
+        "providers.codex.profiles.create",
+        json!({"name":"Synthetic access B"}),
+    );
+    let other = text(&other, "id");
+    let data = engine.store.data_directory().unwrap();
+    let home = data.join("providers/codex").join(&account);
+    let home_b = data.join("providers/codex").join(&other);
+    fs::write(home.join("fixture-model"), "synthetic-access").unwrap();
+    fs::write(home_b.join("fixture-model"), "synthetic-other").unwrap();
+    select_profile(&mut engine, &id, &account);
+    let mut seeded = engine.store.thread(&id).unwrap();
+    seeded["draft"] = json!("  exact unsent café\n  ");
+    seeded["future"] = json!({"retain":[true,"中文"]});
+    engine.store.save(&seeded).unwrap();
+    let before = engine.store.thread(&id).unwrap();
+    denied(
+        &mut engine,
+        "providers.codex.profiles.models.select",
+        access_request(
+            &before,
+            &account,
+            "synthetic-access",
+            Some("forged"),
+            "fullAccess",
+        ),
+    );
+    assert_eq!(engine.store.thread(&id).unwrap(), before);
+    let first = start_catalog(&mut engine, &id, &account);
+    assert_eq!(
+        wait_catalog(&mut engine, &id, &account, &first)["state"],
+        "ready"
+    );
+    choose(
+        &mut engine,
+        &id,
+        &account,
+        "synthetic-access",
+        first["requestId"].as_str(),
+    );
+    let before = engine.store.thread(&id).unwrap();
+    let request = access_request(
+        &before,
+        &account,
+        "synthetic-access",
+        first["requestId"].as_str(),
+        "fullAccess",
+    );
+    let external_before = records(&root).len();
+    let elevated = call(
+        &mut engine,
+        "providers.codex.profiles.models.select",
+        request.clone(),
+    );
+    let mut expected = before.clone();
+    expected["accessMode"] = json!("fullAccess");
+    assert_eq!(
+        elevated, expected,
+        "Changing access must preserve the full conversation/draft envelope"
+    );
+    assert_eq!(
+        records(&root).len(),
+        external_before,
+        "A mode edit must not start a provider or send"
+    );
+    let caps = call(
+        &mut engine,
+        "agent.selection.capabilities",
+        json!({"threadId":id}),
+    );
+    assert_eq!(caps["locked"], false);
+    assert_eq!(caps["namedModels"]["fullAccessSupported"], true);
+    assert_eq!(caps["namedModels"]["effortSupported"], false);
+    let codex = caps["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["provider"] == "codex")
+        .unwrap();
+    assert_eq!(codex["interactionModes"], json!(["build"]));
+    for stale in [
+        request,
+        access_request(
+            &elevated,
+            &other,
+            "synthetic-access",
+            first["requestId"].as_str(),
+            "approval",
+        ),
+        access_request(
+            &elevated,
+            &account,
+            "synthetic-other",
+            first["requestId"].as_str(),
+            "fullAccess",
+        ),
+        access_request(
+            &elevated,
+            &account,
+            "synthetic-access",
+            Some("wrong-generation"),
+            "approval",
+        ),
+        access_request(&elevated, &account, "default", None, "fullAccess"),
+    ] {
+        // The first request still has the pre-edit expected approval mode.
+        denied(&mut engine, "providers.codex.profiles.models.select", stale);
+        assert_eq!(engine.store.thread(&id).unwrap(), elevated);
+    }
+    for field in ["expectedAccessMode", "expectedInteractionMode"] {
+        let mut missing = access_request(
+            &elevated,
+            &account,
+            "synthetic-access",
+            first["requestId"].as_str(),
+            "approval",
+        );
+        missing.as_object_mut().unwrap().remove(field);
+        denied(
+            &mut engine,
+            "providers.codex.profiles.models.select",
+            missing,
+        );
+    }
+    for (field, value) in [
+        ("interactionMode", json!("plan")),
+        ("effort", json!("high")),
+        ("speed", json!("priority")),
+    ] {
+        let mut unsupported = access_request(
+            &elevated,
+            &account,
+            "synthetic-access",
+            first["requestId"].as_str(),
+            "fullAccess",
+        );
+        unsupported[field] = value;
+        denied(
+            &mut engine,
+            "providers.codex.profiles.models.select",
+            unsupported,
+        );
+    }
+    assert_eq!(engine.store.thread(&id).unwrap(), elevated);
+    fs::write(home.join("fixture-access"), "fullAccess").unwrap();
+    call(
+        &mut engine,
+        "agent.send",
+        json!({"threadId":id,"text":"Explicit synthetic full access turn"}),
+    );
+    settle(&mut engine);
+    let calls = records(&root);
+    let actual = calls
+        .iter()
+        .find(|row| row["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(actual["home"], json!(home));
+    assert_eq!(actual["params"]["approvalPolicy"], "never");
+    assert_eq!(
+        actual["params"]["sandboxPolicy"],
+        json!({"type":"dangerFullAccess"})
+    );
+    assert!(!calls.iter().any(|row| row["method"] == "thread/resume"));
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["selection"]["accountID"],
+        account
+    );
+    drop(engine);
+    // Saved full access survives restart but cannot send or borrow a default proof.
+    let mut engine = Engine::new(Store::open(&db).unwrap());
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let restored = engine.store.thread(&id).unwrap();
+    assert_eq!(restored["accessMode"], "fullAccess");
+    let caps = call(
+        &mut engine,
+        "agent.selection.capabilities",
+        json!({"threadId":id}),
+    );
+    assert_eq!(caps["locked"], true);
+    assert_eq!(caps["namedModels"]["refreshAllowed"], true);
+    assert_eq!(caps["namedModels"]["fullAccessSupported"], false);
+    let count = records(&root).len();
+    denied(
+        &mut engine,
+        "agent.send",
+        json!({"threadId":id,"text":"Must not send before fresh profile proof"}),
+    );
+    assert_eq!(engine.store.thread(&id).unwrap(), restored);
+    assert_eq!(records(&root).len(), count);
+    let restarted_refresh = start_catalog(&mut engine, &id, &account);
+    assert_eq!(
+        wait_catalog(&mut engine, &id, &account, &restarted_refresh)["state"],
+        "ready"
+    );
+    let recovered = call(
+        &mut engine,
+        "agent.selection.capabilities",
+        json!({"threadId":id}),
+    );
+    assert_eq!(recovered["locked"], false);
+    assert_eq!(recovered["namedModels"]["fullAccessSupported"], true);
+    assert_eq!(engine.store.thread(&id).unwrap(), restored);
+    // A failed later generation revokes that recovered proof, and still
+    // permits the explicit reduction to approval/provider default.
+    fs::write(home.join("fixture-mode"), "deny").unwrap();
+    let failed = start_catalog(&mut engine, &id, &account);
+    assert_eq!(
+        wait_catalog(&mut engine, &id, &account, &failed)["state"],
+        "failed"
+    );
+    let count = records(&root).len();
+    // Explicit combined approval/default repair is available without new RPC.
+    let repaired = call(
+        &mut engine,
+        "providers.codex.profiles.models.select",
+        access_request(&restored, &account, "default", None, "approval"),
+    );
+    let mut expected = restored;
+    expected["accessMode"] = json!("approval");
+    expected["selection"]["modelID"] = json!("default");
+    assert_eq!(repaired, expected);
+    assert_eq!(records(&root).len(), count);
+    fs::write(home.join("fixture-mode"), "allow").unwrap();
+    let refreshed = start_catalog(&mut engine, &id, &account);
+    assert_eq!(
+        wait_catalog(&mut engine, &id, &account, &refreshed)["state"],
+        "ready"
+    );
+    let elevated = call(
+        &mut engine,
+        "providers.codex.profiles.models.select",
+        access_request(
+            &repaired,
+            &account,
+            "synthetic-access",
+            refreshed["requestId"].as_str(),
+            "fullAccess",
+        ),
+    );
+    // A captured auth-generation change after thread/start stops before turn/start.
+    fs::write(home.join("fixture-mode"), "revoke-after-start").unwrap();
+    let turns = records(&root)
+        .iter()
+        .filter(|row| row["method"] == "turn/start")
+        .count();
+    call(
+        &mut engine,
+        "agent.send",
+        json!({"threadId":id,"text":"Reject changed profile auth before full access"}),
+    );
+    settle(&mut engine);
+    assert_eq!(
+        records(&root)
+            .iter()
+            .filter(|row| row["method"] == "turn/start")
+            .count(),
+        turns
+    );
+    fs::remove_file(home.join("auth.json")).unwrap();
+    fs::write(home.join("fixture-mode"), "hold-turn").unwrap();
+    let refreshed = start_catalog(&mut engine, &id, &account);
+    assert_eq!(
+        wait_catalog(&mut engine, &id, &account, &refreshed)["state"],
+        "ready"
+    );
+    let before = engine.store.thread(&id).unwrap();
+    assert_eq!(before["selection"], elevated["selection"]);
+    call(
+        &mut engine,
+        "agent.send",
+        json!({"threadId":id,"text":"Owned full access cancellation"}),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !home.join("turn-held").exists() {
+        engine.poll();
+        assert!(
+            Instant::now() < deadline,
+            "fake full-access turn was not held"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let running = engine.store.thread(&id).unwrap();
+    denied(
+        &mut engine,
+        "providers.codex.profiles.models.select",
+        access_request(
+            &running,
+            &account,
+            "synthetic-access",
+            refreshed["requestId"].as_str(),
+            "approval",
+        ),
+    );
+    call(&mut engine, "agent.stop", json!({"threadId":id}));
+    settle(&mut engine);
+    let workers = engine.provider_workers_status();
+    assert_eq!(workers.running, 0);
+    assert_eq!(workers.panicked, 0);
+    assert_eq!(workers.unclassified, 0);
+    let calls = records(&root);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|row| row["method"] == "turn/start")
+            .count(),
+        2
+    );
+    assert!(
+        calls
+            .iter()
+            .filter(|row| row["method"] == "turn/start")
+            .all(|row| row["home"] == json!(home) && row["params"]["approvalPolicy"] == "never")
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|row| row["home"] == json!(home_b) || row["method"] == "thread/resume")
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["future"], seeded["future"]);
+    assert_eq!(saved["selection"]["accountID"], account);
 }
