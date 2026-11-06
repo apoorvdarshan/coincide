@@ -500,6 +500,10 @@ fn effort_fixture_child() {
         json!({"threadId":id,"text":"Captured medium option until cancellation"}),
     );
     marker(&hb.join("turn-held"));
+    // The worker queued the new native Session before writing turn/start.
+    // Drain that established boundary before the refused-edit raw baseline;
+    // the fake still holds the turn, so this does not complete or retry it.
+    call(&mut e, "app.status", json!({}));
     let p = params(&e, &id, "synthetic-b", Value::Null, None);
     refuse(&mut e, &root, SELECT, p);
     e.request_provider_stop(&id).unwrap();
