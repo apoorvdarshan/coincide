@@ -48,7 +48,6 @@ impl Drop for NativeUiEditLease {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{api::Engine, store::Store};
     use serde_json::json;
     #[test]

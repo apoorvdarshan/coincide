@@ -1,4 +1,13 @@
 fn main() {
+    // GPUI's main-thread view construction exceeds the MSVC 1 MiB default
+    // stack in debug builds (observed by the native Windows startup smoke).
+    // Match the ordinary macOS main-thread reserve without moving the UI
+    // event loop to a worker thread.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg-bin=coincide-rust=/STACK:8388608");
+    }
     println!("cargo:rerun-if-changed=src/microphone_macos.m");
     println!("cargo:rerun-if-changed=src/microphone_macos.h");
     println!("cargo:rerun-if-changed=src/computer_use_macos.m");
