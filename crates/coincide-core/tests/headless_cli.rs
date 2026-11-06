@@ -16,6 +16,9 @@ use std::{
 const BINARY: &str = env!("CARGO_BIN_EXE_coincide-rs");
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[path = "headless_cli/new_options.rs"]
+mod new_options;
+
 struct ChildGuard(Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -58,6 +61,7 @@ struct Fixture {
     dir: tempfile::TempDir,
     data: PathBuf,
     sequence: AtomicUsize,
+    path_override: Option<PathBuf>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -71,13 +75,19 @@ impl Fixture {
             dir,
             data,
             sequence: AtomicUsize::new(0),
+            path_override: None,
         }
     }
     fn command(&self) -> Command {
         let mut command = Command::new(BINARY);
         command
             .env_clear()
-            .env("PATH", "/usr/bin:/bin")
+            .env(
+                "PATH",
+                self.path_override
+                    .as_deref()
+                    .unwrap_or(Path::new("/usr/bin:/bin")),
+            )
             .env("SHELL", "/bin/sh")
             .env("COINCIDE_RUST_DATA_DIR", &self.data)
             .current_dir(self.dir.path());
