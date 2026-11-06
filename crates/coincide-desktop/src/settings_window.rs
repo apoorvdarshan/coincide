@@ -2,6 +2,22 @@
 //! Coincide owner, so this window never creates another Engine or service owner.
 use super::*;
 
+fn return_focus_to_main(main: AnyWindowHandle, focus: FocusHandle, cx: &mut App) {
+    // Leave the closing window's update stack before restoring the main focus
+    // tree. A closed main target never redirects focus to another window.
+    cx.defer(move |cx| {
+        main.update(cx, |_, window, cx| {
+            window.activate_window();
+            focus.focus(window, cx);
+        })
+        .ok();
+    });
+}
+
+#[cfg(test)]
+#[path = "settings_window_focus_tests.rs"]
+mod focus_tests;
+
 pub(super) struct SettingsWindow {
     owner: WeakEntity<Coincide>,
     _observation: Subscription,
@@ -143,6 +159,9 @@ impl Coincide {
     }
 
     pub(super) fn settings_window_closed(&mut self, cx: &mut Context<Self>) {
+        let return_focus = self.settings_window.is_some()
+            && !self.media.shutdown_requested
+            && !self.media.close_requested;
         self.settings_navigation.cancel_drag();
         self.archive_settings.close_review();
         self.settings_window = None;
@@ -152,6 +171,18 @@ impl Coincide {
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
         self.sync_transcription_binding(cx);
+        if return_focus {
+            let focus = if self.selected.is_some()
+                && !self.schedules_open
+                && !self.workspace_open
+                && !self.session_import_open
+            {
+                self.composer.read(cx).focus_handle(cx)
+            } else {
+                self.navigation_focus.clone()
+            };
+            return_focus_to_main(self.main_window, focus, cx);
+        }
         cx.notify();
     }
 
