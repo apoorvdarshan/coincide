@@ -351,7 +351,7 @@ impl BotSettingsPanel {
         }
         cx.notify();
     }
-    fn select(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn select(&mut self, id: String, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -364,7 +364,7 @@ impl BotSettingsPanel {
         }
         cx.notify();
     }
-    fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }

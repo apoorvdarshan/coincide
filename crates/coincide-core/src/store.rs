@@ -47,6 +47,26 @@ pub struct ThreadSummary {
     pub pinned: bool,
     #[serde(default)]
     pub snoozed_until: Option<f64>,
+    /// Descriptive navigation only. Missing metadata preserves legacy summary JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub navigation: Option<ThreadNavigation>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThreadNavigation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_draft: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -408,7 +428,9 @@ impl Store {
             " AND instr(search_body,?2)>0"
         };
         let sql = format!(
-            "SELECT id,title,project_id,archived,pinned,snoozed_until FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
+            "SELECT id,title,project_id,archived,pinned,snoozed_until,
+             (SELECT json_object('botID',json_extract(document,'$.botID'),'branch',json_extract(document,'$.branch'),'createdAt',json_extract(document,'$.createdAt'),'updatedAt',json_extract(document,'$.updatedAt'),'itemCount',json_array_length(document,'$.items'),'hasDraft',coalesce(length(json_extract(document,'$.draft')),0)>0,'preview',(SELECT substr(json_extract(value,'$.text'),1,560) FROM json_each(document,'$.items') WHERE json_extract(value,'$.kind') IN ('user','assistant') AND length(trim(json_extract(value,'$.text')))>0 ORDER BY cast(key AS INTEGER) DESC LIMIT 1)) FROM threads WHERE threads.id=thread_summaries.id COLLATE NOCASE)
+             FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
         let mut stmt = self.connection()?.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
@@ -419,6 +441,38 @@ impl Store {
                 archived: r.get(3)?,
                 pinned: r.get(4)?,
                 snoozed_until: r.get(5)?,
+                navigation: r
+                    .get::<_, Option<String>>(6)?
+                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    .and_then(|value| {
+                        let metadata = ThreadNavigation {
+                            bot_id: value["botID"]
+                                .as_str()
+                                .filter(|id| Uuid::parse_str(id).is_ok())
+                                .map(str::to_owned),
+                            branch: value["branch"]
+                                .as_str()
+                                .filter(|branch| !branch.is_empty())
+                                .map(str::to_owned),
+                            created_at: snooze_timestamp(&value["createdAt"]),
+                            updated_at: snooze_timestamp(&value["updatedAt"]),
+                            preview: value["preview"].as_str().map(|text| {
+                                let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                                if line.chars().count() > 140 {
+                                    line.chars().take(139).collect::<String>() + "…"
+                                } else {
+                                    line
+                                }
+                            }),
+                            item_count: value["itemCount"].as_u64().map(|count| count as usize),
+                            has_draft: value["hasDraft"].as_u64().map(|value| value != 0),
+                        };
+                        (metadata.bot_id.is_some()
+                            || metadata.branch.is_some()
+                            || metadata.created_at.is_some()
+                            || metadata.updated_at.is_some())
+                        .then_some(metadata)
+                    }),
             })
         };
         let result = if query.is_empty() {
@@ -994,6 +1048,75 @@ impl Store {
             "Stored projects document is not an array"
         );
         Ok(projects)
+    }
+    /// Native manual ordering is an exact permutation of a reviewed array.
+    /// No project fields, folders, threads or session authority are changed.
+    pub fn reorder_projects_if_unchanged(
+        &mut self,
+        expected: &Value,
+        ids: &[String],
+    ) -> Result<Value> {
+        let projects = expected
+            .as_array()
+            .context("Project order source is not an array")?;
+        ensure!(
+            projects.len() <= 10_000
+                && ids.len() == projects.len()
+                && serde_json::to_vec(expected)?.len() <= 16 * 1024 * 1024,
+            "Project reorder exceeds bounds or omits projects"
+        );
+        let mut seen = std::collections::HashSet::new();
+        let mut ordered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let identity = canonical_uuid(id)?;
+            ensure!(seen.insert(identity), "Duplicate project in reorder");
+            ordered.push(
+                projects
+                    .iter()
+                    .find(|project| {
+                        project["id"]
+                            .as_str()
+                            .and_then(|id| canonical_uuid(id).ok())
+                            == Some(identity)
+                    })
+                    .context("Unknown project in reorder")?
+                    .clone(),
+            );
+        }
+        let value = json!(ordered);
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='projects.json'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current: Value = if let Some(local) = local {
+            serde_json::from_str(&local)?
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='projects.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+                .unwrap_or(json!([]))
+        };
+        ensure!(
+            &current == expected,
+            "Projects changed; refresh before reordering"
+        );
+        tx.execute("INSERT INTO documents(name,document) VALUES ('projects.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document",[value.to_string()])?;
+        tx.commit()?;
+        Ok(value)
     }
     pub fn create_project(&mut self, path: &Path, name: Option<&str>) -> Result<Value> {
         self.connection()?;
@@ -2101,5 +2224,86 @@ mod saved_usage_tests {
             )
             .unwrap();
         assert!(store.saved_usage_snapshot().is_err());
+    }
+}
+
+#[cfg(test)]
+mod navigation_metadata_tests {
+    use super::*;
+    #[test]
+    fn optional_summary_metadata_preserves_legacy_json_and_describes_bot_without_changing_source() {
+        let legacy = json!({"id":"legacy","title":"Legacy","project_id":"","archived":false,"pinned":false,"snoozed_until":null});
+        let summary: ThreadSummary = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(summary.navigation.is_none());
+        assert_eq!(serde_json::to_value(summary).unwrap(), legacy);
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("navigation.sqlite")).unwrap();
+        let mut thread = store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        thread["botID"] = json!("117E51F1-9D63-43DD-AF75-A5709E1B0123");
+        thread["branch"] = json!("feature/sidebar");
+        thread["updatedAt"] = json!(100.);
+        thread["items"] = json!([{ "id": "017E51F1-9D63-43DD-AF75-A5709E1B0123", "kind":"assistant", "text":" Hello\n\tfrom the bot " }]);
+        store.save(&thread).unwrap();
+        let before = store.thread(thread["id"].as_str().unwrap()).unwrap();
+        let rows = store.summaries("", false).unwrap();
+        let metadata = rows[0].navigation.as_ref().unwrap();
+        assert_eq!(metadata.bot_id.as_deref(), thread["botID"].as_str());
+        assert_eq!(metadata.branch.as_deref(), Some("feature/sidebar"));
+        assert_eq!(metadata.preview.as_deref(), Some("Hello from the bot"));
+        assert_eq!(metadata.item_count, Some(1));
+        assert_eq!(metadata.has_draft, Some(false));
+        assert_eq!(metadata.updated_at, Some(100.));
+        assert_eq!(
+            store.thread(thread["id"].as_str().unwrap()).unwrap(),
+            before
+        );
+        assert!(before.get("rustBotContext").is_none());
+    }
+}
+
+#[cfg(test)]
+mod project_order_tests {
+    use super::*;
+    #[test]
+    fn reviewed_project_permutation_retains_unknown_fields_and_rejects_stale_or_invalid_orders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        let first = "00000000-0000-4000-8000-000000000001";
+        let second = "00000000-0000-4000-8000-000000000002";
+        let original = json!([{"id":first,"name":"One","path":"/fixture/one","future":{"keep":true}},{"id":second,"name":"Two","path":"/fixture/two","threadDefaults":{"future":"keep"}}]);
+        store.save_document("projects.json", &original).unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), first.into()])
+                .is_err()
+        );
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), original);
+        let reordered = store
+            .reorder_projects_if_unchanged(&original, &[second.into(), first.into()])
+            .unwrap();
+        assert_eq!(reordered, json!([original[1], original[0]]));
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), reordered);
+        let mut other = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        other
+            .patch_project(first, &json!({"name":"Changed elsewhere"}))
+            .unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&reordered, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap()[1]["name"], "Changed elsewhere");
     }
 }

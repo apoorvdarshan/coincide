@@ -341,7 +341,7 @@ impl Coincide {
         }
         self.refresh_schedules(cx);
     }
-    fn open_schedule_editor(
+    pub(super) fn open_schedule_editor(
         &mut self,
         id: Option<&str>,
         window: &mut Window,

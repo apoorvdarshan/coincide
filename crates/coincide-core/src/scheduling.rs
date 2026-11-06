@@ -388,3 +388,71 @@ impl ScheduleDocument {
         Ok(())
     }
 }
+
+/// The native sidebar's calendar snooze choices. This computes dates only;
+/// snoozing never schedules execution or grants provider approval.
+pub fn native_snooze_presets() -> Vec<(&'static str, f64)> {
+    sidebar_snooze_presets(chrono::Local::now())
+}
+fn sidebar_snooze_presets<T: TimeZone>(now: DateTime<T>) -> Vec<(&'static str, f64)> {
+    let stamp = |date: DateTime<T>| date.timestamp_millis() as f64 / 1000. - 978307200.;
+    let mut result = vec![
+        ("In 1 Hour", stamp(now.clone() + Duration::hours(1))),
+        ("In 3 Hours", stamp(now.clone() + Duration::hours(3))),
+    ];
+    let at = |days: i64, hour| {
+        now.date_naive()
+            .checked_add_signed(Duration::days(days))
+            .and_then(|day| day.and_hms_opt(hour, 0, 0))
+            .and_then(|local| now.timezone().from_local_datetime(&local).earliest())
+    };
+    if let Some(evening) = at(0, 18) {
+        if evening.clone().signed_duration_since(now.clone()) > Duration::hours(1) {
+            result.push(("This Evening", stamp(evening)));
+        }
+    }
+    let tomorrow = at(1, 9);
+    if let Some(date) = tomorrow.clone() {
+        result.push(("Tomorrow", stamp(date)));
+    }
+    let days = 7 - i64::from(now.weekday().num_days_from_monday());
+    if let Some(monday) = at(days, 9) {
+        if tomorrow.as_ref() != Some(&monday) {
+            result.push(("Next Week", stamp(monday)));
+        }
+    }
+    result
+}
+#[cfg(test)]
+mod sidebar_snooze_tests {
+    use super::*;
+    #[test]
+    fn tomorrow_and_next_week_use_calendar_mornings_across_daylight_saving() {
+        let zone: Tz = "America/New_York".parse().unwrap();
+        let now = zone
+            .with_ymd_and_hms(2026, 3, 7, 16, 30, 0)
+            .single()
+            .unwrap();
+        let choices = sidebar_snooze_presets(now);
+        let tomorrow = choices
+            .iter()
+            .find(|(label, _)| *label == "Tomorrow")
+            .unwrap()
+            .1;
+        let expected = zone
+            .with_ymd_and_hms(2026, 3, 8, 9, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp() as f64
+            - 978307200.;
+        assert_eq!(tomorrow, expected);
+        assert!(choices.iter().any(|(label, _)| *label == "This Evening"));
+        let sunday = zone
+            .with_ymd_and_hms(2026, 3, 8, 20, 0, 0)
+            .single()
+            .unwrap();
+        let choices = sidebar_snooze_presets(sunday);
+        assert!(!choices.iter().any(|(label, _)| *label == "Next Week"));
+        assert!(!choices.iter().any(|(label, _)| *label == "This Evening"));
+    }
+}

@@ -5,7 +5,9 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 #[path = "navigation_sections.rs"]
 mod sections;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use sections::NO_PROJECT;
+pub(super) const NO_PROJECT_ID: &str = NO_PROJECT;
 
 // Button's root alignment does not reach its independently centered label slot.
 // A full-width content child keeps the real Button and aligns/truncates its text.
@@ -13,48 +15,222 @@ fn sidebar_button_label(label: String) -> Div {
     div().w_full().min_w_0().truncate().text_left().child(label)
 }
 
+#[derive(Clone)]
+struct ProjectDrag(String);
+impl Render for ProjectDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child("Move project")
+    }
+}
+#[derive(Clone)]
+struct PinnedDrag(String);
+impl Render for PinnedDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child("Move pinned thread")
+    }
+}
+#[derive(Clone, Copy)]
+enum SidebarThreadAction {
+    Pin,
+    Rename,
+    Fork,
+    Archive,
+    Schedule,
+    CopyID,
+    CopyPath,
+    Open,
+    Unread,
+    Settle,
+    Snooze(f64),
+    Unsnooze,
+}
+
+pub(super) fn sidebar_age(date: Option<f64>, now: f64) -> String {
+    let Some(date) = date else {
+        return String::new();
+    };
+    let age = (now - date).max(0.) as u64;
+    match age {
+        0..=59 => "now".into(),
+        60..=3599 => format!("{}m", age / 60),
+        3600..=86399 => format!("{}h", age / 3600),
+        86400..=604799 => format!("{}d", age / 86400),
+        604800..=2629799 => format!("{}w", age / 604800),
+        2629800..=31557599 => format!("{}mo", age / 2629800),
+        _ => format!("{}y", age / 31557600),
+    }
+}
+pub(super) fn automatic_sidebar_limit(height: f32) -> usize {
+    sections::automatic_limit(height)
+}
+
+fn section_key(section: &sections::Section<'_>) -> &'static str {
+    match section.project_id.as_deref() {
+        None => "pinned",
+        Some(NO_PROJECT) => "chats",
+        Some(id) if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) => "bots",
+        _ => "projects",
+    }
+}
+
 impl Coincide {
     fn sidebar_sections(&self, now: f64, searching: bool) -> Vec<sections::Section<'_>> {
-        sections::display(
+        let mut projects: Vec<_> = self
+            .projects
+            .iter()
+            .map(|p| (text(p, "id"), text(p, "name")))
+            .collect();
+        match self.sidebar_preferences.sort("projectSort") {
+            "name" => projects
+                .sort_by(|(_, left), (_, right)| sidebar_preferences::name_order(left, right)),
+            "recentActivity" => projects.sort_by(|left, right| {
+                let stamp = |id: &str| {
+                    self.sidebar_all_threads
+                        .iter()
+                        .filter(|thread| thread.project_id == id)
+                        .filter_map(|thread| thread.navigation.as_ref()?.updated_at)
+                        .max_by(f64::total_cmp)
+                        .unwrap_or(0.)
+                };
+                stamp(&right.0).total_cmp(&stamp(&left.0))
+            }),
+            _ => {}
+        }
+        let mut result = sections::display(
             &self.threads,
-            self.projects
-                .iter()
-                .map(|p| (text(p, "id"), text(p, "name")))
-                .collect(),
+            projects,
             self.selected_project.as_deref(),
-            self.show_snoozed,
+            true, // Running/approval rows stay visible even while snoozed.
             now,
             searching,
-        )
+        );
+        for section in &mut result {
+            let key = if section.project_id.as_deref() == Some(NO_PROJECT) {
+                "chatSort"
+            } else {
+                "threadSort"
+            };
+            if section.project_id.is_none() {
+                let saved = self.sidebar_preferences.strings("pinnedThreads");
+                section.threads.sort_by_key(|thread| {
+                    saved
+                        .iter()
+                        .position(|id| id.eq_ignore_ascii_case(&thread.id))
+                        .map(|index| index + 1)
+                        .unwrap_or(0)
+                });
+            } else {
+                section.threads.sort_by(|left, right| {
+                    let date = |thread: &ThreadSummary, created: bool| {
+                        thread
+                            .navigation
+                            .as_ref()
+                            .and_then(|meta| {
+                                if created {
+                                    meta.created_at
+                                } else {
+                                    meta.updated_at
+                                }
+                            })
+                            .unwrap_or(0.)
+                    };
+                    let order = match self.sidebar_preferences.sort(key) {
+                        "name" => sidebar_preferences::name_order(&left.title, &right.title),
+                        "created" => date(right, true).total_cmp(&date(left, true)),
+                        _ => std::cmp::Ordering::Equal,
+                    };
+                    order
+                        .then_with(|| date(right, false).total_cmp(&date(left, false)))
+                        .then_with(|| left.id.cmp(&right.id))
+                });
+            }
+            section.threads.retain(|thread| {
+                let bot = thread
+                    .navigation
+                    .as_ref()
+                    .and_then(|meta| meta.bot_id.as_deref());
+                let represented = bot.is_some_and(|id| {
+                    self.sidebar_bots.iter().any(|bot| {
+                        bot["id"]
+                            .as_str()
+                            .is_some_and(|known| known.eq_ignore_ascii_case(id))
+                    })
+                });
+                let settled = self.sidebar_preferences.document["settledThreads"][&thread.id]
+                    .as_f64()
+                    .is_some_and(|date| {
+                        date >= thread
+                            .navigation
+                            .as_ref()
+                            .and_then(|meta| meta.updated_at)
+                            .unwrap_or(f64::MAX)
+                    });
+                let snoozed = thread.snoozed_until.is_some_and(|until| until > now);
+                !represented
+                    && (!snoozed
+                        || self.show_snoozed
+                        || searching
+                        || self.running.contains(&thread.id))
+                    && (!settled
+                        || searching
+                        || self.sidebar_preferences.flag("showsSettledThreads")
+                        || self.running.contains(&thread.id))
+            });
+        }
+        result
     }
-    fn sidebar_projects_heading(&self, cx: &mut Context<Self>) -> AnyElement {
+
+    fn sidebar_thread_content(&self, thread: &ThreadSummary, label: String, now: f64) -> Div {
+        let schedules = self
+            .sidebar_schedules
+            .iter()
+            .filter(|task| {
+                task["threadID"] == thread.id
+                    && task["isPaused"] != true
+                    && task["awaitingApproval"] != true
+            })
+            .map(|task| text(task, "name"))
+            .collect::<Vec<_>>();
+        let running = self.running.contains(&thread.id);
         div()
             .flex()
             .items_center()
-            .h(px(36.))
-            .px_2()
             .gap_1()
-            .child(
-                div()
-                    .id("sidebar-section-projects")
-                    .role(Role::Heading)
-                    .text_xs()
-                    .text_color(self.color(0xe4e9f2).opacity(0.55))
-                    .flex_1()
-                    .child("Projects"),
-            )
-            .child(
-                Button::new("sidebar-add-project")
-                    .icon(IconName::FolderPlus)
-                    .accessibility_label("Add project folders")
-                    .tooltip("Add folders…")
-                    .ghost()
-                    .compact()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_project_form(project_management::Mode::Add, None, window, cx)
-                    })),
-            )
-            .into_any_element()
+            .w_full()
+            .min_w_0()
+            .child(sidebar_button_label(label).flex_1())
+            .when(!schedules.is_empty(), |row| {
+                row.child(
+                    div()
+                        .id(SharedString::from(format!("sidebar-clock-{}", thread.id)))
+                        .child(IconName::Clock)
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(schedules.join("\n")).build(window, cx)
+                        }),
+                )
+            })
+            .when(running, |row| {
+                row.child(gpui_kit::component::spinner::Spinner::new().small())
+            })
+            .when(!running, |row| {
+                row.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(self.color(0xe4e9f2).opacity(0.55))
+                        .child(sidebar_age(
+                            thread.navigation.as_ref().and_then(|meta| meta.updated_at),
+                            now,
+                        )),
+                )
+            })
+    }
+    fn sidebar_projects_heading(&self, cx: &mut Context<Self>) -> AnyElement {
+        self.sidebar_section_header(
+            "projects",
+            "Projects",
+            !self.search.read(cx).value().trim().is_empty(),
+            cx,
+        )
     }
     pub(super) fn bulk_sidebar_binding(&self, cx: &Context<Self>) -> thread_bulk::Binding {
         let query = self.search.read(cx).value().to_string();
@@ -64,16 +240,32 @@ impl Coincide {
             .into_iter()
             .filter(|section| {
                 searching
-                    || section
-                        .project_id
-                        .as_ref()
-                        .is_none_or(|id| !self.collapsed_projects.contains(id))
+                    || (!self.sidebar_preferences.collapsed(section_key(section))
+                        && section
+                            .project_id
+                            .as_ref()
+                            .is_none_or(|id| !self.collapsed_projects.contains(id)))
             })
             .flat_map(|section| {
-                section
-                    .threads
+                let expanded = section
+                    .project_id
+                    .as_ref()
+                    .is_some_and(|id| self.expanded_sidebar_lists.contains(id));
+                let limit = if section.project_id.is_none() {
+                    0
+                } else {
+                    self.sidebar_preferences.limit(self.sidebar_list_height)
+                };
+                let selected = self
+                    .selected
+                    .as_ref()
+                    .and_then(|thread| thread["id"].as_str())
+                    .unwrap_or("");
+                sections::visible_rows(&section.threads, limit, selected, expanded, searching)
+                    .0
                     .into_iter()
-                    .map(|t| (t.id.clone(), t.pinned, t.archived))
+                    .map(|thread| (thread.id.clone(), thread.pinned, thread.archived))
+                    .collect::<Vec<_>>()
             })
             .collect();
         thread_bulk::Binding {
@@ -139,9 +331,9 @@ impl Coincide {
         let searching = !self.search.read(cx).value().trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
         let sections = self.sidebar_sections(now, searching);
-        let mut projects_heading = false;
+        let mut section_index = 0usize;
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
-        if sections.is_empty() {
+        if sections.is_empty() && self.sidebar_bots.is_empty() {
             conversations = conversations.child(
                 div()
                     .p_3()
@@ -149,155 +341,512 @@ impl Coincide {
                     .child("No conversations match these filters."),
             );
         }
-        for (section_index, section) in sections.into_iter().enumerate() {
-            if !projects_heading
-                && section
-                    .project_id
-                    .as_ref()
-                    .is_some_and(|id| !id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
-            {
-                conversations = conversations.child(self.sidebar_projects_heading(cx));
-                projects_heading = true;
-            }
-            let pinned = section.project_id.is_none();
-            let name = section.name;
-            let threads = section.threads;
-            // Keep existing raw project collapse keys and the bot-open reveal
-            // contract. Pinned is a section, never a fabricated project key.
-            let collapsed = !searching
-                && section
-                    .project_id
-                    .as_ref()
-                    .is_some_and(|id| self.collapsed_projects.contains(id));
-            let mut group = div().flex().flex_col().mb_2();
-            if let Some(group_id) = section.project_id {
-                let chats = group_id == NO_PROJECT;
-                let target = group_id.clone();
-                group = group.child(
-                    Button::new(SharedString::from(format!("project-group-{group_id}")))
-                        .ghost()
-                        .compact()
-                        .justify_start()
-                        .w_full()
-                        .h(px(if chats {
-                            if section_index == 0 { 30. } else { 36. }
-                        } else {
-                            28.
-                        }))
-                        .accessibility_id(SharedString::from(format!("project-group-{group_id}")))
-                        .accessibility_label(SharedString::from(format!(
-                            "{} {} {name}, {} conversations",
-                            if collapsed { "Expand" } else { "Collapse" },
-                            if chats { "section" } else { "project" },
-                            threads.len()
-                        )))
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(if collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .when(
-                                    !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
-                                    |row| row.child(IconName::Folder),
-                                )
-                                .child(sidebar_button_label(name)),
-                        )
-                        .disabled(searching)
-                        .when(searching, |button| {
-                            button.tooltip("Clear search to collapse project groups")
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.thread_bulk.invalidate();
-                            if !this.collapsed_projects.remove(&target) {
-                                this.collapsed_projects.insert(target.clone());
-                            }
-                            cx.notify();
-                        })),
-                );
-            } else {
-                group = group.child(
-                    div()
-                        .id("sidebar-section-pinned")
-                        .role(Role::Heading)
-                        .aria_label(SharedString::from(format!(
-                            "Pinned section, {} conversations",
-                            threads.len()
-                        )))
-                        .h(px(if section_index == 0 { 30. } else { 36. }))
-                        .flex()
-                        .items_center()
-                        .px_2()
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(self.color(0xe4e9f2).opacity(0.65))
-                        .child("Pinned"),
-                );
-            }
-            if !collapsed {
-                for thread in threads {
-                    let id = thread.id.clone();
-                    let selecting = self.thread_bulk.mode;
-                    let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
-                    let label = format!(
-                        "{}{}{}{}",
-                        if thread.pinned && !pinned { "★ " } else { "" },
-                        if thread.archived { "Archived · " } else { "" },
-                        if snoozed { "Snoozed · " } else { "" },
-                        thread.title
-                    );
-                    group = group.child(
-                        Button::new(SharedString::from(format!("thread-{id}")))
-                            .ghost()
-                            .compact()
-                            .justify_start()
-                            .h(px(28.))
-                            .min_w_0()
-                            .accessibility_id(SharedString::from(format!("thread-{id}")))
-                            .accessibility_label(SharedString::from(format!(
-                                "{} conversation: {}",
-                                if self.thread_bulk.mode {
-                                    "Select"
-                                } else {
-                                    "Open"
-                                },
-                                thread.title
-                            )))
-                            .child(sidebar_button_label(if self.thread_bulk.mode {
-                                format!(
-                                    "{} {label}",
-                                    if self.thread_bulk.picked.contains(&id) {
-                                        "☑"
-                                    } else {
-                                        "☐"
-                                    }
-                                )
-                            } else {
-                                label
-                            }))
-                            .tooltip(thread.title.clone())
-                            .w_full()
-                            .selected(if self.thread_bulk.mode {
-                                self.thread_bulk.picked.contains(&id)
-                            } else {
-                                id == selected
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.bulk_row_click(&id, selecting, window, cx)
-                            })),
-                    );
+        for section_kind in self.sidebar_preferences.order() {
+            if section_kind == "projects" {
+                if !searching
+                    || sections
+                        .iter()
+                        .any(|section| section_key(section) == "projects")
+                {
+                    conversations = conversations.child(self.sidebar_projects_heading(cx));
+                }
+                if !searching && self.sidebar_preferences.collapsed("projects") {
+                    continue;
                 }
             }
-            conversations = conversations.child(group);
-        }
-        if !projects_heading && !searching {
-            conversations = conversations.child(self.sidebar_projects_heading(cx));
+            if section_kind == "bots"
+                && !self.sidebar_bots.is_empty()
+                && self
+                    .selected_project
+                    .as_deref()
+                    .is_none_or(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+            {
+                conversations =
+                    conversations.child(self.sidebar_section_header("bots", "Bots", searching, cx));
+                if searching || !self.sidebar_preferences.collapsed("bots") {
+                    conversations = conversations.child(self.sidebar_bot_rows(searching, cx));
+                }
+            }
+            for section in sections
+                .iter()
+                .filter(|section| section_key(section) == section_kind)
+            {
+                if section.threads.is_empty()
+                    && (section.project_id.is_none()
+                        || section
+                            .project_id
+                            .as_deref()
+                            .is_some_and(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID)))
+                {
+                    continue;
+                }
+                let pinned = section.project_id.is_none();
+                let name = section.name.clone();
+                let group_key = section.project_id.clone();
+                let expanded = group_key
+                    .as_ref()
+                    .is_some_and(|id| self.expanded_sidebar_lists.contains(id));
+                let limit = self
+                    .sidebar_preferences
+                    .limit((f32::from(window.viewport_size().height) - 130.).max(0.));
+                let total = section.threads.len();
+                let (threads, hidden) = sections::visible_rows(
+                    &section.threads,
+                    if pinned { 0 } else { limit },
+                    selected,
+                    expanded,
+                    searching,
+                );
+                // Keep existing raw project collapse keys and the bot-open reveal
+                // contract. Pinned is a section, never a fabricated project key.
+                let collapsed = !searching
+                    && (self.sidebar_preferences.collapsed(section_key(section))
+                        || section
+                            .project_id
+                            .as_ref()
+                            .is_some_and(|id| self.collapsed_projects.contains(id)));
+                let mut group = div().flex().flex_col().mb_2();
+                if let Some(group_id) = section.project_id.clone() {
+                    let chats = group_id == NO_PROJECT;
+                    let target = group_id.clone();
+                    let menu_target = group_id.clone();
+                    let drag_project = group_id.clone();
+                    let drop_project = group_id.clone();
+                    let expected_projects = json!(self.projects);
+                    let menu_path = self
+                        .projects
+                        .iter()
+                        .find(|project| project["id"] == group_id)
+                        .and_then(|project| project["path"].as_str())
+                        .map(std::path::PathBuf::from);
+                    let parent = cx.entity().downgrade();
+                    let targets = self.open_targets.clone();
+                    group = group.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "sidebar-project-drag-{group_id}"
+                            )))
+                            .w_full()
+                            .on_drag(ProjectDrag(drag_project), |drag, _, _, cx| {
+                                cx.new(|_| drag.clone())
+                            })
+                            .on_drop(cx.listener(move |this, drag: &ProjectDrag, _, cx| {
+                                if searching
+                                    || chats
+                                    || this.media.shutdown_requested
+                                    || this.media.close_requested
+                                {
+                                    return;
+                                }
+                                let mut ids: Vec<_> = expected_projects
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .map(|project| text(project, "id"))
+                                    .collect();
+                                if !ids.iter().any(|id| id.eq_ignore_ascii_case(&drag.0)) {
+                                    return;
+                                }
+                                ids.retain(|id| !id.eq_ignore_ascii_case(&drag.0));
+                                let index = ids
+                                    .iter()
+                                    .position(|id| id.eq_ignore_ascii_case(&drop_project))
+                                    .unwrap_or(ids.len());
+                                ids.insert(index, drag.0.clone());
+                                let result = try_state(&this.engine).and_then(|mut engine| {
+                                    anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
+                                    engine
+                                        .store
+                                        .reorder_projects_if_unchanged(&expected_projects, &ids)
+                                });
+                                match result {
+                                    Ok(projects) => {
+                                        this.projects =
+                                            projects.as_array().cloned().unwrap_or_default();
+                                        this.sidebar_preference("projectSort", json!("manual"), cx);
+                                    }
+                                    Err(error) => {
+                                        this.status =
+                                            format!("Projects could not be reordered: {error}")
+                                    }
+                                }
+                                cx.notify();
+                            }))
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "project-group-{group_id}"
+                                )))
+                                .ghost()
+                                .compact()
+                                .justify_start()
+                                .w_full()
+                                .h(px(if chats {
+                                    if section_index == 0 { 30. } else { 36. }
+                                } else {
+                                    28.
+                                }))
+                                .accessibility_id(SharedString::from(format!(
+                                    "project-group-{group_id}"
+                                )))
+                                .accessibility_label(SharedString::from(format!(
+                                    "{} {} {name}, {} conversations",
+                                    if collapsed { "Expand" } else { "Collapse" },
+                                    if chats { "section" } else { "project" },
+                                    threads.len()
+                                )))
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(if collapsed {
+                                            IconName::ChevronRight
+                                        } else {
+                                            IconName::ChevronDown
+                                        })
+                                        .when(
+                                            !chats
+                                                && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
+                                            |row| row.child(IconName::Folder),
+                                        )
+                                        .child(sidebar_button_label(name)),
+                                )
+                                .disabled(searching)
+                                .when(searching, |button| {
+                                    button.tooltip("Clear search to collapse project groups")
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.thread_bulk.invalidate();
+                                    this.sidebar_expand_project(&target, collapsed, cx);
+                                }))
+                                .context_menu(
+                                    move |mut menu, _, _| {
+                                        let parent_new = parent.clone();
+                                        let id = menu_target.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(if chats {
+                                                "New Chat"
+                                            } else {
+                                                "New Thread"
+                                            })
+                                            .on_click(move |_, window, cx| {
+                                                let _ = parent_new.update(cx, |this, cx| {
+                                                    this.selected_project = Some(id.clone());
+                                                    this.new_thread_in_project(&id, window, cx);
+                                                });
+                                            }),
+                                        );
+                                        if let Some(path) = menu_path.clone() {
+                                            menu = menu.item(PopupMenuItem::separator());
+                                            for target in &targets {
+                                                let parent = parent.clone();
+                                                let path = path.clone();
+                                                let target = target.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(format!(
+                                                        "Open in {}",
+                                                        target.name
+                                                    ))
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = parent.update(cx, |this, cx| {
+                                                            this.change_setting(
+                                                                "preferredOpenTarget",
+                                                                json!(target.id),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            this.open_in_folder(
+                                                                target.clone(),
+                                                                path.clone(),
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }),
+                                                );
+                                            }
+                                            let copy = path.to_string_lossy().into_owned();
+                                            menu = menu.item(
+                                                PopupMenuItem::new("Copy Path").on_click(
+                                                    move |_, _, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(copy.clone()),
+                                                        )
+                                                    },
+                                                ),
+                                            );
+                                            if !chats {
+                                                menu = menu.item(PopupMenuItem::separator());
+                                                for (label, mode) in [
+                                                    (
+                                                        "Locate Folder…",
+                                                        project_management::Mode::Relocate,
+                                                    ),
+                                                    ("Rename…", project_management::Mode::Rename),
+                                                    (
+                                                        "Remove from Coincide…",
+                                                        project_management::Mode::Remove,
+                                                    ),
+                                                ] {
+                                                    let parent = parent.clone();
+                                                    let id = menu_target.clone();
+                                                    menu = menu.item(
+                                                        PopupMenuItem::new(label).on_click(
+                                                            move |_, window, cx| {
+                                                                let _ = parent.update(
+                                                                    cx,
+                                                                    |this, cx| {
+                                                                        this.project_picker_open =
+                                                                            true;
+                                                                        this.open_project_form(
+                                                                            mode,
+                                                                            Some(id.clone()),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                );
+                                                            },
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        menu
+                                    },
+                                ),
+                            ),
+                    );
+                } else {
+                    group = group.child(
+                        div()
+                            .id("sidebar-section-pinned")
+                            .role(Role::Heading)
+                            .aria_label(SharedString::from(format!(
+                                "Pinned section, {} conversations",
+                                threads.len()
+                            )))
+                            .h(px(if section_index == 0 { 30. } else { 36. }))
+                            .flex()
+                            .items_center()
+                            .px_2()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(self.color(0xe4e9f2).opacity(0.65))
+                            .child("Pinned"),
+                    );
+                }
+                if pinned {
+                    group = div()
+                        .flex()
+                        .flex_col()
+                        .mb_2()
+                        .child(self.sidebar_section_header("pinned", "Pinned", searching, cx));
+                } else if section.project_id.as_deref() == Some(NO_PROJECT) {
+                    group = div()
+                        .flex()
+                        .flex_col()
+                        .mb_2()
+                        .child(self.sidebar_section_header("chats", "Chats", searching, cx));
+                }
+                if !collapsed {
+                    if threads.is_empty() {
+                        group = group.child(
+                            div()
+                                .h(px(24.))
+                                .pl(px(36.))
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.55))
+                                .child("No threads yet"),
+                        );
+                    }
+                    for thread in threads {
+                        let id = thread.id.clone();
+                        let selecting = self.thread_bulk.mode;
+                        let menu_id = id.clone();
+                        let pinned_drag = id.clone();
+                        let pinned_drop = id.clone();
+                        let parent = cx.entity().downgrade();
+                        let is_pinned = thread.pinned;
+                        let is_archived = thread.archived;
+                        let was_unread =
+                            self.sidebar_preferences.document["unseen"][&thread.id].is_string();
+                        let was_settled = self.sidebar_preferences.document["settledThreads"]
+                            [&thread.id]
+                            .as_f64()
+                            .is_some_and(|date| {
+                                date >= thread
+                                    .navigation
+                                    .as_ref()
+                                    .and_then(|meta| meta.updated_at)
+                                    .unwrap_or(f64::MAX)
+                            });
+                        let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
+                        let label = format!(
+                            "{}{}{}{}",
+                            if thread.pinned && !pinned { "★ " } else { "" },
+                            if thread.archived { "Archived · " } else { "" },
+                            if snoozed { "Snoozed · " } else { "" },
+                            format!(
+                                "{}{}",
+                                if self.sidebar_preferences.document["unseen"][&thread.id]
+                                    .is_string()
+                                {
+                                    "● "
+                                } else {
+                                    ""
+                                },
+                                thread.title
+                            )
+                        );
+                        group = group.child(div().id(SharedString::from(format!("sidebar-thread-drag-{}",thread.id))).w_full()
+                                .when(pinned, |row| row.on_drag(PinnedDrag(pinned_drag),|drag,_,_,cx|cx.new(|_|drag.clone())))
+                                .on_drop(cx.listener(move |this,drag:&PinnedDrag,_,cx| {
+                                    if !pinned || searching || !this.search.read(cx).value().trim().is_empty() || this.thread_bulk.mode || this.media.shutdown_requested || this.media.close_requested { return; }
+                                    let mut ids:Vec<_>=this.sidebar_sections(coincide_core::store::swift_timestamp(),false).into_iter().find(|section|section.project_id.is_none()).map(|section|section.threads.iter().map(|thread|thread.id.clone()).collect()).unwrap_or_default();
+                                    if !ids.contains(&drag.0) { return; } ids.retain(|id|id!=&drag.0); let index=ids.iter().position(|id|id==&pinned_drop).unwrap_or(ids.len()); ids.insert(index,drag.0.clone()); this.sidebar_preference("pinnedThreads",json!(ids),cx);
+                                }))
+                            .child(Button::new(SharedString::from(format!("thread-{id}")))
+                                .ghost()
+                                .compact()
+                                .justify_start()
+                                .h(px(28.))
+                                .min_w_0()
+                                .accessibility_id(SharedString::from(format!("thread-{id}")))
+                                .accessibility_label(SharedString::from(format!(
+                                    "{} conversation: {}",
+                                    if self.thread_bulk.mode {
+                                        "Select"
+                                    } else {
+                                        "Open"
+                                    },
+                                    thread.title
+                                )))
+                                .child(self.sidebar_thread_content(thread,if self.thread_bulk.mode {
+                                    format!(
+                                        "{} {label}",
+                                        if self.thread_bulk.picked.contains(&id) {
+                                            "☑"
+                                        } else {
+                                            "☐"
+                                        }
+                                    )
+                                } else {
+                                    label
+                                },now))
+                                .tooltip(thread.title.clone())
+                                .w_full()
+                                .selected(if self.thread_bulk.mode {
+                                    self.thread_bulk.picked.contains(&id)
+                                } else {
+                                    id == selected
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.bulk_row_click(&id, selecting, window, cx)
+                                }))
+                                .context_menu(move |mut menu, _, _| {
+                                    let mut actions = vec![
+                                        (
+                                            if is_pinned { "Unpin" } else { "Pin" },
+                                            SidebarThreadAction::Pin,
+                                        ),
+                                        ("Rename…", SidebarThreadAction::Rename),
+                                        ("Fork", SidebarThreadAction::Fork),
+                                        (
+                                            if is_archived { "Restore" } else { "Archive…" },
+                                            SidebarThreadAction::Archive,
+                                        ),
+                                    ];
+                                    actions.extend([("Schedule…",SidebarThreadAction::Schedule),("Open In",SidebarThreadAction::Open),("Copy Path",SidebarThreadAction::CopyPath),("Copy Thread ID",SidebarThreadAction::CopyID),(if was_unread { "Mark as Read" } else { "Mark as Unread" },SidebarThreadAction::Unread),(if was_settled { "Unsettle" } else { "Settle" },SidebarThreadAction::Settle)]);
+                                    if snoozed { actions.push(("Unsnooze",SidebarThreadAction::Unsnooze)); } else { actions.extend(coincide_core::scheduling::native_snooze_presets().into_iter().map(|(label,date)|(label,SidebarThreadAction::Snooze(date)))); }
+                                    for (label,action) in actions {
+                                        let parent = parent.clone();
+                                        let id = menu_id.clone();
+                                        menu = menu.item(PopupMenuItem::new(label).on_click(
+                                            move |_, window, cx| {
+                                                let _ = parent.update(cx, |this, cx| {
+                                                    if this.thread_bulk.mode
+                                                        || this.media.shutdown_requested
+                                                        || this.media.close_requested
+                                                    {
+                                                        return;
+                                                    }
+                                                    this.select(&id, window, cx);
+                                                    if this
+                                                        .selected
+                                                        .as_ref()
+                                                        .is_none_or(|thread| thread["id"] != id)
+                                                    {
+                                                        return;
+                                                    }
+                                                    match action {
+                                                        SidebarThreadAction::Pin => {
+                                                            this.toggle("isPinned", cx)
+                                                        }
+                                                        SidebarThreadAction::Rename => {
+                                                            this.begin_rename(window, cx)
+                                                        }
+                                                        SidebarThreadAction::Fork => {
+                                                            this.fork(window, cx)
+                                                        }
+                                                        SidebarThreadAction::Archive => {
+                                                            if !this.running.contains(&id) { this.request_archive(cx); } else { this.status="Stop this conversation before archiving it.".into(); cx.notify(); }
+                                                        }
+                                                        SidebarThreadAction::Schedule => { this.open_conversation_schedules(cx); this.open_schedule_editor(None,window,cx); }
+                                                        SidebarThreadAction::CopyID => cx.write_to_clipboard(ClipboardItem::new_string(id.clone())),
+                                                        SidebarThreadAction::CopyPath => { if let Some(path)=this.open_folder() { cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned())); } }
+                                                        SidebarThreadAction::Open => { if let Some(target)=open_targets::preferred(&this.open_targets,&this.settings).cloned() { this.open_in_target(target,false,window,cx); } }
+                                                        SidebarThreadAction::Unread => { this.sidebar_thread_marker("unseen",&id,(!was_unread).then(||json!("completed")),cx); }
+                                                        SidebarThreadAction::Settle => {
+                                                            let settled=was_settled;
+                                                            let pending=call(&this.engine,"agent.pending",json!({"threadId":id}));
+                                                            if settled || (!this.running.contains(&id) && pending.as_ref().is_ok_and(|rows|rows.as_array().is_some_and(Vec::is_empty))) { let before=this.sidebar_preferences.document["settledThreads"].get(&id).cloned(); let after=(!settled).then(||json!(coincide_core::store::swift_timestamp())); this.sidebar_thread_marker("settledThreads",&id,after.clone(),cx); if this.sidebar_preferences.document["settledThreads"].get(&id)==after.as_ref() { this.sidebar_settle_undo=Some((id.clone(),before,after)); } }
+                                                            else { this.status="Finish this conversation's work and approvals before settling it.".into(); cx.notify(); }
+                                                        }
+                                                        SidebarThreadAction::Snooze(date) => { this.patch_navigation(&id,json!({"snoozedUntil":date}),"Conversation snoozed.",cx); }
+                                                        SidebarThreadAction::Unsnooze => this.snooze_selected(None,cx),
+                                                    }
+                                                });
+                                            },
+                                        ));
+                                    }
+                                    menu
+                                })),
+                        );
+                    }
+                }
+                if !collapsed
+                    && !searching
+                    && !pinned
+                    && (hidden > 0 || (expanded && total > limit))
+                {
+                    if let Some(key) = group_key {
+                        group = group.child(
+                            Button::new(SharedString::from(format!("sidebar-more-{key}")))
+                                .ghost()
+                                .compact()
+                                .w_full()
+                                .h(px(24.))
+                                .justify_start()
+                                .label(if hidden > 0 {
+                                    format!("Show {hidden} more")
+                                } else {
+                                    "Show less".into()
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.thread_bulk.invalidate();
+                                    if !this.expanded_sidebar_lists.remove(&key) {
+                                        this.expanded_sidebar_lists.insert(key.clone());
+                                    }
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                }
+                conversations = conversations.child(group);
+                section_index += 1;
+            }
         }
         div()
             .id("conversation-list")
@@ -388,7 +937,33 @@ impl Coincide {
                     .justify_start()
                     .accessibility_label("Scheduled")
                     .selected(self.schedules_open)
-                    .child(sidebar_button_label("Scheduled".into()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .w_full()
+                            .min_w_0()
+                            .child(sidebar_button_label("Scheduled".into()))
+                            .when(
+                                self.sidebar_schedules.iter().any(|task| {
+                                    task["isPaused"] != true && task["awaitingApproval"] != true
+                                }),
+                                |row| {
+                                    row.child(
+                                        div().text_xs().child(
+                                            self.sidebar_schedules
+                                                .iter()
+                                                .filter(|task| {
+                                                    task["isPaused"] != true
+                                                        && task["awaitingApproval"] != true
+                                                })
+                                                .count()
+                                                .to_string(),
+                                        ),
+                                    )
+                                },
+                            ),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.thread_bulk.invalidate();
                         this.hide_inline_settings();
@@ -581,7 +1156,14 @@ impl Coincide {
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.thread_bulk.invalidate();
-                                        this.show_snoozed = !this.show_snoozed;
+                                        let value = !this.show_snoozed;
+                                        this.sidebar_preference(
+                                            "showsSnoozedThreads",
+                                            json!(value),
+                                            cx,
+                                        );
+                                        this.show_snoozed =
+                                            this.sidebar_preferences.flag("showsSnoozedThreads");
                                         cx.notify();
                                     })),
                             ),
@@ -593,6 +1175,32 @@ impl Coincide {
                 |view| view.child(self.bulk_controls(cx)),
             )
             .child(conversations)
+            .when_some(self.sidebar_preferences.error.as_ref(), |view, error| {
+                view.child(div().text_xs().child(error.clone()))
+            })
+            .when(self.sidebar_settle_undo.is_some(), |view| {
+                view.child(
+                    Button::new("sidebar-undo-settle")
+                        .ghost()
+                        .compact()
+                        .label("Undo Settle")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some((id, before, after)) = this.sidebar_settle_undo.take() {
+                                if this.sidebar_preferences.document["settledThreads"].get(&id)
+                                    == after.as_ref()
+                                    && (before.is_none() || !this.running.contains(&id))
+                                {
+                                    this.sidebar_thread_marker("settledThreads", &id, before, cx);
+                                } else {
+                                    this.status =
+                                        "Conversation state changed; settle Undo was not applied."
+                                            .into();
+                                    cx.notify();
+                                }
+                            }
+                        })),
+                )
+            })
             .when_some(self.sidebar_resize.error(), |view, error| {
                 view.child(div().text_xs().child(error))
             })
