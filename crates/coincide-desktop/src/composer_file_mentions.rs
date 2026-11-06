@@ -75,6 +75,20 @@ pub(super) fn detect(
     Some((range, query.to_owned()))
 }
 pub(super) fn removal(text: &str, range: Range<usize>) -> Option<(String, Range<usize>)> {
+    replacement(text, range, "")
+}
+pub(super) fn folder_text(path: &str) -> String {
+    if path.chars().any(char::is_whitespace) {
+        format!("@\"{path}\" ")
+    } else {
+        format!("@{path}/")
+    }
+}
+pub(super) fn replacement(
+    text: &str,
+    range: Range<usize>,
+    replacement: &str,
+) -> Option<(String, Range<usize>)> {
     let (actual, _) = detect(text, range.end..range.end, false, &[])?;
     if actual != range {
         return None;
@@ -82,8 +96,35 @@ pub(super) fn removal(text: &str, range: Range<usize>) -> Option<(String, Range<
     let utf16 =
         text[..range.start].encode_utf16().count()..text[..range.end].encode_utf16().count();
     let mut next = text.to_owned();
-    next.replace_range(range, "");
+    next.replace_range(range, replacement);
     Some((next, utf16))
+}
+/// Production native folder edit, shared with the actual Textarea fixture.
+/// Selection/IME/read-only/source changes always keep the current text.
+pub(super) fn apply_folder(
+    input: &mut gpui_kit::component::input::TextareaState,
+    ticket: &Ticket,
+    path: &str,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::Context<gpui_kit::component::input::TextareaState>,
+) -> bool {
+    use gpui_kit::EntityInputHandler;
+    if input.value().as_ref() != ticket.binding.draft
+        || input.selected_range() != ticket.selection
+        || !input.is_editable()
+        || input.is_selection_reversed()
+        || input.marked_text_range(window, cx).is_some()
+    {
+        return false;
+    }
+    let insertion = folder_text(path);
+    let Some((expected, utf16)) =
+        replacement(&ticket.binding.draft, ticket.range.clone(), &insertion)
+    else {
+        return false;
+    };
+    input.replace_text_in_range(Some(utf16), &insertion, window, cx);
+    input.value().as_ref() == expected
 }
 #[cfg(test)]
 mod tests {
@@ -101,6 +142,25 @@ mod tests {
         assert_eq!(utf16.start, text[..range.start].encode_utf16().count());
         assert_eq!(utf16.end, text[..caret].encode_utf16().count());
         assert_eq!(text, before);
+    }
+    #[::core::prelude::v1::test]
+    fn folder_ranges_keep_unicode_surroundings_and_match_swift_whitespace_behavior() {
+        let text = "👩🏽‍💻 @sr suffix";
+        let caret = text.find(" suffix").unwrap();
+        let (range, _) = detect(text, caret..caret, false, &[]).unwrap();
+        assert_eq!(
+            replacement(text, range.clone(), &folder_text("src/中文"))
+                .unwrap()
+                .0,
+            "👩🏽‍💻 @src/中文/ suffix"
+        );
+        assert_eq!(
+            replacement(text, range, &folder_text("white space"))
+                .unwrap()
+                .0,
+            "👩🏽‍💻 @\"white space\"  suffix"
+        );
+        assert!(replacement(text, 0..caret, "@src/").is_none());
     }
     #[::core::prelude::v1::test]
     fn blink_notifications_are_stable_but_caret_and_same_text_roundtrips_revoke_tickets() {

@@ -29,7 +29,7 @@ fn identity(metadata: &std::fs::Metadata) -> Result<Identity> {
         ino: metadata.ino(),
     })
 }
-fn file_identity(root: &Path, path: &str) -> Result<Identity> {
+fn path_identity(root: &Path, path: &str) -> Result<(Identity, bool)> {
     composer_context::validate_file_reference_path(path)?;
     let parts: Vec<_> = Path::new(path).components().collect();
     let mut current = root.to_owned();
@@ -45,8 +45,11 @@ fn file_identity(root: &Path, path: &str) -> Result<Identity> {
             "Symbolic links are not attached by this picker"
         );
         if index + 1 == parts.len() {
-            ensure!(metadata.is_file(), "Choose a regular project file");
-            return identity(&metadata);
+            ensure!(
+                metadata.is_file() || metadata.is_dir(),
+                "Choose a regular project file or folder"
+            );
+            return Ok((identity(&metadata)?, metadata.is_dir()));
         }
         ensure!(metadata.is_dir(), "Project path is no longer a directory");
     }
@@ -67,7 +70,7 @@ impl FileReferenceScope {
         &self.root
     }
     pub fn search(self: &Arc<Self>, query: &str) -> Result<FileReferenceList> {
-        self.search_with(query, crate::workspace::files)
+        self.search_with(query, crate::workspace::composer_paths)
     }
     fn search_with(
         self: &Arc<Self>,
@@ -101,11 +104,12 @@ impl FileReferenceScope {
             if !seen.insert(path.to_owned()) {
                 continue;
             }
-            match file_identity(&self.root, path) {
-                Ok(metadata) => files.push(FileReference {
+            match path_identity(&self.root, path) {
+                Ok((metadata, directory)) => files.push(FileReference {
                     scope: self.clone(),
                     path: path.into(),
                     identity: metadata,
+                    directory,
                 }),
                 Err(_) => skipped += 1,
             }
@@ -128,10 +132,14 @@ pub struct FileReference {
     scope: Arc<FileReferenceScope>,
     path: String,
     identity: Identity,
+    directory: bool,
 }
 impl FileReference {
     pub fn path(&self) -> &str {
         &self.path
+    }
+    pub fn is_directory(&self) -> bool {
+        self.directory
     }
 }
 pub struct FileReferenceList {
@@ -210,7 +218,36 @@ impl Engine {
             root_identity: identity(&metadata)?,
         }))
     }
-    pub fn attach_file_reference(&mut self, file: &FileReference) -> Result<AttachedFileReference> {
+    /// Validate a folder completion with the same private source/metadata proof
+    /// as a file attachment. This grants no content read and writes no Store row.
+    pub fn validate_file_reference_folder(&self, file: &FileReference) -> Result<()> {
+        ensure!(file.directory, "Choose a project folder");
+        self.validate_file_reference(file)?;
+        Ok(())
+    }
+    /// Recheck Store/owner state at the native text-edit admission point. The
+    /// owned background job already checked folder metadata; this read does not
+    /// traverse the filesystem on the UI thread.
+    pub fn validate_file_reference_folder_delivery(&self, file: &FileReference) -> Result<()> {
+        let scope = &file.scope;
+        self.require_admissions()?;
+        ensure!(
+            file.directory
+                && scope.owner == self.composer_file_owner
+                && scope.revision == self.revision
+                && self.active_thread() == Some(scope.thread.as_str())
+                && !self.unsaved_threads.contains_key(&scope.thread)
+                && !self.store.is_imported(&scope.thread)?,
+            "Selected conversation changed; search again"
+        );
+        ensure!(
+            self.store.file_reference_source(&scope.thread)? == *scope.source
+                && self.store.projects()? == *scope.projects,
+            "Conversation or project changed; search again"
+        );
+        Ok(())
+    }
+    fn validate_file_reference(&self, file: &FileReference) -> Result<Value> {
         self.require_admissions()?;
         let scope = &file.scope;
         ensure!(
@@ -236,9 +273,23 @@ impl Engine {
             "Project directory changed; search again"
         );
         ensure!(
-            file_identity(&scope.root, &file.path)? == file.identity,
+            path_identity(&scope.root, &file.path)? == (file.identity.clone(), file.directory),
             "Project file metadata changed; search again"
         );
+        ensure!(
+            self.store.file_reference_source(&scope.thread)? == *scope.source
+                && self.store.projects()? == *scope.projects,
+            "Conversation or project changed; search again"
+        );
+        Ok(value)
+    }
+    pub fn attach_file_reference(&mut self, file: &FileReference) -> Result<AttachedFileReference> {
+        ensure!(
+            !file.directory,
+            "Open the folder to choose a file; folders are not attached"
+        );
+        let value = self.validate_file_reference(file)?;
+        let scope = &file.scope;
         let context = composer_context::append_file_reference(
             value.get("draftContext").unwrap_or(&Value::Null),
             &file.path,

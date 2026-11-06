@@ -29,10 +29,16 @@ pub(super) struct Binding {
 enum Job {
     Search(Binding, String),
     Attach(FileReference),
+    Folder(FileReference),
 }
 enum Effect {
     Listed(FileReferenceList),
     Attached(AttachedFileReference),
+    Folder(FileReference),
+}
+enum Picked {
+    Attached(AttachedFileReference, bool, Option<mentions::Ticket>),
+    Folder(FileReference, bool, Option<mentions::Ticket>),
 }
 struct Reply {
     generation: u64,
@@ -64,6 +70,7 @@ pub(super) struct Picker {
     scheduled: Option<mentions::Ticket>,
     dismissed: Option<mentions::Ticket>,
     pending_mention: Option<mentions::Ticket>,
+    folder_search_pending: bool,
     composer_revision: mentions::Revision,
 }
 fn allowed(admission: &worker_owner::Admission, epoch: &AtomicU64, generation: u64) -> Result<()> {
@@ -103,6 +110,7 @@ impl Picker {
             scheduled: None,
             dismissed: None,
             pending_mention: None,
+            folder_search_pending: false,
             composer_revision: Default::default(),
         }
     }
@@ -121,6 +129,7 @@ impl Picker {
         }
     }
     pub fn invalidate(&mut self) {
+        self.folder_search_pending = false;
         self.epoch.fetch_add(1, Ordering::AcqRel);
         if !self.files.is_empty() {
             self.status =
@@ -194,6 +203,15 @@ impl Picker {
                         allowed(&admission, &epoch, generation)?;
                         Ok(Effect::Listed(result))
                     }
+                    Job::Folder(file) => {
+                        let engine = engine
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("App owner is unavailable"))?;
+                        allowed(&admission, &epoch, generation)?;
+                        engine.validate_file_reference_folder(&file)?;
+                        allowed(&admission, &epoch, generation)?;
+                        Ok(Effect::Folder(file))
+                    }
                     Job::Attach(file) => {
                         let mut engine = engine
                             .lock()
@@ -217,7 +235,7 @@ impl Picker {
         }
         started
     }
-    fn poll(&mut self) -> Option<(AttachedFileReference, bool, Option<mentions::Ticket>)> {
+    fn poll(&mut self) -> Option<Picked> {
         let status = self.workers.status();
         self.unjoined = status.unjoined != 0;
         if !self.ambiguous && (status.panicked != 0 || status.unclassified != 0) {
@@ -240,12 +258,19 @@ impl Picker {
                     self.skipped = result.skipped;
                     self.scroll_selected();
                     self.status = if self.files.is_empty() {
-                        "No eligible project files in this result. Refine the search.".into()
+                        "No matching project files or folders. Refine the search.".into()
                     } else {
-                        "Choose Attach for the file you want to reference.".into()
+                        "Open a folder or attach a file reference.".into()
                     };
                 }
                 None
+            }
+            Ok(Effect::Folder(file)) => {
+                let fresh = self.opened
+                    && !self.ambiguous
+                    && reply.generation == self.epoch.load(Ordering::Acquire);
+                self.invalidate();
+                Some(Picked::Folder(file, fresh, self.pending_mention.take()))
             }
             Ok(Effect::Attached(result)) => {
                 let fresh = self.opened && reply.generation == self.epoch.load(Ordering::Acquire);
@@ -260,7 +285,7 @@ impl Picker {
                         " Worker completion is ambiguous; further file actions are disabled.",
                     );
                 }
-                Some((result, fresh, self.pending_mention.take()))
+                Some(Picked::Attached(result, fresh, self.pending_mention.take()))
             }
             Err(error) => {
                 self.invalidate();
@@ -369,7 +394,11 @@ impl Coincide {
         self.sync_composer_file_picker(window, cx);
         let was_busy = self.composer_files.busy();
         let previous = self.composer_files.status.clone();
-        if let Some((result, fresh, mention)) = self.composer_files.poll() {
+        let picked = self.composer_files.poll();
+        if let Some(Picked::Folder(file, fresh, mention)) = &picked {
+            self.complete_composer_folder(file, *fresh, mention.as_ref(), window, cx);
+        }
+        if let Some(Picked::Attached(result, fresh, mention)) = picked {
             let live_before_projection = if mention.is_some() {
                 self.live_file_mention(window, cx, false)
             } else {
@@ -423,6 +452,10 @@ impl Coincide {
                 }
             }
             self.status = self.composer_files.status.clone();
+        }
+        if self.composer_files.folder_search_pending && !self.composer_files.busy() {
+            self.composer_files.folder_search_pending = false;
+            self.search_composer_files(window, cx);
         }
         if was_busy != self.composer_files.busy() || previous != self.composer_files.status {
             cx.notify();
@@ -530,14 +563,67 @@ impl Coincide {
         } else {
             None
         };
-        if self
-            .composer_files
-            .spawn(self.engine.clone(), Job::Attach(file))
-        {
+        if self.composer_files.spawn(
+            self.engine.clone(),
+            if file.is_directory() {
+                Job::Folder(file)
+            } else {
+                Job::Attach(file)
+            },
+        ) {
             self.composer_files.pending_mention = mention;
         }
 
         cx.notify();
+    }
+    fn complete_composer_folder(
+        &mut self,
+        file: &FileReference,
+        fresh: bool,
+        ticket: Option<&mentions::Ticket>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !fresh || self.composer_files.binding.is_none() {
+            self.composer_files.status = "The folder choice changed; newer text was kept.".into();
+            return;
+        }
+        let valid = self
+            .engine
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!(EngineBusy))
+            .and_then(|engine| engine.validate_file_reference_folder_delivery(file));
+        if let Err(error) = valid {
+            self.composer_files.status = error.to_string();
+            return;
+        }
+        if let Some(ticket) = ticket {
+            if self.live_file_mention(window, cx, false).as_ref() != Some(ticket) {
+                self.composer_files.status =
+                    "Caret, draft or context changed; newer text was kept.".into();
+                return;
+            }
+            if !self.composer.update(cx, |input, cx| {
+                mentions::apply_folder(input, ticket, file.path(), window, cx)
+            }) {
+                self.composer_files.status =
+                    "Folder completion did not match the proven edit; inspect the preserved draft."
+                        .into();
+                return;
+            }
+            self.composer_files.status =
+                "Folder path completed. Continue typing to choose a file.".into();
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            self.composer_files.scheduled = None;
+            self.sync_composer_file_picker(window, cx);
+            self.sync_automatic_file_mentions(window, cx);
+        } else {
+            self.composer_files.query.update(cx, |input, cx| {
+                input.set_value(format!("{}/", file.path()), window, cx)
+            });
+            self.composer_files.status = "Choose a file in this folder.".into();
+            self.composer_files.folder_search_pending = true;
+        }
     }
     fn live_file_mention(
         &mut self,
@@ -758,7 +844,7 @@ impl Coincide {
         }
         if !state.directory.is_empty() {
             let counts = format!(
-                "{} files / {} paths · {} skipped{}{}",
+                "{} entries / {} paths · {} skipped{}{}",
                 state.files.len(),
                 state.total,
                 state.skipped,
@@ -766,7 +852,7 @@ impl Coincide {
                 if busy { " · working…" } else { "" },
             );
             let details = format!(
-                "{} eligible files shown from {} matching Git paths; {} unavailable or unsupported entries skipped. {}Project: {}",
+                "{} eligible entries shown from {} matching Git paths; {} unavailable or unsupported entries skipped. {}Project: {}",
                 state.files.len(),
                 state.total,
                 state.skipped,
@@ -865,16 +951,18 @@ impl Coincide {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(file.path().to_owned()),
+                            .child(if file.is_directory() { format!("{}/", file.path()) } else { file.path().to_owned() }),
                     )
                     .child(
                         Button::new(("composer-file-attach", index))
-                            .label(if state.automatic {
+                            .label(if file.is_directory() {
+                                "Open folder"
+                            } else if state.automatic {
                                 "Attach and complete"
                             } else {
                                 "Attach"
                             })
-                            .accessibility_label(if state.automatic {format!("Attach project file reference {} and complete the current @query",file.path())} else {format!("Attach project file reference {}",file.path())})
+                            .accessibility_label(if file.is_directory() {format!("Open project folder {}",file.path())} else if state.automatic {format!("Attach project file reference {} and complete the current @query",file.path())} else {format!("Attach project file reference {}",file.path())})
                             .compact()
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
