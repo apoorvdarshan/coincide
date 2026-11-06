@@ -178,6 +178,7 @@ fn invalid_inputs_root_rebinding_busy_and_capacity_fail_before_dispatch() {
         owner.clone(),
         Running {
             configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session: Session::start(Launch {
                 executable: root.join("nonexistent-fixture-provider"),

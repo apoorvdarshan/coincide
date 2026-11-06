@@ -622,13 +622,14 @@ impl Coincide {
         );
     }
     pub(super) fn composer_file_key_scope(&self, scope: Div, cx: &mut Context<Self>) -> Div {
-        capture::attach(
+        let scope = capture::attach(
             scope,
             cx,
             Self::composer_file_bound_key,
             Self::composer_file_key,
             |this, key, _| this.composer_files.keys.release(key),
-        )
+        );
+        self.follow_up_key_scope(scope, cx)
     }
 
     fn composer_file_bound_key(

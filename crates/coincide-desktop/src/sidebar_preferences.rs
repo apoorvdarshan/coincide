@@ -131,6 +131,9 @@ pub(super) fn normalized_order(saved: &[String]) -> Vec<String> {
     result
 }
 pub(super) fn moved(saved: &[String], item: &str, before: Option<&str>) -> Vec<String> {
+    if before == Some(item) {
+        return saved.to_vec();
+    }
     let mut result = normalized_order(saved);
     result.retain(|id| id != item);
     let index = before
@@ -217,6 +220,16 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn dropping_section_on_itself_preserves_exact_order_and_unknown_entries() {
+        let saved = vec![
+            "chats".into(),
+            "future-section".into(),
+            "bots".into(),
+            "projects".into(),
+        ];
+        assert_eq!(moved(&saved, "bots", Some("bots")), saved);
+    }
     #[::core::prelude::v1::test]
     fn numeric_names_order_naturally_and_case_ties_remain_available_to_activity_ordering() {
         assert!(name_order("Project 2", "project 10").is_lt());

@@ -1136,6 +1136,7 @@ name = "coincide-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atspi",
  "block2 0.6.2",
  "cc",
  "coincide-core",
@@ -1144,6 +1145,7 @@ dependencies = [
  "gpui-webview",
  "gtk",
  "lb-wry",
+ "libc",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
  "objc2-user-notifications",
@@ -1151,6 +1153,10 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "uuid",
+ "windows 0.61.3",
+ "windows-capture",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]

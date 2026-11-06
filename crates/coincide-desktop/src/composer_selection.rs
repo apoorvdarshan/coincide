@@ -1226,6 +1226,14 @@ impl Coincide {
             return true;
         }
         self.selected.as_ref().is_some_and(|thread| {
+            if !coincide_core::provider_preferences::enabled(
+                &self.settings,
+                &text(&thread["selection"], "provider"),
+            )
+            .unwrap_or(false)
+            {
+                return true;
+            }
             if named_models::named_thread(thread) && !self.running.contains(&text(thread, "id")) {
                 let named = &self.selection_ui.capabilities["namedModels"];
                 if named["threadId"] != thread["id"]
@@ -2402,6 +2410,9 @@ impl Coincide {
                         cx.notify();
                     })),
             );
+            if facet == PickerFacet::Access {
+                controls = controls.child(self.follow_up_button(cx));
+            }
         }
         div()
             .flex_1()

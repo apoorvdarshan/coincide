@@ -45,6 +45,7 @@ fn retire(engine: &mut Engine, id: &str, session: Session) {
         id.to_owned(),
         Running {
             configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session,
             provider: "codex".into(),

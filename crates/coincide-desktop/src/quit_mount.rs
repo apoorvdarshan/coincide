@@ -114,6 +114,7 @@ impl Coincide {
         self.github_threads_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.notification_panel.read(cx).request_shutdown();
+        self.appshots.close();
         self.shutdown_computer_use(cx);
         for workspace in self.terminal_workspaces.values() {
             workspace.update(cx, |workspace, cx| workspace.request_shutdown(cx));
@@ -186,6 +187,7 @@ impl Coincide {
             && notifications_done
             && terminals_done
             && browser_done
+            && self.appshots.drained()
             && self.computer_use_shutdown_ready()
             && self.image_validations_running == 0
             && self.image_validation_tasks.is_empty()

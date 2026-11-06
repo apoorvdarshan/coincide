@@ -32,6 +32,7 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
         id.into(),
         Running {
             configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session,
             provider: "codex".into(),

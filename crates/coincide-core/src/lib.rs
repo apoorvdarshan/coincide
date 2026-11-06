@@ -39,6 +39,7 @@ pub mod updater;
 
 pub mod legacy_media;
 
+pub mod composer_follow_up;
 pub mod composer_selection;
 
 pub mod legacy_media_service;
@@ -75,3 +76,5 @@ mod private_fs;
 pub mod native_file;
 pub mod native_instruction_profiles;
 pub mod native_ui_edits;
+
+pub mod appshots;

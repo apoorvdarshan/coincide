@@ -120,6 +120,83 @@ fn rows_match(db: &Connection, rows: &[DeleteRow]) -> Result<()> {
     }
     Ok(())
 }
+#[path = "store_bot_lifecycle.rs"]
+pub(crate) mod bot_lifecycle;
+fn delete_rows_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    rows: &[DeleteRow],
+    receipt: &str,
+) -> Result<()> {
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS deleted_threads(id TEXT PRIMARY KEY COLLATE NOCASE,receipt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS revoked_native_sessions(thread_id TEXT NOT NULL COLLATE NOCASE,native_hash BLOB NOT NULL CHECK(length(native_hash)=32),PRIMARY KEY(thread_id,native_hash));")?;
+    for row in rows {
+        tx.execute(
+            "INSERT INTO deleted_threads(id,receipt) VALUES(?1,?2)",
+            params![Uuid::parse_str(&row.id)?.to_string(), receipt],
+        )?;
+        for hash in &row.native {
+            tx.execute("INSERT OR IGNORE INTO revoked_native_sessions(thread_id,native_hash) VALUES(?1,?2)",params![Uuid::parse_str(&row.id)?.to_string(),hash.as_slice()])?;
+        }
+        tx.execute(
+            "DELETE FROM search WHERE thread_id=?1 COLLATE NOCASE",
+            [&row.id],
+        )?;
+        tx.execute(
+            "DELETE FROM search_trigram WHERE thread_id=?1 COLLATE NOCASE",
+            [&row.id],
+        )?;
+        tx.execute(
+            "DELETE FROM thread_summaries WHERE id=?1 COLLATE NOCASE",
+            [&row.id],
+        )?;
+        ensure!(
+            tx.execute(
+                "DELETE FROM threads WHERE id=?1 AND document=?2",
+                params![row.id, row.raw]
+            )? == 1,
+            "Conversation changed during deletion"
+        );
+    }
+    Ok(())
+}
+fn restore_rows_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    rows: &[DeleteRow],
+    receipt: &str,
+) -> Result<()> {
+    ensure!(
+        exists(tx, "deleted_threads")?,
+        "Delete Undo receipt is no longer current"
+    );
+    for row in rows {
+        let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM deleted_threads WHERE id=?3 AND receipt=?2) AND NOT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM search WHERE thread_id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM search_trigram WHERE thread_id=?1 COLLATE NOCASE)",params![row.id,receipt,Uuid::parse_str(&row.id)?.to_string()],|row|row.get(0))?;
+        let imported: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE)",
+            [&row.id],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            matches && imported == row.imported,
+            "Deleted conversation identity or provenance changed; Undo was refused"
+        );
+    }
+    for row in rows {
+        let value: Value = serde_json::from_str(&row.raw)?;
+        tx.execute(
+            "INSERT INTO threads(id,document) VALUES(?1,?2)",
+            params![row.id, row.raw],
+        )?;
+        index_thread(tx, &value)?;
+        cache_thread(tx, &value, true)?;
+        ensure!(
+            tx.execute(
+                "DELETE FROM deleted_threads WHERE id=?1 AND receipt=?2",
+                params![Uuid::parse_str(&row.id)?.to_string(), receipt]
+            )? == 1,
+            "Delete Undo receipt changed"
+        );
+    }
+    Ok(())
+}
 impl Store {
     pub(crate) fn delete_source_identity(
         &self,
@@ -202,9 +279,22 @@ impl Store {
         &self,
         ids: &[String],
     ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
+        self.prepare_delete_rows_scoped(ids, true)
+    }
+    pub(crate) fn prepare_any_delete_rows(
+        &self,
+        ids: &[String],
+    ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
+        self.prepare_delete_rows_scoped(ids, false)
+    }
+    fn prepare_delete_rows_scoped(
+        &self,
+        ids: &[String],
+        archived_only: bool,
+    ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
         ensure!(
             !ids.is_empty() && ids.len() <= ROW_LIMIT,
-            "Review 1–128 archived conversations at a time"
+            "Review 1–128 conversations at a time"
         );
         let start = version(self.connection()?)?;
         let mut unique = HashSet::new();
@@ -226,7 +316,8 @@ impl Store {
             );
             let value: Value = serde_json::from_str(&raw)?;
             ensure!(
-                validate_thread(&value)? == stored && value["isArchived"] == true,
+                validate_thread(&value)? == stored
+                    && (!archived_only || value["isArchived"] == true),
                 "Only current archived conversations can be deleted here"
             );
             rows.push(DeleteRow {
@@ -269,35 +360,7 @@ impl Store {
             "Store changed after deletion review"
         );
         rows_match(&tx, rows)?;
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS deleted_threads(id TEXT PRIMARY KEY COLLATE NOCASE,receipt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS revoked_native_sessions(thread_id TEXT NOT NULL COLLATE NOCASE,native_hash BLOB NOT NULL CHECK(length(native_hash)=32),PRIMARY KEY(thread_id,native_hash));")?;
-        for row in rows {
-            tx.execute(
-                "INSERT INTO deleted_threads(id,receipt) VALUES(?1,?2)",
-                params![Uuid::parse_str(&row.id)?.to_string(), receipt],
-            )?;
-            for hash in &row.native {
-                tx.execute("INSERT OR IGNORE INTO revoked_native_sessions(thread_id,native_hash) VALUES(?1,?2)",params![Uuid::parse_str(&row.id)?.to_string(),hash.as_slice()])?;
-            }
-            tx.execute(
-                "DELETE FROM search WHERE thread_id=?1 COLLATE NOCASE",
-                [&row.id],
-            )?;
-            tx.execute(
-                "DELETE FROM search_trigram WHERE thread_id=?1 COLLATE NOCASE",
-                [&row.id],
-            )?;
-            tx.execute(
-                "DELETE FROM thread_summaries WHERE id=?1 COLLATE NOCASE",
-                [&row.id],
-            )?;
-            ensure!(
-                tx.execute(
-                    "DELETE FROM threads WHERE id=?1 AND document=?2",
-                    params![row.id, row.raw]
-                )? == 1,
-                "Conversation changed during deletion"
-            );
-        }
+        delete_rows_in_transaction(&tx, rows, receipt)?;
         tx.commit()?;
         Ok(())
     }
@@ -305,38 +368,7 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        ensure!(
-            exists(&tx, "deleted_threads")?,
-            "Delete Undo receipt is no longer current"
-        );
-        for row in rows {
-            let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM deleted_threads WHERE id=?3 AND receipt=?2) AND NOT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM search WHERE thread_id=?1 COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM search_trigram WHERE thread_id=?1 COLLATE NOCASE)",params![row.id,receipt,Uuid::parse_str(&row.id)?.to_string()],|row|row.get(0))?;
-            let imported: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE)",
-                [&row.id],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                matches && imported == row.imported,
-                "Deleted conversation identity or provenance changed; Undo was refused"
-            );
-        }
-        for row in rows {
-            let value: Value = serde_json::from_str(&row.raw)?;
-            tx.execute(
-                "INSERT INTO threads(id,document) VALUES(?1,?2)",
-                params![row.id, row.raw],
-            )?;
-            index_thread(&tx, &value)?;
-            cache_thread(&tx, &value, true)?;
-            ensure!(
-                tx.execute(
-                    "DELETE FROM deleted_threads WHERE id=?1 AND receipt=?2",
-                    params![Uuid::parse_str(&row.id)?.to_string(), receipt]
-                )? == 1,
-                "Delete Undo receipt changed"
-            );
-        }
+        restore_rows_in_transaction(&tx, rows, receipt)?;
         tx.commit()?;
         Ok(())
     }

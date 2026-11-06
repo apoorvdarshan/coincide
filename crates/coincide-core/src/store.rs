@@ -4,6 +4,8 @@ mod navigation_cache;
 mod project_defaults;
 #[path = "project_management.rs"]
 mod project_management;
+#[path = "store_follow_up.rs"]
+mod store_follow_up;
 use anyhow::{Context, Result, bail, ensure};
 pub(crate) use project_management::{PreparedProject, ProjectAction};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -14,6 +16,7 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+pub(crate) use store_follow_up::NativeUncertainty;
 use uuid::Uuid;
 #[path = "browser_history_store.rs"]
 mod browser_history_store;
@@ -29,8 +32,12 @@ mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;
 #[path = "store_native_ui_selection.rs"]
 mod native_ui_selection;
+#[path = "store_sidebar_lifecycle.rs"]
+mod sidebar_lifecycle;
+pub(crate) use sidebar_lifecycle::SidebarRow;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
+pub(crate) use store_thread_delete::bot_lifecycle::{BotLifecycle, BotLifecycleUndo};
 use store_thread_delete::ensure_not_deleted;
 pub use store_thread_delete::{ArchivedConversation, ArchivedConversations};
 pub(crate) use store_thread_delete::{DeleteRow, DeleteVersion};
@@ -509,20 +516,21 @@ impl Store {
         document: &Value,
         record: Option<&Value>,
     ) -> Result<()> {
-        self.save_with_usage_and_settings(document, record, None)
+        self.save_with_usage_and_settings(document, record, None, None)
     }
     pub(crate) fn save_composer_choice(
         &mut self,
         document: &Value,
         settings: Option<&Value>,
     ) -> Result<()> {
-        self.save_with_usage_and_settings(document, None, settings)
+        self.save_with_usage_and_settings(document, None, settings, None)
     }
     fn save_with_usage_and_settings(
         &mut self,
         document: &Value,
         record: Option<&Value>,
         settings: Option<&Value>,
+        expected: Option<&Value>,
     ) -> Result<()> {
         self.connection()?;
         let id = validate_thread(document)?;
@@ -542,6 +550,25 @@ impl Store {
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         ensure_not_deleted(&tx, id)?;
+        if let Some(expected) = expected {
+            ensure!(expected["id"] == id, "Native turn source identity mismatch");
+            let raw: String =
+                tx.query_row("SELECT document FROM threads WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })?;
+            ensure!(
+                &serde_json::from_str::<Value>(&raw)? == expected,
+                "Conversation changed before replacement admission; draft retained"
+            );
+            ensure!(
+                !tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM imported_threads WHERE id=?1)",
+                    [id],
+                    |row| row.get::<_, bool>(0)
+                )?,
+                "Imported conversation cannot admit a native turn"
+            );
+        }
         if let Some(record) = record {
             ensure!(
                 record["threadID"]
@@ -812,11 +839,19 @@ impl Store {
         self.connection()?;
         let id = Uuid::new_v4().to_string().to_uppercase();
         let now = swift_timestamp();
-        Ok(
-            json!({"id":id,"projectID":project_id,"title":"New conversation","createdAt":now,"updatedAt":now,
+        let mut thread = json!({"id":id,"projectID":project_id,"title":"New conversation","createdAt":now,"updatedAt":now,
             "selection":{"provider":"claude","modelID":"default"},"accessMode":"approval","interactionMode":"build",
-            "items":[],"sessions":{},"isPinned":false,"isArchived":false,"draft":""}),
-        )
+            "items":[],"sessions":{},"isPinned":false,"isArchived":false,"draft":""});
+        if let Some(follow_up) = self
+            .document("settings.json")?
+            .as_ref()
+            .and_then(|settings| {
+                crate::composer_follow_up::Behavior::parse(&settings["followUpBehavior"])
+            })
+        {
+            thread["followUpBehavior"] = json!(follow_up.key());
+        }
+        Ok(thread)
     }
     pub fn new_thread(&mut self, project_id: &str) -> Result<Value> {
         let thread = self.prepare_new_thread(project_id)?;

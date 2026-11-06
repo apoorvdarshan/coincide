@@ -213,7 +213,8 @@ impl Coincide {
                     .w_full()
                     .on_drag(BotDrag(drag_id), |drag, _, _, cx| cx.new(|_| drag.clone()))
                     .on_drop(cx.listener(move |this, drag: &BotDrag, _, cx| {
-                        if !this.search.read(cx).value().trim().is_empty()
+                        if drag.0.eq_ignore_ascii_case(&drop_id)
+                            || !this.search.read(cx).value().trim().is_empty()
                             || this.thread_bulk.mode
                             || this.sidebar_bot_pending.is_some()
                             || this.media.close_requested
@@ -355,10 +356,19 @@ impl Coincide {
                                 }
                                 let parent_edit = parent.clone();
                                 let id = menu_id.clone();
-                                menu.item(PopupMenuItem::new("Edit Bot…").on_click(
+                                menu = menu.item(PopupMenuItem::new("Edit Bot…").on_click(
                                     move |_, window, cx| {
                                         let _ = parent_edit.update(cx, |this, cx| {
                                             this.sidebar_edit_bot(Some(id.clone()), window, cx)
+                                        });
+                                    },
+                                ));
+                                let parent_delete = parent.clone();
+                                let id = menu_id.clone();
+                                menu.item(PopupMenuItem::new("Delete Bot…").on_click(
+                                    move |_, _, cx| {
+                                        let _ = parent_delete.update(cx, |this, cx| {
+                                            this.sidebar_bot_delete_review(id.clone(), cx)
                                         });
                                     },
                                 ))

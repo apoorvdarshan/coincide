@@ -33,6 +33,7 @@ fn failed_atomic_finish_retains_usage_after_run_retirement_and_shutdown_retry_de
         id.clone(),
         Running {
             configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: Some(agent::usage_capture::TurnContext::new(&before)),
             session,
             provider: "codex".into(),

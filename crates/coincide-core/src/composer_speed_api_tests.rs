@@ -127,6 +127,7 @@ fn combined_repair_obeys_existing_bot_import_running_recovery_and_freeze_gates()
         id.clone(),
         Running {
             configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session: Session::fixture_worker(|_, _| {}),
             provider: "codex".into(),

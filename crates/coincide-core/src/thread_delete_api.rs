@@ -50,16 +50,26 @@ impl Engine {
         provider: &str,
     ) -> Result<Option<String>> {
         let session = agent::provider_session(thread, provider);
+        let account = thread["selection"]["accountID"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
         if let Some(native) = &session
-            && self
+            && (self
                 .store
                 .is_native_session_revoked(required(thread, "id")?, native)?
+                || provider == "codex"
+                    && self.store.is_native_session_uncertain(
+                        required(thread, "id")?,
+                        account,
+                        native,
+                    )?)
         {
             return Ok(None);
         }
         Ok(session)
     }
-    fn archive_delete_admitted(&mut self, ids: &[String], deleting: bool) -> Result<()> {
+    pub(super) fn archive_delete_admitted(&mut self, ids: &[String], deleting: bool) -> Result<()> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
         let workers = self.provider_workers_status();
@@ -73,6 +83,7 @@ impl Engine {
         ensure!(
             self.workspace_mutations.is_empty()
                 && self.steering_operations.is_empty()
+                && !self.native_follow_up.has_pending()
                 && self.schedule_completions.is_empty(),
             "Wait for pending workspace/provider results before deleting or restoring conversations"
         );
@@ -177,6 +188,33 @@ impl Engine {
             rows,
         })
     }
+    /// Explicit sidebar review for ordinary conversations, including unarchived
+    /// rows. Bot lifecycle uses a distinct reviewed transaction instead.
+    pub fn prepare_native_conversation_deletion(
+        &mut self,
+        ids: &[String],
+    ) -> Result<PreparedThreadDeletion> {
+        self.archive_delete_admitted(ids, true)?;
+        let source = self.store.delete_source_identity()?;
+        let (version, rows) = self.store.prepare_any_delete_rows(ids)?;
+        for row in &rows {
+            let value: Value = serde_json::from_str(&row.raw)?;
+            ensure!(
+                value["botID"].is_null() && value["rustBotContext"].is_null(),
+                "Delete bot conversations through their bot's reviewed lifecycle"
+            );
+        }
+        ensure!(
+            self.store.delete_source_identity()? == source,
+            "Store changed while preparing confirmation"
+        );
+        Ok(PreparedThreadDeletion {
+            owner: self.thread_bulk_owner,
+            source,
+            version,
+            rows,
+        })
+    }
     /// Call only from the native Delete confirmation callback. Consumes the
     /// reviewed plan; any stale/failing confirmation requires a new review.
     pub fn apply_native_thread_deletion(
@@ -271,6 +309,42 @@ mod tests {
         thread["sessions"] = json!({"codex":{"sessionID":"old-default-native"}});
         store.save(&thread).unwrap();
         (dir, Engine::fixture(store), text(&thread, "id"))
+    }
+    #[test]
+    fn ordinary_native_delete_undo_and_external_aba_keep_exact_document_and_review_boundary() {
+        let (dir, mut engine, id) = fixture();
+        let mut before = engine.store.thread(&id).unwrap();
+        before["isArchived"] = json!(false);
+        before["future"] = json!({"preserve":[1,2]});
+        before["draft"] = json!("Keep native draft");
+        engine.store.save(&before).unwrap();
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err(),
+            "Archive-only route stays scoped"
+        );
+        let plan = engine
+            .prepare_native_conversation_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let undo = engine.apply_native_thread_deletion(plan).unwrap();
+        assert!(engine.store.thread(&id).is_err());
+        engine.undo_native_thread_deletion(&undo).unwrap();
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        let plan = engine
+            .prepare_native_conversation_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let mut other = Store::open(&dir.path().join("data/state.sqlite")).unwrap();
+        other
+            .patch_thread(&id, &json!({"draft":"External transient"}))
+            .unwrap();
+        other.save(&before).unwrap();
+        assert!(engine.apply_native_thread_deletion(plan).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        let mut bot = before.clone();
+        bot["botID"] = json!(Uuid::new_v4().to_string());
+        engine.store.save(&bot).unwrap();
+        assert!(engine.prepare_native_conversation_deletion(&[id]).is_err());
     }
     #[test]
     fn human_confirmed_delete_and_undo_are_owner_bound_and_preserve_native_denials() {

@@ -8,6 +8,9 @@ fn main() {
     {
         println!("cargo:rustc-link-arg-bin=coincide-rust=/STACK:8388608");
     }
+    println!("cargo:rerun-if-changed=src/appshots_macos.m");
+    #[cfg(target_os = "macos")]
+    compile_appshots();
     println!("cargo:rerun-if-changed=src/microphone_macos.m");
     println!("cargo:rerun-if-changed=src/microphone_macos.h");
     println!("cargo:rerun-if-changed=src/computer_use_macos.m");
@@ -62,4 +65,12 @@ fn compile_computer_use() {
 #[cfg(not(all(target_os = "macos", feature = "native-computer-use")))]
 fn compile_computer_use() {
     panic!("native-computer-use for macOS requires a macOS build host");
+}
+
+#[cfg(target_os = "macos")]
+fn compile_appshots() {
+    cc::Build::new().file("src/appshots_macos.m").flag("-fobjc-arc").flag("-fblocks").flag("-std=gnu11").compile("coincide_appshots");
+    for framework in ["Foundation", "AppKit", "ApplicationServices", "CoreGraphics", "Carbon", "ScreenCaptureKit", "AudioToolbox"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
 }

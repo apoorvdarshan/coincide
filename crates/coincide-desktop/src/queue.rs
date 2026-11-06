@@ -24,66 +24,6 @@ impl Coincide {
         cx.notify();
     }
 
-    pub(super) fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref() else {
-            return;
-        };
-        let id = text(thread, "id");
-        if self.attachment_import_threads.contains(&id) {
-            self.status = "Wait for image imports to finish before queueing.".into();
-            cx.notify();
-            return;
-        }
-        // Core also checks persisted attachments, including imports completed
-        // since the last native refresh. A rejected enqueue keeps the draft.
-        if thread["rustDraftImages"]
-            .as_array()
-            .is_some_and(|images| !images.is_empty())
-        {
-            self.status =
-                "Queued messages currently support text only. Keep these images for a direct send."
-                    .into();
-            cx.notify();
-            return;
-        }
-        let message = self.composer.read(cx).value().to_string();
-        match call(
-            &self.engine,
-            "agent.queue.add",
-            json!({"threadId":id,"text":message}),
-        ) {
-            Ok(result) => {
-                match call(
-                    &self.engine,
-                    "threads.patch",
-                    json!({"threadId":id,"patch":{"draft":""}}),
-                ) {
-                    Ok(thread) => {
-                        self.pending_drafts.remove(&id);
-                        self.selected = Some(thread);
-                        self.composer
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                        self.status = if result["enabled"] == true {
-                            "Message queued. It will run after the current turn finishes successfully.".into()
-                        } else {
-                            "Message queued. Resume the queue when ready.".into()
-                        };
-                    }
-                    Err(error) => {
-                        self.status = format!(
-                            "Message queued, but draft cleanup failed: {error}. Do not queue it again."
-                        )
-                    }
-                }
-                self.refresh_queue(cx);
-            }
-            Err(error) => {
-                self.status = format!("Message could not be queued: {error}");
-                cx.notify();
-            }
-        }
-    }
-
     fn queue_action(
         &mut self,
         method: &'static str,

@@ -44,6 +44,7 @@ icon_assets!(
         Bot,
         Building2,
         Calendar,
+        Camera,
         CaseSensitive,
         ChartPie,
         ChartNoAxesColumn,
@@ -124,6 +125,7 @@ icon_assets!(
         Settings,
         SortAscending,
         SortDescending,
+        SkipForward,
         SquareTerminal,
         Square,
         StarFill,
@@ -164,6 +166,7 @@ mod tests {
             "icons/ellipsis.svg",
             "icons/loader-circle.svg",
             // Composer actions already reference these non-default icons.
+            "icons/camera.svg",
             "icons/brain.svg",
             "icons/zap.svg",
             "icons/lock.svg",
@@ -174,6 +177,7 @@ mod tests {
             "icons/at-sign.svg",
             "icons/list-plus.svg",
             "icons/corner-up-right.svg",
+            "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
         ] {
