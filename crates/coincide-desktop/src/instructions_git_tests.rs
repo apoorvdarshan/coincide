@@ -86,6 +86,7 @@ impl Fixture {
             self.repo.clone(),
             self.copy.clone(),
             StoreSource::capture(&self.store).unwrap(),
+            self.store.document("instructions.json").unwrap(),
             Runner::isolated().unwrap(),
             &AtomicBool::new(false),
             || self.copy.validate_native(&self.store),
@@ -419,4 +420,225 @@ fn incoming_updates_refuse_unrelated_dirty_work_and_conflicting_rebase_is_aborte
             .is_empty()
         );
     }
+}
+
+#[::core::prelude::v1::test]
+fn existing_remote_objects_still_advance_the_selected_destination_branch() {
+    let fixture = Fixture::new("Instructions.md");
+    let bare = fixture.remote();
+    fixture
+        .review()
+        .apply(Some(0), true, &AtomicBool::new(false), || Ok(()))
+        .unwrap();
+    let old_main = git(&bare, &["rev-parse", "main"]);
+    fs::write(fixture.copy.master_path(), "Already published on feature\n").unwrap();
+    git(&fixture.repo, &["add", "Instructions.md"]);
+    git(
+        &fixture.repo,
+        &["commit", "-m", "Synthetic copy on feature"],
+    );
+    git(
+        &fixture.repo,
+        &["push", "origin", "HEAD:refs/heads/feature"],
+    );
+    let expected = git(&fixture.repo, &["rev-parse", "HEAD"]);
+    assert_ne!(expected, old_main);
+    assert_eq!(git(&bare, &["rev-parse", "feature"]), expected);
+    assert_eq!(git(&bare, &["rev-parse", "main"]), old_main);
+    let result = fixture
+        .review()
+        .apply(Some(0), true, &AtomicBool::new(false), || Ok(()))
+        .unwrap();
+    assert!(result.pushed && !result.committed && !result.pulled);
+    assert_eq!(git(&bare, &["rev-parse", "main"]), expected);
+}
+
+#[::core::prelude::v1::test]
+fn metadata_change_during_displayed_review_refuses_before_any_git_effect() {
+    let mut fixture = Fixture::new("Instructions.md");
+    let bare = fixture.remote();
+    let review = fixture.review();
+    let (_, _, retained) = review.owner_tokens();
+    let before = git(&fixture.repo, &["rev-parse", "HEAD"]);
+    let index = fs::read(fixture.repo.join(".git/index")).ok();
+    fixture
+        .store
+        .save_document(
+            "instructions.json",
+            &serde_json::json!({"global":null,"projects":{},"externalUnknown":{"preserve":true}}),
+        )
+        .unwrap();
+    let error = review.validate_source(&fixture.store).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Instruction configuration changed")
+    );
+    let error = review
+        .apply(Some(0), true, &AtomicBool::new(false), || {
+            validate_metadata(&fixture.store, &retained)
+        })
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("Instruction configuration changed")
+    );
+    assert_eq!(git(&fixture.repo, &["rev-parse", "HEAD"]), before);
+    assert_eq!(fs::read(fixture.repo.join(".git/index")).ok(), index);
+    assert!(
+        !fixture
+            .repo
+            .join(".git/coincide-instruction-sync.lock")
+            .exists()
+    );
+    assert!(git(&bare, &["for-each-ref"]).is_empty());
+    assert_eq!(
+        fs::read(fixture.copy.master_path()).unwrap(),
+        b"Approved instruction copy\n"
+    );
+}
+
+#[::core::prelude::v1::test]
+fn replacement_objects_cannot_hide_forbidden_original_outgoing_history() {
+    let fixture = Fixture::new("Instructions.md");
+    let bare = fixture.remote();
+    fixture
+        .review()
+        .apply(Some(0), true, &AtomicBool::new(false), || Ok(()))
+        .unwrap();
+    let remote_before = git(&bare, &["rev-parse", "main"]);
+    git(
+        &fixture.repo,
+        &["checkout", "-b", "synthetic-safe-replacement"],
+    );
+    fs::write(fixture.copy.master_path(), "Safe replacement copy\n").unwrap();
+    git(&fixture.repo, &["add", "Instructions.md"]);
+    git(
+        &fixture.repo,
+        &["commit", "-m", "Synthetic safe replacement"],
+    );
+    let replacement = String::from_utf8(git(&fixture.repo, &["rev-parse", "HEAD"])).unwrap();
+    git(&fixture.repo, &["checkout", "main"]);
+    fs::write(
+        fixture.repo.join("must-not-publish.txt"),
+        "Synthetic forbidden content\n",
+    )
+    .unwrap();
+    git(&fixture.repo, &["add", "must-not-publish.txt"]);
+    git(
+        &fixture.repo,
+        &["commit", "-m", "Synthetic forbidden original"],
+    );
+    let original = String::from_utf8(git(&fixture.repo, &["rev-parse", "HEAD"])).unwrap();
+    git(
+        &fixture.repo,
+        &["replace", original.trim(), replacement.trim()],
+    );
+    let error = fixture
+        .review()
+        .apply(Some(0), true, &AtomicBool::new(false), || Ok(()))
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("Outgoing history changes files outside"),
+        "{error}"
+    );
+    assert_eq!(git(&bare, &["rev-parse", "main"]), remote_before);
+    assert_eq!(
+        fs::read(fixture.repo.join("must-not-publish.txt")).unwrap(),
+        b"Synthetic forbidden content\n"
+    );
+}
+
+#[::core::prelude::v1::test]
+fn preexisting_or_prestart_cancelled_rebase_is_never_aborted() {
+    let fixture = Fixture::new("Instructions.md");
+    let gitdir = fixture.repo.join(".git");
+    let state = gitdir.join("rebase-merge");
+    fs::create_dir(&state).unwrap();
+    fs::write(state.join("native-owner-marker"), "another operation").unwrap();
+    let original = String::from_utf8(git(&fixture.repo, &["rev-parse", "HEAD"])).unwrap();
+    let runner = Runner::isolated().unwrap();
+    let error = rebase_owned(
+        &runner,
+        &fixture.repo,
+        &gitdir,
+        "main",
+        original.trim(),
+        original.trim(),
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("Another rebase is active"));
+    assert_eq!(
+        fs::read(state.join("native-owner-marker")).unwrap(),
+        b"another operation"
+    );
+    fs::remove_dir_all(&state).unwrap();
+    let error = rebase_owned(
+        &runner,
+        &fixture.repo,
+        &gitdir,
+        "main",
+        original.trim(),
+        original.trim(),
+        &AtomicBool::new(true),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("without proven cleanup ownership")
+    );
+    assert!(!state.exists());
+    assert_eq!(
+        git(&fixture.repo, &["rev-parse", "HEAD"]),
+        original.as_bytes()
+    );
+}
+
+#[::core::prelude::v1::test]
+fn foreign_rebase_appearing_after_precheck_is_not_aborted_on_refused_start() {
+    let fixture = Fixture::new("Instructions.md");
+    let gitdir = fixture.repo.join(".git");
+    let state = gitdir.join("rebase-merge");
+    let original = String::from_utf8(git(&fixture.repo, &["rev-parse", "HEAD"])).unwrap();
+    let error = rebase_owned_after_check(
+        &Runner::isolated().unwrap(),
+        &fixture.repo,
+        &gitdir,
+        ("main", original.trim(), original.trim()),
+        &AtomicBool::new(false),
+        || {
+            fs::create_dir(&state)?;
+            fs::write(
+                state.join("native-owner-marker"),
+                "foreign operation won the race",
+            )?;
+            // Even matching-looking anchors cannot grant ownership after Git refuses to start.
+            fs::write(state.join("orig-head"), original.trim())?;
+            fs::write(state.join("onto"), original.trim())?;
+            fs::write(state.join("head-name"), "refs/heads/main")?;
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("without proven cleanup ownership"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(state.join("native-owner-marker")).unwrap(),
+        b"foreign operation won the race"
+    );
+    assert_eq!(
+        git(&fixture.repo, &["rev-parse", "HEAD"]),
+        original.as_bytes()
+    );
 }

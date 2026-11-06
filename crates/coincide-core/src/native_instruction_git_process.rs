@@ -300,7 +300,12 @@ impl Operation {
             }
             Self::Rebase(commit) => {
                 oid(commit)?;
-                vec!["rebase".into(), "--no-autostash".into(), commit.clone()]
+                vec![
+                    "rebase".into(),
+                    "--merge".into(),
+                    "--no-autostash".into(),
+                    commit.clone(),
+                ]
             }
             Self::AbortRebase => vec!["rebase".into(), "--abort".into()],
             Self::Revisions { head, excluded } => {
@@ -428,6 +433,7 @@ impl Runner {
         command
             .args([
                 "--no-pager",
+                "--no-replace-objects",
                 "--literal-pathspecs",
                 "-c",
                 "core.fsmonitor=false",

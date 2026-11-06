@@ -226,6 +226,7 @@ pub(super) struct Review {
     head_file: Option<Stamp>,
     state: State,
     source: StoreSource,
+    metadata: Option<serde_json::Value>,
     scope: NativeScope,
     file: EditorFile,
     pub relative_copy: String,
@@ -247,6 +248,7 @@ impl Review {
         picked: PathBuf,
         scope: NativeScope,
         source: StoreSource,
+        metadata: Option<serde_json::Value>,
         runner: Runner,
         cancel: &AtomicBool,
         validate: impl Fn() -> Result<()>,
@@ -346,6 +348,7 @@ impl Review {
             head_file,
             state,
             source,
+            metadata,
             scope,
             file,
             relative_copy,
@@ -372,8 +375,12 @@ impl Review {
             .zip(self.push_digests.get(index))
             .is_some_and(|(a, b)| a == b)
     }
-    pub fn owner_tokens(&self) -> (StoreSource, NativeScope) {
-        (self.source.clone(), self.scope.clone())
+    pub fn owner_tokens(&self) -> (StoreSource, NativeScope, Option<serde_json::Value>) {
+        (
+            self.source.clone(),
+            self.scope.clone(),
+            self.metadata.clone(),
+        )
     }
     pub fn repository_path(&self) -> &Path {
         &self.root.path
@@ -383,7 +390,8 @@ impl Review {
     }
     pub fn validate_source(&self, store: &coincide_core::store::Store) -> Result<()> {
         self.source.validate(store)?;
-        self.scope.validate_native(store)
+        self.scope.validate_native(store)?;
+        validate_metadata(store, &self.metadata)
     }
     fn binding(&self) -> Result<()> {
         self.root.validate()?;
@@ -633,20 +641,18 @@ impl Review {
                             cancel,
                         )?;
                     } else {
-                        let rebase =
-                            self.runner
-                                .capture(&self.root.path, &Op::Rebase(incoming), cancel);
-                        if !rebase.as_ref().is_ok_and(|r| r.code == 0) {
-                            let cleanup = AtomicBool::new(false);
-                            let aborted =
-                                self.runner
-                                    .capture(&self.root.path, &Op::AbortRebase, &cleanup);
-                            ensure!(
-                                aborted.is_ok_and(|r| r.code == 0),
-                                "Rebase did not finish and owned abort failed; inspect the selected repository"
-                            );
-                            bail!("Git rebase stopped; the original local state was restored");
-                        }
+                        rebase_owned(
+                            &self.runner,
+                            &self.root.path,
+                            &self.git.path,
+                            &self.branch,
+                            self.state
+                                .head
+                                .as_deref()
+                                .context("Missing rebase source")?,
+                            &incoming,
+                            cancel,
+                        )?;
                     }
                     applied.pulled = true;
                     let next =
@@ -684,7 +690,7 @@ impl Review {
                     &self.runner,
                     &self.root.path,
                     &Op::Revisions {
-                        head: current,
+                        head: current.clone(),
                         excluded,
                     },
                     cancel,
@@ -709,7 +715,27 @@ impl Review {
                         "Outgoing history changes files outside the chosen instruction copy; push was refused"
                     );
                 }
-                if !revisions.is_empty() {
+                // Object transfer/audit and destination ref advancement are independent.
+                // Another remote branch can already contain every outgoing object.
+                let destination = heads.iter().find(|(name, _)| name == &self.branch);
+                let push_needed = destination.is_none_or(|(_, id)| id != &current);
+                if push_needed {
+                    if let Some((_, destination)) = destination {
+                        let counts = line(output(
+                            &self.runner,
+                            &self.root.path,
+                            &Op::AheadBehind {
+                                head: current.clone(),
+                                upstream: destination.clone(),
+                            },
+                            cancel,
+                        )?)?;
+                        let parts = counts.split_whitespace().collect::<Vec<_>>();
+                        ensure!(
+                            parts.len() == 2 && parts[1] == "0",
+                            "Destination branch is not an ancestor; nonforce push was refused"
+                        );
+                    }
                     owner()?;
                     self.remote(remote_index, cancel)?;
                     ensure!(
@@ -760,6 +786,79 @@ impl Review {
         drop(lock);
         Ok(applied)
     }
+}
+pub(super) fn validate_metadata(
+    store: &coincide_core::store::Store,
+    baseline: &Option<serde_json::Value>,
+) -> Result<()> {
+    ensure!(
+        &store.document("instructions.json")? == baseline,
+        "Instruction configuration changed; review Git again"
+    );
+    Ok(())
+}
+fn rebase_owned(
+    runner: &Runner,
+    root: &Path,
+    git: &Path,
+    branch: &str,
+    original: &str,
+    incoming: &str,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    rebase_owned_after_check(
+        runner,
+        root,
+        git,
+        (branch, original, incoming),
+        cancel,
+        || Ok(()),
+    )
+}
+fn rebase_owned_after_check(
+    runner: &Runner,
+    root: &Path,
+    git: &Path,
+    context: (&str, &str, &str),
+    cancel: &AtomicBool,
+    before_start: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let (branch, original, incoming) = context;
+    ensure!(
+        !git.join("rebase-merge").exists() && !git.join("rebase-apply").exists(),
+        "Another rebase is active; nothing was aborted"
+    );
+    before_start()?;
+    let result = runner.capture(root, &Op::Rebase(incoming.to_owned()), cancel);
+    if result.as_ref().is_ok_and(|r| r.code == 0) {
+        return Ok(());
+    }
+    // Only Git's conflict exit qualifies: pre-spawn cancellation/transport errors
+    // and Git's refused-to-start exit must never abort someone else's operation.
+    if result.as_ref().is_ok_and(|r| r.code == 1) {
+        let state = git.join("rebase-merge");
+        let matches = |name: &str, expected: &str| {
+            fs::read_to_string(state.join(name)).is_ok_and(|v| v.trim_end() == expected)
+        };
+        if state.is_dir()
+            && matches("orig-head", original)
+            && matches("onto", incoming)
+            && matches("head-name", &format!("refs/heads/{branch}"))
+        {
+            let identity = native_file::path_identity(&state)?;
+            ensure!(
+                native_file::path_identity(&state)? == identity,
+                "Rebase ownership changed; cleanup was refused"
+            );
+            let aborted = runner.capture(root, &Op::AbortRebase, &AtomicBool::new(false));
+            ensure!(
+                aborted.is_ok_and(|r| r.code == 0),
+                "Owned rebase abort failed; inspect the selected repository"
+            );
+            bail!("Git rebase stopped; the original local state was restored");
+        }
+    }
+    bail!("Git rebase stopped without proven cleanup ownership; inspect the selected repository")
 }
 fn parse_heads(bytes: &[u8], token: &str) -> Result<Vec<(String, String)>> {
     let mut rows = Vec::new();

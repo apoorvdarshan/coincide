@@ -156,7 +156,8 @@ impl InstructionsPanel {
             let owner = crate::try_state(&self.setup.engine)?;
             copy.validate_native(&owner.store)?;
             let source = StoreSource::capture(&owner.store)?;
-            let baseline = Metadata::from_document(owner.store.document("instructions.json")?)?;
+            let baseline = owner.store.document("instructions.json")?;
+            Metadata::from_document(baseline.clone())?;
             Ok((copy, source, baseline))
         })();
         let (copy, source, baseline) = match source {
@@ -181,16 +182,23 @@ impl InstructionsPanel {
                 anchor.validate(&owner.store)?;
                 scope.validate_native(&owner.store)?;
                 anyhow::ensure!(
-                    Metadata::from_document(owner.store.document("instructions.json")?)?.document
-                        == baseline.document,
+                    owner.store.document("instructions.json")? == baseline,
                     "Instruction configuration changed; review Git again"
                 );
                 Ok(())
             };
             let result = (|| {
                 validate()?;
-                Review::capture(path, copy, source, Runner::system()?, &cancel, validate)
-                    .map(Effect::Reviewed)
+                Review::capture(
+                    path,
+                    copy,
+                    source,
+                    baseline.clone(),
+                    Runner::system()?,
+                    &cancel,
+                    validate,
+                )
+                .map(Effect::Reviewed)
             })()
             .map_err(|e: anyhow::Error| e.to_string());
             let _ = sender.send(Reply {
@@ -216,20 +224,15 @@ impl InstructionsPanel {
         let Some(review) = self.setup.git.review.take() else {
             return;
         };
-        let (source, scope) = review.owner_tokens();
-        let baseline = (|| -> Result<_> {
+        let (source, scope, baseline) = review.owner_tokens();
+        if let Err(error) = (|| -> Result<()> {
             let owner = crate::try_state(&self.setup.engine)?;
-            review.validate_source(&owner.store)?;
-            Metadata::from_document(owner.store.document("instructions.json")?)
-        })();
-        let baseline = match baseline {
-            Ok(value) => value,
-            Err(e) => {
-                self.setup.git.status = e.to_string();
-                cx.notify();
-                return;
-            }
-        };
+            review.validate_source(&owner.store)
+        })() {
+            self.setup.git.status = error.to_string();
+            cx.notify();
+            return;
+        }
         let remote = self.setup.git.remote;
         let expected = self.setup.git.start();
         let cancel = self.setup.git.cancel.clone();
@@ -243,8 +246,7 @@ impl InstructionsPanel {
                 source.validate(&owner.store)?;
                 scope.validate_native(&owner.store)?;
                 anyhow::ensure!(
-                    Metadata::from_document(owner.store.document("instructions.json")?)?.document
-                        == baseline.document,
+                    owner.store.document("instructions.json")? == baseline,
                     "Instruction configuration changed; Git was stopped"
                 );
                 Ok(())
