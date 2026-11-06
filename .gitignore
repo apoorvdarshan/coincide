@@ -15,6 +15,9 @@ xcuserdata/
 # macOS
 .DS_Store
 
+# Rust build output (session builds use CARGO_TARGET_DIR outside the checkout).
+/target/
+
 # Local agent worktrees
 .claude/worktrees/
 

@@ -1,0 +1,68 @@
+name: Rust packaging validation
+
+on:
+  pull_request:
+    paths: ['crates/coincide-core/**', 'vendor/gpui-pre/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
+  push:
+    branches: [main, rust-parallel-packaging-52f19]
+    paths: ['crates/coincide-core/**', 'vendor/gpui-pre/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/rust-*', 'docs/rust/packaging.md', '.github/workflows/rust-packaging.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-packaging-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validation:
+    name: Store artifact and migration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            crates
+            vendor
+            .cargo
+            scripts
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        id: toolchain
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-packaging-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/**') }}
+          restore-keys: |
+            rust-packaging-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
+      - name: Python validator regressions
+        run: python -B scripts/rust-packaging-tests.py
+      - name: Build only synthetic migration tool
+        run: cargo build -p coincide-core --bin coincide-store --locked
+      - name: Validate built artifact and rehearse isolated import
+        env:
+          TESTED_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p packaging-evidence
+          store_binary=target/debug/coincide-store
+          if [ "$RUNNER_OS" = Windows ]; then store_binary="$store_binary.exe"; fi
+          python -B scripts/rust-packaging-ci.py --store-bin "$store_binary" --commit "$TESTED_COMMIT" > packaging-evidence/result.json
+      - name: Retain validation evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-packaging-evidence-${{ runner.os }}-${{ runner.arch }}
+          path: packaging-evidence/result.json
+          if-no-files-found: error
+          retention-days: 7
