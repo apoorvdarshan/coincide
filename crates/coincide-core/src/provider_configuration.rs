@@ -116,6 +116,8 @@ impl Binary {
 struct Record {
     revision: String,
     executable: Option<Binary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    companion: Option<Binary>,
     custom: bool,
     environment: BTreeMap<String, String>,
 }
@@ -139,6 +141,7 @@ pub(crate) struct LaunchConfiguration {
     stamp: Stamp,
     record: Record,
     derived_executable: Option<Binary>,
+    derived_companion: Option<Binary>,
 }
 thread_local! { static CURRENT: RefCell<Option<LaunchConfiguration>>=const {RefCell::new(None)}; }
 pub(crate) struct Scope(Option<LaunchConfiguration>);
@@ -160,9 +163,9 @@ pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
     let Some(configuration) = current() else {
         return Ok(());
     };
+    configuration.validate_launch()?;
     configuration
-        .record
-        .executable
+        .derived_companion
         .as_ref()
         .map(Binary::validate)
         .transpose()?;
@@ -529,6 +532,20 @@ impl Engine {
         } else {
             None
         };
+        let companion = if provider == "antigravity" {
+            binary
+                .as_ref()
+                .map(|binary| {
+                    Binary::capture(
+                        &binary
+                            .canonical
+                            .with_file_name(antigravity_companion_name()),
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let (source, identity) = source(&self.store)?;
         Ok(Prepared {
             source,
@@ -538,6 +555,7 @@ impl Engine {
             record: Record {
                 revision: Uuid::new_v4().to_string(),
                 executable: binary,
+                companion,
                 custom: executable.is_some(),
                 environment,
             },
@@ -552,6 +570,12 @@ impl Engine {
         prepared
             .record
             .executable
+            .as_ref()
+            .map(Binary::validate)
+            .transpose()?;
+        prepared
+            .record
+            .companion
             .as_ref()
             .map(Binary::validate)
             .transpose()?;
@@ -615,6 +639,7 @@ impl Engine {
             },
             record,
             derived_executable: None,
+            derived_companion: None,
         }))
     }
     pub(crate) fn native_provider_scope_for_command(
@@ -666,6 +691,13 @@ impl LaunchConfiguration {
         Ok(())
     }
     pub(crate) fn validate_launch(&self) -> Result<()> {
+        if self.stamp.provider == "antigravity" && self.record.executable.is_some() {
+            self.record
+                .companion
+                .as_ref()
+                .context("Save Antigravity configuration again to approve its runtime helper")?
+                .validate()?;
+        }
         self.record
             .executable
             .as_ref()
@@ -688,6 +720,13 @@ impl LaunchConfiguration {
     }
 }
 
+fn antigravity_companion_name() -> &'static str {
+    if cfg!(windows) {
+        "localharness_external.exe"
+    } else {
+        "localharness_external"
+    }
+}
 /// Authorize only the byte-identical private copy made by the Antigravity profile owner.
 /// The source configuration stamp remains unchanged and the original pin is revalidated
 /// again at spawn. This never grants another provider or an arbitrary copied program.
@@ -698,11 +737,9 @@ pub(crate) fn antigravity_runtime_copy(source: &Path, copied: &Path) -> Result<S
             configuration.stamp.provider == "antigravity",
             "Runtime copy requires Antigravity configuration"
         );
-        let original = configuration
-            .record
-            .executable
-            .as_ref()
-            .context("Approved runtime executable is missing")?;
+        let Some(original) = configuration.record.executable.as_ref() else {
+            return Ok(enter(Some(configuration.clone())));
+        };
         original.validate()?;
         ensure!(
             source == original.requested || source == original.canonical,
@@ -713,7 +750,21 @@ pub(crate) fn antigravity_runtime_copy(source: &Path, copied: &Path) -> Result<S
             derived.digest == original.digest && derived.length == original.length,
             "Private runtime copy differs from approved executable"
         );
+        let companion = configuration
+            .record
+            .companion
+            .as_ref()
+            .context("Approved runtime helper is missing; save configuration again")?;
+        companion.validate()?;
+        let derived_companion =
+            Binary::capture(&copied.with_file_name(antigravity_companion_name()))?;
+        ensure!(
+            derived_companion.digest == companion.digest
+                && derived_companion.length == companion.length,
+            "Private runtime helper differs from approved helper"
+        );
         configuration.derived_executable = Some(derived);
+        configuration.derived_companion = Some(derived_companion);
     }
     Ok(enter(configuration))
 }
@@ -801,6 +852,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let companion = root.path().join(antigravity_companion_name());
+        fs::copy(&binary, &companion).unwrap();
         let engine =
             Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
@@ -846,6 +899,48 @@ mod tests {
         save(&mut engine, "codex", &binary, "codex");
         let _codex = enter(engine.provider_launch_configuration("codex").unwrap());
         assert!(antigravity_runtime_copy(&binary, &binary).is_err());
+    }
+    #[test]
+    fn antigravity_helper_replacement_cannot_reuse_approved_runtime_grant() {
+        let (root, mut engine, binary) = fixture();
+        let companion = root.path().join(antigravity_companion_name());
+        let baseline = engine
+            .native_provider_configuration("antigravity")
+            .unwrap()
+            .baseline;
+        let plan = engine
+            .prepare_native_provider_configuration(
+                "antigravity",
+                &baseline,
+                Some(&binary),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        fs::write(&companion, b"changed helper").unwrap();
+        assert!(engine.apply_native_provider_configuration(plan).is_err());
+        fs::copy(&binary, &companion).unwrap();
+        save(&mut engine, "antigravity", &binary, "synthetic");
+        let configuration = engine
+            .provider_launch_configuration("antigravity")
+            .unwrap()
+            .unwrap();
+        let runtime = root.path().join("private-runtime");
+        fs::create_dir(&runtime).unwrap();
+        let copied = runtime.join(binary.file_name().unwrap());
+        fs::copy(&binary, &copied).unwrap();
+        let copied_helper = runtime.join(antigravity_companion_name());
+        fs::copy(&companion, &copied_helper).unwrap();
+        {
+            let _scope = enter(Some(configuration.clone()));
+            let _runtime_scope = antigravity_runtime_copy(&binary, &copied).unwrap();
+            apply_to_child(&mut Command::new(&copied), false).unwrap();
+            fs::write(&copied_helper, b"changed copied helper").unwrap();
+            assert!(apply_to_child(&mut Command::new(&copied), false).is_err());
+        }
+        fs::write(&companion, b"replaced helper after approval").unwrap();
+        assert!(configuration.validate_launch().is_err());
+        let _scope = enter(Some(configuration));
+        assert!(apply_to_child(&mut Command::new(&binary), false).is_err());
     }
     #[test]
     fn imported_settings_and_agent_json_cannot_grant_executable_or_environment_authority() {
