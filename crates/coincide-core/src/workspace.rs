@@ -263,11 +263,9 @@ fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Valu
             } else if let Some(cost) = composer_subsequence_cost(query.as_bytes(), name.as_bytes())
             {
                 1_000 + cost
-            } else if let Some(cost) = composer_subsequence_cost(query.as_bytes(), lower.as_bytes())
-            {
-                100_000 + cost
             } else {
-                return None;
+                let cost = composer_subsequence_cost(query.as_bytes(), lower.as_bytes())?;
+                100_000 + cost
             };
             let directory_order = query.is_empty() && !directory;
             Some((
