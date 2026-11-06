@@ -143,14 +143,13 @@ impl CliCommand {
         }
         let start = Instant::now();
         let mut bytes = Vec::new();
-        let mut eof = false;
         loop {
             if start.elapsed() >= timeout {
                 return Err(Failure::Unavailable);
             }
             let mut chunk = [0_u8; 8192];
             match stdout.read(&mut chunk) {
-                Ok(0) => eof = true,
+                Ok(0) => {}
                 Ok(n) => {
                     if bytes.len() + n > 8 * 1024 * 1024 {
                         return Err(Failure::InvalidResponse);
@@ -195,12 +194,10 @@ impl CliCommand {
             }
             // Do not reap the leader until capture completes. This retains its
             // PID while group cleanup still needs the process-group identifier.
-            if eof {
-                match group.exited_successfully()? {
-                    Some(true) => return Ok(bytes),
-                    Some(_) => return Err(Failure::Unavailable),
-                    None => {}
-                }
+            match group.exited_successfully()? {
+                Some(true) => return Ok(bytes),
+                Some(_) => return Err(Failure::Unavailable),
+                None => {}
             }
             std::thread::sleep(Duration::from_millis(10));
         }
