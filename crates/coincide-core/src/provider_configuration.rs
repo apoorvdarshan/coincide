@@ -1111,6 +1111,9 @@ impl Engine {
     }
 }
 
+#[path = "provider_account_secret_store.rs"]
+pub mod account_secret_store;
+
 #[path = "native_provider_accounts.rs"]
 mod accounts;
 pub use accounts::NativeLoginAccount;
