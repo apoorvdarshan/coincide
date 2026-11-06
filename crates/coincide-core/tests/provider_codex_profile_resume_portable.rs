@@ -431,6 +431,45 @@ fn provider() {
         .as_ref()
         .map(|h| h.file_name().unwrap().to_string_lossy().into_owned())
         .unwrap_or_else(|| "default".into());
+    if home.is_none() {
+        // Default CLI environments may retain their configured API-key source.
+        // This fixture's parent is env_clear'ed; only its explicit synthetic
+        // marker and system/path inputs are permitted, never real credentials.
+        for (key, value) in std::env::vars_os() {
+            let name = key
+                .to_str()
+                .expect("fixture environment name")
+                .to_ascii_uppercase();
+            assert!(
+                matches!(
+                    name.as_str(),
+                    "PATH"
+                        | "SYSTEMROOT"
+                        | "WINDIR"
+                        | "TMP"
+                        | "TEMP"
+                        | "HOME"
+                        | "OPENAI_API_KEY"
+                        | "COINCIDE_CONTROL_SOCKET"
+                ),
+                "Unexpected default fixture environment key {name}"
+            );
+            if name == "OPENAI_API_KEY" {
+                assert!(
+                    value == "synthetic-must-not-inherit",
+                    "Only the cleared parent's synthetic default marker is permitted"
+                );
+            }
+            if name == "COINCIDE_CONTROL_SOCKET" {
+                assert!(
+                    value
+                        .to_str()
+                        .is_some_and(|s| s.contains("coincide-unbound-")),
+                    "Default fixture control endpoint must be unbound"
+                );
+            }
+        }
+    }
     for key in [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
@@ -438,6 +477,9 @@ fn provider() {
         "OPENAI_BASE_URL",
         "COINCIDE_PORTABLE_PHASE",
     ] {
+        if key == "OPENAI_API_KEY" && home.is_none() {
+            continue;
+        }
         assert!(
             std::env::var_os(key).is_none(),
             "Ambient provider variable {key}"
