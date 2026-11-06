@@ -529,9 +529,39 @@ mod tests {
         g.selected = Some(t);
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
-        let id = queue(&h, &mut g, t, Instant::now() + Duration::from_secs(1));
-        let plan = h.prepare(&mut g);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let id = queue(&h, &mut g, t, deadline);
+        let old_grant = h.handle.authority_for_engine().grant(t).unwrap();
+        // prepare deliberately pauses admission when the runtime's latest-status
+        // mutex is contended. Establish the actual drain boundary before changing
+        // authority; empty plans neither submit nor execute the queued operation.
+        let plan = loop {
+            assert!(
+                Instant::now() < deadline,
+                "queued operation was not drained before its original deadline"
+            );
+            assert_eq!(h.handle.authority_for_engine().grant(t), Ok(old_grant));
+            let plan = h.prepare(&mut g);
+            if !plan.requests.is_empty() {
+                break plan;
+            }
+            assert!(plan.revoke.is_none());
+            assert_eq!(g.queue.len(), 1);
+            assert_eq!(g.queue[0].id, id);
+            assert_eq!(g.queue[0].grant, old_grant);
+            assert!(g.results.is_empty());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            thread::yield_now();
+        };
+        assert_eq!(plan.requests.len(), 1);
+        assert_eq!(plan.requests[0].id, id);
+        assert_eq!(plan.requests[0].thread, t);
+        assert_eq!(plan.requests[0].grant, old_grant);
+        assert_eq!(plan.requests[0].deadline, deadline);
+        assert!(g.queue.is_empty() && g.results.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         h.handle.native_grant(t).unwrap();
+        assert_ne!(h.handle.authority_for_engine().grant(t), Ok(old_grant));
         h.submit(plan);
         h.flush(&mut g);
         assert_eq!(g.results[&id].1, Err(Failure::Revoked));
