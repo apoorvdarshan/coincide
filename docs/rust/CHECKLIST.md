@@ -1,47 +1,55 @@
 # Rust replacement monitoring checklist
 
-Updated 2026-11-06, 15:47 IST. This is a manual progress snapshot.
-The Rust preview works; the full replacement is unfinished. There is no measured,
-weighted overall completion percentage. The 7/32 count in [STATUS](STATUS.md)
-counts completely accepted feature groups and hides progress within open groups.
+Updated 2026-11-07. Shared UI/UX parity is required on macOS, Windows, and Linux;
+fonts, styling, window chrome, and primary modifiers may follow each platform.
+The running Swift app and actual user data remain authoritative. No installation,
+cutover, updater activation, or release has been performed by this UI work.
 
-## Verified workflows
+## Verified merged slices
 
-- [x] Independent macOS build; Windows/Linux compilation checks.
-- [x] Lossless import, original-file capture, unknown-field preservation and rollback.
-- [x] Scoped project/history workflows, saved-state restart and transcript actions.
-- [x] File attachment, duplicate prevention, scoped paths and saved-card restart.
-- [x] Named Codex model selection and independent restart proof locks.
-- [x] Usage display and standalone `/usage-limits` routing.
-- [x] Keyboard settings, bulk selection, Pin Undo and Archive/Restore.
-- [x] CLI socket/message compatibility and create-only option validation.
-- [x] Actual shipped CLI-to-server creation, atomic rejection, unsent draft and
-  storage preservation; normal server shutdown passed.
+- [x] Account/model restoration and independent native-session restart foundation:
+  [#264](https://github.com/apoorvdarshan/coincide/pull/264),
+  [#265](https://github.com/apoorvdarshan/coincide/pull/265),
+  [#267](https://github.com/apoorvdarshan/coincide/pull/267).
+- [x] Shared desktop workflow foundation:
+  [#266](https://github.com/apoorvdarshan/coincide/pull/266), including scoped
+  native macOS and Windows/Linux input, Settings, selection, draft and restart checks.
+- [x] Explicit Instructions Git controls and owned operations:
+  [#268](https://github.com/apoorvdarshan/coincide/pull/268). Actual handlers and
+  local Git passed with the OS picker response injected; physical picker entry
+  is separate from that headless result. Global user instruction files were unchanged.
+- [x] Shared navigation rail, sidebar grouping/actions and persisted preferences:
+  [#272](https://github.com/apoorvdarshan/coincide/pull/272), tested at
+  `a7b632ed746d758e733da1e72dc849a1cb8c8aca` and merged with the identical tree.
+  All 14 applicable hosted checks passed. Actual Windows/Linux render, keyboard
+  input, separate Settings close, normal Quit and older-selection/draft restart
+  passed; both platforms' screenshots were reviewed.
 
-These checkmarks apply to the scoped flows in STATUS, including their stated
-limitations; they do not claim complete feature-group parity.
+## Current integration and remaining work
 
-## Active work
+- [ ] Complete [#274](https://github.com/apoorvdarshan/coincide/pull/274): shared
+  composer layout, owned follow-ups, Settings navigation, Project Defaults,
+  thread/bot lifecycle actions, queue editing, empty-thread reuse, persisted
+  snooze wake-up and Appshots. Scoped tests pass; final combined checks are active.
+- [ ] Complete provider setup/configuration and external-terminal setup in
+  [#273](https://github.com/apoorvdarshan/coincide/pull/273), including real
+  per-provider/account/catalog gaps and all-platform validation.
+- [ ] Integrate and verify full selectable context details and native reply
+  selection to composer; preserve source/selection identity during async changes.
+- [ ] Finish queued follow-up behavior, including named-account dispatch and
+  attachment/context handling. Text-only acceptance does not cover those cases.
+- [ ] Finish all remaining screens, menus, dialogs, shortcuts, focus, scrolling,
+  accessibility and loading/error states against Swift on every platform.
+- [ ] Complete browser/password, terminal/Git/GitHub, scheduling/bot, voice,
+  background/power and remote workflows and their end-to-end acceptance.
+- [ ] Complete real-account and failure/restart acceptance within the permitted
+  providers. Antigravity live testing remains off; its fake gate tests are separate.
+- [ ] Resolve signed updater/process-identity, installation/rollback and data
+  cutover acceptance only within separately authorized migration work.
 
-- [ ] Native file suggestion keyboard acceptance: V1 failed before popup
-  validation on an unexplained submission; V2 is prepared with checks after every
-  input. No passing keyboard acceptance is claimed.
-- [ ] Read final creation-batch CI results after the local checks passed.
-
-## Remaining full-replacement work
-
-- [ ] Finish and verify remaining UI, shortcut, focus, scroll and accessibility parity.
-- [ ] Close remaining provider/account, conversation and CLI behavior gaps.
-- [ ] Finish and verify integrated browser/password, terminal/Git/GitHub,
-  scheduling/bot, voice and remote workflows.
-- [ ] Complete real-account, failure/restart and full end-to-end acceptance.
-- [ ] Resolve the updater's authoritative process-identity blocker; verify signed
-  install and rollback without weakening the guard.
-- [ ] Rehearse safe data cutover, then retire the old desktop only when authorized.
-
-Latest combined source checks: 584 Core unit tests, every Core integration target,
-12 CLI socket tests, strict Core Clippy, 421 desktop unit tests, all four desktop
-integration targets (19/10/14/11), formatting and ordinary build passed. These
-automated passes do not substitute for the open native or real-account checks.
-The new actual CLI/server regression and the full three-test headless CLI suite
-also passed, followed by strict Core Clippy.
+The broad inventory in [STATUS](STATUS.md) counts fully accepted feature groups;
+it is not a weighted completion percentage. A source implementation, a passing
+unit suite, a scoped native test and full feature acceptance are separate results.
+Appshots is off by default. Its macOS/Windows/X11 source and synthetic lifecycle
+checks do not establish actual capture or permission acceptance, and automatic
+front-window Appshots on Wayland remains unavailable.
