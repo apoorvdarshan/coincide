@@ -92,8 +92,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn authenticated_named_catalog_is_never_default_account_authority() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let executable = root.join("synthetic-executable");
         std::fs::write(&executable, b"metadata only, never executed").unwrap();
         let account = uuid::Uuid::new_v4().to_string();
