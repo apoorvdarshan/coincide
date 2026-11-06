@@ -5,6 +5,8 @@ mod codex_limits_mount;
 mod codex_limits_view;
 mod usage_history_mount;
 mod usage_history_view;
+mod voice_settings;
+mod voice_shortcut;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
@@ -418,6 +420,7 @@ struct Coincide {
     transcription_panel: Entity<transcription_settings::TranscriptionSettings>,
     transcription_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     transcription_target: transcription_composer::ComposerTarget,
+    voice: voice_shortcut::State,
     microphone_panel: Entity<microphone_settings::MicrophoneSettings>,
     microphone_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     microphone_window_active: bool,
@@ -568,15 +571,17 @@ impl Coincide {
     ) -> Option<transcription_settings::ComposerBinding> {
         self.sync_thread_bulk(cx);
         self.sync_browser_settings_route(cx);
-        let thread = if self.settings_open
+        let voice_composer =
+            self.chat_visible() && coincide_core::voice::Settings::decode(&self.settings).enabled;
+        let voice_settings = self.settings_open
             && self.transcription_open
             && !self.bots_open
             && !self.notifications_open
             && !self.session_import_open
             && !self.credentials_open
             && !self.provider_settings.open
-            && !self.command_palette.read(cx).is_open()
-        {
+            && !self.command_palette.read(cx).is_open();
+        let thread = if voice_composer || voice_settings {
             self.selected.as_ref().map(|thread| text(thread, "id"))
         } else {
             None
@@ -588,12 +593,28 @@ impl Coincide {
             composer.selected_range(),
             composer.is_selection_reversed(),
         );
-        self.transcription_panel
-            .update(cx, |panel, cx| panel.set_binding(binding.clone(), cx));
-        let (settings_revision, configuration) = self
+        self.transcription_panel.update(cx, |panel, cx| {
+            panel.set_binding(
+                if voice_settings {
+                    binding.clone()
+                } else {
+                    None
+                },
+                cx,
+            )
+        });
+        let (settings_revision, mut configuration) = self
             .transcription_panel
             .read(cx)
             .recording_configuration(cx);
+        if voice_composer && let Some(config) = configuration.as_mut() {
+            let language = coincide_core::voice::Settings::decode(&self.settings).language;
+            config.language = if language == "auto" {
+                "auto".into()
+            } else {
+                language.split('-').next().unwrap_or("auto").to_lowercase()
+            };
+        }
         let microphone_binding = (self.microphone_window_active || self.microphone_settings_active)
             .then(|| binding.clone())
             .flatten();
@@ -615,6 +636,7 @@ impl Coincide {
         self.microphone_window_active =
             window.is_window_active() && window.visibility().is_visible();
         self.sync_transcription_binding(cx);
+        self.poll_voice_shortcut(window, cx);
         self.transcription_panel
             .update(cx, |panel, cx| panel.poll(cx));
         self.microphone_panel.update(cx, |panel, cx| panel.poll(cx));
@@ -650,6 +672,18 @@ impl Coincide {
             if !accepted {
                 continue;
             }
+            let send_dictation = if from_microphone {
+                self.voice
+                    .ticket
+                    .take()
+                    .is_some_and(|(target, send, voice)| {
+                        target == binding
+                            && send
+                            && self.settings.get("voice").unwrap_or(&Value::Null) == &voice
+                    })
+            } else {
+                false
+            };
             let original = self.composer.read(cx).value().to_string();
             if self
                 .selected
@@ -688,6 +722,11 @@ impl Coincide {
                     self.status =
                         "Transcript inserted into the selected draft. Nothing was sent.".into();
                     self.save_pending_draft(&binding.thread_id);
+                    if send_dictation && !event.text.trim().is_empty() && self.chat_visible() {
+                        // Native session intent, exact accepted target and ordinary
+                        // Send admission; a preference document alone never sends.
+                        self.send_selected(false, window, cx);
+                    }
                     cx.notify();
                 }
                 Err(error) => {
@@ -1229,6 +1268,7 @@ impl Coincide {
             transcription_panel,
             transcription_events,
             transcription_target: Default::default(),
+            voice: Default::default(),
             microphone_panel,
             microphone_events,
             microphone_window_active: window.is_window_active() && window.visibility().is_visible(),
@@ -4490,6 +4530,7 @@ impl Render for Coincide {
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
+                                                .child(self.composer_voice_control(cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
@@ -4541,8 +4582,15 @@ impl Render for Coincide {
                     }).into_any_element();
         div()
             .relative()
+            .capture_key_up(
+                cx.listener(|this, event, window, cx| this.voice_key_up(event, window, cx)),
+            )
+            .on_modifiers_changed(
+                cx.listener(|this, event, window, cx| this.voice_modifiers(event, window, cx)),
+            )
             .capture_key_down(cx.listener(|this, event, window, cx| {
-                if !this.context_details_shortcut(event, window, cx)
+                if !this.voice_key_down(event, window, cx)
+                    && !this.context_details_shortcut(event, window, cx)
                     && !this.project_defaults_key(event, window, cx)
                     && !this.historical_image_shortcut(event, window, cx)
                     && !this.reply_selection_shortcut(event, window, cx)

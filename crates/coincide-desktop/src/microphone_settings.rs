@@ -63,6 +63,7 @@ enum Phase {
 }
 #[derive(Clone, Copy)]
 enum Action {
+    BeginDictation,
     Enable,
     Record,
     Stop,
@@ -158,6 +159,7 @@ struct Owner {
     permission_target: Option<Target>,
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
+    dictation: bool,
 }
 impl Owner {
     fn current(&self) -> bool {
@@ -181,6 +183,7 @@ impl Owner {
         }
         self.audio = None;
         self.session = None;
+        self.dictation = false;
         self.target = None;
         self.phase = Phase::Idle;
     }
@@ -224,6 +227,27 @@ impl Owner {
             return;
         }
         match command.action {
+            Action::BeginDictation if matches!(self.phase, Phase::Idle | Phase::Failed) => {
+                // This closed native intent authorizes permission followed by
+                // capture for this exact target. Manual Enable stays separate.
+                if self
+                    .target
+                    .as_ref()
+                    .is_none_or(|target| target.binding.is_none() || target.config.is_none())
+                {
+                    self.publish(
+                        "Choose a local executable/model and a composer before dictating.",
+                    );
+                    return;
+                }
+                self.dictation = true;
+                let target = self.target.clone().unwrap();
+                self.command(Command {
+                    generation: self.generation,
+                    target,
+                    action: Action::Enable,
+                });
+            }
             Action::Enable if self.phase == Phase::Idle || self.phase == Phase::Failed => {
                 match self.controller.as_mut().unwrap().request_permission() {
                     Ok(()) => {
@@ -315,9 +339,22 @@ impl Owner {
             };
             match event {
                 CaptureEvent::PermissionChanged(permission) => {
+                    let continue_dictation = self.dictation && self.phase == Phase::Permission;
                     self.permission = permission;
                     self.permission_target = self.target.clone();
                     self.phase = Phase::Idle;
+                    if continue_dictation
+                        && matches!(permission, Permission::Authorized | Permission::Ready)
+                    {
+                        let target = self.target.clone().unwrap();
+                        self.command(Command {
+                            generation: self.generation,
+                            target,
+                            action: Action::Record,
+                        });
+                        continue;
+                    }
+                    self.dictation = false;
                     self.publish(match permission {
                         Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
                         Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
@@ -345,6 +382,10 @@ impl Owner {
                         self.audio = Some(audio);
                         self.session = None;
                         self.phase = Phase::Captured;
+                        if self.dictation {
+                            self.transcribe();
+                            continue;
+                        }
                         self.publish(if limited { "Recording reached its limit and stopped. Press Transcribe Recording to proceed." } else { "Recording stopped. Press Transcribe Recording to proceed; nothing was sent." });
                     } else {
                         self.reset();
@@ -519,6 +560,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 permission_target: None,
                 session: None,
                 audio: None,
+                dictation: false,
             };
             while owner.shared.alive.load(Ordering::Acquire) {
                 match receiver.recv_timeout(Duration::from_millis(10)) {
@@ -565,13 +607,14 @@ pub struct MicrophoneSettings {
     phase: Phase,
     permission: Permission,
     status: String,
+    listening_since: Option<std::time::Instant>,
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(Box::new(|| {
             (Box::new(Microphone::new()), Box::new(LocalInference))
         }));
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into() }, events)
+        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None }, events)
     }
     pub fn set_target(
         &mut self,
@@ -639,6 +682,38 @@ impl MicrophoneSettings {
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
         cx.notify();
     }
+    pub fn begin_dictation(&mut self, cx: &mut Context<Self>) {
+        self.action(Action::BeginDictation, cx);
+    }
+    pub fn stop_dictation(&mut self, cx: &mut Context<Self>) {
+        if self.phase == Phase::Recording {
+            self.action(Action::Stop, cx);
+        } else if matches!(self.phase, Phase::Permission | Phase::Pending) {
+            self.cancel(cx);
+        }
+    }
+    pub fn dictation_active(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Pending
+                | Phase::Permission
+                | Phase::Recording
+                | Phase::Stopping
+                | Phase::Transcribing
+        )
+    }
+    pub fn status_text(&self) -> String {
+        if self.phase == Phase::Recording {
+            format!(
+                "Listening · {}s",
+                self.listening_since
+                    .map(|since| since.elapsed().as_secs())
+                    .unwrap_or(0)
+            )
+        } else {
+            self.status.clone()
+        }
+    }
     pub fn accepts_text(&self, event: &TextReady, live: &ComposerBinding) -> bool {
         self.backend_enabled
             && self.connection.shared.alive.load(Ordering::Acquire)
@@ -653,6 +728,12 @@ impl MicrophoneSettings {
         }
         while let Ok(snapshot) = self.connection.snapshots.try_recv() {
             if snapshot.generation == self.generation && self.backend_enabled {
+                if snapshot.phase == Phase::Recording && self.phase != Phase::Recording {
+                    self.listening_since = Some(std::time::Instant::now());
+                }
+                if snapshot.phase != Phase::Recording {
+                    self.listening_since = None;
+                }
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
                 self.status = snapshot.message.into();
@@ -665,7 +746,10 @@ impl MicrophoneSettings {
             return;
         }
         // Beginning a new explicit request invalidates any older queued text.
-        if matches!(action, Action::Enable | Action::Record) {
+        if matches!(
+            action,
+            Action::Enable | Action::Record | Action::BeginDictation
+        ) {
             self.generation = self
                 .connection
                 .shared
@@ -891,6 +975,7 @@ mod tests {
             permission_target: None,
             session: None,
             audio: None,
+            dictation: false,
         };
         (owner, events, trace)
     }
@@ -907,6 +992,34 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn native_dictation_intent_continues_matching_permission_and_transcribes_stop_once() {
+        let (mut owner, events, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        assert_eq!(trace.lock().unwrap().requests, 1);
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        assert_eq!(trace.lock().unwrap().inference, 0);
+        assert!(owner.phase == Phase::Recording);
+        action(&mut owner, Action::Stop);
+        assert_eq!(trace.lock().unwrap().inference, 1);
+        assert_eq!(
+            events.try_recv().unwrap().binding,
+            target().binding.unwrap()
+        );
+        action(&mut owner, Action::Transcribe);
+        assert!(events.try_recv().is_err());
+        assert_eq!(trace.lock().unwrap().inference, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn dictation_generation_revoke_prevents_automatic_inference() {
+        let (mut owner, events, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        owner.shared.generation.store(2, Ordering::Release);
+        action(&mut owner, Action::Stop);
+        assert_eq!(trace.lock().unwrap().inference, 0);
+        assert!(events.try_recv().is_err());
+        assert!(!owner.dictation);
     }
     #[::core::prelude::v1::test]
     fn default_acceptance_gate_prevents_even_controller_construction() {
@@ -1105,6 +1218,7 @@ mod tests {
             phase: Phase::Idle,
             permission: Permission::Unavailable,
             status: String::new(),
+            listening_since: None,
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {
