@@ -1,4 +1,4 @@
-//! Named subscription catalogs never confer default-account or effort authority.
+//! Named model/effort authority stays local to one captured subscription profile.
 use super::*;
 use crate::codex_login_profiles::LaunchContext;
 use std::{fs, path::Path, time::SystemTime};
@@ -97,26 +97,65 @@ pub(super) fn same_scope(a: Option<&NamedBinding>, b: Option<&NamedBinding>) -> 
 #[derive(Clone, Debug)]
 pub(crate) struct NamedModelProof {
     model: String,
+    effort: Option<String>,
     binding: NamedBinding,
     revoked: Arc<AtomicBool>,
 }
+impl PartialEq for NamedModelProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+            && self.effort == other.effort
+            && self.binding == other.binding
+            && Arc::ptr_eq(&self.revoked, &other.revoked)
+    }
+}
+impl Eq for NamedModelProof {}
 impl NamedModelProof {
+    pub(crate) fn validate_thread(&self, thread: &Value) -> Result<()> {
+        self.validate_selection(thread, &self.binding)
+    }
+    pub(crate) fn validate_policy(&self, model: Option<&str>, effort: Option<&str>) -> Result<()> {
+        ensure!(
+            !self.revoked.load(Ordering::Acquire),
+            "Profile model proof was revoked; refresh the catalog"
+        );
+        ensure!(
+            model == Some(self.model.as_str()) && effort == self.effort.as_deref(),
+            "Named model effort does not match the captured policy"
+        );
+        self.binding.validate()
+    }
+    pub(crate) fn validate_executable(&self, executable: &Path) -> Result<()> {
+        ensure!(
+            executable == self.binding.profile.executable(),
+            "Named effort executable changed"
+        );
+        self.validate_policy(Some(&self.model), self.effort.as_deref())
+    }
     pub(crate) fn validate_selection(&self, thread: &Value, binding: &NamedBinding) -> Result<()> {
         ensure!(
             thread["id"] == self.binding.thread
                 && thread["selection"]["provider"] == "codex"
                 && thread["selection"]["accountID"] == self.binding.account()
                 && thread["selection"]["modelID"] == self.model
+                && thread["selection"]["effort"] == json!(self.effort)
+                && thread["selection"]["speed"].is_null()
                 && binding == &self.binding,
             "Named model proof belongs to another account, thread or directory"
         );
-        self.validate_launch(&binding.profile, &binding.cwd, Some(&self.model))
+        self.validate_launch(
+            &binding.profile,
+            &binding.cwd,
+            Some(&self.model),
+            self.effort.as_deref(),
+        )
     }
     pub(crate) fn validate_launch(
         &self,
         profile: &LaunchContext,
         cwd: &Path,
         model: Option<&str>,
+        effort: Option<&str>,
     ) -> Result<()> {
         ensure!(
             !self.revoked.load(Ordering::Acquire),
@@ -128,7 +167,7 @@ impl NamedModelProof {
                 && model == Some(self.model.as_str()),
             "Named model proof does not match the captured launch"
         );
-        self.binding.validate()
+        self.validate_policy(model, effort)
     }
     pub(crate) fn validate_resolved(&self, result: &Value) -> Result<()> {
         ensure!(
@@ -158,18 +197,23 @@ impl ModelCatalog {
         );
         Ok(job.response.clone())
     }
-    pub(crate) fn named_model_proof(
+    fn named_model_row(
         &self,
         thread: &Value,
         binding: &NamedBinding,
         request: Option<&str>,
-    ) -> Result<Option<NamedModelProof>> {
+    ) -> Result<(&Job, &Value)> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
-        binding.validate()?;
+        // Binding capture is intentionally broader for read/repair. Advertised
+        // execution options must still satisfy the actual supported model shape.
         crate::codex_login_profiles::validate_model_thread(thread)?;
-        if thread["selection"]["modelID"] == "default" {
-            return Ok(None);
-        }
+        binding.validate()?;
+        ensure!(
+            thread["id"] == binding.thread()
+                && thread["selection"]["provider"] == "codex"
+                && thread["selection"]["accountID"] == binding.account(),
+            "Profile catalog row belongs to another thread/account"
+        );
         let job = self
             .order
             .iter()
@@ -194,13 +238,58 @@ impl ModelCatalog {
             .as_str()
             .context("Invalid named model")?;
         ensure!(
-            job.response["models"]
-                .as_array()
-                .is_some_and(|rows| rows.iter().any(|row| row["id"] == model)),
-            "Model was not reported by this profile's latest catalog"
+            model != "default",
+            "Effort requires an explicit profile-catalog model"
         );
+        let reported = job.response["models"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == model))
+            .context("Model was not reported by this profile's latest catalog")?;
+        Ok((job, reported))
+    }
+    pub(crate) fn named_effort_capability(&self, thread: &Value, binding: &NamedBinding) -> Value {
+        match self.named_model_row(thread, binding, None) {
+            Ok((_, row)) => {
+                let choices = row["reportedEfforts"]
+                    .as_array()
+                    .filter(|choices| !choices.is_empty());
+                json!({"supported":choices.is_some(),"choices":choices.cloned().unwrap_or_default(),"reportedDefault":row["reportedDefaultEffort"],
+                    "provenance":"named_profile_model_list","requiresExplicitModel":true,"effectiveDefault":null,
+                    "reason":if choices.is_some() {Value::Null} else {json!("This profile's model did not advertise reasoning efforts")}})
+            }
+            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+        }
+    }
+    pub(crate) fn named_model_proof(
+        &self,
+        thread: &Value,
+        binding: &NamedBinding,
+        request: Option<&str>,
+    ) -> Result<Option<NamedModelProof>> {
+        ensure!(!self.shutdown.closed, "Model catalog is shutting down");
+        binding.validate()?;
+        crate::codex_login_profiles::validate_model_thread(thread)?;
+        if thread["selection"]["modelID"] == "default" {
+            return Ok(None);
+        }
+        let (job, reported) = self.named_model_row(thread, binding, request)?;
+        let model = thread["selection"]["modelID"]
+            .as_str()
+            .context("Invalid named model")?;
+        let effort = thread["selection"]["effort"].as_str();
+        if let Some(effort) = effort {
+            ensure!(
+                reported["reportedEfforts"]
+                    .as_array()
+                    .is_some_and(|choices| choices
+                        .iter()
+                        .any(|choice| choice.as_str() == Some(effort))),
+                "Effort was not advertised for this exact profile model"
+            );
+        }
         let proof = NamedModelProof {
             model: model.into(),
+            effort: effort.map(str::to_owned),
             binding: binding.clone(),
             revoked: job.cancelled.clone(),
         };
@@ -290,7 +379,7 @@ mod tests {
         assert!(catalog.named_model_proof(&document, &other, None).is_err());
         assert!(
             proof
-                .validate_launch(&binding.profile, &nested, Some("synthetic-a"))
+                .validate_launch(&binding.profile, &nested, Some("synthetic-a"), None)
                 .is_err()
         );
         assert!(
@@ -345,6 +434,129 @@ mod tests {
         );
         catalog.request_shutdown();
         assert!(catalog.refresh_named(binding).is_err());
+    }
+    #[test]
+    fn named_effort_requires_exact_reported_model_and_private_policy() {
+        let (_dir, binding, mut document) = fixture();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "a");
+        catalog.jobs.get_mut("a").unwrap().response["models"] = json!([
+            {"id":"synthetic-a","reportedEfforts":["low","high"],"reportedDefaultEffort":"low"},
+            {"id":"synthetic-b","reportedEfforts":["low"]}
+        ]);
+        document["selection"]["effort"] = json!("high");
+        document["accessMode"] = json!("approval");
+        document["interactionMode"] = json!("build");
+        let proof = catalog
+            .named_model_proof(&document, &binding, Some("a"))
+            .unwrap()
+            .unwrap();
+        let policy = crate::composer_policy::Policy::parse_named(
+            &document,
+            crate::composer_policy::Origin::Ordinary,
+            Some(&proof),
+        )
+        .unwrap();
+        policy.preflight().unwrap();
+        let fields = policy
+            .codex_turn_fields(
+                "native-a",
+                None,
+                crate::composer_policy::CollaborationHistory::NeverApplied,
+            )
+            .unwrap();
+        assert_eq!(fields["effort"], "high");
+        assert_eq!(
+            fields["collaborationMode"]["settings"]["reasoning_effort"],
+            "high"
+        );
+        assert_eq!(
+            catalog.named_effort_capability(&document, &binding)["choices"],
+            json!(["low", "high"])
+        );
+        // The validation alias alone cannot turn named metadata into a default proof.
+        assert!(
+            crate::composer_selection::validate_thread_with_proof(
+                &crate::codex_login_profiles::validation_view(&document),
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            proof
+                .validate_launch(
+                    &binding.profile,
+                    &binding.cwd,
+                    Some("synthetic-a"),
+                    Some("low")
+                )
+                .is_err()
+        );
+        let mut changed = document.clone();
+        changed["selection"]["effort"] = json!("low");
+        assert!(proof.validate_thread(&changed).is_err());
+        assert!(
+            catalog
+                .named_model_proof(&changed, &binding, Some("a"))
+                .is_ok()
+        );
+        changed["selection"]["effort"] = json!("medium");
+        assert!(
+            catalog
+                .named_model_proof(&changed, &binding, Some("a"))
+                .is_err()
+        );
+        // An unreported but syntactically valid saved effort must remain
+        // repairable through this same model's advertised options.
+        assert_eq!(
+            catalog.named_effort_capability(&changed, &binding)["supported"],
+            true
+        );
+        changed = document.clone();
+        changed["selection"]["modelID"] = json!("synthetic-b");
+        assert!(
+            catalog
+                .named_model_proof(&changed, &binding, Some("a"))
+                .is_err()
+        );
+        changed["selection"]["modelID"] = json!("default");
+        assert!(catalog.named_model_proof(&changed, &binding, None).is_err());
+        changed["selection"]["effort"] = Value::Null;
+        catalog.jobs.get_mut("a").unwrap().response["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"default","reportedEfforts":["high"]}));
+        assert_eq!(
+            catalog.named_effort_capability(&changed, &binding)["supported"],
+            false
+        );
+        catalog.jobs.get_mut("a").unwrap().response["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"gpt-6-astra","reportedEfforts":["high"]}));
+        for effort in [Value::Null, json!("high")] {
+            changed["selection"]["modelID"] = json!("gpt-6-astra");
+            changed["selection"]["effort"] = effort;
+            let capability = catalog.named_effort_capability(&changed, &binding);
+            assert_eq!(capability["supported"], false);
+            assert_eq!(capability["choices"], json!([]));
+            assert!(
+                catalog
+                    .named_model_proof(&changed, &binding, Some("a"))
+                    .is_err()
+            );
+        }
+        catalog.jobs["a"].cancelled.store(true, Ordering::Release);
+        assert!(policy.preflight().is_err());
+        assert!(
+            policy
+                .codex_turn_fields(
+                    "native-a",
+                    None,
+                    crate::composer_policy::CollaborationHistory::NeverApplied
+                )
+                .is_err()
+        );
     }
     #[test]
     fn profile_model_notifications_accept_quota_but_never_new_auth_authority() {
