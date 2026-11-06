@@ -291,13 +291,15 @@ mod tests {
     #[test]
     fn expired_or_unavailable_target_creates_projectless_chat_with_global_defaults() {
         let (_directory, mut engine, id) = fixture();
-        engine.execute("settings.patch",&json!({"patch":{"defaultSelection":{"provider":"claude","modelID":"fixture-default"},"defaultAccessMode":"fullAccess"}})).unwrap();
+        engine.execute("settings.patch",&json!({"patch":{"defaultSelection":{"provider":"codex","modelID":"fixture-default"},"defaultAccessMode":"fullAccess"}})).unwrap();
         let ticket = engine.native_appshot_admit(None).unwrap();
         let capture = prepared(&engine, None);
         let saved = engine.native_appshot_deliver(ticket, capture).unwrap();
         assert_ne!(saved["id"], id);
         assert_eq!(saved["projectID"], "00000000-0000-0000-0000-000000000000");
         assert_eq!(saved["selection"]["modelID"], "fixture-default");
+        assert_eq!(saved["selection"]["provider"], "codex");
+        assert_eq!(saved["accessMode"], "fullAccess");
         assert_eq!(saved["items"], json!([]));
         assert_eq!(saved["draft"], "");
     }
