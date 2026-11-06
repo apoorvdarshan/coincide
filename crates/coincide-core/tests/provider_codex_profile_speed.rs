@@ -216,6 +216,14 @@ fn choose(e: &mut Engine, id: &str, _root: &Path, model: &str, speed: &str, r: &
         "codex/{}",
         expected["selection"]["accountID"].as_str().unwrap()
     );
+    if expected["modelPreferences"].is_object()
+        && expected["modelPreferences"].get(&account_key).is_none()
+    {
+        // The first B choice remembers its existing Automatic/Standard defaults
+        // before the explicit override. A's preferences remain fully compared.
+        assert!(expected["selection"]["effort"].is_null());
+        expected["modelPreferences"][&account_key] = json!({"effort":null,"speed":null});
+    }
     expected["modelPreferences"][&account_key]["speed"] = json!(speed);
     assert_eq!(actual, expected);
     assert_eq!(
