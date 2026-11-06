@@ -1422,6 +1422,32 @@ pub(crate) mod tests {
         );
     }
     #[test]
+    fn failed_approval_marker_keeps_the_last_approved_configuration_exact() {
+        let (root, mut engine, binary) = fixture();
+        save(&mut engine, "codex", &binary, "original-synthetic-value");
+        let before = engine.native_provider_configuration("codex").unwrap();
+        let file = directory(&root.path().join("private/state.sqlite"))
+            .unwrap()
+            .join("configuration.json");
+        let bytes = fs::read(&file).unwrap();
+        let plan = engine
+            .prepare_native_provider_configuration(
+                "codex",
+                &before.baseline,
+                Some(&binary),
+                BTreeMap::from([("SYNTHETIC_API_KEY".into(), "new-synthetic-value".into())]),
+            )
+            .unwrap();
+        let database =
+            rusqlite::Connection::open(root.path().join("private/state.sqlite")).unwrap();
+        database.execute_batch("CREATE TRIGGER fail_native_marker BEFORE INSERT ON metadata WHEN NEW.key LIKE 'native-provider-configuration-v1/%' BEGIN SELECT RAISE(ABORT,'synthetic marker failure'); END;").unwrap();
+        assert!(engine.apply_native_provider_configuration(plan).is_err());
+        let after = engine.native_provider_configuration("codex").unwrap();
+        assert_eq!(before.baseline, after.baseline);
+        assert_eq!(before.environment, after.environment);
+        assert_eq!(fs::read(file).unwrap(), bytes);
+    }
+    #[test]
     fn native_save_cas_keeps_private_values_out_of_settings_and_survives_restart() {
         let (root, mut first, binary) = fixture();
         let stale = first
