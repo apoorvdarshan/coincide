@@ -2003,10 +2003,35 @@ mod tests {
         let path = dir.path().join("v2.sqlite");
         let mut store = Store::open(&path).unwrap();
         store.save(&json!({"id":ID,"title":"Snoozed","items":[],"snoozedUntil":"2026-01-01T00:00:01Z","future":42})).unwrap();
-        store.connection().unwrap().execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema';").unwrap();
+        store.connection().unwrap().execute_batch("DROP INDEX thread_summaries_snooze; ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema';").unwrap();
+        // This index was introduced after schema v2; the old fixture has none.
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='thread_summaries_snooze'",
+                    [],
+                    |row| row.get::<_, u32>(0)
+                )
+                .unwrap(),
+            0
+        );
         let original = store.thread(ID).unwrap();
         drop(store);
         let mut store = Store::open(&path).unwrap();
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='thread_summaries_snooze'",
+                    [],
+                    |row| row.get::<_, u32>(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(
             store.summaries("", false).unwrap()[0].snoozed_until,
             Some(788918401.0)
@@ -2042,7 +2067,7 @@ mod tests {
         store
             .save(&json!({"id":ID,"title":"Preserve","items":[]}))
             .unwrap();
-        store.connection().unwrap().execute_batch("ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema'; UPDATE threads SET document='{}';").unwrap();
+        store.connection().unwrap().execute_batch("DROP INDEX thread_summaries_snooze; ALTER TABLE thread_summaries DROP COLUMN snoozed_until; UPDATE metadata SET value='2' WHERE key='schema'; UPDATE threads SET document='{}';").unwrap();
         drop(store);
         assert!(Store::open(&path).is_err());
         let db = Connection::open(&path).unwrap();
@@ -2054,6 +2079,15 @@ mod tests {
             "2"
         );
         assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('thread_summaries') WHERE name='snoozed_until'",[],|r|r.get::<_,u32>(0)).unwrap(),0);
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='thread_summaries_snooze'",
+                [],
+                |row| row.get::<_, u32>(0)
+            )
+            .unwrap(),
+            0
+        );
     }
 }
 
