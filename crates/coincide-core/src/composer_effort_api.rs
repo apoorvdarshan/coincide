@@ -79,6 +79,41 @@ impl Engine {
         }
     }
     pub(super) fn validate_composer_defaults(&self, defaults: &Value) -> Result<Value> {
+        if defaults["selection"]["provider"] == "codex"
+            && !crate::composer_selection::default_account(&defaults["selection"]["accountID"])
+        {
+            let fields = defaults
+                .as_object()
+                .context("Composer defaults must be an object")?;
+            ensure!(
+                fields.keys().all(|key| matches!(
+                    key.as_str(),
+                    "selection" | "accessMode" | "interactionMode"
+                )),
+                "Composer defaults contain unsupported options"
+            );
+            let mut value = defaults.clone();
+            if value["accessMode"].is_null() {
+                value["accessMode"] = json!("approval");
+            }
+            if value["interactionMode"].is_null() {
+                value["interactionMode"] = json!("build");
+            }
+            crate::codex_login_profiles::validate_model_thread(&value)?;
+            let account = required(&value["selection"], "accountID")?;
+            crate::codex_login_profiles::account(
+                &crate::codex_login_profiles::configuration(&self.store)?,
+                account,
+            )?;
+            // Saving a default admits metadata only. A new thread cannot borrow
+            // this thread's catalog proof; it authenticates its own observation.
+            let mut syntax = crate::codex_login_profiles::validation_view(&value);
+            for option in ["effort", "speed"] {
+                syntax["selection"].as_object_mut().unwrap().remove(option);
+            }
+            crate::composer_selection::validate_thread_base(&syntax)?;
+            return Ok(value);
+        }
         let proof = self.composer_effort_proof(&defaults["selection"])?;
         crate::composer_selection::validate_defaults_with_proof(defaults, proof.as_ref())
     }

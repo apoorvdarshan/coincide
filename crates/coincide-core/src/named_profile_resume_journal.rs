@@ -19,12 +19,32 @@ use std::{
 #[cfg(any(unix, windows))]
 use std::io::Read;
 const MAX_RECORD: usize = 32 * 1024;
+// Dropped after Journal.db by field order. A transient concurrent fork/dup may
+// retain the open-file description past close, so release our finished owner's
+// lock explicitly before closing its descriptor. Never unlink the lock inode.
+struct Lease {
+    file: File,
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // SAFETY: this lease exclusively owns a live, already-locked fd.
+            while unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) } != 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
 pub(super) struct Journal {
     db: Connection,
     key: hmac::Key,
     // The key file doubles as an exclusive process/Engine lease. It is never
     // removed: unlinking a lock would let another process lock a new inode.
-    lease: File,
+    lease: Lease,
     key_path: PathBuf,
     db_path: PathBuf,
     key_identity: crate::private_fs::Identity,
@@ -62,7 +82,7 @@ impl Journal {
         private(&directory, true)?;
         let key_path = directory.join("authority.key");
         let db_path = directory.join("receipts.sqlite");
-        let mut lease = match open_file(&key_path, true) {
+        let lease = match open_file(&key_path, true) {
             Ok(mut file) => {
                 // A missing key beside an old journal is never permission to
                 // adopt it. Keep the old bytes for diagnosis; start fresh only.
@@ -87,15 +107,16 @@ impl Journal {
         };
         private(&key_path, false)?;
         lock(&lease)?;
+        let mut lease = Lease { file: lease };
         ensure!(
-            (34..=MAX_RECORD as u64).contains(&lease.metadata()?.len()),
+            (34..=MAX_RECORD as u64).contains(&lease.file.metadata()?.len()),
             "Invalid continuation authority state"
         );
-        lease.seek(SeekFrom::Start(0))?;
+        lease.file.seek(SeekFrom::Start(0))?;
         let mut secret = [0u8; 32];
-        lease.read_exact(&mut secret)?;
+        lease.file.read_exact(&mut secret)?;
         let mut state = Vec::new();
-        std::io::Read::by_ref(&mut lease)
+        std::io::Read::by_ref(&mut lease.file)
             .take(MAX_RECORD as u64)
             .read_to_end(&mut state)?;
         let tickets: HashMap<String, String> = serde_json::from_slice(&state)?;
@@ -105,7 +126,7 @@ impl Journal {
         );
         let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
         secret.fill(0);
-        let key_identity = crate::private_fs::file_identity(&lease)?;
+        let key_identity = crate::private_fs::file_identity(&lease.file)?;
         let file = match open_file(&db_path, true) {
             Ok(file) => file,
             Err(error)
@@ -143,7 +164,7 @@ impl Journal {
         private(&self.key_path, false)?;
         private(&self.db_path, false)?;
         ensure!(
-            crate::private_fs::file_identity(&self.lease)? == self.key_identity
+            crate::private_fs::file_identity(&self.lease.file)? == self.key_identity
                 && crate::private_fs::identity(&self.key_path)? == self.key_identity
                 && crate::private_fs::identity(&self.db_path)? == self.db_identity,
             "Continuation journal identity changed"
@@ -218,10 +239,10 @@ impl Journal {
             bytes.len() + 32 <= MAX_RECORD,
             "Continuation authority state exceeds its bound"
         );
-        self.lease.seek(SeekFrom::Start(32))?;
-        self.lease.write_all(&bytes)?;
-        self.lease.set_len((32 + bytes.len()) as u64)?;
-        self.lease.sync_all()?;
+        self.lease.file.seek(SeekFrom::Start(32))?;
+        self.lease.file.write_all(&bytes)?;
+        self.lease.file.set_len((32 + bytes.len()) as u64)?;
+        self.lease.file.sync_all()?;
         Ok(())
     }
 }
@@ -359,6 +380,29 @@ mod tests {
             "Copied MAC-valid row cannot restore a consumed private ticket"
         );
         assert!(journal.take("thread").unwrap().is_none());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn finished_journal_releases_lease_despite_inherited_open_description() {
+        let (_dir, store, mut journal) = fixture();
+        let receipt = json!({"native":"synthetic-owned"});
+        journal.put("thread", &receipt).unwrap();
+        // dup and pre-exec fork copies share the same open-file description.
+        // This reproduces the race deterministically without a concurrent fork.
+        let inherited = journal.lease.file.try_clone().unwrap();
+        assert!(Journal::open(&store).is_err());
+        drop(journal);
+        let mut replacement = Journal::open(&store).expect("closed owner releases its lease");
+        assert_eq!(replacement.take("thread").unwrap(), Some(receipt));
+        assert!(inherited.metadata().is_ok());
+        assert!(Journal::open(&store).is_err());
+        drop(inherited);
+        assert!(
+            Journal::open(&store).is_err(),
+            "old description cannot unlock the new owner"
+        );
+        drop(replacement);
+        assert!(Journal::open(&store).is_ok());
     }
     #[test]
     fn corruption_and_oversized_payloads_are_consumed_without_authority() {

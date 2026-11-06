@@ -3209,6 +3209,11 @@ impl Coincide {
                 return;
             }
         }
+        if self.selection_send_blocked() {
+            self.status = self.selected_account_wait_status().into();
+            cx.notify();
+            return;
+        }
         if self
             .selected
             .as_ref()

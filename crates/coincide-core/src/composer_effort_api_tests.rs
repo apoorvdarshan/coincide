@@ -270,6 +270,9 @@ fn effort_provider_fixture_child() {
         .as_object_mut()
         .unwrap()
         .remove("effort");
+    // An explicit Automatic choice also clears this account's remembered
+    // desired effort; every other saved field is compared byte-for-byte below.
+    expected["modelPreferences"]["codex/default"]["effort"] = Value::Null;
     assert_eq!(repaired, expected);
     let revision = engine.revision;
     assert!(engine.execute("agent.select", &params).is_err());
@@ -336,9 +339,17 @@ fn restarted_unproved_effort_can_only_be_explicitly_removed_without_other_change
         .as_object_mut()
         .unwrap()
         .remove("effort");
+    // Repair is an explicit account option choice, including after restart;
+    // its inert remembered preference changes without granting catalog proof.
+    expected["modelPreferences"] = json!({"codex/default":{"effort":null,"speed":null}});
+    let settings_before_repair = engine.store.document("settings.json").unwrap();
     let repaired = engine
         .execute("agent.select", &json!({"threadId":id,"effort":null}))
         .unwrap();
+    assert_eq!(
+        engine.store.document("settings.json").unwrap(),
+        settings_before_repair
+    );
     assert_eq!(repaired, expected);
     assert_eq!(engine.store.thread(&id).unwrap(), expected);
     assert_eq!(engine.revision, revision + 1);

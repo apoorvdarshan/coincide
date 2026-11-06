@@ -192,6 +192,26 @@ impl NamedModelProof {
     }
 }
 impl ModelCatalog {
+    pub(crate) fn cancel_named_restore(&mut self, request: &str) {
+        if let Some(job) = self.jobs.get(request) {
+            job.cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    pub(crate) fn ready_named_restore(&self, binding: &NamedBinding) -> Option<Value> {
+        binding.validate().ok()?;
+        let job = self
+            .order
+            .iter()
+            .rev()
+            .filter_map(|id| self.jobs.get(id))
+            .find(|job| same_scope(job.named.as_ref(), Some(binding)))?;
+        (job.named.as_ref() == Some(binding)
+            && job.response["state"] == "ready"
+            && job.response["authenticationChecked"] == true
+            && !job.cancelled.load(Ordering::Acquire))
+        .then(|| job.response.clone())
+    }
     pub(crate) fn refresh_named(&mut self, binding: NamedBinding) -> Result<Value> {
         binding.validate()?;
         let work_binding = binding.clone();
@@ -309,6 +329,26 @@ impl ModelCatalog {
             Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
         }
     }
+    /// Resolve desired options only against this authenticated account's exact
+    /// current row. Unsupported desired values remain remembered for a later
+    /// compatible model, while the active choice uses its supported default.
+    pub(crate) fn resolve_named_preferences(
+        &self,
+        thread: &mut Value,
+        binding: &NamedBinding,
+        request: Option<&str>,
+    ) -> Result<()> {
+        let mut shape = thread.clone();
+        for key in ["effort", "speed"] {
+            shape["selection"]
+                .as_object_mut()
+                .context("Invalid selection")?
+                .remove(key);
+        }
+        let (_, row) = self.named_model_row(&shape, binding, request)?;
+        super::resolve_reported_preferences(thread, binding.account(), std::slice::from_ref(row))
+    }
+
     pub(crate) fn named_model_proof(
         &self,
         thread: &Value,

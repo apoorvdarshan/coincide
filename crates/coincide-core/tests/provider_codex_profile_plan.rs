@@ -288,6 +288,12 @@ fn configure(
     expected["selection"]["modelID"] = json!(model);
     expected["selection"]["effort"] = json!(effort);
     expected["selection"]["speed"] = json!(speed);
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["effort"] = json!(effort);
+    expected["modelPreferences"][&account_key]["speed"] = json!(speed);
     expected["interactionMode"] = json!(mode);
     assert_eq!(call(e, SELECT, p), expected);
 }
@@ -425,6 +431,11 @@ fn plan_fixture_child() {
                 let mut p = selection_params(&e, &id, Some(&second));
                 p[option] = json!(value);
                 expected["selection"][option] = json!(value);
+                let account_key = format!(
+                    "codex/{}",
+                    expected["selection"]["accountID"].as_str().unwrap()
+                );
+                expected["modelPreferences"][&account_key][option] = json!(value);
                 assert_eq!(call(&mut e, SELECT, p), expected);
             }
             select_mode(&mut e, &id, "plan", Some(&second));

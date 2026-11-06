@@ -356,6 +356,10 @@ fn speed_fixture_child() {
         .as_object_mut()
         .unwrap()
         .remove("effort");
+    // Explicit Automatic/Standard choices clear this account's remembered
+    // desired options too. Every unrelated field remains in the exact compare.
+    expected["modelPreferences"]["codex/default"]["effort"] = Value::Null;
+    expected["modelPreferences"]["codex/default"]["speed"] = Value::Null;
     // save updates timestamp; all other thread data remains exact.
     expected["updatedAt"] = repaired["updatedAt"].clone();
     assert_eq!(repaired, expected);
