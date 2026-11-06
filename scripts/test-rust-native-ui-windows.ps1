@@ -12,6 +12,13 @@ $Artifacts = [IO.Path]::GetFullPath($Artifacts)
 New-Item -ItemType Directory -Force $Artifacts | Out-Null
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
+# Retain PowerShell's standard reference set when adding Drawing assemblies.
+# Replacing it with Drawing alone hides List/HashSet and fails before app launch.
+$CompilerReferences = @(
+    Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' |
+        Where-Object { $_.BaseName -notin @('System.Drawing','System.Drawing.Common','System.Drawing.Primitives') } |
+        ForEach-Object { $_.FullName }
+) + @([System.Drawing.Bitmap].Assembly.Location,[System.Drawing.Point].Assembly.Location)
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -73,7 +80,7 @@ public static class NativeUiSmoke {
         }
     }
 }
-'@ -ReferencedAssemblies @([System.Drawing.Bitmap].Assembly.Location,[System.Drawing.Point].Assembly.Location)
+'@ -ReferencedAssemblies $CompilerReferences
 
 $Fixture = Join-Path ([IO.Path]::GetTempPath()) ('coincide-native-ui-' + [Guid]::NewGuid().ToString('N'))
 $HomeDir = Join-Path $Fixture 'home'

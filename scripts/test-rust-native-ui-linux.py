@@ -98,7 +98,18 @@ def main():
             image = source.convert("RGB")
         assert image.width >= 800 and image.height >= 500, "Native window is too small"
         assert max(ImageStat.Stat(image).stddev) > 8, "Window has no meaningful rendered content"
-        text = command("tesseract", str(path), "stdout", "--psm", "11", env=env)
+        ocr_path, segmentation = path, "11"
+        if stage == "command-palette":
+            # The captured palette is visibly correct, but sparse whole-window
+            # segmentation split its small text into unrelated character blobs.
+            # Keep the full native image; OCR only its actual centered popup at
+            # a readable scale and retain that derived diagnostic separately.
+            left, right = max(0, image.width // 2 - 360), min(image.width, image.width // 2 + 360)
+            crop = image.crop((left, 48, right, min(image.height, 250)))
+            ocr_path = artifacts / f"{stage}-ocr-region.png"
+            crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS).save(ocr_path)
+            segmentation = "6"
+        text = command("tesseract", str(ocr_path), "stdout", "--psm", segmentation, env=env)
         (artifacts / f"{stage}.txt").write_text(text)
         if expected:
             assert expected.lower() in text.lower(), f"Expected rendered text {expected!r} in {stage}"
