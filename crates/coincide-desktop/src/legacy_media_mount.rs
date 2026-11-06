@@ -38,6 +38,9 @@ pub(super) struct ParentMedia {
     draft_pending: bool,
     context: Option<(Option<String>, u64, Vec<String>)>,
     images: Vec<DisplayImage>,
+    viewer: historical_image_view::Viewer,
+    viewer_focus: FocusHandle,
+    viewer_restore: Option<FocusHandle>,
     status: String,
     epoch: u64,
     pending_render: Option<RenderRequest>,
@@ -71,6 +74,9 @@ impl ParentMedia {
             draft_pending: false,
             context: None,
             images: Vec::new(),
+            viewer: historical_image_view::Viewer::default(),
+            viewer_focus: cx.focus_handle(),
+            viewer_restore: None,
             status: String::new(),
             epoch: 0,
             pending_render: None,
@@ -211,6 +217,10 @@ impl Coincide {
             && !self.session_import_open
     }
     fn remove_media_images(&mut self, cx: &mut Context<Self>) {
+        self.media.viewer.close();
+        if self.media.shutdown_requested || self.media.close_requested {
+            self.media.viewer_restore = None;
+        }
         let ids = self
             .media
             .images
@@ -647,12 +657,153 @@ impl Coincide {
         }
         cx.notify();
     }
-    pub(super) fn historical_images(&self, item: &str) -> Vec<AnyElement> {
+    pub(super) fn historical_image_is_open(&self) -> bool {
+        self.media.viewer.selection().is_some()
+    }
+    fn historical_image_selection_current(
+        &self,
+        selection: &historical_image_view::Selection,
+    ) -> bool {
+        selection.current(
+            self.selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str()),
+            self.media.epoch,
+            self.media.revision,
+            self.media.images.iter().any(|image| {
+                image.item == selection.item && image.candidate == selection.candidate
+            }),
+            self.media.shutdown_requested
+                || self.media.close_requested
+                || !self.find_context_available(),
+        )
+    }
+    fn open_historical_image(
+        &mut self,
+        selection: historical_image_view::Selection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let visible = self
+            .selected
+            .as_ref()
+            .and_then(|thread| find_row(thread, &selection.thread, &selection.item))
+            .and_then(|row| self.transcript_list.bounds_for_item(row))
+            .is_some_and(|row| row_intersects(row, self.transcript_list.viewport_bounds()));
+        let current = visible
+            && window.is_window_active()
+            && !self.command_palette.read(cx).is_open()
+            && self.historical_image_selection_current(&selection);
+        let was_open = self.historical_image_is_open();
+        if !self.media.viewer.open(selection, current) {
+            return;
+        }
+        if !was_open {
+            self.media.viewer_restore = window.focused(cx);
+        }
+        self.media.viewer_focus.focus(window, cx);
+        // Native WebViews are above GPUI; hide them before drawing this modal.
+        // The selected profile/tab and the user's browser-panel choice stay intact.
+        if let Some(browser) = &mut self.browser {
+            browser.set_thread_visible(None, cx);
+        }
+        self.sync_terminal_workspace(window, cx);
+        cx.notify();
+    }
+    fn close_historical_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.media.viewer.close();
+        if let Some(focus) = self.media.viewer_restore.take() {
+            focus.focus(window, cx);
+        }
+        self.sync_terminal_workspace(window, cx);
+        cx.notify();
+    }
+    pub(super) fn sync_historical_image_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .media
+            .viewer
+            .selection()
+            .is_some_and(|selection| !self.historical_image_selection_current(selection))
+        {
+            self.media.viewer.close();
+        }
+        if !self.historical_image_is_open() {
+            if self.media.shutdown_requested || self.media.close_requested {
+                self.media.viewer_restore = None;
+            } else if let Some(focus) = self.media.viewer_restore.take() {
+                focus.focus(window, cx);
+            }
+        }
+    }
+    /// While the modal owns input, root conversation shortcuts must not act on
+    /// the obscured composer. Tab still reaches its native-accessible Close button.
+    pub(super) fn historical_image_shortcut(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.historical_image_is_open() {
+            return false;
+        }
+        let key = &event.keystroke;
+        if key.key == "escape"
+            && !key.modifiers.platform
+            && !key.modifiers.control
+            && !key.modifiers.alt
+            && !key.modifiers.shift
+            && !event.is_held
+        {
+            self.close_historical_image(window, cx);
+            cx.stop_propagation();
+        }
+        true
+    }
+    pub(super) fn historical_image_overlay(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let selection = self.media.viewer.selection()?;
+        if !self.historical_image_selection_current(selection) {
+            return None;
+        }
+        let image =
+            self.media.images.iter().find(|image| {
+                image.item == selection.item && image.candidate == selection.candidate
+            })?;
+        Some(div().id("historical-image-viewer").absolute().inset_0().p_6().flex().items_center().justify_center()
+            .bg(rgba(0x000000ee)).track_focus(&self.media.viewer_focus)
+            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| cx.stop_propagation()))
+            .child(div().w_full().h_full().max_w(px(1400.)).flex().flex_col().gap_3().min_h_0()
+                .child(div().flex().items_center().gap_3()
+                    .child(div().flex_1().min_w_0().truncate().child(image.name.clone()))
+                    .child(Button::new("historical-image-close").label("Close image").on_click(cx.listener(|this, _, window, cx| this.close_historical_image(window, cx)))))
+                .child(div().flex_1().min_h_0().w_full().overflow_hidden()
+                    .child(img(image.image.clone()).size_full().object_fit(ObjectFit::Contain)
+                        .with_loading(|| div().child("Loading historical image…").into_any_element())
+                        .with_fallback(|| div().child("Historical image unavailable. Close this view and inspect again.").into_any_element())))
+                .child(div().text_xs().child("Verified local image · Escape or Close image returns to the conversation.")))
+            .into_any_element())
+    }
+    pub(super) fn historical_images(&self, item: &str, cx: &Context<Self>) -> Vec<AnyElement> {
+        let thread = self
+            .selected
+            .as_ref()
+            .map(|thread| text(thread, "id"))
+            .unwrap_or_default();
         self.media
             .images
             .iter()
             .filter(|image| image.item == item)
             .map(|image| {
+                let selection = historical_image_view::Selection {
+                    thread: thread.clone(),
+                    item: image.item.clone(),
+                    candidate: image.candidate.clone(),
+                    epoch: self.media.epoch,
+                    revision: self.media.revision,
+                };
                 div()
                     .id(SharedString::from(format!(
                         "historical-image-{}-{}",
@@ -685,6 +836,18 @@ impl Coincide {
                             .truncate()
                             .text_xs()
                             .child(image.name.clone()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "historical-image-enlarge-{}",
+                            image.candidate
+                        )))
+                        .label("Enlarge image")
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.open_historical_image(selection.clone(), window, cx)
+                            },
+                        )),
                     )
                     .into_any_element()
             })

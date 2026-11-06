@@ -29,6 +29,7 @@ mod github_actions;
 mod github_review;
 mod github_threads;
 mod github_write_transport;
+mod historical_image_view;
 mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
@@ -1230,6 +1231,7 @@ impl Coincide {
             .try_lock()
             .map(|mut engine| engine.browser_requests.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
+        let image_viewer_open = self.historical_image_is_open();
         let Some(browser) = &mut self.browser else {
             return;
         };
@@ -1250,7 +1252,7 @@ impl Coincide {
         let selected = self.selected.as_ref().map(|v| text(v, "id"));
         let visible = selected
             .as_deref()
-            .filter(|thread| self.browser_panels.contains(*thread));
+            .filter(|thread| self.browser_panels.contains(*thread) && !image_viewer_open);
         // API work for another thread may create a native surface; reconcile it
         // before yielding to the run loop so it never covers this conversation.
         browser.set_thread_visible(visible, cx);
@@ -1315,6 +1317,9 @@ impl Coincide {
         }
     }
     fn browser_pane(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.historical_image_is_open() {
+            return None;
+        }
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         let browser = self.browser.as_ref()?;
         if !browser.is_visible(&thread) {
@@ -3280,7 +3285,7 @@ impl Coincide {
                 .when(!previews.is_empty(), |view| {
                     view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
                 })
-                .children(self.historical_images(&item_id))
+                .children(self.historical_images(&item_id, cx))
                 .when(kind == "user", |view| {
                     let source = source_id.clone();
                     let item = item_id.clone();
@@ -3374,6 +3379,7 @@ impl Coincide {
             && !self.workspace_open
             && !self.session_import_open
             && !self.command_palette.read(cx).is_open()
+            && !self.historical_image_is_open()
             && window.is_window_active()
             && window.visibility().is_visible();
         let target = selected.filter(|id| visible && !id.is_empty());
@@ -3460,6 +3466,11 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Revoke image-modal input immediately on either close path, before its
+        // ordinary conversation surface is replaced by cleanup-only controls.
+        if self.media.close_requested || self.media.shutdown_requested {
+            self.sync_historical_image_view(window, cx);
+        }
         // Closing exposes only already-owned cleanup recovery, never the general
         // settings surface or a new source/profile admission.
         let cookie_recovery = if self.media.shutdown_requested || self.media.close_requested {
@@ -3503,6 +3514,7 @@ impl Render for Coincide {
                 });
         }
         self.sync_media_context(cx);
+        self.sync_historical_image_view(window, cx);
         self.sync_terminal_workspace(window, cx);
         let open = self
             .engine
@@ -3771,10 +3783,15 @@ impl Render for Coincide {
             && !self.session_import_open;
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
+        let historical_image = self.historical_image_overlay(cx);
         div()
             .relative()
             .capture_key_down(
-                cx.listener(|this, event, window, cx| this.app_shortcut(event, window, cx)),
+                cx.listener(|this, event, window, cx| {
+                    if !this.historical_image_shortcut(event, window, cx) {
+                        this.app_shortcut(event, window, cx);
+                    }
+                }),
             )
             .flex()
             .size_full()
@@ -4011,6 +4028,7 @@ impl Render for Coincide {
                     }),
             )
             .when_some(browser_pane, |view, pane| view.child(pane))
+            .when_some(historical_image, |view, image| view.child(image))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()
