@@ -210,6 +210,13 @@ fn choose(e: &mut Engine, id: &str, _root: &Path, model: &str, effort: &str, r: 
     let mut expected = before;
     expected["selection"]["modelID"] = json!(model);
     expected["selection"]["effort"] = json!(effort);
+    // Explicit option choices remember only this account's desired option;
+    // retain the exact comparison for draft, modes, transcript and all accounts.
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["effort"] = json!(effort);
     assert_eq!(actual, expected);
     assert_eq!(
         e.store.document("effort-fixture.json").unwrap(),
@@ -500,6 +507,11 @@ fn effort_fixture_child() {
     let repaired = call(&mut e, SELECT, bad);
     let mut expected = saved.clone();
     expected["selection"]["effort"] = Value::Null;
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["effort"] = Value::Null;
     assert_eq!(repaired, expected);
     refuse(
         &mut e,
