@@ -200,7 +200,10 @@ pub(super) fn configure(shortcut: Option<&str>) -> Result<()> {
                         Err(_) => return,
                     };
                     let transition = match event {
-                        Event::XinputRawKeyPress(event) => {
+                        Event::XinputRawKeyPress(event)
+                            if event.flags & xinput::KeyEventFlags::KEY_REPEAT
+                                == xinput::KeyEventFlags::default() =>
+                        {
                             u8::try_from(event.detail).ok().map(|key| (key, true))
                         }
                         Event::XinputRawKeyRelease(event) => {
