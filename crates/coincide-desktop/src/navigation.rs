@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::tooltip::Tooltip;
 
 use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 
@@ -945,7 +946,7 @@ impl Coincide {
             .border_color(self.color(0x29303d))
             .p_3()
             .gap_2()
-            .on_key_down(cx.listener(|this, event, window, cx| {
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if this.search.read(cx).focus_handle(cx).is_focused(window)
                     || this.project_picker_open
                     || this.thread_bulk.mode
