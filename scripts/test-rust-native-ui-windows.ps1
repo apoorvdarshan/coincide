@@ -190,6 +190,46 @@ function Invoke-Rpc([string]$Method,[hashtable]$Params=@{}) {
     if($reply.ContainsKey('error')){throw "Local-control API error: $Method"}
     return $reply.result
 }
+function Capture-OwnedAccessibility([IntPtr]$Window,[string]$Stage) {
+    # Inspect only the private candidate HWND. This diagnostic grants no click
+    # authority and never treats missing UIA support as native workflow proof.
+    $query=@'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]__WINDOW__)
+if($null -eq $root -or $root.Current.ProcessId -ne __OWNER__){throw 'UIA root owner mismatch'}
+$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+if($all.Count -gt 512){throw 'Owned UIA tree exceeds diagnostic bound'}
+$rows=@()
+foreach($node in $all){
+    $value=$node.Current
+    if($value.ProcessId -ne __OWNER__){continue}
+    $bounds=$value.BoundingRectangle
+    $name=$value.Name;$id=$value.AutomationId
+    if($name.Length -gt 256 -or $id.Length -gt 256){throw 'Owned UIA label exceeds diagnostic bound'}
+    $rows+=@{name=$name;automationId=$id;controlType=$value.ControlType.ProgrammaticName;bounds=@($bounds.X,$bounds.Y,$bounds.Width,$bounds.Height)}
+}
+ConvertTo-Json -InputObject $rows -Depth 5 -Compress
+'@
+    $query=$query.Replace('__WINDOW__',$Window.ToInt64().ToString()).Replace('__OWNER__',$script:OwnedProcess.Id.ToString())
+    $info=[Diagnostics.ProcessStartInfo]::new((Join-Path $Environment.SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'))
+    $info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    foreach($arg in @('-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($query)))){$info.ArgumentList.Add($arg)}
+    $info.Environment.Clear();foreach($key in $Environment.Keys){$info.Environment[$key]=$Environment[$key]}
+    $reader=[Diagnostics.Process]::Start($info);$script:PendingClients.Add($reader)
+    $outputTask=$reader.StandardOutput.ReadToEndAsync();$errorTask=$reader.StandardError.ReadToEndAsync()
+    if(-not $reader.WaitForExit(10000)){throw "Owned accessibility reader still running: PID $($reader.Id)"}
+    $script:PendingClients.Remove($reader) | Out-Null
+    $output=$outputTask.GetAwaiter().GetResult();$null=$errorTask.GetAwaiter().GetResult()
+    if($reader.ExitCode -eq 0){
+        $nodes=$output|ConvertFrom-Json
+        $nodes|ConvertTo-Json -Depth 5|Set-Content (Join-Path $Artifacts "$Stage-accessibility.json")
+        $Report.accessibilityObserved=$true
+    } else {
+        $Report.accessibilityObserved=$false
+        $Report.accessibilityDiagnostic='Owned UIA query unavailable; no semantic locator acceptance claimed'
+    }
+}
 function Start-Owned([string]$Stage) {
     # Start-Process inherits this deliberately restricted temporary environment.
     # Restore the parent without printing any saved environment values.
@@ -253,6 +293,7 @@ try {
     [NativeUiSmoke]::Enter($main,[uint32]$script:OwnedProcess.Id)
     $settings=Wait-Condition 'separate General Settings window' {$handle=[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'General');if($handle -ne [IntPtr]::Zero){$handle}}
     Capture-Owned $settings 'settings-general'
+    Capture-OwnedAccessibility $settings 'settings-general'
     [NativeUiSmoke]::Chord($settings,[uint32]$script:OwnedProcess.Id,0x57)
     Wait-Condition 'Settings window closed independently' {[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'General') -eq [IntPtr]::Zero} | Out-Null
     if($script:OwnedProcess.HasExited){throw 'Closing Settings unexpectedly closed the app'}
