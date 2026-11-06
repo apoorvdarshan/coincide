@@ -56,6 +56,18 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- Work resumed on 2026-11-06 at 04:18 UTC after an inactive gap; the overnight
+  work was not continuous. The broad acceptance checklist remains incomplete.
+- The new explicit default-runtime Codex limits reader and separate Usage panel
+  passed 528 core unit tests, every core integration target, 360 desktop unit
+  tests and all four desktop integration targets (19, 10, 14, 11). Strict feature
+  core Clippy passes after fixing enum names without suppressions or wire changes.
+  The reader retains cancellation and actual worker joins, rejects stale results,
+  and does not claim a selected account identity, billing or entitlement. Native
+  live limits acceptance passed on ab1b8e4: one visible Refresh showed actual
+  timestamped provider windows/plan/reset/credits, missing fields stayed unknown,
+  and normal native Quit exited zero with isolated data and Swift preserved.
+  This batch's remote CI remains pending.
 - e88132a passed all six Rust CI jobs (42128919172), packaging validation
   (42128919100) and general CI (42128919184), verified on the exact pushed SHA.
   Local outcome-diagnostic and cookie-notification changes passed 511 core unit
@@ -69,9 +81,12 @@ Latest verification and current gates:
   Only synthetic vault data was used. This does not prove real-vault integration,
   passkeys, full-product shutdown or native WebKit release.
 - A separate opt-in per-WebView release receipt prototype compiled and passed its
-  eight token tests and nine GPUI release tests. Native ownership checks are in
-  progress in an isolated fixture. The prototype is not integrated into the main
-  application; global native release and updater readiness remain unproven.
+  eight token tests and nine GPUI release tests. Actual isolated native checks
+  passed: the per-view receipt stayed Owned through Rust Drop and became
+  SuperDeallocReturned only after an actual held callback block/target released.
+  The independent content manager was still held at that point. Normal fixture
+  exit returned zero. The prototype is not integrated into the main application;
+  strict native release remains Unknown and global updater readiness is unproven.
 - Native cookie acceptance on immutable dfdcc88 passed choosing the synthetic
   closed SQLite source, host/count review, explicit four-cookie import, exact
   asynchronous native readback and a new unselected profile with no automatic
@@ -108,7 +123,10 @@ Latest verification and current gates:
   An external selection-change setup exposed Discard using cached settings;
   07d47c7 now reloads authoritative selection fields without replacing local
   composer content, with all 36 focused selection tests passing. This reload fix
-  has not yet been retested through native UI.
+  passed native retesting on e88132a: one actual Discard reloaded a validated
+  external model/effort/speed/mode change without Apply or a refresh workaround.
+  Normal native Quit exited zero with actual Store/control completion, exact
+  content/image preservation, one catalog call and zero runtime calls.
 - Native bookmark acceptance passed on isolated f703202: choosing/reviewing
   showed no saved library or HTTP requests, explicit Save produced 23 unique
   bookmarks from 24 rows, Reload/paging worked, and Open displayed the exact
@@ -338,26 +356,26 @@ proof bound to the explicit model, advertised choice and executable metadata.
 Refresh/revocation, invalid selection and failure cases are tested, including the
 actual fake-provider wire boundary. Controls preserve saved effort, offer only
 current scoped choices and require explicit Apply; an explicit effort-only clear
-can repair stale proof without changing other fields. Native effort-control
-acceptance is pending. Speed and Swift’s Astra special default override remain
-unsupported; executable metadata binding is not cryptographic running-code trust.
+can repair stale proof without changing other fields. Native effort/model-control acceptance now passed in the scoped fixtures above.
+Codex speed and Swift's Astra default override are implemented and tested;
+executable metadata binding is not cryptographic running-code trust.
 
 The parent normal-quit mount freezes new work, retains recovery controls, drains owned workers
 off the UI thread, stops the control transport and explicitly closes the Store
 before requesting native exit. It does not grant updater consent or establish
 crash/force-quit acceptance. Strict desktop Clippy still has existing backlog and
 unmounted transport dead-code failures; no strict desktop success is claimed.
-The last fully green Rust remote checkpoint is cbc7eef (all six jobs); f521be7
-also passed all six Rust jobs and all three packaging-validation jobs after the
-explicit transaction-lock fix. Newer local command, effort, picker and menu fixes
-have passed the checks above and require their own pushed CI checkpoint. Native
+The cbc7eef and f521be7 checkpoints below are historical. The latest verified
+remote checkpoint is recorded at the top of this document; newer batches remain
+pending until their exact pushed SHA has passing results. Native
 menu/terminal fixtures and real provider smoke checks are scoped evidence, not
 full OS GUI parity, installation/rollback or data cutover acceptance.
 
 ## Earlier parallel checkpoint (2026-11-05)
 
-Overall verified macOS parity remains approximately 30%. Windows/Linux feature
-parity and existing-macOS UI/UX matching remain open acceptance milestones.
+The earlier estimate of approximately 30% was a historical checkpoint, not a
+current measured percentage. Windows/Linux feature parity and existing-macOS
+UI/UX matching remain open acceptance milestones.
 
 All seven first-round worker slices and their delivered follow-ups are integrated.
 The broad feature groups above remain open until their complete behavior passes.
