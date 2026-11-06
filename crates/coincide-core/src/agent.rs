@@ -251,6 +251,7 @@ impl Session {
             instructions,
             policy,
             None,
+            None,
         )
     }
     pub(crate) fn start_with_mode_policy_and_profile(
@@ -260,6 +261,7 @@ impl Session {
         instructions: Option<String>,
         policy: Option<crate::composer_policy::Policy>,
         profile: Option<crate::codex_login_profiles::LaunchContext>,
+        named_model: Option<crate::model_catalog::NamedModelProof>,
     ) -> Self {
         let profile_account = profile.as_ref().map(|profile| profile.account().to_owned());
         let codex = matches!(&provider, Provider::Codex);
@@ -299,6 +301,7 @@ impl Session {
                             steering: steer_server,
                             policy,
                             profile,
+                            named_model,
                         },
                     ),
                     Provider::Claude => {
@@ -456,6 +459,7 @@ struct CodexOptions {
     steering: codex_steering::Server,
     policy: Option<crate::composer_policy::Policy>,
     profile: Option<crate::codex_login_profiles::LaunchContext>,
+    named_model: Option<crate::model_catalog::NamedModelProof>,
 }
 fn run(
     launch: Launch,
@@ -470,6 +474,7 @@ fn run(
         mut steering,
         policy,
         profile,
+        named_model,
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
@@ -482,11 +487,20 @@ fn run(
         .map(|image| image.path().to_path_buf())
         .collect::<Vec<_>>();
     drop(images);
+    ensure!(
+        profile.is_some() || named_model.is_none(),
+        "Named model proof requires its captured Codex profile"
+    );
     let mut transport = if let Some(profile) = &profile {
         ensure!(
-            launch.session.is_none() && launch.model.is_none() && instructions.is_none(),
+            launch.session.is_none()
+                && instructions.is_none()
+                && (launch.model.is_none() == named_model.is_none()),
             "Named Codex profile native resume/options are unavailable"
         );
+        if let Some(proof) = &named_model {
+            proof.validate_launch(profile, &launch.cwd, launch.model.as_deref())?;
+        }
         transport::Transport::spawn_codex_profile(&launch, profile)?
     } else {
         transport::Transport::spawn(&launch, &["app-server".into()], &[])?
@@ -548,6 +562,9 @@ fn run(
                     "Codex profile authentication check failed"
                 );
                 profile.admit_account(&frame["result"])?;
+                if let Some(proof) = &named_model {
+                    proof.validate_launch(profile, &launch.cwd, launch.model.as_deref())?;
+                }
                 account_pending = false;
                 write_thread_request(&mut transport, &launch, instructions.as_deref())?;
                 stage = 2;
@@ -607,6 +624,14 @@ fn run(
                     2 => {
                         if let Some(profile) = &profile {
                             profile.validate()?;
+                            if let Some(proof) = &named_model {
+                                proof.validate_launch(
+                                    profile,
+                                    &launch.cwd,
+                                    launch.model.as_deref(),
+                                )?;
+                                proof.validate_resolved(&frame["result"])?;
+                            }
                         }
                         let id = frame["result"]["thread"]["id"]
                             .as_str()

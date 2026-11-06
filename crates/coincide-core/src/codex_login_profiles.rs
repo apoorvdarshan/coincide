@@ -10,7 +10,7 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) const DOCUMENT: &str = "rust-codex-login-profiles.json";
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaunchContext {
     account: String,
     home: PathBuf,
@@ -183,16 +183,31 @@ pub(crate) fn account<'a>(configuration: &'a Value, id: &str) -> Result<&'a Valu
     Ok(value)
 }
 pub(crate) fn validate_thread(thread: &Value) -> Result<()> {
+    validate_model_thread(thread)?;
+    ensure!(
+        thread["selection"]["modelID"] == "default",
+        "Choose Provider default before switching Codex profile"
+    );
+    Ok(())
+}
+pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
+    let model = thread["selection"]["modelID"]
+        .as_str()
+        .context("Codex model must be text")?;
+    crate::composer_selection::validate_model(model)?;
+    ensure!(
+        !matches!(model, "gpt-6-astra" | "openai.gpt-6-astra"),
+        "Named Codex Astra app-default effort is not connected"
+    );
     ensure!(
         thread["selection"]["provider"] == "codex"
-            && thread["selection"]["modelID"] == "default"
             && thread["selection"]["effort"].is_null()
             && thread["selection"]["speed"].is_null()
             && thread["rustBotContext"].is_null()
             && thread["botID"].is_null()
             && (thread["accessMode"].is_null() || thread["accessMode"] == "approval")
             && (thread["interactionMode"].is_null() || thread["interactionMode"] == "build"),
-        "Named Codex login profiles currently require ordinary provider-default model, approval/build and no effort/speed"
+        "Named Codex login profiles require ordinary approval/build and no effort/speed"
     );
     Ok(())
 }

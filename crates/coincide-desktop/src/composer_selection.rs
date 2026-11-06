@@ -4,6 +4,8 @@
 use super::*;
 use anyhow::Context as _;
 use std::collections::HashMap;
+#[path = "codex_profile_models.rs"]
+mod named_models;
 
 #[derive(Clone, Debug, PartialEq)]
 struct SelectionDraft {
@@ -579,6 +581,7 @@ struct CatalogRequest {
     request_id: String,
     provider: String,
     account_id: String,
+    thread_id: Option<String>,
 }
 fn default_account_id(raw: &Value) -> Option<&str> {
     match raw {
@@ -592,6 +595,11 @@ fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
     value["requestId"].as_str() == Some(request.request_id.as_str())
         && value["provider"].as_str() == Some(request.provider.as_str())
         && value["accountID"].as_str() == Some(request.account_id.as_str())
+        && request
+            .thread_id
+            .as_ref()
+            .is_none_or(|id| value["threadId"] == *id)
+        && (request.thread_id.is_some() || value["threadId"].is_null())
         && matches!(
             value["state"].as_str(),
             Some("loading" | "ready" | "failed" | "unsupported")
@@ -1370,6 +1378,7 @@ impl Coincide {
                     request_id: text(&value, "requestId"),
                     provider,
                     account_id,
+                    thread_id: None,
                 };
                 if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
                     self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
@@ -1401,16 +1410,26 @@ impl Coincide {
             return;
         }
         self.selection_ui.catalog_last_poll = Some(Instant::now());
-        match call(
-            &self.engine,
-            "agent.models.status",
-            json!({"requestId":request.request_id}),
-        ) {
+        let (method, params) = if let Some(thread) = &request.thread_id {
+            (
+                "providers.codex.profiles.models.status",
+                json!({"requestId":request.request_id,"threadId":thread,"accountId":request.account_id}),
+            )
+        } else {
+            (
+                "agent.models.status",
+                json!({"requestId":request.request_id}),
+            )
+        };
+        match call(&self.engine, method, params) {
             Ok(value) if catalog_response_matches(&value, &request) => {
                 let done = value["state"] != "loading";
                 self.selection_ui.catalog = value;
                 if done {
                     self.selection_ui.catalog_request = None;
+                    if request.thread_id.is_some() {
+                        self.selection_ui.context = None;
+                    }
                 }
             }
             Ok(_) => {
@@ -1541,6 +1560,9 @@ impl Coincide {
         let Some(thread) = &self.selected else {
             return div().into_any_element();
         };
+        if named_models::named_thread(thread) {
+            return self.named_profile_model_pane(thread, cx);
+        }
         let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
             return div().child("Loading selection…").into_any_element();
         };
@@ -2392,6 +2414,7 @@ mod tests {
             request_id: "request".into(),
             provider: "codex".into(),
             account_id: "default".into(),
+            thread_id: None,
         };
         let mut result = json!({"requestId":"request","provider":"codex","accountID":"default","state":"ready","models":[{"id":"reported","reportedEfforts":["high"]}]});
         assert!(catalog_response_matches(&result, &request));

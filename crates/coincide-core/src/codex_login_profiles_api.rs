@@ -122,7 +122,7 @@ impl Engine {
             !self.store.is_imported(id)?,
             "Imported Codex profile execution is unavailable"
         );
-        profiles::validate_thread(thread)?;
+        profiles::validate_model_thread(thread)?;
         let account = required(&thread["selection"], "accountID")?;
         profiles::account(&profiles::configuration(&self.store)?, account)?;
         ensure!(

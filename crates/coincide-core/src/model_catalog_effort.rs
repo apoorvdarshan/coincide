@@ -115,7 +115,7 @@ impl ModelCatalog {
             .iter()
             .rev()
             .filter_map(|id| self.jobs.get(id))
-            .find(|job| job.response["provider"] == "codex")
+            .find(|job| job.named.is_none() && job.response["provider"] == "codex")
             .context("Refresh the Codex model catalog before choosing effort/speed")?;
         ensure!(
             job.response["state"] == "ready" && !job.cancelled.load(Ordering::Acquire),
@@ -236,7 +236,7 @@ mod tests {
         let mut catalog = ModelCatalog::default();
         let id = "trusted-private-job".to_owned();
         let model = parse_model(&json!({"model":"reported-model","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}],"defaultReasoningEffort":"low"})).unwrap().unwrap();
-        catalog.jobs.insert(id.clone(), Job { binding:Some(EffortExecutable::read(&executable).unwrap()), response:json!({"provider":"codex","accountID":"default","state":"ready","models":[model]}),cancelled:Arc::new(AtomicBool::new(false)) });
+        catalog.jobs.insert(id.clone(), Job { named:None, binding:Some(EffortExecutable::read(&executable).unwrap()), response:json!({"provider":"codex","accountID":"default","state":"ready","models":[model]}),cancelled:Arc::new(AtomicBool::new(false)) });
         catalog.order.push_back(id);
         let selection = json!({"provider":"codex","modelID":"reported-model","effort":"high"});
         (dir, catalog, executable, selection)
@@ -329,6 +329,7 @@ mod tests {
             catalog.jobs.insert(
                 "latest".into(),
                 Job {
+                    named: None,
                     binding: Some(EffortExecutable::read(&path).unwrap()),
                     response: json!({"provider":"codex","state":state,"models":[]}),
                     cancelled: Arc::new(AtomicBool::new(false)),

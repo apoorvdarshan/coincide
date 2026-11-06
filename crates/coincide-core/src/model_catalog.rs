@@ -21,6 +21,9 @@ pub(crate) use effort::{CodexEffortProof, astra_default_needed};
 
 #[path = "model_catalog_limits.rs"]
 pub(crate) mod limits;
+#[path = "model_catalog_profile.rs"]
+mod profile;
+pub(crate) use profile::{NamedBinding, NamedModelProof};
 
 const MAX_JOBS: usize = 8;
 const MAX_ACTIVE: usize = 2;
@@ -52,6 +55,7 @@ struct Worker {
     completion: crate::agent::WorkerCompletion,
 }
 struct Job {
+    named: Option<NamedBinding>,
     binding: Option<EffortExecutable>,
     response: Value,
     cancelled: Arc<AtomicBool>,
@@ -94,6 +98,7 @@ impl ModelCatalog {
                     Ok(models) => {
                         job.response["state"] = json!("ready");
                         job.response["models"] = json!(models);
+                        job.response["authenticationChecked"] = json!(job.named.is_some());
                     }
                     Err(error) => {
                         job.response["state"] = json!("failed");
@@ -195,14 +200,23 @@ impl ModelCatalog {
         binding: Option<EffortExecutable>,
         work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
     ) -> Result<Value> {
+        self.refresh_scoped(provider, binding, None, work)
+    }
+    fn refresh_scoped(
+        &mut self,
+        provider: &str,
+        binding: Option<EffortExecutable>,
+        named: Option<NamedBinding>,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         crate::agent::Provider::from_name(provider)?;
         self.poll();
-        if let Some(job) = self
-            .jobs
-            .values()
-            .find(|job| job.response["provider"] == provider && job.response["state"] == "loading")
-        {
+        if let Some(job) = self.jobs.values().find(|job| {
+            job.response["provider"] == provider
+                && job.named == named
+                && job.response["state"] == "loading"
+        }) {
             return Ok(job.response.clone());
         }
         let supported = supported(provider);
@@ -223,17 +237,20 @@ impl ModelCatalog {
         }
         // A newly admitted refresh revokes old proofs immediately, even if
         // its eventual discovery fails. Never fall back to an older catalog.
-        for job in self
-            .jobs
-            .values()
-            .filter(|job| job.response["provider"] == provider)
-        {
+        for job in self.jobs.values().filter(|job| {
+            job.response["provider"] == provider
+                && profile::same_scope(job.named.as_ref(), named.as_ref())
+        }) {
             job.cancelled.store(true, Ordering::Release);
         }
         let id = uuid::Uuid::new_v4().to_string();
         let mut response = json!({"requestId":id,"provider":provider,"accountID":"default",
             "state":if supported {"loading"} else {"unsupported"},"provenance":"provider_model_list",
             "authenticationChecked":false,"models":[],"error":null});
+        if let Some(named) = &named {
+            response["accountID"] = json!(named.account());
+            response["threadId"] = json!(named.thread());
+        }
         if !supported {
             response["error"] =
                 json!("Read-only model discovery is not implemented for this provider/platform");
@@ -242,6 +259,7 @@ impl ModelCatalog {
         self.jobs.insert(
             id.clone(),
             Job {
+                named,
                 binding,
                 response: response.clone(),
                 cancelled: cancelled.clone(),
@@ -417,10 +435,17 @@ trait Rpc {
     fn write(&mut self, value: &Value) -> Result<()>;
     fn response(&mut self, id: u64) -> Result<Value>;
 }
-fn codex_models(rpc: &mut impl Rpc) -> Result<Vec<Value>> {
+fn codex_initialize(rpc: &mut impl Rpc) -> Result<()> {
     rpc.write(&json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}}))?;
     rpc.response(1)?;
     rpc.write(&json!({"method":"initialized"}))?;
+    Ok(())
+}
+fn codex_models(rpc: &mut impl Rpc) -> Result<Vec<Value>> {
+    codex_initialize(rpc)?;
+    codex_model_pages(rpc)
+}
+fn codex_model_pages(rpc: &mut impl Rpc) -> Result<Vec<Value>> {
     let mut cursor: Option<String> = None;
     let mut cursors = HashSet::new();
     let mut models = Vec::new();
@@ -564,6 +589,7 @@ struct ProcessRpc<'a> {
     started: Instant,
     timeout: Duration,
     cancelled: &'a AtomicBool,
+    named_account_admitted: bool,
 }
 #[cfg(unix)]
 impl Drop for ProcessRpc<'_> {
@@ -585,6 +611,15 @@ impl<'a> ProcessRpc<'a> {
         timeout: Duration,
         cancelled: &'a AtomicBool,
     ) -> Result<Self> {
+        Self::spawn_scoped(provider, executable, timeout, cancelled, None)
+    }
+    fn spawn_scoped(
+        provider: &str,
+        executable: PathBuf,
+        timeout: Duration,
+        cancelled: &'a AtomicBool,
+        named: Option<&NamedBinding>,
+    ) -> Result<Self> {
         use std::{
             os::{fd::AsRawFd, unix::process::CommandExt},
             process::{Command, Stdio},
@@ -601,7 +636,13 @@ impl<'a> ProcessRpc<'a> {
         let mut command = Command::new(executable);
         match provider {
             "codex" => {
-                command.arg("app-server");
+                if let Some(named) = named {
+                    named.validate()?;
+                    named.profile.configure(&mut command)?;
+                    command.args(named.profile.arguments());
+                } else {
+                    command.arg("app-server");
+                }
             }
             "claude" => {
                 command.args([
@@ -639,7 +680,7 @@ impl<'a> ProcessRpc<'a> {
             _ => bail!("Read-only model discovery is unsupported for this provider"),
         }
         command
-            .current_dir(std::env::temp_dir())
+            .current_dir(named.map_or_else(std::env::temp_dir, |named| named.cwd.clone()))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -675,6 +716,7 @@ impl<'a> ProcessRpc<'a> {
             started,
             timeout,
             cancelled,
+            named_account_admitted: false,
         };
         for fd in [rpc.stdin.as_raw_fd(), rpc.stdout.as_raw_fd()] {
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -794,6 +836,9 @@ impl Rpc for ProcessRpc<'_> {
                 frame["method"].is_string(),
                 "Malformed model discovery notification"
             );
+            if self.named_account_admitted {
+                profile::validate_notification(&frame)?;
+            }
         }
     }
 }

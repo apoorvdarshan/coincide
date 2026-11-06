@@ -38,6 +38,8 @@ pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 mod codex_login_profiles_api;
 #[path = "codex_profile_login_api.rs"]
 mod codex_profile_login_api;
+#[path = "codex_profile_models_api.rs"]
+mod codex_profile_models_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
 #[path = "project_management_api.rs"]
@@ -304,6 +306,7 @@ impl Engine {
                 self.revision += 1;
                 Ok(result)
             }
+            "providers.codex.profiles.models.refresh" | "providers.codex.profiles.models.status" | "providers.codex.profiles.models.select" => self.codex_profile_model_command(method,p),
             "providers.codex.profiles.status" | "providers.codex.profiles.create" | "providers.codex.profiles.select" => self.codex_login_profile_command(method,p),
             "providers.codex.profiles.login.start" | "providers.codex.profiles.login.status" | "providers.codex.profiles.login.cancel" => self.codex_profile_login_command(method,p),
             "providers.antigravity.status" | "providers.antigravity.configure" | "providers.antigravity.acknowledge" => self.antigravity_command(method,p),
@@ -638,6 +641,9 @@ impl Engine {
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
+                    if codex_profile_models_api::named_thread(&thread) {
+                        return Ok(self.codex_profile_model_capabilities(&thread));
+                    }
                     let reason = if !thread["rustBotContext"].is_null() {
                         Some("Bot selection is fixed for this conversation; create a new bot conversation".to_owned())
                     } else if self.store.is_imported(id)? {
@@ -831,7 +837,23 @@ impl Engine {
         } else {
             v.clone()
         };
-        let effort_proof = self.composer_thread_effort_proof(&validation_thread)?;
+        // Named models require their own account/cwd-bound job. Never consult
+        // the default-account effort catalog through the validation alias.
+        let named_model_proof = if let Some(profile) = &codex_profile {
+            let binding = crate::model_catalog::NamedBinding::capture(
+                profile.clone(),
+                &id,
+                &self.working_directory(&v)?,
+            )?;
+            self.model_catalog.named_model_proof(&v, &binding, None)?
+        } else {
+            None
+        };
+        let effort_proof = if codex_profile.is_some() {
+            None
+        } else {
+            self.composer_thread_effort_proof(&validation_thread)?
+        };
         crate::composer_selection::validate_thread_with_proof(
             &validation_thread,
             effort_proof.as_ref(),
@@ -1043,6 +1065,7 @@ impl Engine {
                     bot_instructions,
                     mode_policy,
                     codex_profile,
+                    named_model_proof,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
