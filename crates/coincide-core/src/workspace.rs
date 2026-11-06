@@ -260,10 +260,24 @@ fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Valu
                 3
             } else if lower.contains(&query) {
                 4
+            } else if let Some(cost) = composer_subsequence_cost(query.as_bytes(), name.as_bytes())
+            {
+                1_000 + cost
+            } else if let Some(cost) = composer_subsequence_cost(query.as_bytes(), lower.as_bytes())
+            {
+                100_000 + cost
             } else {
                 return None;
             };
-            Some((rank, depth, !directory, lower, path))
+            let directory_order = query.is_empty() && !directory;
+            Some((
+                rank,
+                depth,
+                directory_order,
+                lower.chars().count(),
+                lower,
+                path,
+            ))
         })
         .collect();
     matches.sort_unstable();
@@ -271,9 +285,33 @@ fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Valu
     let paths: Vec<_> = matches
         .into_iter()
         .take(limit)
-        .map(|(_, _, _, _, path)| path)
+        .map(|(_, _, _, _, _, path)| path)
         .collect();
     Ok(json!({"files":paths,"total":total,"truncated":limited || total>limit}))
+}
+
+// Same ranking rule as Swift's ComposerFileIndex: scattered byte runs first,
+// then their span. Only matching is byte-based; emitted paths stay exact UTF-8.
+fn composer_subsequence_cost(query: &[u8], text: &[u8]) -> Option<usize> {
+    let mut position = 0;
+    let mut previous = None;
+    let mut first = None;
+    let mut runs = 0;
+    for byte in query {
+        while position < text.len() && text[position] != *byte {
+            position += 1;
+        }
+        if position == text.len() {
+            return None;
+        }
+        if previous.is_none_or(|last| last + 1 != position) {
+            runs += 1;
+        }
+        first.get_or_insert(position);
+        previous = Some(position);
+        position += 1;
+    }
+    Some(runs * 100 + previous?.saturating_sub(first?).min(99))
 }
 
 pub fn read_file(directory: &Path, path: &str, offset: usize, limit: usize) -> Result<Value> {
@@ -324,6 +362,16 @@ mod tests {
             composer_path_results(paths.as_bytes(), "CAFÉ", 80).unwrap()["files"],
             json!(["src/café.rs"])
         );
+        assert_eq!(
+            composer_path_results(paths.as_bytes(), "cf", 80).unwrap()["files"],
+            json!(["src/café.rs"])
+        );
+        assert_eq!(
+            composer_path_results(paths.as_bytes(), "sdp", 80).unwrap()["files"],
+            json!(["src/deep", "src/deep/main.rs"])
+        );
+        assert_eq!(composer_subsequence_cost(b"ab", b"xxab"), Some(101));
+        assert_eq!(composer_subsequence_cost(b"ab", b"axxb"), Some(203));
         assert!(composer_path_results(&[255, 0], "", 80).is_err());
         assert!(composer_path_results(paths.as_bytes(), "", 81).is_err());
     }
