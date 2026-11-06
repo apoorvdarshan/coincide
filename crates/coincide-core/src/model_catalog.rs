@@ -18,6 +18,8 @@ use std::{
 mod effort;
 #[path = "model_catalog_restore.rs"]
 mod restore;
+#[path = "model_catalog_delete.rs"]
+mod thread_delete;
 use effort::EffortExecutable;
 pub(crate) use effort::{CodexEffortProof, astra_default_needed, astra_model};
 

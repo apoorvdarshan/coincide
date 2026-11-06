@@ -207,11 +207,40 @@ impl Registry {
         &mut self,
         ids: &[String],
         store: &crate::store::Store,
-    ) -> Result<()> {
+    ) -> Result<Vec<(String, String)>> {
         let selected = ids
             .iter()
             .map(|id| Uuid::parse_str(id))
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        let mut records = std::collections::BTreeSet::new();
+        let mut capture = |thread: &str, native: &str| -> Result<()> {
+            let thread = Uuid::parse_str(thread)?;
+            ensure!(
+                selected.contains(&thread),
+                "Private continuation belongs to another conversation"
+            );
+            ensure!(
+                !native.is_empty() && native.len() <= 512 && !native.chars().any(char::is_control),
+                "Invalid private native-session identity"
+            );
+            records.insert((thread.to_string(), native.to_owned()));
+            ensure!(
+                records.len() <= 256,
+                "Private continuation revocation exceeds its bound"
+            );
+            Ok(())
+        };
+        for receipt in self
+            .ready
+            .values()
+            .chain(self.pending.values().map(|pending| &pending.receipt))
+        {
+            if Uuid::parse_str(receipt.context.binding.thread())
+                .is_ok_and(|thread| selected.contains(&thread))
+            {
+                capture(receipt.context.binding.thread(), &receipt.native)?;
+            }
+        }
         self.ready
             .retain(|id, _| Uuid::parse_str(id).is_ok_and(|id| !selected.contains(&id)));
         self.pending
@@ -225,10 +254,22 @@ impl Registry {
         }
         if let Some(journal) = &mut self.journal {
             for id in ids {
-                journal.take(id)?;
+                if let Some(record) = journal.take(id)? {
+                    let thread = record["context"]["binding"]["thread"]
+                        .as_str()
+                        .context("Private continuation thread identity is malformed")?;
+                    ensure!(
+                        Uuid::parse_str(thread)? == Uuid::parse_str(id)?,
+                        "Private continuation thread identity changed"
+                    );
+                    let native = record["native"]
+                        .as_str()
+                        .context("Private continuation native identity is malformed")?;
+                    capture(thread, native)?;
+                }
             }
         }
-        Ok(())
+        Ok(records.into_iter().collect())
     }
     pub(crate) fn for_store(store: &crate::store::Store) -> Self {
         match journal::Journal::open(store) {

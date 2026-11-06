@@ -106,6 +106,9 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "thread_delete_api.rs"]
+mod thread_delete_api;
+pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]
@@ -195,7 +198,7 @@ impl Engine {
         Self::initialize(store, true)
     }
     #[cfg(test)]
-    fn fixture(store: Store) -> Self {
+    pub(crate) fn fixture(store: Store) -> Self {
         Self::initialize(store, false)
     }
     fn initialize(store: Store, discover: bool) -> Self {
@@ -975,6 +978,14 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
+        let saved_session = agent::provider_session(&v, &provider);
+        let allowed_session = self.unrevoked_provider_session(&v, &provider)?;
+        if codex_profile.is_some() && saved_session.is_some() && allowed_session.is_none() {
+            // Undo restores exact content, while deletion permanently consumes
+            // every old continuation opportunity, including private receipts.
+            self.named_resume
+                .invalidate_threads(std::slice::from_ref(&id), &self.store)?;
+        }
         // Session JSON cannot authorize named resume. The private registry
         // and authenticated restart journal require a saved owned worker join.
         let named_resume = if let Some(profile) = &codex_profile {
@@ -995,7 +1006,7 @@ impl Engine {
         let session = if let Some(authority) = &named_resume {
             authority.session().map(str::to_owned)
         } else {
-            agent::provider_session(&v, &provider)
+            allowed_session
         };
         let seen = if let Some(authority) = &named_resume {
             authority.seen()
