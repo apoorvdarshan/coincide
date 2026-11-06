@@ -497,6 +497,99 @@ impl Coincide {
         true
     }
 
+    pub(super) fn providers_overview_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let panel = self.provider_configuration_panel.read(cx);
+        let mut pane = div()
+            .id("providers-overview")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_5()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_xl().child("Providers"));
+        for descriptor in coincide_core::provider_catalog::PROVIDERS {
+            let provider = descriptor.id;
+            let section = Section::Provider(provider);
+            let enabled = provider_enabled(&self.settings, provider);
+            let summary = if enabled {
+                panel.summary(provider_key(provider))
+            } else {
+                "Off".into()
+            };
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+                    .child(icon_tile(section, 30.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(descriptor.display_name)
+                            .child(div().text_xs().child(summary)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "provider-overview-use-{}",
+                            provider_key(provider)
+                        )))
+                        .label(if enabled { "On" } else { "Off" })
+                        .accessibility_label(format!("Use {}", descriptor.display_name))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.set_settings_provider_enabled(
+                                    provider, enabled, !enabled, window, cx,
+                                )
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "provider-overview-open-{}",
+                            provider_key(provider)
+                        )))
+                        .label("Show settings")
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.navigate_settings_section(section, window, cx)
+                            },
+                        )),
+                    ),
+            );
+        }
+        pane.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(panel.last_checked())
+                .child(
+                    Button::new("providers-check-all")
+                        .label("Check All Again")
+                        .disabled(panel.checking_all())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let providers = coincide_core::provider_catalog::PROVIDERS
+                                .iter()
+                                .filter(|descriptor| {
+                                    provider_enabled(&this.settings, descriptor.id)
+                                })
+                                .map(|descriptor| provider_key(descriptor.id).to_owned())
+                                .collect::<Vec<_>>();
+                            this.provider_configuration_panel
+                                .update(cx, |panel, cx| panel.check_all(&providers, window, cx));
+                        })),
+                ),
+        )
+        .child(div().text_sm().child(self.settings_status.clone()))
+        .into_any_element()
+    }
+
     pub(super) fn provider_preferences_pane(
         &self,
         provider: ProviderId,

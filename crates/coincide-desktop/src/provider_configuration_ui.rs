@@ -90,6 +90,7 @@ pub(super) struct Panel {
     receiver: mpsc::Receiver<Reply>,
     pending: Option<String>,
     active: String,
+    check_queue: std::collections::VecDeque<String>,
     enabled: bool,
     pickers: Vec<Task<()>>,
     _poll: Task<()>,
@@ -130,6 +131,7 @@ impl Panel {
             receiver,
             pending: None,
             active: String::new(),
+            check_queue: Default::default(),
             enabled: true,
             pickers: Vec::new(),
             _poll: poll,
@@ -175,6 +177,65 @@ impl Panel {
         if !self.editors[provider].loaded && self.editors[provider].load_requested {
             self.start(provider, Request::Load, cx);
         }
+    }
+    pub fn check_all(&mut self, providers: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_pending_write() || !self.check_queue.is_empty() {
+            return;
+        }
+        let selected = self.active.clone();
+        let enabled = self.enabled;
+        for provider in providers {
+            self.select(provider, true, window, cx);
+            self.check_queue.push_back(provider.clone());
+        }
+        self.active = selected;
+        self.enabled = enabled;
+        cx.notify();
+    }
+    pub fn checking_all(&self) -> bool {
+        !self.check_queue.is_empty() || self.pending.is_some()
+    }
+    pub fn summary(&self, provider: &str) -> String {
+        let Some(editor) = self.editors.get(provider) else {
+            return "Not checked".into();
+        };
+        if self.pending.as_deref() == Some(provider) {
+            return "Checking…".into();
+        }
+        if let Some(report) = &editor.report {
+            let status = match report.authenticated {
+                Some(true) => "Signed in",
+                Some(false) => "Sign in required",
+                None => "Sign-in not checked",
+            };
+            return [
+                Some(status.to_owned()),
+                report.version.clone(),
+                report.account.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        }
+        if editor.checked.is_some() {
+            "Managed configuration checked; sign-in not verified".into()
+        } else {
+            "Not checked".into()
+        }
+    }
+    pub fn last_checked(&self) -> String {
+        self.editors
+            .values()
+            .filter_map(|editor| editor.checked)
+            .max()
+            .map(|checked| {
+                format!(
+                    "Last checked {} minutes ago",
+                    checked.elapsed().as_secs() / 60
+                )
+            })
+            .unwrap_or_else(|| "Not checked yet".into())
     }
     fn variable(
         &self,
@@ -361,6 +422,24 @@ impl Panel {
             let provider = self.active.clone();
             self.start(&provider, Request::Load, cx);
         }
+        if self.pending.is_none() {
+            if let Some(provider) = self.check_queue.front().cloned() {
+                if self.editors.get(&provider).is_some_and(|editor| {
+                    editor.dirty(cx) || (!editor.loaded && !editor.load_requested)
+                }) {
+                    self.check_queue.pop_front();
+                } else if self
+                    .editors
+                    .get(&provider)
+                    .is_some_and(|editor| editor.loaded)
+                {
+                    self.check_queue.pop_front();
+                    self.start(&provider, Request::Check, cx);
+                } else {
+                    self.start(&provider, Request::Load, cx);
+                }
+            }
+        }
         self.pickers.retain(|task| !task.is_ready());
         while let Ok(reply) = self.receiver.try_recv() {
             self.pending = None;
@@ -484,7 +563,9 @@ impl Panel {
             .map(|(provider, _)| provider.clone())
     }
     pub fn has_pending_write(&self) -> bool {
-        self.pending.is_some() || self.pickers.iter().any(|task| !task.is_ready())
+        !self.check_queue.is_empty()
+            || self.pending.is_some()
+            || self.pickers.iter().any(|task| !task.is_ready())
     }
     pub fn is_selected(&self, provider: &str) -> bool {
         self.active == provider
@@ -573,7 +654,18 @@ impl Panel {
                             )
                         }))
                     })
-                    .child(div().text_sm().child(editor.notice.clone()));
+                    .child(div().text_sm().child(editor.notice.clone()))
+                    .when(!loaded && !editor.load_requested, |pane| {
+                        pane.child(
+                            Button::new("provider-config-reload")
+                                .label("Reload Saved Settings")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let provider = this.active.clone();
+                                    this.start(&provider, Request::Load, cx);
+                                })),
+                        )
+                    });
             }
             Part::Executable => {
                 let key = provider.clone();
@@ -748,6 +840,7 @@ impl Panel {
         pane.into_any_element()
     }
     pub fn request_shutdown(&mut self) {
+        self.check_queue.clear();
         self.workers.close();
     }
     pub fn shutdown_status(&mut self) -> worker_owner::ShutdownStatus {

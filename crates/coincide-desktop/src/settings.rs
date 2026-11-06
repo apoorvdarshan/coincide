@@ -689,6 +689,8 @@ impl Coincide {
                 .into_any_element()
         } else if self.provider_settings.open {
             self.antigravity_settings(cx)
+        } else if self.settings_section == SettingsSection::Accounts {
+            self.providers_overview_pane(cx)
         } else if let SettingsSection::Provider(provider) = self.settings_section {
             self.provider_preferences_pane(provider, cx)
         } else {
