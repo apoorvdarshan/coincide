@@ -36,6 +36,8 @@ mod browser_history_api;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
+#[path = "codex_profile_limits_api.rs"]
+mod codex_profile_limits_api;
 #[path = "codex_profile_login_api.rs"]
 mod codex_profile_login_api;
 #[path = "codex_profile_models_api.rs"]
@@ -318,6 +320,7 @@ impl Engine {
                 self.revision += 1;
                 Ok(result)
             }
+            "providers.codex.profiles.limits.refresh" | "providers.codex.profiles.limits.status" => self.codex_profile_limits_command(method,p),
             "providers.codex.profiles.models.refresh" | "providers.codex.profiles.models.status" | "providers.codex.profiles.models.select" => self.codex_profile_model_command(method,p),
             "providers.codex.profiles.status" | "providers.codex.profiles.create" | "providers.codex.profiles.select" => self.codex_login_profile_command(method,p),
             "providers.codex.profiles.login.start" | "providers.codex.profiles.login.status" | "providers.codex.profiles.login.cancel" => self.codex_profile_login_command(method,p),
@@ -545,6 +548,7 @@ impl Engine {
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
                     "providers.codex.profiles.login.start", "providers.codex.profiles.login.status", "providers.codex.profiles.login.cancel",
                     "providers.codex.profiles.models.refresh", "providers.codex.profiles.models.status", "providers.codex.profiles.models.select",
+                    "providers.codex.profiles.limits.refresh", "providers.codex.profiles.limits.status",
                 ]);
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
@@ -1571,7 +1575,9 @@ impl Engine {
         self.provider_workers_status();
         self.computer_use_expire();
         let limits_executable = self.codex_limits_executable();
-        let limits_changed = self.model_catalog.limits_context(limits_executable);
+        let named_limits = self.current_profile_limits_binding();
+        let limits_changed = self.model_catalog.limits_context(limits_executable)
+            | self.model_catalog.named_limits_context(named_limits);
         if self.model_catalog.poll() | limits_changed {
             self.revision += 1;
         }

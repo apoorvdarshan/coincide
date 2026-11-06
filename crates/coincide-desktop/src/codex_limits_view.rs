@@ -107,8 +107,23 @@ fn bucket(value: &Value) -> Result<Bucket, ()> {
     })
 }
 pub fn decode(value: &Value) -> Result<Observation, ()> {
+    decode_scoped(value, None)
+}
+pub(super) fn decode_scoped(value: &Value, target: Option<&Value>) -> Result<Observation, ()> {
+    let scope = if let Some(target) = target {
+        if value.get("threadId") != target.get("threadId")
+            || value.get("accountId") != target.get("accountId")
+            || value.get("expectedSelection") != target.get("expectedSelection")
+            || value["authenticationChecked"] != (value["state"] == "ready")
+        {
+            return Err(());
+        }
+        "named_codex_profile"
+    } else {
+        SCOPE
+    };
     if value["provider"] != "codex"
-        || value["accountScope"] != SCOPE
+        || value["accountScope"] != scope
         || value["accountIdentityVerified"] != false
     {
         return Err(());
@@ -134,7 +149,7 @@ pub fn decode(value: &Value) -> Result<Observation, ()> {
         Some("ready") if value["error"].is_null() => {
             let snapshot = &value["snapshot"];
             if snapshot["provenance"] != "codex_app_server_account_rate_limits"
-                || snapshot["accountScope"] != SCOPE
+                || snapshot["accountScope"] != scope
                 || snapshot["accountIdentityVerified"] != false
             {
                 return Err(());
@@ -224,14 +239,23 @@ fn window_text(window: &WindowReport) -> String {
 pub struct Refresh;
 pub struct LimitsView {
     phase: Phase,
+    account: Option<String>,
 }
 impl Default for LimitsView {
     fn default() -> Self {
-        Self { phase: Phase::Idle }
+        Self {
+            phase: Phase::Idle,
+            account: None,
+        }
     }
 }
 impl EventEmitter<Refresh> for LimitsView {}
 impl LimitsView {
+    pub(super) fn context(&mut self, account: Option<String>, cx: &mut Context<Self>) {
+        self.account = account;
+        self.phase = Phase::Idle;
+        cx.notify();
+    }
     pub fn set(&mut self, phase: Phase, cx: &mut Context<Self>) {
         if self.phase != phase {
             self.phase = phase;
@@ -244,8 +268,11 @@ impl Render for LimitsView {
         let mut body = div().flex().flex_col().gap_2();
         match &self.phase {
             Phase::Idle => {
-                body =
-                    body.child("Refresh to read the limits reported by your default Codex runtime.")
+                body = body.child(if self.account.is_some() {
+                    "Refresh to read this selected profile’s reported limits. No turn is sent."
+                } else {
+                    "Refresh to read the limits reported by your default Codex runtime."
+                })
             }
             Phase::Loading => body = body.child("Reading Codex limits…"),
             Phase::Failed(error) => body = body.child(*error),
@@ -300,7 +327,7 @@ impl Render for LimitsView {
         }
         div().id("codex-limits-panel").flex().flex_col().gap_2().p_3()
             .child(div().text_lg().child("Codex reported limits"))
-            .child("Default Codex runtime. Account identity is unverified; these observations are separate from saved turn usage and billing.")
+            .child(self.account.as_ref().map(|account| format!("Selected local Codex profile {account}. Subscription authentication is checked for each read; account identity is unverified. These observations are separate from saved turn usage and billing.")).unwrap_or_else(|| "Default Codex runtime. Account identity is unverified; these observations are separate from saved turn usage and billing.".into()))
             .child(Button::new("codex-limits-refresh").label("Refresh Codex limits").disabled(matches!(self.phase, Phase::Loading | Phase::Closing)).on_click(cx.listener(|this, _, _, cx| {
                 if !matches!(this.phase, Phase::Loading | Phase::Closing) { this.set(Phase::Loading, cx); cx.emit(Refresh); }
             })))
@@ -352,5 +379,30 @@ mod tests {
         assert_eq!(utc(4_107_542_400.), "2100-03-01 00:00:00 UTC");
         assert_eq!(utc(253_402_300_799.), "9999-12-31 23:59:59 UTC");
         assert_eq!(utc(f64::NAN), "Date unavailable");
+    }
+    #[::core::prelude::v1::test]
+    fn named_decode_requires_exact_account_thread_selection_and_authenticated_scope() {
+        let target = json!({"threadId":"a","accountId":"profile-a","expectedSelection":{"provider":"codex","accountID":"profile-a","modelID":"default"}});
+        let mut value = ready();
+        value["accountScope"] = json!("named_codex_profile");
+        value["snapshot"]["accountScope"] = json!("named_codex_profile");
+        value["threadId"] = target["threadId"].clone();
+        value["accountId"] = target["accountId"].clone();
+        value["expectedSelection"] = target["expectedSelection"].clone();
+        value["authenticationChecked"] = json!(true);
+        assert!(decode_scoped(&value, Some(&target)).is_ok());
+        assert!(decode(&value).is_err());
+        for (key, replacement) in [
+            ("accountId", json!("profile-b")),
+            ("threadId", json!("b")),
+            ("expectedSelection", json!({})),
+            ("authenticationChecked", json!(false)),
+        ] {
+            let mut bad = value.clone();
+            bad[key] = replacement;
+            assert!(decode_scoped(&bad, Some(&target)).is_err());
+        }
+        value["snapshot"]["accountScope"] = json!(SCOPE);
+        assert!(decode_scoped(&value, Some(&target)).is_err());
     }
 }

@@ -779,6 +779,7 @@ impl Coincide {
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
+                this.codex_limits.set_context(this.selected.as_ref(), cx);
                 this.codex_limits.refresh(cx);
             }),
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
@@ -2560,6 +2561,7 @@ impl Coincide {
             cx.notify();
         }
         self.usage_history.poll(cx);
+        self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
             self.steering
