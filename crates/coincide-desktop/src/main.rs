@@ -37,6 +37,7 @@ mod microphone;
 mod microphone_settings;
 mod native_quit;
 mod navigation;
+mod navigation_rail;
 mod notification_runtime;
 mod notification_settings;
 mod notifications;
@@ -332,6 +333,8 @@ struct Coincide {
     queued_messages: Vec<Value>,
     queue_enabled: bool,
     queue_error: String,
+    thread_list_open: bool,
+    navigation_focus: FocusHandle,
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
@@ -994,6 +997,8 @@ impl Coincide {
             queued_messages: Vec::new(),
             queue_enabled: false,
             queue_error: String::new(),
+            thread_list_open: true,
+            navigation_focus: cx.focus_handle(),
             settings_open: false,
             thread_actions_open: false,
             settings_search,
@@ -3548,7 +3553,10 @@ impl Render for Coincide {
             .as_ref()
             .map(|v| text(v, "id"))
             .unwrap_or_default();
-        let sidebar = self.navigation_sidebar(&selected_id, cx);
+        let navigation_rail = self.navigation_rail(cx);
+        let sidebar = self
+            .thread_list_open
+            .then(|| self.navigation_sidebar(&selected_id, cx));
         let title = self
             .selected
             .as_ref()
@@ -3797,7 +3805,8 @@ impl Render for Coincide {
             .size_full()
             .bg(self.color(0x10141c))
             .text_color(self.color(0xe4e9f2))
-            .child(sidebar)
+            .child(navigation_rail)
+            .when_some(sidebar, |view, sidebar| view.child(sidebar))
             .child(
                 div()
                     .flex()
@@ -4103,10 +4112,11 @@ fn main() -> Result<()> {
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
-            let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
+            let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(820.), px(520.))),
                     ..Default::default()
                 },
                 cx,

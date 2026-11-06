@@ -154,29 +154,6 @@ impl Coincide {
             .border_color(self.color(0x29303d))
             .p_3()
             .gap_2()
-            .child(div().px_2().py_2().text_sm().child("Coincide"))
-            .child(
-                Button::new("settings")
-                    .ghost()
-                    .compact()
-                    .justify_start()
-                    .h(px(32.))
-                    .label("Settings")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.settings_open = !this.settings_open;
-                        this.sync_transcription_binding(cx);
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("new")
-                    .ghost()
-                    .compact()
-                    .justify_start()
-                    .h(px(32.))
-                    .label("New conversation")
-                    .on_click(cx.listener(|this, _, window, cx| this.new_thread(window, cx))),
-            )
             .child(
                 Button::new("projects-toggle")
                     .ghost()
