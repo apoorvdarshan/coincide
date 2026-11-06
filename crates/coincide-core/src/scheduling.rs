@@ -406,20 +406,20 @@ fn sidebar_snooze_presets<T: TimeZone>(now: DateTime<T>) -> Vec<(&'static str, f
             .and_then(|day| day.and_hms_opt(hour, 0, 0))
             .and_then(|local| now.timezone().from_local_datetime(&local).earliest())
     };
-    if let Some(evening) = at(0, 18) {
-        if evening.clone().signed_duration_since(now.clone()) > Duration::hours(1) {
-            result.push(("This Evening", stamp(evening)));
-        }
+    if let Some(evening) = at(0, 18)
+        && evening.clone().signed_duration_since(now.clone()) > Duration::hours(1)
+    {
+        result.push(("This Evening", stamp(evening)));
     }
     let tomorrow = at(1, 9);
     if let Some(date) = tomorrow.clone() {
         result.push(("Tomorrow", stamp(date)));
     }
     let days = 7 - i64::from(now.weekday().num_days_from_monday());
-    if let Some(monday) = at(days, 9) {
-        if tomorrow.as_ref() != Some(&monday) {
-            result.push(("Next Week", stamp(monday)));
-        }
+    if let Some(monday) = at(days, 9)
+        && tomorrow.as_ref() != Some(&monday)
+    {
+        result.push(("Next Week", stamp(monday)));
     }
     result
 }
