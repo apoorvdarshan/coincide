@@ -464,6 +464,9 @@ mod process {
             );
         }
         const LOST_OWNER_RECEIPT: &str = "coincide-owned-inhibitor-echild-complete";
+        const LOST_OWNER_CHILD: &str =
+            "platform_host::inhibitor::process::tests::lost_child_ownership_fixture_child";
+        const LOST_OWNER_HOME: &str = "COINCIDE_INHIBITOR_OWNERSHIP_FIXTURE";
         #[test]
         fn lost_child_ownership_never_signals_or_reports_cleanup_success() {
             let temporary = tempfile::tempdir().unwrap();
@@ -472,12 +475,13 @@ mod process {
                 .args([
                     "--ignored",
                     "--exact",
-                    "platform_host::inhibitor::process::tests::lost_child_ownership_fixture_child",
+                    LOST_OWNER_CHILD,
                     "--nocapture",
                     "--test-threads=1",
                 ])
                 .env_clear()
-                .env("HOME", home)
+                .env("HOME", &home)
+                .env(LOST_OWNER_HOME, &home)
                 .env("PATH", "/usr/bin:/bin")
                 .output()
                 .unwrap();
@@ -495,6 +499,28 @@ mod process {
         #[test]
         #[ignore = "Outer test supplies an isolated one-child process and cleared environment"]
         fn lost_child_ownership_fixture_child() {
+            use std::os::unix::fs::PermissionsExt;
+            // Reject generic --ignored or manually mismatched invocations
+            // before creating any child in a potentially parallel parent.
+            assert!(
+                std::env::args().skip(1).eq([
+                    "--ignored",
+                    "--exact",
+                    LOST_OWNER_CHILD,
+                    "--nocapture",
+                    "--test-threads=1"
+                ]),
+                "ownership-loss fixture requires its exact isolated invocation"
+            );
+            let home = std::env::var_os(LOST_OWNER_HOME).expect("private fixture HOME is required");
+            assert_eq!(std::env::var_os("HOME"), Some(home.clone()));
+            assert_eq!(std::env::var("PATH").unwrap(), "/usr/bin:/bin");
+            let home = std::path::PathBuf::from(home);
+            assert!(home.is_absolute());
+            assert_eq!(home, home.canonicalize().unwrap());
+            let metadata = std::fs::symlink_metadata(&home).unwrap();
+            assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+            assert_eq!(metadata.permissions().mode() & 0o077, 0);
             // This process runs only this exact test and spawns only this one
             // exec-cat child. No parallel fixture can replace its child PID.
             // A reused PID belonging to a different parent still yields ECHILD.
