@@ -379,7 +379,9 @@ impl Engine {
                     return Ok(response);
                 }
                 let response = match &candidate.binding {
-                    Binding::Named(binding) => self.model_catalog.refresh_named(binding.clone()),
+                    Binding::Named(binding) => self
+                        .model_catalog
+                        .refresh_named_restore(binding.clone(), false),
                     Binding::Default(binding) => {
                         self.model_catalog.refresh_default_restore(binding.clone())
                     }

@@ -52,6 +52,16 @@ const DEADLINE: Duration = Duration::from_secs(15);
 
 type Completion = (String, Result<Vec<Value>, String>);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshReuse {
+    Loading,
+    AuthenticatedReadyOrLoading,
+    Never,
+}
+
+#[cfg(all(test, any(unix, windows)))]
+#[path = "model_catalog_restore_poll_tests.rs"]
+mod restore_poll_tests;
 #[cfg(test)]
 #[path = "model_catalog_shutdown_tests.rs"]
 mod shutdown_tests;
@@ -242,15 +252,37 @@ impl ModelCatalog {
         named: Option<NamedBinding>,
         work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
     ) -> Result<Value> {
+        self.refresh_scoped_reusing(provider, binding, named, RefreshReuse::Loading, work)
+    }
+    fn refresh_scoped_reusing(
+        &mut self,
+        provider: &str,
+        binding: Option<EffortExecutable>,
+        named: Option<NamedBinding>,
+        reuse: RefreshReuse,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         crate::agent::Provider::from_name(provider)?;
         self.poll();
-        if let Some(job) = self.jobs.values().find(|job| {
-            job.response["provider"] == provider
-                && job.named == named
-                && job.response["state"] == "loading"
-                && !job.cancelled.load(Ordering::Acquire)
-        }) {
+        if reuse != RefreshReuse::Never
+            && let Some(job) = self
+                .order
+                .iter()
+                .rev()
+                .filter_map(|id| self.jobs.get(id))
+                .find(|job| {
+                    job.response["provider"] == provider
+                        && profile::same_scope(job.named.as_ref(), named.as_ref())
+                })
+            && job.named == named
+            && !job.cancelled.load(Ordering::Acquire)
+            && (job.response["state"] == "loading"
+                || (reuse == RefreshReuse::AuthenticatedReadyOrLoading
+                    && named.is_some()
+                    && job.response["state"] == "ready"
+                    && job.response["authenticationChecked"] == true))
+        {
             return Ok(job.response.clone());
         }
         let supported = supported(provider);
