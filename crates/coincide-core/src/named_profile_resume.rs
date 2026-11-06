@@ -477,7 +477,18 @@ impl Registry {
             admission
                 .as_ref()
                 .context("Refresh this selected account's private catalog before resuming")?
-                .validate(&context.binding, &context.selection, parked.fence.as_ref())?;
+                .validate(
+                    &context.binding,
+                    &context.selection,
+                    // A changed stable context can never reuse this receipt.
+                    // Require current authenticated admission, then consume it
+                    // and start fresh rather than waiting on an obsolete fence.
+                    if parked.stable == context.durable()? {
+                        parked.fence.as_ref()
+                    } else {
+                        None
+                    },
+                )?;
         }
         let durable = match &mut self.journal {
             Some(journal) => journal.take(&key)?,
@@ -713,6 +724,131 @@ mod tests {
                 .session(),
             Some("private-1")
         );
+    }
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn parked_changed_context_waits_for_current_admission_then_consumes_and_starts_fresh() {
+        use std::{
+            fs,
+            time::{Duration, Instant},
+        };
+        for changed in ["auth", "executable", "cwd", "mode-presence"] {
+            let dir = tempfile::tempdir().unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let root = dir.path().canonicalize().unwrap();
+            let store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
+            let account = Uuid::new_v4().to_string();
+            let home = crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+            let executable = root.join("synthetic-executable");
+            fs::write(&executable, b"synthetic metadata only").unwrap();
+            let profile = LaunchContext::capture(&root, &account, &executable).unwrap();
+            let thread = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","modelID":"default","accountID":account},"items":[{"kind":"user","text":"owned prefix"}],"sessions":{"codex":{"accountID":account,"sessionID":"old-private-native"}}});
+            let policy = |thread: &Value| {
+                Policy::parse_named(thread, crate::composer_policy::Origin::Ordinary, None).unwrap()
+            };
+            let mut registry = Registry::for_store(&store);
+            let authority = registry
+                .prepare(&thread, profile.clone(), &root, policy(&thread))
+                .unwrap();
+            let ack = authority
+                .acknowledge(&json!({"thread":{"id":"old-private-native"},"model":"actual-model"}))
+                .unwrap();
+            let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while worker.status() == WorkerThreadStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            registry.persisted(ack, &thread, worker);
+            registry.poll();
+            let binding = registry.departure_binding(&thread).unwrap().unwrap();
+            let mut catalog = crate::model_catalog::ModelCatalog::default();
+            catalog.fixture_resume_job(binding.clone(), "old");
+            registry
+                .park_departure(&thread, catalog.named_catalog_fence(&binding))
+                .unwrap();
+            let mut current = thread.clone();
+            let mut cwd = root.clone();
+            let mut selected_executable = executable;
+            match changed {
+                "auth" => {
+                    fs::write(home.join("auth.json"), b"synthetic fixture only").unwrap();
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(
+                            home.join("auth.json"),
+                            fs::Permissions::from_mode(0o600),
+                        )
+                        .unwrap();
+                    }
+                }
+                "executable" => {
+                    selected_executable = root.join("different-executable");
+                    fs::write(&selected_executable, b"different synthetic metadata").unwrap();
+                }
+                "cwd" => {
+                    cwd = root.join("different-project");
+                    fs::create_dir(&cwd).unwrap();
+                }
+                "mode-presence" => current["accessMode"] = Value::Null,
+                _ => unreachable!(),
+            }
+            let profile = LaunchContext::capture(&root, &account, &selected_executable).unwrap();
+            assert!(
+                registry
+                    .prepare_admitted(&current, profile.clone(), &cwd, policy(&current), None)
+                    .is_err(),
+                "{changed}"
+            );
+            assert_eq!(registry.parked.len(), 1);
+            assert_eq!(
+                registry.journal.as_ref().unwrap().keys().unwrap().len(),
+                1,
+                "Missing current admission must not consume {changed}"
+            );
+            let binding =
+                NamedBinding::capture(profile.clone(), thread["id"].as_str().unwrap(), &cwd)
+                    .unwrap();
+            catalog.fixture_resume_job(binding.clone(), "current");
+            let admitted = catalog.named_resume_admission(&current, &binding).unwrap();
+            let fresh = registry
+                .prepare_admitted(
+                    &current,
+                    profile.clone(),
+                    &cwd,
+                    policy(&current),
+                    Some(admitted),
+                )
+                .unwrap();
+            assert!(
+                fresh.session().is_none(),
+                "Changed {changed} must never resume old native"
+            );
+            assert_eq!(fresh.seen(), 0);
+            assert!(registry.parked.is_empty());
+            assert!(
+                registry
+                    .journal
+                    .as_ref()
+                    .unwrap()
+                    .keys()
+                    .unwrap()
+                    .is_empty(),
+                "Old ticket must be durably consumed for {changed}"
+            );
+            let next = registry
+                .prepare(&current, profile, &cwd, policy(&current))
+                .unwrap();
+            assert!(
+                next.session().is_none(),
+                "Descriptive old sessionID cannot regain {changed} authority"
+            );
+        }
     }
     #[cfg(unix)]
     #[test]
