@@ -299,7 +299,7 @@ pub(super) fn init(cx: &mut App) {
 impl Coincide {
     fn file_reference_route(&self, cx: &Context<Self>) -> bool {
         if !self.microphone_window_active
-            || self.settings_open
+            || self.settings_in_main_window()
             || self.schedules_open
             || self.workspace_open
             || self.session_import_open

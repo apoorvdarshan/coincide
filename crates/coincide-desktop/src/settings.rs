@@ -998,12 +998,7 @@ impl Coincide {
                             .child(div().text_xl().child(self.settings_section.label()))
                             .child(Button::new("settings-done").label("Done").on_click(
                                 cx.listener(|this, _, window, cx| {
-                                    this.settings_open = false;
-                                    this.focus_settings_route(window, cx);
-                                    this.credential_panel
-                                        .update(cx, |panel, cx| panel.cancel(cx));
-                                    this.sync_transcription_binding(cx);
-                                    cx.notify();
+                                    this.close_settings_panel(window, cx);
                                 }),
                             )),
                     )
@@ -1042,6 +1037,46 @@ impl Coincide {
                 "keyboard shortcuts record reset disable command palette terminal font",
             )
     }
+    pub(super) fn run_keyboard_command(
+        &mut self,
+        command: keyboard_settings::Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use keyboard_settings::Command as K;
+        match command {
+            K::NewThread => self.new_thread(window, cx),
+            K::Palette => self.toggle_palette(window, cx),
+            K::Sidebar => self.toggle_sidebar(window, cx),
+            K::Terminal => {
+                if self.settings_in_main_window() || self.schedules_open || self.selected.is_none()
+                {
+                    return;
+                }
+                self.terminal(window, cx);
+            }
+            K::Schedules => {
+                self.hide_inline_settings();
+                self.workspace_open = false;
+                self.session_import_open = false;
+                self.schedules_open = !self.schedules_open;
+                if self.schedules_open {
+                    self.refresh_schedules(cx);
+                }
+                self.sync_transcription_binding(cx);
+                cx.notify();
+            }
+            K::Larger | K::Smaller | K::FontReset => {
+                let size = match command {
+                    K::Larger => (self.conversation_font_size() + 1.).min(24.),
+                    K::Smaller => (self.conversation_font_size() - 1.).max(10.),
+                    _ => 13.,
+                };
+                self.change_setting("fontSize", json!(size), window, cx);
+            }
+        }
+    }
+
     pub(super) fn app_shortcut(
         &mut self,
         event: &KeyDownEvent,
@@ -1107,37 +1142,7 @@ impl Coincide {
             return;
         }
         if let Some(command) = custom {
-            use keyboard_settings::Command as K;
-            match command {
-                K::NewThread => self.new_thread(window, cx),
-                K::Palette => unreachable!(),
-                K::Sidebar => self.toggle_sidebar(window, cx),
-                K::Terminal => {
-                    if self.settings_open || self.schedules_open || self.selected.is_none() {
-                        return;
-                    }
-                    self.terminal(window, cx);
-                }
-                K::Schedules => {
-                    self.settings_open = false;
-                    self.workspace_open = false;
-                    self.session_import_open = false;
-                    self.schedules_open = !self.schedules_open;
-                    if self.schedules_open {
-                        self.refresh_schedules(cx);
-                    }
-                    self.sync_transcription_binding(cx);
-                    cx.notify();
-                }
-                K::Larger | K::Smaller | K::FontReset => {
-                    let size = match command {
-                        K::Larger => (self.conversation_font_size() + 1.).min(24.),
-                        K::Smaller => (self.conversation_font_size() - 1.).max(10.),
-                        _ => 13.,
-                    };
-                    self.change_setting("fontSize", json!(size), window, cx);
-                }
-            }
+            self.run_keyboard_command(command, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -1159,7 +1164,7 @@ impl Coincide {
                 self.open_find(window, cx);
             }
             "enter"
-                if !self.settings_open
+                if !self.settings_in_main_window()
                     && !self.schedules_open
                     && self.composer.read(cx).focus_handle(cx).is_focused(window) =>
             {

@@ -353,6 +353,7 @@ struct Coincide {
     settings_section: settings::SettingsSection,
     settings_window: Option<gpui_kit::WindowHandle<settings_window::SettingsWindow>>,
     settings_window_pending: bool,
+    main_window: gpui_kit::WindowHandle<Coincide>,
     settings_focus: FocusHandle,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
@@ -464,7 +465,7 @@ impl Coincide {
             .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
         let threads_context = if self.workspace_open
             && self.github_threads_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.session_import_open
             && !self.command_palette.read(cx).is_open()
@@ -1041,6 +1042,10 @@ impl Coincide {
             settings_section: Default::default(),
             settings_window: None,
             settings_window_pending: false,
+            main_window: window
+                .window_handle()
+                .downcast()
+                .expect("Coincide main window"),
             settings_focus: cx.focus_handle(),
             keyboard,
             usage_history,
@@ -1570,7 +1575,7 @@ impl Coincide {
                 }
                 self.selected = Some(v);
                 self.sync_workspace_context(cx);
-                self.settings_open = false;
+                self.hide_inline_settings();
                 self.rename_target = None;
                 self.archive_confirmation = None;
                 self.pending_requests.clear();
@@ -1624,7 +1629,7 @@ impl Coincide {
     }
     fn find_context_available(&self) -> bool {
         self.selected.is_some()
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open
@@ -2016,7 +2021,7 @@ impl Coincide {
             ),
             C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
-                self.settings_open = false;
+                self.hide_inline_settings();
                 self.workspace_open = false;
                 self.session_import_open = false;
                 self.schedules_open = true;
@@ -2402,7 +2407,7 @@ impl Coincide {
         }
     }
     fn sync_notification_activity(&self, window: &Window, cx: &App) {
-        let visible_thread = (!self.settings_open
+        let visible_thread = (!self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open)
@@ -2539,7 +2544,7 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|thread| thread["id"] == id)
             })
-            && !self.settings_open
+            && !self.settings_in_main_window()
         {
             self.created_bot_thread_to_focus = None;
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
@@ -3617,7 +3622,7 @@ impl Coincide {
     fn sync_terminal_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
         let visible = self.terminal_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open

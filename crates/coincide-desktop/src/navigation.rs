@@ -53,7 +53,7 @@ impl Coincide {
             snoozed: self.show_snoozed,
             available: self.thread_list_open
                 && self.microphone_window_active
-                && !self.settings_open
+                && !self.settings_in_main_window()
                 && !self.schedules_open
                 && !self.session_import_open
                 && !self.workspace_open

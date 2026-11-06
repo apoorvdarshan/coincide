@@ -33,6 +33,7 @@ impl Render for SettingsWindow {
                     || owner.media.shutdown_requested
                     || owner.media.close_requested
                 {
+                    owner.settings_window_closed(cx);
                     window.remove_window();
                     return div().into_any_element();
                 }
@@ -44,7 +45,7 @@ impl Render for SettingsWindow {
                     .flex()
                     .track_focus(&owner.settings_focus)
                     .capture_key_down(cx.listener(|owner, event, window, cx| {
-                        owner.app_shortcut(event, window, cx);
+                        owner.settings_window_shortcut(event, window, cx);
                     }))
                     .bg(owner.color(0x10141c))
                     .text_color(owner.color(0xe4e9f2))
@@ -59,8 +60,81 @@ impl Render for SettingsWindow {
 }
 
 impl Coincide {
+    pub(super) fn hide_inline_settings(&mut self) {
+        if self.settings_window.is_none() && !self.settings_window_pending {
+            self.settings_open = false;
+        }
+    }
+
+    fn settings_window_shortcut(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.record_shortcut_event(event, window, cx) {
+            return;
+        }
+        if event.is_held || !window.is_window_active() {
+            return;
+        }
+        let key = &event.keystroke;
+        let command = if cfg!(target_os = "macos") {
+            key.modifiers.platform
+        } else {
+            key.modifiers.control
+        };
+        if command && !key.modifiers.alt && !key.modifiers.shift {
+            match key.key.as_str() {
+                "w" => {
+                    self.close_settings_panel(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "f" => {
+                    self.settings_search
+                        .read(cx)
+                        .focus_handle(cx)
+                        .focus(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "," => {
+                    self.show_settings_window(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if let Some(command) = self.keyboard_command(key, false, false, false) {
+            let main = self.main_window;
+            cx.defer(move |cx| {
+                main.update(cx, |owner, window, cx| {
+                    window.activate_window();
+                    owner.run_keyboard_command(command, window, cx);
+                    cx.notify();
+                })
+                .ok();
+            });
+            cx.stop_propagation();
+        }
+    }
+
     pub(super) fn settings_in_main_window(&self) -> bool {
         self.settings_open && self.settings_window.is_none() && !self.settings_window_pending
+    }
+
+    pub(super) fn close_settings_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let separate = self.settings_window.is_some_and(|handle| {
+            gpui_kit::AnyWindowHandle::from(handle) == window.window_handle()
+        });
+        self.settings_window_closed(cx);
+        if separate {
+            window.remove_window();
+        } else {
+            self.navigation_focus.focus(window, cx);
+        }
     }
 
     pub(super) fn settings_window_closed(&mut self, cx: &mut Context<Self>) {
