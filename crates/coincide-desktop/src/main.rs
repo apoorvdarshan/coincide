@@ -21,6 +21,7 @@ mod composer_steering_mount;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
+mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
 mod draft_close;
@@ -331,6 +332,7 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     settings_open: bool,
+    thread_actions_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
     usage_history: usage_history_mount::Mount,
@@ -992,6 +994,7 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             settings_open: false,
+            thread_actions_open: false,
             settings_search,
             settings_section: Default::default(),
             usage_history,
@@ -1472,6 +1475,13 @@ impl Coincide {
             .update(cx, |panel, cx| panel.cancel(cx));
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
+                if self
+                    .selected
+                    .as_ref()
+                    .is_none_or(|thread| thread["id"] != id)
+                {
+                    self.thread_actions_open = false;
+                }
                 self.preserve_pending_draft(&mut v);
                 if self
                     .created_bot_thread_to_focus
@@ -3805,146 +3815,7 @@ impl Render for Coincide {
                                 ),
                         )
                     })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .flex_shrink_0()
-                            .w_full()
-                            .overflow_hidden()
-                            .items_center()
-                            .gap_3()
-                            .p_4()
-                            .border_b_1()
-                            .border_color(self.color(0x29303d))
-                            .child(div().w_full().min_w_0().truncate().text_lg().child(title))
-                            .child(
-                                Button::new("transcript-find-open")
-                                    .label("Find")
-                                    .disabled(!self.find_context_available())
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_find(window, cx)
-                                    })),
-                            )
-                            .child(Button::new("terminal").label("Terminal").on_click(
-                                cx.listener(|this, _, window, cx| this.terminal(window, cx)),
-                            ))
-                            .child(
-                                Button::new("browser").label("Browser").on_click(
-                                    cx.listener(|this, _, _, cx| this.toggle_browser(cx)),
-                                ),
-                            )
-                            .child(
-                                Button::new("session-import-toggle")
-                                    .label(if self.session_import_open {
-                                        "Close import"
-                                    } else {
-                                        "Import CLI session"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.session_import_open = !this.session_import_open;
-                                        this.sync_transcription_binding(cx);
-                                        this.sync_credentials(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("password-settings-toggle")
-                                    .label(if self.settings_open && self.credentials_open {
-                                        "Close passwords"
-                                    } else {
-                                        "Passwords"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.session_import_open = false;
-                                        let open = !(this.settings_open && this.credentials_open);
-                                        this.credentials_open = open;
-                                        this.browser_settings_open = false;
-                                        this.media.opened = false;
-                                        this.credential_panel
-                                            .update(cx, |panel, cx| panel.cancel(cx));
-                                        this.notifications_open = false;
-                                        this.bots_open = false;
-                                        this.transcription_open = false;
-                                        this.settings_open = open;
-                                        this.provider_settings.open = false;
-                                        this.workspace_open = false;
-                                        this.schedules_open = false;
-                                        this.sync_credentials(cx);
-                                        this.sync_transcription_binding(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("git-workspace-toggle")
-                                    .label(if self.workspace_open {
-                                        "Close Git workspace"
-                                    } else {
-                                        "Git workspace"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.session_import_open = false;
-                                        this.workspace_open = !this.workspace_open;
-                                        this.settings_open = false;
-                                        this.schedules_open = false;
-                                        this.sync_transcription_binding(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("schedules")
-                                    .label(if self.schedules_open {
-                                        "Conversation"
-                                    } else {
-                                        "Schedules"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.settings_open = false;
-                                        this.workspace_open = false;
-                                        this.session_import_open = false;
-                                        this.schedules_open = !this.schedules_open;
-                                        this.sync_transcription_binding(cx);
-                                        if this.schedules_open {
-                                            this.refresh_schedules(cx);
-                                        }
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("fork").label("Fork").on_click(
-                                    cx.listener(|this, _, window, cx| this.fork(window, cx)),
-                                ),
-                            )
-                            .child(Button::new("pin").label("Pin / unpin").on_click(
-                                cx.listener(|this, _, _, cx| this.toggle("isPinned", cx)),
-                            ))
-                            .child(
-                                Button::new("rename-thread")
-                                    .label("Rename")
-                                    .disabled(self.selected.is_none())
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.begin_rename(window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("archive")
-                                    .label(
-                                        if self
-                                            .selected
-                                            .as_ref()
-                                            .is_some_and(|v| v["isArchived"] == true)
-                                        {
-                                            "Restore"
-                                        } else {
-                                            "Archive"
-                                        },
-                                    )
-                                    .disabled(self.selected.is_none())
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.request_archive(cx)),
-                                    ),
-                            ),
-                    )
+                    .child(self.conversation_toolbar(title, cx))
                     .when_some(self.thread_management(cx), |view, management| {
                         view.child(management)
                     })

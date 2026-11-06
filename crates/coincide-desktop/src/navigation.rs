@@ -413,6 +413,12 @@ impl Coincide {
 
     pub(super) fn thread_management(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
+        if !self.thread_actions_open
+            && self.rename_target.is_none()
+            && self.archive_confirmation.is_none()
+        {
+            return None;
+        }
         let mut pane = div()
             .flex()
             .flex_col()
@@ -494,8 +500,8 @@ impl Coincide {
             .is_some_and(|date| {
                 date.timestamp() as f64 > coincide_core::store::swift_timestamp() + 978307200.
             });
-        pane =
-            pane.child(
+        if self.thread_actions_open {
+            pane = pane.child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -520,6 +526,7 @@ impl Coincide {
                         )
                     }),
             );
+        }
         Some(pane.into_any_element())
     }
 }

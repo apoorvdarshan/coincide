@@ -58,6 +58,7 @@ icon_assets!(
         Folder,
         Frame,
         GalleryVerticalEnd,
+        GitBranch,
         Github,
         Globe,
         HardDrive,
