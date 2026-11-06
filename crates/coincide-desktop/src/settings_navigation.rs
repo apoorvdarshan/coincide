@@ -504,6 +504,11 @@ impl Coincide {
         if provider.is_none() && !pending {
             return false;
         }
+        if let Some(guard) = &self.native_quit {
+            guard.cancel_request();
+        }
+        self.native_quit_observed = false;
+        self.open_settings_panel(window, cx);
         if let Some(provider) = provider.and_then(|key| {
             coincide_core::provider_catalog::PROVIDERS
                 .iter()
