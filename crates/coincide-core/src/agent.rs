@@ -36,6 +36,8 @@ mod images;
 mod opencode;
 #[path = "provider_transport.rs"]
 mod transport;
+#[path="provider_metadata_capture.rs"]
+pub(crate) mod metadata_capture;
 #[cfg(windows)]
 #[path = "provider_job_windows.rs"]
 mod windows_job;

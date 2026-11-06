@@ -646,6 +646,18 @@ impl Engine {
     }
 }
 impl LaunchConfiguration {
+    pub(crate) fn validate_named_profile(&self, named: bool) -> Result<()> {
+        ensure!(
+            !named
+                || !self
+                    .record
+                    .environment
+                    .keys()
+                    .any(|key| sensitive_for_profile(key)),
+            "A named subscription profile cannot accept provider auth, endpoint or proxy overrides"
+        );
+        Ok(())
+    }
     pub(crate) fn validate_launch(&self) -> Result<()> {
         self.record
             .executable
@@ -742,7 +754,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let engine = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
+        let engine =
+            Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
     }
     fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
@@ -809,7 +822,8 @@ mod tests {
                 BTreeMap::new(),
             )
             .unwrap();
-        let mut second = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
+        let mut second =
+            Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         save(&mut second, "codex", &binary, "fixture-not-a-real-key");
         assert!(first.apply_native_provider_configuration(stale).is_err());
         assert_eq!(
@@ -824,16 +838,19 @@ mod tests {
             .provider_launch_configuration("codex")
             .unwrap()
             .unwrap()
-            .stamp.clone();
+            .stamp
+            .clone();
         drop(first);
         drop(second);
-        let reopened = Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
+        let reopened =
+            Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         assert_eq!(
             reopened
                 .provider_launch_configuration("codex")
                 .unwrap()
                 .unwrap()
-                .stamp.clone(),
+                .stamp
+                .clone(),
             stamp
         );
     }
@@ -873,7 +890,8 @@ mod tests {
                     .provider_launch_configuration(provider)
                     .unwrap()
                     .unwrap()
-                    .stamp.clone(),
+                    .stamp
+                    .clone(),
                 stamp
             );
             // No global environment setter exists in production or this test.
@@ -1013,3 +1031,7 @@ mod tests {
         );
     }
 }
+
+#[path = "provider_configuration_probe.rs"]
+mod probe;
+pub use probe::{Probe, ProbeReport};
