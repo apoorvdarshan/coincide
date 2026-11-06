@@ -715,7 +715,9 @@ impl Coincide {
     }
     pub(super) fn composer_file_button(&self, cx: &mut Context<Self>) -> AnyElement {
         Button::new("composer-project-files")
-            .label("@ Files")
+            .when(!cfg!(target_os = "macos"), |button| button.label("@ Files"))
+            .when(cfg!(target_os = "macos"), |button| button.icon(gpui_kit::assets::IconName::AtSign).xsmall().h(px(26.)))
+            .accessibility_label("Attach project file reference")
             .compact()
             .ghost()
             .tooltip("Attach a project file path reference; file contents are not read")

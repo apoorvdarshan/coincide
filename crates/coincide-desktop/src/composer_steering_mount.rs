@@ -20,7 +20,10 @@ impl Coincide {
             && !has_attachments
             && self.steering.can_submit(&id, &draft, &provider, running);
         let mut pane = div().flex().flex_col().gap_1().child(
-            Button::new("steer-active-turn").label("Steer active turn")
+            Button::new("steer-active-turn")
+                .when(!cfg!(target_os = "macos"), |button| button.label("Steer active turn"))
+                .when(cfg!(target_os = "macos"), |button| button.icon(gpui_kit::assets::IconName::CornerUpRight).w(px(28.)).h(px(28.)).rounded(px(14.)).p_0())
+                .accessibility_label("Steer active turn").tooltip("Steer active turn")
                 .disabled(!enabled).on_click(cx.listener(|this,_,_,cx| {
                     let Some(thread) = this.selected.as_ref() else { return; };
                     let id = text(thread,"id");

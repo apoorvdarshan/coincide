@@ -2316,7 +2316,8 @@ impl Coincide {
         } else {
             "Build"
         };
-        let mut controls = div().flex().flex_wrap().items_center().gap_1();
+        let mut controls = div().flex().flex_wrap().items_center().gap_1()
+            .when(cfg!(target_os = "macos"), |view| view.gap(px(2.)));
         for (facet, id, label, help) in [
             (
                 PickerFacet::Model,
@@ -2351,8 +2352,16 @@ impl Coincide {
         ] {
             controls = controls.child(
                 Button::new(id)
-                    .label(label)
+                    .when(!(cfg!(target_os = "macos") && facet == PickerFacet::Model), |button| button.label(label.clone()))
+                    .accessibility_label(help.clone())
                     .tooltip(help)
+                    .when(cfg!(target_os = "macos"), |button| button.xsmall().h(px(26.)).rounded(px(7.)))
+                    .when(cfg!(target_os = "macos") && facet == PickerFacet::Model, |button| {
+                        #[cfg(target_os = "macos")]
+                        { button.child(macos_chat_layout::provider_label(&text(selection, "provider"), label.clone())) }
+                        #[cfg(not(target_os = "macos"))]
+                        { button }
+                    })
                     .when(facet != PickerFacet::Mode, |button| {
                         button.dropdown_caret(true)
                     })
@@ -2367,6 +2376,7 @@ impl Coincide {
                                     gpui_kit::assets::IconName::Lock
                                 }
                             }
+                            PickerFacet::Mode if cfg!(target_os = "macos") && mode == "Plan" => gpui_kit::assets::IconName::PencilRuler,
                             _ => gpui_kit::assets::IconName::Hammer,
                         })
                     })

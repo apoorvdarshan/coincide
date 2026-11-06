@@ -1,6 +1,72 @@
 //! AppKit reference geometry for macOS chat chrome only.
 use super::*;
 
+// Existing provider-owned branding, already used by the Coincide website.
+// Keep bytes local and embedded; rendering never downloads an image.
+const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
+    (
+        "codex",
+        include_bytes!("../../../website/public/img/logo-codex.png"),
+    ),
+    (
+        "claude",
+        include_bytes!("../../../website/public/img/logo-claude.png"),
+    ),
+    (
+        "cursor",
+        include_bytes!("../../../website/public/img/logo-cursor.png"),
+    ),
+    (
+        "grok",
+        include_bytes!("../../../website/public/img/logo-grok.png"),
+    ),
+    (
+        "opencode",
+        include_bytes!("../../../website/public/img/logo-opencode.png"),
+    ),
+    (
+        "antigravity",
+        include_bytes!("../../../website/public/img/logo-antigravity.png"),
+    ),
+];
+
+pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
+    static IMAGES: std::sync::OnceLock<std::collections::HashMap<&str, Arc<Image>>> =
+        std::sync::OnceLock::new();
+    let images = IMAGES.get_or_init(|| {
+        PROVIDER_LOGOS
+            .into_iter()
+            .map(|(name, bytes)| {
+                (
+                    name,
+                    Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())),
+                )
+            })
+            .collect()
+    });
+    div()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .min_w_0()
+        .when_some(images.get(provider), |view, image| {
+            // Original monochrome branding is black on transparency. A small
+            // light backing preserves its pixels in either app appearance.
+            view.child(
+                img(image.clone())
+                    .w(px(13.))
+                    .h(px(13.))
+                    .rounded(px(2.))
+                    .bg(rgb(0xffffff)),
+            )
+        })
+        .when(!images.contains_key(provider), |view| {
+            view.child(Icon::new(gpui_kit::assets::IconName::Cpu).xsmall())
+        })
+        .child(div().truncate().child(label))
+        .into_any_element()
+}
+
 /// ComposerTextView reserves two actual wrapped lines and six points of text
 /// inset; ComposerViewController caps the text viewport at 40% of the window.
 pub(super) fn composer_height(rows: usize, line_height: f32, window_height: f32) -> f32 {
@@ -36,6 +102,26 @@ fn notice_label(body: &str) -> &str {
 }
 
 impl Coincide {
+    pub(super) fn macos_stop_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("stop")
+            .icon(gpui_kit::assets::IconName::Square)
+            .accessibility_label("Stop agent")
+            .tooltip("Stop agent")
+            .primary()
+            .w(px(28.))
+            .h(px(28.))
+            .rounded(px(14.))
+            .p_0()
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(thread) = this.selected.as_ref()
+                    && let Err(error) =
+                        call(&this.engine, "agent.stop", json!({"threadId":thread["id"]}))
+                {
+                    this.status = error.to_string();
+                }
+                cx.notify();
+            }))
+    }
     pub(super) fn notice_row(
         &mut self,
         thread: &str,
@@ -114,7 +200,17 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{ComposerSizing, composer_height, notice_label};
+    use super::{ComposerSizing, PROVIDER_LOGOS, composer_height, notice_label};
+
+    #[test]
+    fn all_supported_provider_logos_are_local_png_assets() {
+        let mut names = std::collections::HashSet::new();
+        for (provider, bytes) in PROVIDER_LOGOS {
+            assert!(names.insert(provider));
+            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{provider}");
+        }
+        assert_eq!(names.len(), 6);
+    }
 
     #[test]
     fn repeated_geometry_and_selection_notifications_do_not_refit_parent() {

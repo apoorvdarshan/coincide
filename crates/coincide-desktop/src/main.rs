@@ -4316,6 +4316,7 @@ impl Render for Coincide {
                                                 .items_center()
                                                 .min_w_0()
                                                 .gap_1()
+                                                .when(cfg!(target_os = "macos"), |view| view.gap(px(6.)))
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
@@ -4329,29 +4330,35 @@ impl Render for Coincide {
                                                         })
                                                         .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
                                                         .compact().ghost()
+                                                        .when(cfg!(target_os = "macos"), |button| button.xsmall().h(px(26.)).rounded(px(7.)))
                                                         .disabled(importing_images)
                                                         .on_click(cx.listener(|this, _, _, cx| {
                                                             this.attach_images(cx)
                                                         })),
                                                 )
+                                                .when(cfg!(target_os = "macos") && self.running.contains(&selected_id), |view| {
+                                                    #[cfg(target_os = "macos")]
+                                                    { view.child(self.macos_stop_button(cx)) }
+                                                    #[cfg(not(target_os = "macos"))]
+                                                    { view }
+                                                })
                                                 .child(
                                                     Button::new("send")
                                                         .primary()
                                                         .disabled(importing_images || self.selection_send_blocked())
-                                                        .label(
-                                                            if self.running.contains(&selected_id) {
-                                                                "Queue message"
-                                                            } else {
-                                                                "Send"
-                                                            },
-                                                        )
+                                                        .accessibility_label(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
+                                                        .tooltip(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
+                                                        .when(!cfg!(target_os = "macos"), |button| button.label(if self.running.contains(&selected_id) { "Queue message" } else { "Send" }))
+                                                        .when(cfg!(target_os = "macos"), |button| button
+                                                            .icon(if self.running.contains(&selected_id) { gpui_kit::assets::IconName::ListPlus } else { gpui_kit::assets::IconName::ArrowUp })
+                                                            .w(px(28.)).h(px(28.)).rounded(px(14.)).p_0())
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
                                                                 this.send(window, cx)
                                                             },
                                                         )),
                                                 )
-                                                .child(Button::new("stop").icon(gpui_kit::assets::IconName::Square)
+                                                .when(!cfg!(target_os = "macos"), |view| view.child(Button::new("stop").icon(gpui_kit::assets::IconName::Square)
                                                     .accessibility_label("Stop agent").tooltip("Stop agent")
                                                     .compact().ghost().disabled(!self.running.contains(&selected_id)).on_click(
                                                     cx.listener(|this, _, _, cx| {
@@ -4366,7 +4373,7 @@ impl Render for Coincide {
                                                         }
                                                         cx.notify();
                                                     }),
-                                                )),
+                                                ))),
                                         )
                                         .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
                                             div()
