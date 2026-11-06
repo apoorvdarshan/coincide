@@ -202,9 +202,22 @@ impl Store {
         &self,
         ids: &[String],
     ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
+        self.prepare_delete_rows_scoped(ids, true)
+    }
+    pub(crate) fn prepare_any_delete_rows(
+        &self,
+        ids: &[String],
+    ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
+        self.prepare_delete_rows_scoped(ids, false)
+    }
+    fn prepare_delete_rows_scoped(
+        &self,
+        ids: &[String],
+        archived_only: bool,
+    ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
         ensure!(
             !ids.is_empty() && ids.len() <= ROW_LIMIT,
-            "Review 1–128 archived conversations at a time"
+            "Review 1–128 conversations at a time"
         );
         let start = version(self.connection()?)?;
         let mut unique = HashSet::new();
@@ -226,7 +239,8 @@ impl Store {
             );
             let value: Value = serde_json::from_str(&raw)?;
             ensure!(
-                validate_thread(&value)? == stored && value["isArchived"] == true,
+                validate_thread(&value)? == stored
+                    && (!archived_only || value["isArchived"] == true),
                 "Only current archived conversations can be deleted here"
             );
             rows.push(DeleteRow {

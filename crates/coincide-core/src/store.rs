@@ -25,6 +25,9 @@ mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;
 #[path = "store_native_ui_selection.rs"]
 mod native_ui_selection;
+#[path = "store_sidebar_lifecycle.rs"]
+mod sidebar_lifecycle;
+pub(crate) use sidebar_lifecycle::SidebarRow;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
 use store_thread_delete::ensure_not_deleted;

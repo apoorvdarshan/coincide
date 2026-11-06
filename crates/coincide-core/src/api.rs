@@ -112,8 +112,12 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "sidebar_lifecycle_api.rs"]
+mod sidebar_lifecycle_api;
 #[path = "thread_delete_api.rs"]
 mod thread_delete_api;
+pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
+
 pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
