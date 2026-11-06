@@ -49,7 +49,13 @@ impl Fixture {
         engine.schedule_initialized = true;
         engine.schedule_last_poll = Instant::now();
         let mut screen = Terminal::fixture_output(rows, cols, bytes);
-        let revision = screen.snapshot().unwrap()["revision"].as_u64().unwrap();
+        // This is an actual display parser without a process. Process snapshots
+        // correctly require a child; initialize the queued display bytes directly.
+        assert!(
+            screen.poll().unwrap(),
+            "fixture output must reach Alacritty"
+        );
+        let revision = screen.revision;
         let terminal = Uuid::new_v4().to_string();
         engine
             .terminals
