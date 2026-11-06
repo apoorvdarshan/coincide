@@ -567,6 +567,9 @@ impl Panel {
         });
         self.pickers.push(task);
     }
+    pub fn native_action_custody(&self) -> NativeUiEditLease {
+        self.native_editors.editor().pending_native_action()
+    }
     pub fn dirty_provider(&self, cx: &App) -> Option<String> {
         self.editors
             .iter()

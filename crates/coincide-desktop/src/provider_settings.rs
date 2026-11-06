@@ -6,10 +6,10 @@ use std::path::PathBuf;
 #[path = "account_settings.rs"]
 mod account_settings;
 
-const RISK_NOTICE: &str = "Using Antigravity through Coincide may break Google’s Antigravity terms, which forbid accessing it with third-party tools. Google has suspended accounts for this, including access to Gemini CLI and Code Assist. Use at your own risk; consider a separate Google account.";
+pub(super) const RISK_NOTICE: &str = "Using Antigravity through Coincide may break Google’s Antigravity terms, which forbid accessing it with third-party tools. Google has suspended accounts for this, including access to Gemini CLI and Code Assist. Use at your own risk; consider a separate Google account.";
 const API_KEY_NOTE: &str =
     "Gemini API keys from Google AI Studio or Gemini Enterprise aren’t affected.";
-const RISK_KEY: &str = "provider:antigravity-account-risk";
+pub(super) const RISK_KEY: &str = "provider:antigravity-account-risk";
 
 #[derive(Default)]
 struct Suggestions {

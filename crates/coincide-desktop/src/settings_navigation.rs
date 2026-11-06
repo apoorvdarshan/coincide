@@ -118,8 +118,23 @@ fn enabled_patch(
         provider != ProviderId::Antigravity,
         "Use the Antigravity account-risk controls"
     );
+    enabled_value_patch(settings, provider, expected, enabled)
+}
+
+fn enabled_value_patch(
+    settings: &Value,
+    provider: ProviderId,
+    expected: bool,
+    enabled: bool,
+) -> Result<Value> {
     anyhow::ensure!(settings.is_object(), "Saved settings are malformed");
-    let current = coincide_core::provider_preferences::enabled(settings, provider_key(provider))?;
+    let current = if provider == ProviderId::Antigravity
+        && models_settings::provider_value(settings, provider_key(provider))["isEnabled"].is_null()
+    {
+        false
+    } else {
+        coincide_core::provider_preferences::enabled(settings, provider_key(provider))?
+    };
     anyhow::ensure!(
         current == expected,
         "Provider settings changed; review the current value"
@@ -441,17 +456,92 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if provider == ProviderId::Antigravity {
-            self.open_antigravity_settings(window, cx);
+        if self
+            .provider_enable_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+        {
             return;
         }
+        if provider == ProviderId::Antigravity && enabled {
+            match call(&self.engine, "providers.antigravity.status", json!({})) {
+                Ok(status) if status["riskAcknowledged"] != true => {
+                    let answer = window.prompt(
+                        PromptLevel::Warning,
+                        "Use Antigravity?",
+                        Some(provider_settings::RISK_NOTICE),
+                        &["I Understand", "Cancel"],
+                        cx,
+                    );
+                    let custody = self
+                        .provider_configuration_panel
+                        .read(cx)
+                        .native_action_custody();
+                    self.provider_enable_prompt =
+                        Some(cx.spawn_in(window, async move |this, cx| {
+                            let _custody = custody;
+                            let accepted = answer.await.unwrap_or(1) == 0;
+                            if accepted {
+                                this.update_in(cx, |this, window, cx| {
+                                    // The prompt is now resolved; this direct continuation
+                                    // performs acknowledgement and the original CAS once.
+                                    match call(
+                                        &this.engine,
+                                        "providers.antigravity.acknowledge",
+                                        json!({"key":provider_settings::RISK_KEY,"accepted":true}),
+                                    ) {
+                                        Ok(_) => this.apply_settings_provider_enabled(
+                                            provider, expected, enabled, window, cx,
+                                        ),
+                                        Err(error) => {
+                                            this.settings_status = error.to_string();
+                                            cx.notify();
+                                        }
+                                    }
+                                })
+                                .ok();
+                            }
+                        }));
+                    return;
+                }
+                Err(error) => {
+                    self.settings_status = error.to_string();
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.apply_settings_provider_enabled(provider, expected, enabled, window, cx);
+    }
+
+    fn apply_settings_provider_enabled(
+        &mut self,
+        provider: ProviderId,
+        expected: bool,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let result = (|| -> Result<Value> {
             let mut owner = try_state(&self.engine)?;
             let current = owner
                 .store
                 .document("settings.json")?
                 .unwrap_or_else(|| json!({}));
-            let patch = enabled_patch(&current, provider, expected, enabled)?;
+            let patch = if provider == ProviderId::Antigravity {
+                if enabled {
+                    let status = owner
+                        .dispatch(json!({"method":"providers.antigravity.status","params":{}}));
+                    anyhow::ensure!(
+                        status["result"]["riskAcknowledged"] == true,
+                        "Acknowledge the Antigravity account risk first"
+                    );
+                }
+                enabled_value_patch(&current, provider, expected, enabled)?
+            } else {
+                enabled_patch(&current, provider, expected, enabled)?
+            };
             let reply = owner.dispatch(json!({"method":"settings.patch","params":{"patch":patch}}));
             if let Some(error) = reply.get("error") {
                 anyhow::bail!(
@@ -498,9 +588,13 @@ impl Coincide {
             .read(cx)
             .dirty_provider(cx);
         let pending = self
-            .provider_configuration_panel
-            .read(cx)
-            .has_pending_write();
+            .provider_enable_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+            || self
+                .provider_configuration_panel
+                .read(cx)
+                .has_pending_write();
         if provider.is_none() && !pending {
             return false;
         }
@@ -776,6 +870,31 @@ mod tests {
         assert!(!search_matches(super::Section::Browser, "claude"));
     }
 
+    #[::core::prelude::v1::test]
+    fn native_antigravity_toggle_round_trip_preserves_provider_values_and_rejects_stale_state() {
+        for providers in [
+            json!({"antigravity":{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}}),
+            json!(["antigravity",{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}]),
+        ] {
+            let initial = json!({"providers":providers});
+            let on = super::enabled_value_patch(&initial, P::Antigravity, false, true).unwrap();
+            let value = super::models_settings::provider_value(&on, "antigravity");
+            assert_eq!(value["isEnabled"], true);
+            assert_eq!(value["opaque"], 42);
+            assert_eq!(
+                value["environment"],
+                json!({"SYNTHETIC_TEST_MODE":"fixture"})
+            );
+            assert!(super::enabled_value_patch(&on, P::Antigravity, false, true).is_err());
+            let off = super::enabled_value_patch(&on, P::Antigravity, true, false).unwrap();
+            assert!(!provider_enabled(&off, P::Antigravity));
+            assert_eq!(
+                super::models_settings::provider_value(&off, "antigravity")["opaque"],
+                42
+            );
+            assert!(enabled_patch(&initial, P::Antigravity, false, true).is_err());
+        }
+    }
     #[::core::prelude::v1::test]
     fn generic_toggle_cannot_bypass_antigravity_risk_controls() {
         assert!(!provider_enabled(&json!({}), P::Antigravity));
