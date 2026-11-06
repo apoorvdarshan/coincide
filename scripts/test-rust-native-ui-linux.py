@@ -142,10 +142,22 @@ def main():
         y = int(row["top"]) + int(row["height"]) // 2
         command("xdotool", "mousemove", "--window", window, str(x), str(y), "click", "1", env=env)
 
-    def quit_normally():
+    def quit_normally(*, guarded=False):
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
+        first = time.monotonic()
         command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
+        if guarded:
+            time.sleep(0.2)
+            assert process.poll() is None, "Hold-to-Quit must refuse the first brief native Ctrl+Q"
+            # Normal Quit freezes all Engine JSON admissions. A successful
+            # owner-bound request proves this is not merely a slow drain.
+            assert rpc("app.status")["running"] == [], "First Quit press must leave ordinary admissions live"
+            elapsed = time.monotonic() - first
+            assert elapsed < 1.5, "Second native Quit press must remain inside the product double-press interval"
+            command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
+            report["guardedQuitFirstPressAlive"] = True
+            report["guardedQuitSecondPressSeconds"] = elapsed
         assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
         process = None
         log.close()
@@ -156,6 +168,7 @@ def main():
         (artifacts / "software-vulkan.txt").write_text(vulkan)
         assert "llvmpipe" in vulkan.lower() or "lavapipe" in vulkan.lower(), "Software Vulkan was not selected"
         window = start("initial")
+        rpc("settings.patch", patch={"holdToQuit": False})
         created_project = rpc("projects.create", path=str(project), name="Native Linux smoke")
         thread = rpc("threads.create", projectId=created_project["id"])
         thread_id = thread["id"]
@@ -237,12 +250,14 @@ def main():
         capture(window, "older-selected-before-quit", "keyboard draft")
         quit_normally()
         window = start("restart")
+        rpc("settings.patch", patch={"holdToQuit": True})
         wait_for("last selected older conversation restored automatically", lambda: rpc("app.status")["activeThread"] == thread_id)
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         capture(window, "reopened-draft", "keyboard draft")
         report["persistedDraftVerified"] = rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("normal Quit/reopen automatically restored older selected conversation and rendered its unsent native draft")
-        quit_normally()
+        quit_normally(guarded=True)
+        report["checks"].append("native Hold-to-Quit refused first brief Ctrl+Q and accepted the second within 1.5 seconds, with ordinary zero-exit drain")
         report["passed"] = True
     except BaseException as error:
         report["passed"] = False
