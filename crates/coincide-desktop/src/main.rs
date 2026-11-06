@@ -41,6 +41,7 @@ mod github_review;
 mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
+mod inspector_follow;
 mod instructions;
 mod instructions_config;
 mod instructions_scope;
@@ -429,6 +430,7 @@ struct Coincide {
     browser_profile_requests: std::sync::mpsc::Receiver<browser_settings::ProfileRequest>,
     credential_panel: Entity<credential_settings::CredentialSettings>,
     credential_jobs: std::sync::mpsc::Receiver<credentials::FillJob>,
+    inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
     github_open: bool,
@@ -1239,6 +1241,7 @@ impl Coincide {
             browser_profile_requests,
             credential_panel,
             credential_jobs,
+            inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
             github_open: false,
@@ -1511,6 +1514,12 @@ impl Coincide {
         let terminal_right = self.terminal_on_right();
         let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
         let mut changed = !requests.is_empty();
+        let mut browser_note: Option<Option<inspector_follow::SavedPanel>> = None;
+        let selected_closes_last = requests.iter().any(|request| {
+            matches!(&request.action, BrowserAction::CloseTab)
+                && selected_id.as_deref() == Some(request.thread_id.as_str())
+        });
+
         // Presentation arbitration precedes native WebView reconciliation. Work
         // for a background thread cannot replace the foreground chat route.
         for request in &requests {
@@ -1519,8 +1528,10 @@ impl Coincide {
                     if selected_id.as_deref() == Some(request.thread_id.as_str())
                         && self.chat_visible()
                     {
+                        self.clear_inspector_placeholders();
                         self.workspace_open = false;
                         self.close_schedule_surface();
+                        browser_note = Some(Some(inspector_follow::SavedPanel::Preview));
                         if terminal_right {
                             self.terminal_open = false;
                         }
@@ -1528,6 +1539,12 @@ impl Coincide {
                     self.browser_panels.insert(request.thread_id.clone());
                 }
                 BrowserAction::Hide => {
+                    if selected_id.as_deref() == Some(request.thread_id.as_str())
+                        && self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser)
+                    {
+                        self.clear_inspector_placeholders();
+                        browser_note = Some(None);
+                    }
                     self.browser_panels.remove(&request.thread_id);
                 }
                 _ => {}
@@ -1541,6 +1558,7 @@ impl Coincide {
             self.ensure_inspector_space(window);
         }
         let browser_is_panel = self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
+        let close_visible_last_tab = selected_closes_last && browser_is_panel;
         let Some(browser) = &mut self.browser else {
             return;
         };
@@ -1548,6 +1566,18 @@ impl Coincide {
             browser.execute(request, window, cx);
         }
         changed |= browser.poll(window, cx);
+        if close_visible_last_tab
+            && selected_id
+                .as_deref()
+                .is_some_and(|thread| browser.active_view(thread).is_none())
+        {
+            if let Some(thread) = &selected_id {
+                self.browser_panels.remove(thread);
+            }
+            self.inspector_follow.preview_placeholder = false;
+            browser_note = Some(None);
+        }
+
         let selected = self.selected.as_ref().map(|v| text(v, "id"));
         let visible = selected.as_deref().filter(|thread| {
             browser_is_panel && self.browser_panels.contains(*thread) && !image_viewer_open
@@ -1610,6 +1640,9 @@ impl Coincide {
                 self.browser_address_page = current_page;
                 changed = true;
             }
+        }
+        if let Some(choice) = browser_note {
+            self.remember_inspector_choice(choice, cx);
         }
         if changed {
             cx.notify();
@@ -1862,6 +1895,13 @@ impl Coincide {
                 if self.sidebar_preferences.collapsed(section) {
                     self.toggle_sidebar_section(section, cx);
                 }
+                if self
+                    .selected
+                    .as_ref()
+                    .is_none_or(|previous| previous["id"] != id)
+                {
+                    self.suspend_inspector_presentation(cx);
+                }
                 self.selected = Some(v);
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
                     self.sidebar_thread_marker("unseen", id, None, cx);
@@ -1914,6 +1954,7 @@ impl Coincide {
                     window.activate_window();
                 }
                 self.terminal_open = false;
+                self.restore_inspector_for_selected(cx);
                 self.sync_terminal_workspace(window, cx);
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
@@ -2794,6 +2835,7 @@ impl Coincide {
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
         self.poll_sidebar_lifecycle(window, cx);
+        self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
@@ -4002,6 +4044,7 @@ impl Coincide {
             .into_any_element()
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_inspector_placeholders();
         if self.selected.is_none() {
             return;
         }
@@ -4031,6 +4074,9 @@ impl Coincide {
         {
             workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
         }
+        if self.terminal_on_right() {
+            self.remember_current_inspector(cx);
+        }
         cx.notify();
     }
     fn sync_terminal_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4040,12 +4086,18 @@ impl Coincide {
             .terminal_layout
             .observe_placement(terminal_layout::placement(&self.settings))
             && self.terminal_open
-            && self.terminal_on_right()
         {
-            self.workspace_open = false;
-            self.close_schedule_surface();
-            self.hide_selected_browser_surface(cx);
-            self.ensure_inspector_space(window);
+            if self.terminal_on_right() {
+                self.workspace_open = false;
+                self.close_schedule_surface();
+                self.hide_selected_browser_surface(cx);
+                self.ensure_inspector_space(window);
+                self.remember_inspector_choice(Some(inspector_follow::SavedPanel::Terminal), cx);
+            } else {
+                // Swift removes the thread's terminal inspector choice when
+                // that actual open controller moves into its bottom drawer.
+                self.remember_inspector_choice(None, cx);
+            }
         }
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
         let visible = self.terminal_open

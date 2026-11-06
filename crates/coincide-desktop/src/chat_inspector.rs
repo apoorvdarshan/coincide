@@ -95,15 +95,18 @@ impl Coincide {
             self.chat_route(),
             self.workspace_open,
             self.schedules_open && !self.schedule_editor.all_conversations,
-            self.terminal_open && self.terminal_on_right(),
-            self.browser.is_some()
-                && self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id"))),
+            (self.terminal_open || self.inspector_follow.terminal_placeholder)
+                && self.terminal_on_right(),
+            self.inspector_follow.preview_placeholder
+                || (self.browser.is_some()
+                    && self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))),
         )
     }
     pub(super) fn close_chat_inspector(&mut self, cx: &mut Context<Self>) {
+        let window_wide = self.schedules_open;
         match self.chat_inspector_panel() {
             Some(Panel::Workspace) => {
                 self.workspace_open = false;
@@ -114,6 +117,10 @@ impl Coincide {
             Some(Panel::Terminal) => self.terminal_open = false,
             None => (),
         }
+        self.clear_inspector_placeholders();
+        if !window_wide {
+            self.remember_inspector_choice(None, cx);
+        }
         cx.notify();
     }
     pub(super) fn chat_inspector_surface(
@@ -122,10 +129,26 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let (id, body) = match self.chat_inspector_panel()? {
+            Panel::Terminal
+                if self.inspector_follow.terminal_placeholder && !self.terminal_open =>
+            {
+                (
+                    "saved-terminal-inspector",
+                    self.saved_inspector_placeholder(true, cx),
+                )
+            }
             Panel::Terminal => return self.terminal_surface(true, window, cx),
             Panel::Workspace => ("workspace-inspector", self.workspace_inspector_body(cx)),
             Panel::ConversationSchedules => {
                 ("conversation-schedules-inspector", self.schedules_pane(cx))
+            }
+            Panel::Browser
+                if self.inspector_follow.preview_placeholder && self.browser.is_none() =>
+            {
+                (
+                    "saved-browser-inspector",
+                    self.saved_inspector_placeholder(false, cx),
+                )
             }
             Panel::Browser => ("browser-inspector", self.browser_pane(cx)?),
         };
@@ -145,6 +168,17 @@ impl Coincide {
                             .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
                     ),
                 )
+                .child(body)
+                .into_any_element()
+        } else {
+            body
+        };
+        let body = if let Some(error) = self.inspector_follow.error.clone() {
+            div()
+                .flex()
+                .flex_col()
+                .h_full()
+                .child(div().p_2().text_sm().child(error))
                 .child(body)
                 .into_any_element()
         } else {
