@@ -47,9 +47,12 @@ pub struct Credits {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Note {
-    WorkspaceCreditsDepleted,
-    WorkspaceUsageLimitReached,
-    WorkspaceSpendControlReached,
+    #[serde(rename = "workspace_credits_depleted")]
+    CreditsDepleted,
+    #[serde(rename = "workspace_usage_limit_reached")]
+    UsageLimitReached,
+    #[serde(rename = "workspace_spend_control_reached")]
+    SpendControlReached,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,13 +174,13 @@ fn bucket(id: &str, value: &Value, individual: bool) -> Result<Bucket, Failure> 
     };
     let note = match object.get("rateLimitReachedType").and_then(Value::as_str) {
         Some("workspace_owner_credits_depleted" | "workspace_member_credits_depleted") => {
-            Some(Note::WorkspaceCreditsDepleted)
+            Some(Note::CreditsDepleted)
         }
         Some("workspace_owner_usage_limit_reached" | "workspace_member_usage_limit_reached") => {
-            Some(Note::WorkspaceUsageLimitReached)
+            Some(Note::UsageLimitReached)
         }
         _ if object.get("spendControlReached").and_then(Value::as_bool) == Some(true) => {
-            Some(Note::WorkspaceSpendControlReached)
+            Some(Note::SpendControlReached)
         }
         _ => None,
     };
@@ -570,7 +573,11 @@ mod tests {
     #[test]
     fn workspace_note_and_individual_remaining_keep_reported_scope() {
         let main=parse(&json!({"rateLimits":{"individualLimit":{"remainingPercent":12},"rateLimitReachedType":"workspace_member_credits_depleted"}})).unwrap().main.unwrap();
-        assert_eq!(main.notes, vec![Note::WorkspaceCreditsDepleted]);
+        assert_eq!(main.notes, vec![Note::CreditsDepleted]);
+        assert_eq!(
+            serde_json::to_value(&main.notes).unwrap(),
+            json!(["workspace_credits_depleted"])
+        );
         assert_eq!(main.windows[0].remaining_percent, Some(12.0));
         assert_eq!(main.windows[0].used_percent, None);
     }
