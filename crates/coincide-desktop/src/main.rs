@@ -12,6 +12,7 @@ mod assets;
 mod bot_settings;
 mod browser;
 mod browser_settings;
+mod chat_layout;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
@@ -41,7 +42,6 @@ mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
-mod chat_layout;
 mod microphone_settings;
 mod models_settings;
 mod native_quit;
@@ -766,8 +766,7 @@ impl Coincide {
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
-        let settings_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),

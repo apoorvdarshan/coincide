@@ -715,7 +715,9 @@ impl Coincide {
     }
     pub(super) fn composer_file_button(&self, cx: &mut Context<Self>) -> AnyElement {
         Button::new("composer-project-files")
-            .icon(gpui_kit::assets::IconName::AtSign).xsmall().h(px(26.))
+            .icon(gpui_kit::assets::IconName::AtSign)
+            .xsmall()
+            .h(px(26.))
             .accessibility_label("Attach project file reference")
             .compact()
             .ghost()
