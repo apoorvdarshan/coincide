@@ -3,17 +3,18 @@
 //! browser/computer-use/media adapters and polling. Scope's app-route flags and
 //! listed ticket are explicit fixture inputs; full Root scope remains unproved.
 use super::{capture, keys, mentions};
-use gpui_kit as gpui;
 use gpui_kit::component::input::{InputEvent as TextEvent, Textarea, TextareaState};
 use gpui_kit::{
-    App, AppContext, Context, Entity, EntityInputHandler, Focusable, InputEvent,
+    App, AppContext, Bounds, Context, Entity, EntityInputHandler, Focusable, InputEvent,
     InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, ParentElement, Render, Styled, Subscription, TestAppContext,
+    ModifiersChangedEvent, ParentElement, Pixels, Render, Styled, Subscription, TestAppContext,
     VisualTestContext, Window, div, px,
 };
 use std::ops::Range;
 
-const TEXT: &str = "SYNTHETIC 👩🏽‍💻 café 中文 @ suffix";
+// Plain Up preserves the column at a visual document edge. Give the real
+// Textarea two logical rows so the unwired control must actually move upward.
+const TEXT: &str = "PREVIOUS SYNTHETIC ROW\nSYNTHETIC 👩🏽‍💻 café 中文 @ suffix";
 const CHILD: &str = "COINCIDE_HEADLESS_COMPOSER_DISPATCH_CHILD";
 
 #[derive(Clone, Debug)]
@@ -46,6 +47,9 @@ struct Snapshot {
     changes: usize,
     ticket_changes: usize,
     selected: Option<usize>,
+    input_bounds: Bounds<Pixels>,
+    cursor_layout: Option<(Bounds<Pixels>, Pixels)>,
+    wrap_rows: usize,
 }
 struct Harness {
     input: Entity<TextareaState>,
@@ -130,6 +134,9 @@ impl Harness {
             changes: self.changes,
             ticket_changes: self.ticket_changes,
             selected: self.keys.selected,
+            input_bounds: self.input.read(cx).input_bounds(),
+            cursor_layout: self.input.read(cx).cursor_layout(),
+            wrap_rows: self.input.read(cx).display_map().wrap_row_count(),
         }
     }
     fn bound(&mut self, key: keys::Key, window: &mut Window, cx: &mut Context<Self>) {
@@ -221,10 +228,11 @@ impl Render for Harness {
         } else {
             div()
         };
-        scope.w_full().child(
+        scope.w(px(560.)).h(px(180.)).child(
             div()
                 .id("composer-image-drop")
-                .child(Textarea::new(&self.input).h(px(110.))),
+                .w_full()
+                .child(Textarea::new(&self.input).w_full().h(px(110.))),
         )
     }
 }
@@ -254,7 +262,20 @@ fn setup(cx: &mut TestAppContext, wired: bool) -> (Entity<Harness>, &mut VisualT
         render_frame(window, cx);
     });
     cx.run_until_parked();
+    cx.update(render_frame);
     view.update(cx, |this, cx| this.arm(cx));
+    let measured = read(&view, cx);
+    assert!(
+        measured.wrap_rows >= 2,
+        "actual two-row layout: {measured:#?}"
+    );
+    assert!(measured.input_bounds.size.width > px(0.));
+    assert!(measured.input_bounds.size.height > px(0.));
+    let (caret_bounds, line_height) = measured
+        .cursor_layout
+        .expect("real Textarea must have measured caret geometry before key dispatch");
+    assert!(line_height > px(0.) && caret_bounds.size.height > px(0.));
+    assert!(measured.selection.start > TEXT.find('\n').unwrap());
     (view, cx)
 }
 fn read(view: &Entity<Harness>, cx: &VisualTestContext) -> Snapshot {
@@ -347,6 +368,10 @@ fn headless_unwired_control_moves_caret_and_revokes_revision(cx: &mut TestAppCon
     assert_ne!(
         after.selection, before.selection,
         "real Textarea must exercise MoveUp"
+    );
+    assert!(
+        after.selection.end <= TEXT.find('\n').unwrap(),
+        "native Up must reach the previous logical row: {after:#?}"
     );
     assert!(after.revision > before.revision);
     assert!(after.ticket_changes > 0);
