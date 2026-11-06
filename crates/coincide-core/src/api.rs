@@ -146,6 +146,7 @@ pub struct Engine {
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
     named_resume: crate::named_profile_resume::Registry,
+    provider_restore: Option<provider_switch_api::RestoreIntent>,
     github_threads: github_threads_engine::State,
     computer_use: computer_use_engine::State,
     pub store: Store,
@@ -220,6 +221,7 @@ impl Engine {
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             named_resume: crate::named_profile_resume::Registry::default(),
+            provider_restore: None,
             github_threads: github_threads_engine::State::default(),
             computer_use: computer_use_engine::State::default(),
             store,
@@ -546,7 +548,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
+                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -712,6 +714,11 @@ impl Engine {
                 Ok(result)
             }
             "agent.provider.select" => self.select_provider_from_history(p),
+            "agent.provider.cancelRestore" => {
+                ensure!(p.as_object().is_some_and(|fields| fields.is_empty()), "Restore cancellation takes no parameters");
+                self.cancel_provider_restore();
+                Ok(json!({"cancelled":true}))
+            },
             "agent.select" => {
                 let id = required(p, "threadId")?;
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
@@ -1600,6 +1607,7 @@ impl Engine {
             })
     }
     pub fn poll(&mut self) {
+        self.poll_provider_restore();
         self.poll_codex_profile_login();
         self.poll_steering();
         self.provider_workers_status();

@@ -60,6 +60,7 @@ pub(super) fn intercept<T>(
 pub(super) struct Submission {
     pub thread: Value,
     pub draft: String,
+    pub restore_request: Option<String>,
 }
 impl Submission {
     pub fn new(thread: &Value, draft: &str) -> Self {
@@ -79,6 +80,7 @@ impl Submission {
                 .collect(),
             ),
             draft: draft.into(),
+            restore_request: None,
         }
     }
     pub fn same_content(&self, thread: &Value, draft: &str) -> bool {

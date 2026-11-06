@@ -46,6 +46,12 @@ pub struct ImportReport {
 }
 
 impl Store {
+    /// Connection-local monotonic write counter for asynchronous compare-and-set
+    /// intents. Detects a source/target changed and restored between polls.
+    pub(crate) fn mutation_serial(&self) -> Result<u64> {
+        Ok(self.connection()?.total_changes())
+    }
+
     fn connection(&self) -> Result<&Connection> {
         self.db.as_ref().context("Store is closed")
     }

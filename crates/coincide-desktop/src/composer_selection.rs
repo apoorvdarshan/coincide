@@ -511,37 +511,15 @@ fn command_params(
                 "This provider is unavailable in the current runtime; command draft retained",
             )?;
         anyhow::ensure!(
-            provider["accountPolicy"] == "default_only"
-                && default_account_id(&thread["selection"]["accountID"]) == Some("default"),
-            "Use model/account controls to choose this account explicitly; command draft retained"
+            matches!(
+                provider["accountPolicy"].as_str(),
+                Some("default_only" | "configured_codex_profile")
+            ),
+            "Automatic switching is unavailable for this account type; draft retained"
         );
-        anyhow::ensure!(
-            provider["models"]
-                .as_array()
-                .is_some_and(|models| models.iter().any(|model| model["id"] == "default")),
-            "Provider default is unavailable in the current runtime; command draft retained"
-        );
-        anyhow::ensure!(
-            thread["selection"]["effort"].is_null() && thread["selection"]["speed"].is_null(),
-            "Clear saved effort/speed explicitly in model controls before switching provider; command draft retained"
-        );
-        let mut draft = SelectionDraft::from_thread(thread);
-        draft.provider = target.into();
-        draft.account = Value::Null;
-        draft.use_custom = false;
-        draft.custom.clear();
-        if let Some(reason) = mode_problem(&draft, Some(provider)) {
-            anyhow::bail!(reason);
-        }
-        let mut params = draft.params(thread)?;
-        // Preserve absent/null mode shape instead of normalizing unrelated
-        // saved metadata while changing provider and its explicit default model.
-        for key in ["accessMode", "interactionMode"] {
-            if thread[key].is_null() {
-                params.as_object_mut().unwrap().remove(key);
-            }
-        }
-        return Ok(Some(params));
+        // Engine derives and validates the remembered account/model atomically.
+        // The desktop must not replace that preference with its cached catalog.
+        return Ok(None);
     }
     // Swift /model and /usage-limits open controls, rather than changing a mode.
     // Preserve the authoritative capability/active/origin locks above; merely
@@ -564,6 +542,26 @@ fn command_params(
     }
     command.mode().map(|_| draft.params(thread)).transpose()
 }
+fn expected_restore_account(thread: &Value, provider: &str) -> Value {
+    let session = thread["sessions"]
+        .as_object()
+        .and_then(|rows| rows.get(provider))
+        .or_else(|| {
+            thread["sessions"]
+                .as_array()?
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|pair| pair[0] == provider)
+                .map(|pair| &pair[1])
+        });
+    session
+        .and_then(|session| session.get("accountID"))
+        .or_else(|| thread["rustProviderSelections"][provider].get("accountID"))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 /// Invoked under one Engine try-lock. Only existing validated selection/draft
 /// endpoints and already-reported limits status are used, never Send/queue or
 /// provider refresh. Every rejection remains intercepted.
@@ -612,25 +610,55 @@ fn command_transaction(
         );
     }
     let mut acknowledged_model = None;
+    let mut acknowledged_account = Value::Null;
     let ack = if let Some(provider) = command.provider() {
-        let response = invoke(
-            "agent.provider.select",
-            json!({"threadId":id,"provider":provider,"expected":submission.thread}),
-        )?;
+        let mut params = json!({"threadId":id,"provider":provider,"expected":submission.thread});
+        if let Some(request) = &submission.restore_request {
+            params["restoreRequestId"] = json!(request);
+        }
+        let response = invoke("agent.provider.select", params)?;
+        if response["pending"] == true {
+            anyhow::ensure!(
+                provider == "codex"
+                    && response["provider"] == provider
+                    && response["authenticationChecked"] == false
+                    && response["requestId"]
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty())
+                    && response["accountID"] == expected_restore_account(&current, provider),
+                "Provider restoration omitted its source-bound pending acknowledgement; draft retained"
+            );
+            return Ok(response);
+        }
         let model = response["model"]
             .as_str()
             .context("Provider selection omitted its model acknowledgement; draft retained")?;
+        let named = response["accountRestored"] == true;
         anyhow::ensure!(
-            response["authenticationChecked"] == false
-                && response["accountRestored"] == false
-                && ((response["restored"] == true
-                    && response["provenance"] == "latest_default_catalog"
-                    && model != "default")
-                    || (response["restored"] == false
-                        && response["provenance"] == "provider_default"
-                        && model == "default")),
+            (named
+                && provider == "codex"
+                && response["authenticationChecked"] == true
+                && response["restored"] == true
+                && response["provenance"] == "latest_authenticated_named_catalog"
+                && response["accountID"] == expected_restore_account(&current, provider)
+                && response["accountID"]
+                    .as_str()
+                    .is_some_and(|account| account != "default" && !account.is_empty())
+                && model != "default")
+                || (!named
+                    && response["authenticationChecked"] == false
+                    && response["accountRestored"] == false
+                    && ((response["restored"] == true
+                        && response["provenance"] == "latest_default_catalog"
+                        && model != "default")
+                        || (response["restored"] == false
+                            && response["provenance"] == "provider_default"
+                            && model == "default"))),
             "Provider selection omitted its scoped catalog acknowledgement; draft retained"
         );
+        if named {
+            acknowledged_account = response["accountID"].clone();
+        }
         acknowledged_model = Some(model.to_owned());
         response["thread"].clone()
     } else if let Some(params) = params {
@@ -652,7 +680,11 @@ fn command_transaction(
         anyhow::ensure!(
             ack["selection"]["provider"] == provider
                 && ack["selection"]["modelID"].as_str() == acknowledged_model.as_deref()
-                && default_account_id(&ack["selection"]["accountID"]) == Some("default")
+                && (if acknowledged_account.is_null() {
+                    default_account_id(&ack["selection"]["accountID"]) == Some("default")
+                } else {
+                    ack["selection"]["accountID"] == acknowledged_account
+                })
                 && ack["accessMode"] == submission.thread["accessMode"]
                 && ack["interactionMode"] == submission.thread["interactionMode"],
             "Selection did not acknowledge the requested provider/model and preserved modes; draft retained"
@@ -714,6 +746,10 @@ pub(super) struct ComposerSelection {
     catalog: Value,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
+    pending_provider: Option<(
+        crate::composer_commands::Command,
+        crate::composer_commands::Submission,
+    )>,
     expanded: bool,
 }
 #[derive(Clone, Debug)]
@@ -991,8 +1027,22 @@ impl Coincide {
             )
         })();
         match result {
+            Ok(response) if response["pending"] == true => {
+                let mut submission = submission;
+                submission.restore_request = response["requestId"].as_str().map(str::to_owned);
+                self.selection_ui.pending_provider = Some((command, submission));
+                self.status = "Checking the remembered account's model catalog. Your draft is retained; no message was sent.".into();
+            }
             Ok(thread) => {
-                let provider_message = if thread["selection"]["modelID"] == "default" {
+                self.selection_ui.pending_provider = None;
+                let provider_message = if !default_account_id(&thread["selection"]["accountID"])
+                    .is_some_and(|account| account == "default")
+                {
+                    format!(
+                        "Previous account and model {} restored from its authenticated catalog. No message was sent.",
+                        text(&thread["selection"], "modelID")
+                    )
+                } else if thread["selection"]["modelID"] == "default" {
                     "Provider selection saved with Provider default. Authentication was not checked. No message was sent.".to_owned()
                 } else {
                     format!(
@@ -1051,7 +1101,10 @@ impl Coincide {
                     self.status="Command acknowledged; newer conversation/draft retained. No message was sent.".into();
                 }
             }
-            Err(error) => self.status = format!("Command was not sent; draft retained: {error}"),
+            Err(error) => {
+                self.selection_ui.pending_provider = None;
+                self.status = format!("Command was not sent; draft retained: {error}");
+            }
         }
         cx.notify();
     }
@@ -1067,6 +1120,20 @@ impl Coincide {
         self.selection_ui.bound = None;
     }
     pub(super) fn sync_composer_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((command, submission)) = self.selection_ui.pending_provider.take() {
+            let current = self.composer.read(cx).value().to_string();
+            if self.selected.as_ref().is_some_and(|thread| {
+                submission.same_content(thread, &current) && submission.same_selection(thread)
+            }) {
+                self.perform_composer_command(command, submission, window, cx);
+            } else {
+                if let Ok(mut engine) = try_state(&self.engine) {
+                    let _ =
+                        selection_response(&mut engine, "agent.provider.cancelRestore", json!({}));
+                }
+                self.status = "Provider restoration cancelled because the composer changed. Your draft was retained.".into();
+            }
+        }
         let context = self.selected.as_ref().map(|thread| {
             let id = text(thread, "id");
             let running = self.running.contains(&id);

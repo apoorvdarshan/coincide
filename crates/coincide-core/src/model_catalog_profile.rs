@@ -198,6 +198,12 @@ impl NamedModelProof {
     }
 }
 impl ModelCatalog {
+    pub(crate) fn cancel_named_restore(&mut self, request: &str) {
+        if let Some(job) = self.jobs.get(request) {
+            job.cancelled.store(true, Ordering::Release);
+        }
+    }
+
     pub(crate) fn refresh_named(&mut self, binding: NamedBinding) -> Result<Value> {
         binding.validate()?;
         let work_binding = binding.clone();
