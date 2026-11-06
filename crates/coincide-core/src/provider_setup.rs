@@ -360,6 +360,12 @@ impl SetupHandoff {
     /// macOS Terminal needs a .command entry point. It contains only quoted
     /// helper/handoff paths; no provider command, environment or credential.
     pub fn terminal_script(&mut self, helper: &Path) -> Result<&Path> {
+        let owner = owner_for(&self.pending)?;
+        let plan: Plan = serde_json::from_value(authenticated(&owner, &self.pending)?)?;
+        ensure!(
+            Binary::capture(helper)? == plan.helper,
+            "Setup launcher differs from the approved helper"
+        );
         let script = self.pending.with_extension("command");
         let helper = format!("'{}'", helper.to_string_lossy().replace('\'', "'\"'\"'"));
         let pending = format!(

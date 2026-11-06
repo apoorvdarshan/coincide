@@ -127,6 +127,8 @@ pub struct Snapshot {
     pub environment: BTreeMap<String, String>,
     pub baseline: String,
     pub approved: bool,
+    /// Imported preferences are native display drafts only, never launch grants.
+    pub imported: bool,
 }
 /// Opaque native prepare/apply proof. Never accepted through agent JSON.
 pub struct Prepared {
@@ -556,6 +558,93 @@ fn provider_id(provider: &str) -> Result<()> {
     );
     Ok(())
 }
+fn legacy_snapshot(store: &Store, provider: &str) -> Result<Snapshot> {
+    let settings = store
+        .document("settings.json")?
+        .unwrap_or_else(|| json!({}));
+    let providers = &settings["providers"];
+    let entry = if providers.is_null() {
+        &Value::Null
+    } else if let Some(providers) = providers.as_object() {
+        providers.get(provider).unwrap_or(&Value::Null)
+    } else {
+        let providers = providers
+            .as_array()
+            .context("Imported provider preferences are malformed")?;
+        let (pairs, remainder) = providers.as_chunks::<2>();
+        ensure!(
+            remainder.is_empty() && pairs.iter().all(|pair| pair[0].is_string()),
+            "Imported provider preferences are malformed"
+        );
+        let mut entries = pairs.iter().filter(|pair| pair[0] == provider);
+        let entry = entries.next().map(|pair| &pair[1]).unwrap_or(&Value::Null);
+        ensure!(
+            entries.next().is_none(),
+            "Imported provider preferences contain duplicate entries"
+        );
+        entry
+    };
+    ensure!(
+        entry.is_null() || entry.is_object(),
+        "Imported provider preferences are malformed"
+    );
+    let executable = entry
+        .get("executablePath")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            let value = value
+                .as_str()
+                .context("Imported executable path must be text")?;
+            ensure!(
+                value.len() <= 4096 && !value.contains('\0'),
+                "Imported executable path is invalid"
+            );
+            Ok::<_, anyhow::Error>((!value.trim().is_empty()).then(|| PathBuf::from(value)))
+        })
+        .transpose()?
+        .flatten();
+    let environment = if entry["environment"].is_null() {
+        BTreeMap::new()
+    } else {
+        let values = entry["environment"]
+            .as_object()
+            .context("Imported environment must be a name/value dictionary")?;
+        ensure!(
+            values.len() <= 128,
+            "Imported environment exceeds the editor bound"
+        );
+        let values = values
+            .iter()
+            .map(|(key, value)| {
+                Ok((
+                    key.clone(),
+                    value
+                        .as_str()
+                        .context("Imported environment values must be text")?
+                        .to_owned(),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        ensure!(
+            values
+                .iter()
+                .map(|(key, value)| key.len() + value.len())
+                .sum::<usize>()
+                <= 64 * 1024,
+            "Imported environment exceeds the editor bound"
+        );
+        values
+    };
+    let imported = executable.is_some() || !environment.is_empty();
+    Ok(Snapshot {
+        executable,
+        environment,
+        baseline: "unconfigured".into(),
+        approved: false,
+        imported,
+    })
+}
+
 fn default_executable(provider: &str) -> Option<PathBuf> {
     let variable = format!("COINCIDE_{}_EXECUTABLE", provider.to_ascii_uppercase());
     std::env::var_os(variable).map(PathBuf::from).or_else(|| {
@@ -590,13 +679,9 @@ impl Engine {
                 environment: record.environment,
                 baseline: record.revision,
                 approved: true,
+                imported: false,
             },
-            None => Snapshot {
-                executable: None,
-                environment: BTreeMap::new(),
-                baseline: "unconfigured".into(),
-                approved: false,
-            },
+            None => legacy_snapshot(&self.store, provider)?,
         })
     }
     pub fn prepare_native_provider_configuration(
@@ -1098,6 +1183,97 @@ mod tests {
                     .is_none()
             );
         }
+    }
+    #[test]
+    fn imported_values_are_visible_native_drafts_until_explicit_pinned_save() {
+        for array in [false, true] {
+            let (root, mut engine, binary) = fixture();
+            let config = json!({"executablePath":binary,"environment":{"SYNTHETIC_API_KEY":"draft-not-a-real-key"},"opaque":17});
+            let providers = if array {
+                json!(["codex", config])
+            } else {
+                json!({"codex":config})
+            };
+            let raw = json!({"providers":providers});
+            engine.store.save_document("settings.json", &raw).unwrap();
+            let draft = engine.native_provider_configuration("codex").unwrap();
+            assert!(draft.imported && !draft.approved);
+            assert_eq!(draft.executable.as_deref(), Some(binary.as_path()));
+            assert_eq!(
+                draft.environment["SYNTHETIC_API_KEY"],
+                "draft-not-a-real-key"
+            );
+            assert!(
+                !directory(&root.path().join("private/state.sqlite"))
+                    .unwrap()
+                    .exists()
+            );
+            assert!(
+                engine
+                    .provider_launch_configuration("codex")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                legacy_environment(
+                    &engine.execute("settings.read", &json!({})).unwrap(),
+                    "codex"
+                )
+                .is_none()
+            );
+            let plan = engine
+                .prepare_native_provider_configuration(
+                    "codex",
+                    &draft.baseline,
+                    draft.executable.as_deref(),
+                    draft.environment,
+                )
+                .unwrap();
+            let saved = engine.apply_native_provider_configuration(plan).unwrap();
+            assert!(saved.approved && !saved.imported);
+            assert!(
+                engine
+                    .provider_launch_configuration("codex")
+                    .unwrap()
+                    .unwrap()
+                    .approved_executable()
+                    .is_some()
+            );
+            assert_eq!(
+                engine.store.document("settings.json").unwrap().unwrap(),
+                raw
+            );
+        }
+    }
+    #[test]
+    fn native_discard_of_imported_values_preserves_raw_document_and_stays_automatic() {
+        let (_root, mut engine, binary) = fixture();
+        let raw = json!({"providers":{"codex":{"executablePath":binary,"environment":{"SYNTHETIC_TEST_MODE":"legacy"}}}});
+        engine.store.save_document("settings.json", &raw).unwrap();
+        let draft = engine.native_provider_configuration("codex").unwrap();
+        let plan = engine
+            .prepare_native_provider_configuration("codex", &draft.baseline, None, BTreeMap::new())
+            .unwrap();
+        engine.apply_native_provider_configuration(plan).unwrap();
+        let next = engine.native_provider_configuration("codex").unwrap();
+        assert!(
+            next.approved
+                && !next.imported
+                && next.executable.is_none()
+                && next.environment.is_empty()
+        );
+        assert!(
+            engine
+                .provider_launch_configuration("codex")
+                .unwrap()
+                .unwrap()
+                .approved_executable()
+                .is_none()
+        );
+        assert_eq!(
+            engine.store.document("settings.json").unwrap().unwrap(),
+            raw
+        );
     }
     #[test]
     fn imported_settings_and_agent_json_cannot_grant_executable_or_environment_authority() {

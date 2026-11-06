@@ -32,6 +32,7 @@ struct Editor {
     baseline: String,
     generation: u64,
     loaded: bool,
+    needs_approval: bool,
     load_requested: bool,
     notice: String,
     report: Option<ProbeReport>,
@@ -171,6 +172,7 @@ impl Panel {
                     baseline: "unconfigured".into(),
                     generation: 0,
                     loaded: false,
+                    needs_approval: false,
                     load_requested: true,
                     notice: String::new(),
                     report: None,
@@ -206,6 +208,9 @@ impl Panel {
         let Some(editor) = self.editors.get(provider) else {
             return "Not checked".into();
         };
+        if editor.needs_approval {
+            return "Imported settings need review".into();
+        }
         if self.pending.as_deref() == Some(provider) {
             return "Checking…".into();
         }
@@ -253,6 +258,7 @@ impl Panel {
         cx: &mut Context<Self>,
     ) -> Variable {
         let id = uuid::Uuid::new_v4().to_string();
+        let revealed = !secret(name);
         let name = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("NAME")
@@ -265,10 +271,19 @@ impl Panel {
         });
         let subscriptions = [&name, &value]
             .into_iter()
-            .map(|input| {
+            .enumerate()
+            .map(|(index, input)| {
                 let provider = provider.to_owned();
+                let row_id = id.clone();
                 cx.subscribe_in(input, window, move |this, _, event, window, cx| {
                     if matches!(event, InputEvent::Change) {
+                        if index == 0
+                            && let Some(editor) = this.editors.get_mut(&provider)
+                            && let Some(row) =
+                                editor.variables.iter_mut().find(|row| row.id == row_id)
+                        {
+                            row.revealed = !secret(&row.name.read(cx).value());
+                        }
                         this.edited(&provider, window, cx);
                     }
                 })
@@ -278,7 +293,7 @@ impl Panel {
             id,
             name,
             value,
-            revealed: false,
+            revealed,
             _subscriptions: subscriptions,
         }
     }
@@ -286,7 +301,7 @@ impl Panel {
         if let Some(editor) = self.editors.get_mut(provider) {
             editor.generation = editor.generation.wrapping_add(1);
             for row in &editor.variables {
-                let masked = secret(&row.name.read(cx).value()) && !row.revealed;
+                let masked = !row.revealed;
                 row.value
                     .update(cx, |input, cx| input.set_masked(masked, window, cx));
             }
@@ -317,6 +332,7 @@ impl Panel {
             Vec::new()
         };
         if let Some(editor) = self.editors.get_mut(provider) {
+            editor.needs_approval = snapshot.imported;
             editor.baseline = snapshot.baseline;
             editor.saved_path = path.clone();
             editor.saved_environment = snapshot.environment;
@@ -330,14 +346,15 @@ impl Panel {
                     .update(cx, |input, cx| input.set_value(path, window, cx));
                 editor.variables = rows;
                 for row in &editor.variables {
-                    row.value.update(cx, |input, cx| {
-                        input.set_masked(secret(&row.name.read(cx).value()), window, cx)
-                    });
+                    row.value
+                        .update(cx, |input, cx| input.set_masked(!row.revealed, window, cx));
                 }
             }
             let dirty = editor.dirty(cx);
             editor.lease.set_dirty(dirty);
-            editor.notice = if dirty {
+            editor.notice = if editor.needs_approval {
+                "Imported preferences are unapproved. Review them, then Save to approve their executable and environment, or Discard Imported Values.".into()
+            } else if dirty {
                 "Saved; newer changes remain unsaved.".into()
             } else {
                 "Saved settings loaded.".into()
@@ -353,6 +370,7 @@ impl Panel {
             return;
         };
         let generation = editor.generation;
+        let baseline = editor.baseline.clone();
         let loading = matches!(&request, Request::Load);
         if matches!(&request, Request::Check) {
             editor.report = None;
@@ -422,7 +440,15 @@ impl Panel {
                         ))
                     }
                     Request::Check => {
-                        let plan = try_state(&engine)?.prepare_native_provider_check(&provider)?;
+                        let plan = {
+                            let owner = try_state(&engine)?;
+                            anyhow::ensure!(
+                                owner.native_provider_configuration(&provider)?.baseline
+                                    == baseline,
+                                "Provider configuration changed; reload before checking"
+                            );
+                            owner.prepare_native_provider_check(&provider)?
+                        };
                         let report = plan.run(&|| admission.allowed())?;
                         let catalog = checked_catalog(&engine, &provider, &|| admission.allowed());
                         Ok(Outcome::Checked(report, catalog))
@@ -460,7 +486,9 @@ impl Panel {
         if self.pending.is_none() {
             if let Some(provider) = self.check_queue.front().cloned() {
                 if self.editors.get(&provider).is_some_and(|editor| {
-                    editor.dirty(cx) || (!editor.loaded && !editor.load_requested)
+                    editor.dirty(cx)
+                        || editor.needs_approval
+                        || (!editor.loaded && !editor.load_requested)
                 }) {
                     self.check_queue.pop_front();
                 } else if self
@@ -549,11 +577,25 @@ impl Panel {
         let Some(editor) = self.editors.get(provider) else {
             return;
         };
+        if editor.needs_approval {
+            let baseline = editor.baseline.clone();
+            self.start(
+                provider,
+                Request::Save {
+                    baseline,
+                    path: String::new(),
+                    environment: BTreeMap::new(),
+                },
+                cx,
+            );
+            return;
+        }
         let snapshot = Snapshot {
             executable: (!editor.saved_path.is_empty()).then(|| PathBuf::from(&editor.saved_path)),
             environment: editor.saved_environment.clone(),
             baseline: editor.baseline.clone(),
             approved: editor.loaded,
+            imported: false,
         };
         self.load_snapshot(provider, snapshot, true, window, cx);
     }
@@ -636,6 +678,7 @@ impl Panel {
         };
         let busy = self.pending.is_some();
         let dirty = editor.dirty(cx);
+        let needs_approval = editor.needs_approval;
         let loaded = editor.loaded;
         let mut pane = div()
             .flex()
@@ -647,6 +690,7 @@ impl Panel {
             .rounded_md();
         match part {
             Part::Status => {
+                let check_provider = provider.clone();
                 let status = editor
                     .report
                     .as_ref()
@@ -667,15 +711,19 @@ impl Panel {
                             .child(
                                 Button::new("provider-check-again")
                                     .label("Check Again")
-                                    .disabled(!loaded || !self.enabled || busy || dirty)
-                                    .tooltip(if dirty {
+                                    .disabled(
+                                        !loaded || !self.enabled || busy || dirty || needs_approval,
+                                    )
+                                    .tooltip(if dirty || needs_approval {
                                         "Save changes before checking"
                                     } else {
                                         "Check this provider’s installation and sign-in"
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        let provider = this.active.clone();
-                                        this.start(&provider, Request::Check, cx);
+                                        if this.active != check_provider {
+                                            return;
+                                        }
+                                        this.start(&check_provider, Request::Check, cx);
                                     })),
                             ),
                     )
@@ -788,12 +836,7 @@ impl Panel {
                                             {
                                                 row.revealed = !row.revealed;
                                                 row.value.update(cx, |input, cx| {
-                                                    input.set_masked(
-                                                        secret(&row.name.read(cx).value())
-                                                            && !row.revealed,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                    input.set_masked(!row.revealed, window, cx)
                                                 });
                                             }
                                         }
@@ -839,16 +882,24 @@ impl Panel {
                             .gap_2()
                             .child(
                                 Button::new("provider-config-save")
-                                    .label("Save Changes")
-                                    .disabled(!loaded || !dirty || busy)
+                                    .label(if needs_approval {
+                                        "Approve Imported Values"
+                                    } else {
+                                        "Save Changes"
+                                    })
+                                    .disabled(!loaded || (!dirty && !needs_approval) || busy)
                                     .on_click(
                                         cx.listener(move |this, _, _, cx| this.save(&save, cx)),
                                     ),
                             )
                             .child(
                                 Button::new("provider-config-discard")
-                                    .label("Discard Changes")
-                                    .disabled(!dirty || busy)
+                                    .label(if needs_approval {
+                                        "Discard Imported Values"
+                                    } else {
+                                        "Discard Changes"
+                                    })
+                                    .disabled((!dirty && !needs_approval) || busy)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.discard(&discard, window, cx)
                                     })),
@@ -865,6 +916,7 @@ impl Panel {
                 ) {
                     let label = command.label;
                     let action = command.action;
+                    let setup_provider = provider.clone();
                     let copy = command.display.clone();
                     pane = pane.child(
                         div()
@@ -891,7 +943,7 @@ impl Panel {
                                     "provider-setup-run-{label}"
                                 )))
                                 .label("Run in Terminal")
-                                .disabled(!loaded || dirty || busy)
+                                .disabled(!loaded || dirty || needs_approval || busy)
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
                                         let provider = this.active.clone();
