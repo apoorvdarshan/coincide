@@ -122,7 +122,8 @@ fn menus(context: EditContext, selection_available: bool) -> Vec<Menu> {
 pub fn install(cx: &mut App) -> Arc<AtomicBool> {
     let requested = Arc::new(AtomicBool::new(false));
     let signal = requested.clone();
-    cx.on_action(move |_: &Quit, _| {
+    cx.on_action(move |_: &Quit, cx| {
+        crate::quit_shortcut::cancel(cx);
         signal.store(true, Ordering::Release);
     });
     let pending = Pending::default();
@@ -158,6 +159,7 @@ pub fn install(cx: &mut App) -> Arc<AtomicBool> {
         selection_available: false,
     });
     cx.set_menus(menus(EditContext::Unverified, false));
+    crate::quit_shortcut::install(requested.clone(), cx);
     requested
 }
 /// Parent calls outside any Engine guard; consumption itself has no effects.

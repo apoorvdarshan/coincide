@@ -2781,6 +2781,7 @@ impl Window {
         cx.keystroke_observers.clone().retain(move |callback| {
             (callback)(
                 &KeystrokeEvent {
+                    is_held: None,
                     keystroke: keystroke.clone(),
                     input_preference,
                     action: action.map(|action| action.boxed_clone()),
@@ -2795,6 +2796,7 @@ impl Window {
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
         keystroke: &Keystroke,
+        is_held: Option<bool>,
         input_preference: InputPreference,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -2802,6 +2804,7 @@ impl Window {
         cx.keystroke_interceptors.clone().retain(move |callback| {
             (callback)(
                 &KeystrokeEvent {
+                    is_held,
                     keystroke: keystroke.clone(),
                     input_preference,
                     action: None,
@@ -6337,6 +6340,9 @@ impl Window {
         cx.propagate_event = true;
         self.dispatch_keystroke_interceptors(
             &keystroke,
+            event
+                .downcast_ref::<KeyDownEvent>()
+                .map(|event| event.is_held),
             input_preference,
             self.context_stack(),
             cx,
