@@ -228,7 +228,7 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust appshots_platform::backend::tests --locked -- --nocapture | tee "$RUNNER_TEMP/appshots-linux-tests.log"
-          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-linux-tests.log"
+          grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-linux-tests.log"
           cargo test -p coincide-desktop --bin coincide-rust appshots::tests --locked -- --nocapture | tee "$RUNNER_TEMP/appshots-owner-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-owner-tests.log"
       - name: Build actual Linux native application
