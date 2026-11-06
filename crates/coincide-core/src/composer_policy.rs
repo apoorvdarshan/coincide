@@ -201,12 +201,15 @@ impl Policy {
             );
         }
         let mut syntax = crate::codex_login_profiles::validation_view(thread);
-        syntax["selection"]
+        let selection = syntax["selection"]
             .as_object_mut()
-            .context("Invalid profile selection")?
-            .remove("effort");
+            .context("Invalid profile selection")?;
+        for option in ["effort", "speed"] {
+            selection.remove(option);
+        }
         let mut policy = Self::parse_with_effort_proof(&syntax, origin, None)?;
         policy.effort = thread["selection"]["effort"].as_str().map(str::to_owned);
+        policy.speed = thread["selection"]["speed"].as_str().map(str::to_owned);
         policy.named_proof = proof.cloned();
         policy.automatic_effort_required = false;
         Ok(policy)
@@ -227,10 +230,14 @@ impl Policy {
     fn validate_effort_proof(&self) -> Result<()> {
         if let Some(proof) = &self.named_proof {
             ensure!(
-                self.effort_proof.is_none() && self.speed.is_none(),
-                "Named effort cannot borrow default options"
+                self.effort_proof.is_none(),
+                "Named options cannot borrow default proof"
             );
-            return proof.validate_policy(self.model.as_deref(), self.effort.as_deref());
+            return proof.validate_policy(
+                self.model.as_deref(),
+                self.effort.as_deref(),
+                self.speed.as_deref(),
+            );
         }
         if self.effort.is_some() || self.speed.is_some() {
             let proof = self.effort_proof.as_ref().context(

@@ -209,7 +209,15 @@ pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
                             && effort.len() <= 128
                             && effort.trim() == effort
                             && !effort.chars().any(char::is_control))))
-            && thread["selection"]["speed"].is_null()
+            && (thread["selection"]["speed"].is_null()
+                || (model != "default"
+                    && thread["selection"]["speed"]
+                        .as_str()
+                        .is_some_and(|speed| !speed.is_empty()
+                            && speed != "default"
+                            && speed.len() <= 128
+                            && speed.trim() == speed
+                            && !speed.chars().any(char::is_control))))
             && thread["rustBotContext"].is_null()
             && thread["botID"].is_null()
             && (thread["accessMode"].is_null()
@@ -218,7 +226,7 @@ pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
                     Some("approval" | "fullAccess")
                 ))
             && (thread["interactionMode"].is_null() || thread["interactionMode"] == "build"),
-        "Named Codex login profiles require ordinary build mode, no speed and explicit-model effort"
+        "Named Codex login profiles require ordinary build mode and explicit-model effort/speed"
     );
     ensure!(
         thread["accessMode"] != "fullAccess" || model != "default",

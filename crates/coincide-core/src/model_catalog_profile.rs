@@ -98,6 +98,7 @@ pub(super) fn same_scope(a: Option<&NamedBinding>, b: Option<&NamedBinding>) -> 
 pub(crate) struct NamedModelProof {
     model: String,
     effort: Option<String>,
+    speed: Option<String>,
     binding: NamedBinding,
     revoked: Arc<AtomicBool>,
 }
@@ -105,6 +106,7 @@ impl PartialEq for NamedModelProof {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
             && self.effort == other.effort
+            && self.speed == other.speed
             && self.binding == other.binding
             && Arc::ptr_eq(&self.revoked, &other.revoked)
     }
@@ -114,14 +116,21 @@ impl NamedModelProof {
     pub(crate) fn validate_thread(&self, thread: &Value) -> Result<()> {
         self.validate_selection(thread, &self.binding)
     }
-    pub(crate) fn validate_policy(&self, model: Option<&str>, effort: Option<&str>) -> Result<()> {
+    pub(crate) fn validate_policy(
+        &self,
+        model: Option<&str>,
+        effort: Option<&str>,
+        speed: Option<&str>,
+    ) -> Result<()> {
         ensure!(
             !self.revoked.load(Ordering::Acquire),
             "Profile model proof was revoked; refresh the catalog"
         );
         ensure!(
-            model == Some(self.model.as_str()) && effort == self.effort.as_deref(),
-            "Named model effort does not match the captured policy"
+            model == Some(self.model.as_str())
+                && effort == self.effort.as_deref()
+                && speed == self.speed.as_deref(),
+            "Named model options do not match the captured policy"
         );
         self.binding.validate()
     }
@@ -130,7 +139,11 @@ impl NamedModelProof {
             executable == self.binding.profile.executable(),
             "Named effort executable changed"
         );
-        self.validate_policy(Some(&self.model), self.effort.as_deref())
+        self.validate_policy(
+            Some(&self.model),
+            self.effort.as_deref(),
+            self.speed.as_deref(),
+        )
     }
     pub(crate) fn validate_selection(&self, thread: &Value, binding: &NamedBinding) -> Result<()> {
         ensure!(
@@ -139,7 +152,7 @@ impl NamedModelProof {
                 && thread["selection"]["accountID"] == self.binding.account()
                 && thread["selection"]["modelID"] == self.model
                 && thread["selection"]["effort"] == json!(self.effort)
-                && thread["selection"]["speed"].is_null()
+                && thread["selection"]["speed"] == json!(self.speed)
                 && binding == &self.binding,
             "Named model proof belongs to another account, thread or directory"
         );
@@ -148,6 +161,7 @@ impl NamedModelProof {
             &binding.cwd,
             Some(&self.model),
             self.effort.as_deref(),
+            self.speed.as_deref(),
         )
     }
     pub(crate) fn validate_launch(
@@ -156,6 +170,7 @@ impl NamedModelProof {
         cwd: &Path,
         model: Option<&str>,
         effort: Option<&str>,
+        speed: Option<&str>,
     ) -> Result<()> {
         ensure!(
             !self.revoked.load(Ordering::Acquire),
@@ -167,7 +182,7 @@ impl NamedModelProof {
                 && model == Some(self.model.as_str()),
             "Named model proof does not match the captured launch"
         );
-        self.validate_policy(model, effort)
+        self.validate_policy(model, effort, speed)
     }
     pub(crate) fn validate_resolved(&self, result: &Value) -> Result<()> {
         ensure!(
@@ -239,7 +254,7 @@ impl ModelCatalog {
             .context("Invalid named model")?;
         ensure!(
             model != "default",
-            "Effort requires an explicit profile-catalog model"
+            "Options require an explicit profile-catalog model"
         );
         let reported = job.response["models"]
             .as_array()
@@ -256,6 +271,19 @@ impl ModelCatalog {
                 json!({"supported":choices.is_some(),"choices":choices.cloned().unwrap_or_default(),"reportedDefault":row["reportedDefaultEffort"],
                     "provenance":"named_profile_model_list","requiresExplicitModel":true,"effectiveDefault":null,
                     "reason":if choices.is_some() {Value::Null} else {json!("This profile's model did not advertise reasoning efforts")}})
+            }
+            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+        }
+    }
+    pub(crate) fn named_speed_capability(&self, thread: &Value, binding: &NamedBinding) -> Value {
+        match self.named_model_row(thread, binding, None) {
+            Ok((_, row)) => {
+                let choices = row["reportedSpeeds"]
+                    .as_array()
+                    .filter(|choices| !choices.is_empty());
+                json!({"supported":choices.is_some(),"choices":choices.cloned().unwrap_or_default(),
+                    "provenance":"named_profile_model_list","requiresExplicitModel":true,"standard":null,
+                    "reason":if choices.is_some() {Value::Null} else {json!("This profile's model did not advertise faster speeds")}})
             }
             Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
         }
@@ -277,6 +305,7 @@ impl ModelCatalog {
             .as_str()
             .context("Invalid named model")?;
         let effort = thread["selection"]["effort"].as_str();
+        let speed = thread["selection"]["speed"].as_str();
         if let Some(effort) = effort {
             ensure!(
                 reported["reportedEfforts"]
@@ -287,9 +316,21 @@ impl ModelCatalog {
                 "Effort was not advertised for this exact profile model"
             );
         }
+        if let Some(speed) = speed {
+            ensure!(
+                speed != "default"
+                    && reported["reportedSpeeds"]
+                        .as_array()
+                        .is_some_and(|choices| choices
+                            .iter()
+                            .any(|choice| choice["id"].as_str() == Some(speed))),
+                "Speed was not advertised for this exact profile model; choose null for Standard"
+            );
+        }
         let proof = NamedModelProof {
             model: model.into(),
             effort: effort.map(str::to_owned),
+            speed: speed.map(str::to_owned),
             binding: binding.clone(),
             revoked: job.cancelled.clone(),
         };
@@ -379,7 +420,7 @@ mod tests {
         assert!(catalog.named_model_proof(&document, &other, None).is_err());
         assert!(
             proof
-                .validate_launch(&binding.profile, &nested, Some("synthetic-a"), None)
+                .validate_launch(&binding.profile, &nested, Some("synthetic-a"), None, None)
                 .is_err()
         );
         assert!(
@@ -436,6 +477,117 @@ mod tests {
         assert!(catalog.refresh_named(binding).is_err());
     }
     #[test]
+    fn named_speed_binds_combined_options_policy_and_revocation() {
+        let (_dir, binding, mut document) = fixture();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "speed-a");
+        catalog.jobs.get_mut("speed-a").unwrap().response["models"] = json!([
+            {"id":"synthetic-a","reportedEfforts":["high"],
+             "reportedSpeeds":[{"id":"priority","name":"Fast"}]}
+        ]);
+        document["selection"]["effort"] = json!("high");
+        document["selection"]["speed"] = json!("priority");
+        document["accessMode"] = json!("approval");
+        document["interactionMode"] = json!("build");
+        let proof = catalog
+            .named_model_proof(&document, &binding, Some("speed-a"))
+            .unwrap()
+            .unwrap();
+        let policy = crate::composer_policy::Policy::parse_named(
+            &document,
+            crate::composer_policy::Origin::Ordinary,
+            Some(&proof),
+        )
+        .unwrap();
+        policy.preflight().unwrap();
+        assert_eq!(policy.codex_effort(), Some("high"));
+        assert_eq!(policy.codex_speed(), Some("priority"));
+        assert!(
+            proof
+                .validate_policy(Some("synthetic-a"), Some("high"), None)
+                .is_err()
+        );
+        assert!(
+            proof
+                .validate_policy(Some("synthetic-a"), None, Some("priority"))
+                .is_err()
+        );
+        proof
+            .validate_launch(
+                &binding.profile,
+                &binding.cwd,
+                Some("synthetic-a"),
+                Some("high"),
+                Some("priority"),
+            )
+            .unwrap();
+        assert_eq!(
+            catalog.named_speed_capability(&document, &binding)["choices"],
+            json!([{"id":"priority","name":"Fast"}])
+        );
+        assert!(
+            catalog
+                .codex_effort_proof(&document["selection"], binding.profile.executable())
+                .is_err(),
+            "named speed must not borrow default-account proof"
+        );
+        for speed in [
+            json!("ultrafast"),
+            json!("default"),
+            json!(" priority "),
+            json!(17),
+        ] {
+            let mut changed = document.clone();
+            changed["selection"]["speed"] = speed;
+            assert!(
+                catalog
+                    .named_model_proof(&changed, &binding, Some("speed-a"))
+                    .is_err()
+            );
+            assert!(proof.validate_thread(&changed).is_err());
+        }
+        let mut standard = document.clone();
+        standard["selection"]["speed"] = Value::Null;
+        assert!(proof.validate_thread(&standard).is_err());
+        let standard_proof = catalog
+            .named_model_proof(&standard, &binding, Some("speed-a"))
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            proof, standard_proof,
+            "speed is part of private proof identity"
+        );
+        let standard_policy = crate::composer_policy::Policy::parse_named(
+            &standard,
+            crate::composer_policy::Origin::Ordinary,
+            Some(&standard_proof),
+        )
+        .unwrap();
+        assert_eq!(standard_policy.codex_speed(), None);
+        catalog.jobs["speed-a"]
+            .cancelled
+            .store(true, Ordering::Release);
+        assert!(policy.preflight().is_err());
+        assert!(standard_policy.preflight().is_err());
+    }
+    #[test]
+    fn named_speed_capability_never_uses_ineligible_or_unadvertised_models() {
+        let (_dir, binding, mut document) = fixture();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "speed-a");
+        catalog.jobs.get_mut("speed-a").unwrap().response["models"] = json!([
+            {"id":"synthetic-a","reportedSpeeds":[]},
+            {"id":"default","reportedSpeeds":[{"id":"priority"}]},
+            {"id":"gpt-6-astra","reportedSpeeds":[{"id":"priority"}]}
+        ]);
+        for model in ["synthetic-a", "default", "gpt-6-astra", "missing"] {
+            document["selection"]["modelID"] = json!(model);
+            let capability = catalog.named_speed_capability(&document, &binding);
+            assert_eq!(capability["supported"], false, "{model}");
+            assert_eq!(capability["choices"], json!([]));
+        }
+    }
+    #[test]
     fn named_effort_requires_exact_reported_model_and_private_policy() {
         let (_dir, binding, mut document) = fixture();
         let mut catalog = ModelCatalog::default();
@@ -488,7 +640,8 @@ mod tests {
                     &binding.profile,
                     &binding.cwd,
                     Some("synthetic-a"),
-                    Some("low")
+                    Some("low"),
+                    None,
                 )
                 .is_err()
         );
