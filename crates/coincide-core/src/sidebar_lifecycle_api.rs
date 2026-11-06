@@ -221,6 +221,36 @@ mod tests {
         (dir, Engine::fixture(store), id, a, b)
     }
     #[test]
+    fn real_owned_worker_return_is_required_before_move_or_ordinary_delete_review() {
+        use std::{
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+        let (_dir, mut engine, id, _, b) = fixture();
+        let before = engine.store.thread(&id).unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = crate::agent::WorkerCompletion::observe(std::thread::spawn(move || {
+            release_rx.recv().unwrap();
+        }));
+        engine.provider_workers.push(worker.clone());
+        assert!(engine.prepare_native_thread_move(&id, &b).is_err());
+        assert!(
+            engine
+                .prepare_native_conversation_deletion(&[id.clone()])
+                .is_err()
+        );
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while worker.status() == crate::agent::WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(worker.status(), crate::agent::WorkerThreadStatus::Returned);
+        assert!(engine.prepare_native_thread_move(&id, &b).is_ok());
+        assert!(engine.prepare_native_conversation_deletion(&[id]).is_ok());
+    }
+    #[test]
     fn native_move_clears_foreign_folder_sessions_and_untouched_undo_preserves_every_other_field() {
         let (_dir, mut engine, id, a, b) = fixture();
         let before = engine.store.thread(&id).unwrap();

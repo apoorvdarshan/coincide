@@ -112,6 +112,9 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "bot_lifecycle_api.rs"]
+mod bot_lifecycle_api;
+pub use bot_lifecycle_api::{BotConversationDisposition, BotDeletionUndo, PreparedBotDeletion};
 #[path = "sidebar_lifecycle_api.rs"]
 mod sidebar_lifecycle_api;
 #[path = "thread_delete_api.rs"]

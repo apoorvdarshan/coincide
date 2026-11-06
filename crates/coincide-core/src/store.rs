@@ -30,6 +30,7 @@ mod sidebar_lifecycle;
 pub(crate) use sidebar_lifecycle::SidebarRow;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
+pub(crate) use store_thread_delete::bot_lifecycle::{BotLifecycle, BotLifecycleUndo};
 use store_thread_delete::ensure_not_deleted;
 pub use store_thread_delete::{ArchivedConversation, ArchivedConversations};
 pub(crate) use store_thread_delete::{DeleteRow, DeleteVersion};
