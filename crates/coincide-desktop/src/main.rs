@@ -41,6 +41,7 @@ mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
+mod chat_layout;
 mod microphone_settings;
 mod models_settings;
 mod native_quit;
@@ -835,6 +836,7 @@ impl Coincide {
         if let Ok(mut engine) = engine.try_lock() {
             engine.ui_available = browser.is_some();
         }
+        let mut composer_sizing = chat_layout::ComposerSizing::default();
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
@@ -885,7 +887,7 @@ impl Coincide {
                 this.sync_transcription_binding(cx);
             }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
-            cx.observe(&composer, |this, _, cx| {
+            cx.observe(&composer, move |this, _, cx| {
                 let composer = this.composer.read(cx);
                 this.composer_files.observe_composer(
                     composer.value().to_string(),
@@ -897,6 +899,17 @@ impl Coincide {
                 // caret-away/back sequence; hidden unfocused composer is stable.
                 this.transcription_target.changed();
                 this.sync_transcription_binding(cx);
+                // Cursor/selection notifications do not change composer height.
+                // Only a changed native wrapped-text measurement refits it.
+                {
+                    let composer = this.composer.read(cx);
+                    if composer_sizing.changed(
+                        composer.display_map().wrap_row_count(),
+                        composer.line_height().map(f32::from).unwrap_or(20.),
+                    ) {
+                        cx.notify();
+                    }
+                }
             }),
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
                 if this.media.shutdown_requested { return; }
@@ -3405,6 +3418,11 @@ impl Coincide {
             return div().into_any_element();
         }
         let body = text(item, "text");
+        // The active find target uses the existing expanded native body so a
+        // later-line match remains visible. Clearing Find remounts the compact row.
+        if kind == "notice" && !find_revealed {
+            return self.notice_row(&source_id, &item_id, body, window, cx);
+        }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
         let expanded = self.expanded.contains(&index) || find_revealed;
@@ -4183,8 +4201,7 @@ impl Render for Coincide {
                                 .flex_col()
                                 .items_center()
                                 .justify_center()
-                                .min_h(px(140.))
-                                .max_h(px(320.))
+
                                 .flex_shrink_0()
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
@@ -4194,7 +4211,7 @@ impl Render for Coincide {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-                                        .max_h(px(296.))
+
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
@@ -4265,7 +4282,16 @@ impl Render for Coincide {
                                                     Textarea::new(&self.composer)
                                                         .appearance(false)
                                                         .bordered(false)
-                                                        .h(px(if self.composer_files.opened {56.} else {110.}))
+                                                        .h({
+                                                            {
+                                                                let state = self.composer.read(cx);
+                                                                px(chat_layout::composer_height(
+                                                                    state.display_map().wrap_row_count(),
+                                                                    state.line_height().map(f32::from).unwrap_or(20.),
+                                                                    f32::from(window.viewport_size().height),
+                                                                ))
+                                                            }
+                                                        })
                                                         .on_paste(move |item, _, cx| {
                                                             target
                                                                 .update(cx, |this, cx| {
@@ -4284,6 +4310,7 @@ impl Render for Coincide {
                                                 .items_center()
                                                 .min_w_0()
                                                 .gap_1()
+                                                .gap(px(6.))
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
@@ -4297,44 +4324,28 @@ impl Render for Coincide {
                                                         })
                                                         .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
                                                         .compact().ghost()
+                                                        .xsmall().h(px(26.)).rounded(px(7.))
                                                         .disabled(importing_images)
                                                         .on_click(cx.listener(|this, _, _, cx| {
                                                             this.attach_images(cx)
                                                         })),
                                                 )
+                                                .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .child(
                                                     Button::new("send")
                                                         .primary()
                                                         .disabled(importing_images || self.selection_send_blocked())
-                                                        .label(
-                                                            if self.running.contains(&selected_id) {
-                                                                "Queue message"
-                                                            } else {
-                                                                "Send"
-                                                            },
-                                                        )
+                                                        .accessibility_label(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
+                                                        .tooltip(if self.running.contains(&selected_id) { "Queue message" } else { "Send message" })
+                                                        .icon(if self.running.contains(&selected_id) { gpui_kit::assets::IconName::ListPlus } else { gpui_kit::assets::IconName::ArrowUp })
+                                                        .w(px(28.)).h(px(28.)).rounded(px(14.)).p_0()
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
                                                                 this.send(window, cx)
                                                             },
                                                         )),
                                                 )
-                                                .child(Button::new("stop").icon(gpui_kit::assets::IconName::Square)
-                                                    .accessibility_label("Stop agent").tooltip("Stop agent")
-                                                    .compact().ghost().disabled(!self.running.contains(&selected_id)).on_click(
-                                                    cx.listener(|this, _, _, cx| {
-                                                        if let Some(v) = this.selected.as_ref()
-                                                            && let Err(e) = call(
-                                                                &this.engine,
-                                                                "agent.stop",
-                                                                json!({"threadId":v["id"]}),
-                                                            )
-                                                        {
-                                                            this.status = e.to_string();
-                                                        }
-                                                        cx.notify();
-                                                    }),
-                                                )),
+
                                         )
                                         .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
                                             div()
