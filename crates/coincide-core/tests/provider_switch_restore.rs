@@ -277,11 +277,53 @@ fn restore_fixture_child() {
     let source_bytes = serde_json::to_vec_pretty(&imported).unwrap();
     let source_file = source.join("threads").join(format!("{imported_id}.json"));
     fs::write(&source_file, &source_bytes).unwrap();
-    engine.store.import_legacy(&source).unwrap();
-    engine.set_active_thread(Some(imported_id.clone())).unwrap();
-    refused(&mut engine, &root, &imported_id, params(&imported, "codex"));
+    let primary_before_import = raw(&root, &id);
+    let calls_before_import = fs::read(root.join("calls.jsonl")).unwrap();
+    let imported_root = root.join("imported-case");
+    fs::create_dir(&imported_root).unwrap();
+    fs::set_permissions(&imported_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut imported_store = Store::open(&imported_root.join("state.sqlite")).unwrap();
+    imported_store.import_legacy(&source).unwrap();
+    let mut imported_engine = Engine::new(imported_store);
+    imported_engine
+        .set_active_thread(Some(imported_id.clone()))
+        .unwrap();
+    assert!(imported_engine.store.is_imported(&imported_id).unwrap());
+    let imported_before = imported_engine.store.thread(&imported_id).unwrap();
+    refused(
+        &mut imported_engine,
+        &imported_root,
+        &imported_id,
+        params(&imported_before, "codex"),
+    );
     assert_eq!(fs::read(source_file).unwrap(), source_bytes);
-    engine.set_active_thread(Some(id.clone())).unwrap();
+    assert_eq!(raw(&root, &id), primary_before_import);
+    assert_eq!(
+        fs::read(root.join("calls.jsonl")).unwrap(),
+        calls_before_import
+    );
+    let providers = imported_engine.provider_workers_status();
+    assert_eq!(
+        (
+            providers.running,
+            providers.returned,
+            providers.panicked,
+            providers.unclassified
+        ),
+        (0, 0, 0, 0)
+    );
+    imported_engine.freeze_admissions();
+    let catalog = imported_engine.model_catalog_shutdown_status().unwrap();
+    assert_eq!(
+        (
+            catalog.running,
+            catalog.returned,
+            catalog.panicked,
+            catalog.unclassified
+        ),
+        (0, 0, 0, 0)
+    );
+    drop(imported_engine);
 
     // A later failed read revokes the successful catalog; no stale fallback.
     fs::write(root.join("fail"), "synthetic failure").unwrap();
