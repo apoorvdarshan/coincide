@@ -464,6 +464,73 @@ fn named_restore_child() {
     assert_eq!(b["fallback"], false);
     drain(&mut f.engine);
 
+    // Cancellation is irreversible. A new explicit action must own a fresh
+    // job even while the cancelled worker is still returning; stale tokens
+    // cannot cancel the newer intent or reset the old job's revoked flag.
+    let mut f = fixture(&root, "cancel-fresh-retry");
+    fs::write(f.a_home.join("block"), "synthetic").unwrap();
+    let old = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.a_home.join("blocked").exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    call(&mut f.engine, "agent.provider.cancelRestore", json!({}));
+    fs::remove_file(f.a_home.join("block")).unwrap();
+    let fresh = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    assert_ne!(old["requestId"], fresh["requestId"]);
+    assert_ne!(
+        old["catalogRequestId"], fresh["catalogRequestId"],
+        "cancelled observations cannot be reused by a new intent"
+    );
+    refused(&mut f.engine, retry(&f.source, &old));
+    let result = finish(&mut f.engine, &f.source, &fresh);
+    assert_eq!(result["accountID"], f.a);
+    drain(&mut f.engine);
+    let ledger = f.engine.model_catalog_shutdown_status().unwrap();
+    assert_eq!(ledger.returned, 2);
+    assert_eq!(ledger.running, 0);
+    assert_eq!(ledger.panicked, 0);
+    assert_eq!(ledger.unclassified, 0);
+
+    let mut f = fixture(&root, "cancel-default-fresh-retry");
+    let blocked = root.join("home/.codex/blocked");
+    if blocked.exists() {
+        fs::remove_file(&blocked).unwrap();
+    }
+    fs::write(root.join("default-mode"), "block").unwrap();
+    let mut start = expected(&f.source, "codex");
+    start["accountId"] = Value::Null;
+    let old = call(&mut f.engine, "agent.provider.select", start.clone());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !blocked.exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    call(&mut f.engine, "agent.provider.cancelRestore", json!({}));
+    fs::write(root.join("default-mode"), "apiKey").unwrap();
+    let fresh = call(&mut f.engine, "agent.provider.select", start);
+    assert_ne!(old["requestId"], fresh["requestId"]);
+    assert_ne!(old["catalogRequestId"], fresh["catalogRequestId"]);
+    let result = finish_explicit(&mut f.engine, &f.source, &fresh, Value::Null);
+    assert_eq!(result["model"], "synthetic-default");
+    assert_eq!(result["authenticationChecked"], true);
+    assert_eq!(result["accountRestored"], false);
+    drain(&mut f.engine);
+    assert_eq!(
+        f.engine.model_catalog_shutdown_status().unwrap().returned,
+        2
+    );
+    fs::write(root.join("default-mode"), "deny").unwrap();
+
     // The remembered account is tried first. If unavailable, each candidate's
     // readiness is actually checked. A default API-key account is distinct from
     // named subscription homes and can legitimately be the first ready one.

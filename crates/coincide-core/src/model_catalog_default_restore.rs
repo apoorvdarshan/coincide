@@ -129,6 +129,7 @@ impl ModelCatalog {
             job.named.is_none()
                 && job.response["provider"] == "codex"
                 && job.response["state"] == "loading"
+                && !job.cancelled.load(Ordering::Acquire)
         }) {
             ensure!(
                 self.default_restore
@@ -185,7 +186,7 @@ fn discover(binding: &DefaultBinding, cancelled: &AtomicBool) -> Result<Vec<Valu
     binding.validate()?;
     let mut rpc = ProcessRpc::spawn_in_directory(
         "codex",
-        binding.executable.clone(),
+        binding.executable().into(),
         DEADLINE,
         cancelled,
         None,

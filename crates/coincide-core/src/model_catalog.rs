@@ -236,6 +236,7 @@ impl ModelCatalog {
             job.response["provider"] == provider
                 && job.named == named
                 && job.response["state"] == "loading"
+                && !job.cancelled.load(Ordering::Acquire)
         }) {
             return Ok(job.response.clone());
         }
