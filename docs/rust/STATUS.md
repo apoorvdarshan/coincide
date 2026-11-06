@@ -56,6 +56,30 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- Follow-up e7d72f8 passed 370 desktop unit tests with all notification,
+  microphone, Computer Use and helper adapters enabled, plus all four integration
+  targets (19, 10, 14, 11). The new saved selection footer remains an explicit
+  disclosure to the unchanged guarded Apply/Discard flow. Native footer testing
+  and native retesting of the image-display fix are pending.
+- Native b493885 rail/header checks passed: persistent rail, list hide/show with
+  exact focused-search/query/draft preservation, real palette/Escape, idle Usage
+  and Accounts routes, More/Snooze reachability, and an observed 820px minimum
+  window width. Normal Quit exited zero with exact isolated one-thread data and
+  zero executable attempts. This accepts the scoped controls, not full UI parity.
+- The eebee66 image fixture passed native mapping/validation/copy/durable handoff
+  but failed to display the transcript preview, so Enlarge/Escape/Close checks
+  were not reached. Exact threads and source/managed bytes were preserved and
+  normal Quit exited zero; four denied fake-git invocations prevented its strict
+  zero-executable assertion passing. An actual read-only core render diagnostic
+  returned one verified image, zero failures and an actual worker-return receipt.
+  The candidate UI fix records completed list layouts instead of treating
+  splice-invalidated measurements as an empty visible list. Native restart
+  validation must pass before the image viewer is accepted.
+- Exact 1f03785 Rust CI passed five jobs, but its macOS desktop test exposed an
+  existing synthetic regrant fixture assuming an immediately drained request.
+  Its test-only correction waits for the actual drain boundary under the same
+  original deadline and retains Revoked/zero-backend-call assertions. The exact
+  all-adapter local suite above passes; the next pushed CI result remains pending.
 - UI parity is now the active priority. A private native comparison confirmed
   the missing persistent rail, oversized wrapping header and obscured composer
   controls. The first presentation batch adds a 60px navigation rail using real
