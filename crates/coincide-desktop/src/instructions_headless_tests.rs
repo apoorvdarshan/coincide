@@ -248,7 +248,9 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
     });
     assert_eq!(
         fs::read(repo.join("AGENTS.md")).unwrap(),
-        fs::read(&master).unwrap()
+        fs::read(&master).unwrap(),
+        "{}",
+        cx.read(|app| panel.read(app).setup.visible_status().to_owned())
     );
     panel.update(cx, |panel, cx| panel.choose_git_repository(cx));
     assert!(cx.did_prompt_for_paths());
