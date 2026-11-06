@@ -448,8 +448,7 @@ impl Coincide {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
         if provider_preferences_changed {
-            self.selection_ui.capability_cache.invalidate();
-            self.refresh_selection_capabilities(cx);
+            self.refresh_provider_preferences(cx);
         }
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer

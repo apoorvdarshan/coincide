@@ -1643,6 +1643,10 @@ impl Coincide {
         self.refresh_selection_capabilities(cx);
         self.observe_saved_profile_once(cx);
     }
+    pub(super) fn refresh_provider_preferences(&mut self, cx: &mut Context<Self>) {
+        self.selection_ui.capability_cache.invalidate();
+        self.refresh_selection_capabilities(cx);
+    }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref() else {
             return;
