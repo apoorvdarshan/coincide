@@ -3926,7 +3926,7 @@ impl Render for Coincide {
                                                         .max_h(px(160.))
                                                         .flex_shrink_1()
                                                         .overflow_y_scroll()
-                                                        .child(self.composer_selection_pane(cx))
+                                                        .when(self.composer_selection_expanded(), |view| view.child(self.composer_selection_pane(cx)))
                                                         .when_some(
                                                             self.composer_steering_pane(cx),
                                                             |view, steering| view.child(steering),
@@ -3977,15 +3977,21 @@ impl Render for Coincide {
                                                 .flex()
                                                 .flex_shrink_0()
                                                 .flex_wrap()
-                                                .gap_2()
+                                                .items_center()
+                                                .min_w_0()
+                                                .gap_1()
                                                 .mt_2()
+                                                .child(self.composer_selection_footer(cx))
                                                 .child(
                                                     Button::new("attach-images")
-                                                        .label(if importing_images {
+                                                        .icon(gpui_kit::assets::IconName::Plus)
+                                                        .accessibility_label(if importing_images {
                                                             "Importing images…"
                                                         } else {
                                                             "Attach images"
                                                         })
+                                                        .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
+                                                        .compact().ghost()
                                                         .disabled(importing_images)
                                                         .on_click(cx.listener(|this, _, _, cx| {
                                                             this.attach_images(cx)
@@ -4008,7 +4014,9 @@ impl Render for Coincide {
                                                             },
                                                         )),
                                                 )
-                                                .child(Button::new("stop").label("Stop").on_click(
+                                                .child(Button::new("stop").icon(gpui_kit::assets::IconName::Square)
+                                                    .accessibility_label("Stop agent").tooltip("Stop agent")
+                                                    .compact().ghost().disabled(!self.running.contains(&selected_id)).on_click(
                                                     cx.listener(|this, _, _, cx| {
                                                         if let Some(v) = this.selected.as_ref()
                                                             && let Err(e) = call(

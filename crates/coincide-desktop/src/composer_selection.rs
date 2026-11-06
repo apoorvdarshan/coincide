@@ -658,6 +658,116 @@ fn account_label(account: &Value) -> String {
         other => format!("Unsupported stored account: {other}"),
     }
 }
+
+struct FooterSummary {
+    saved: String,
+    annotation: Option<String>,
+    accessible: String,
+}
+// A compact presentation of stored values, not a capability/authentication or
+// effective-runtime verdict. Bound imported labels without serializing objects.
+fn footer_value(value: &Value, absent: &str) -> String {
+    match value {
+        Value::Null => absent.into(),
+        Value::String(value) if !value.is_empty() => {
+            let mut chars = value
+                .chars()
+                .map(|ch| if ch.is_control() { ' ' } else { ch });
+            let mut label = chars.by_ref().take(512).collect::<String>();
+            if chars.next().is_some() {
+                label.push('…');
+            }
+            label
+        }
+        Value::String(_) => "Unsupported empty value".into(),
+        Value::Bool(_) => "Unsupported boolean value".into(),
+        Value::Number(_) => "Unsupported numeric value".into(),
+        Value::Array(_) => "Unsupported array value".into(),
+        Value::Object(_) => "Unsupported object value".into(),
+    }
+}
+fn footer_summary(
+    thread: &Value,
+    pending: bool,
+    conflict: bool,
+    expanded: bool,
+    lock: Option<&str>,
+) -> FooterSummary {
+    let saved = &thread["selection"];
+    let provider = footer_value(&saved["provider"], "Unknown provider");
+    let model = if saved["modelID"] == "default" {
+        "Provider default".into()
+    } else {
+        footer_value(&saved["modelID"], "Model not stored")
+    };
+    let account = match default_account_id(&saved["accountID"]) {
+        Some("default") => "Default account".into(),
+        _ => format!(
+            "Account {}",
+            footer_value(&saved["accountID"], "Default account")
+        ),
+    };
+    let access = match thread["accessMode"].as_str() {
+        Some("approval") | None
+            if thread["accessMode"].is_null() || thread["accessMode"] == "approval" =>
+        {
+            "Approval".into()
+        }
+        Some("fullAccess") => "Full access".into(),
+        _ => format!("Access {}", footer_value(&thread["accessMode"], "Approval")),
+    };
+    let interaction = match thread["interactionMode"].as_str() {
+        Some("build") | None
+            if thread["interactionMode"].is_null() || thread["interactionMode"] == "build" =>
+        {
+            "Build".into()
+        }
+        Some("plan") => "Plan".into(),
+        _ => format!(
+            "Interaction {}",
+            footer_value(&thread["interactionMode"], "Build")
+        ),
+    };
+    let saved = format!(
+        "{} · {model} · Effort {} · Speed {} · {access} · {interaction} · {account}",
+        presentation::provider_name(&provider),
+        footer_value(&saved["effort"], "automatic"),
+        footer_value(&saved["speed"], "default")
+    );
+    let mut annotation = match (pending, conflict) {
+        (true, true) => Some("Edits pending · saved selection changed".into()),
+        (true, false) => Some("Edits pending".into()),
+        (false, true) => Some("Saved selection changed".into()),
+        (false, false) => None,
+    };
+    if let Some(lock) = lock {
+        let reason = format!(
+            "Locked: {}",
+            footer_value(&json!(lock), "Selection is locked")
+        );
+        annotation =
+            Some(annotation.map_or_else(|| reason.clone(), |value| format!("{value} · {reason}")));
+    }
+    let action = if expanded {
+        "Hide selection options"
+    } else {
+        "Edit selection options"
+    };
+    let mut accessible = format!(
+        "{action}. Saved: {saved}. Automatic/default means no stored override; runtime support and authentication are not verified."
+    );
+    if let Some(annotation) = &annotation {
+        accessible.push_str(&format!(" {annotation}."));
+    }
+    if pending {
+        accessible.push_str(" Pending edits are not applied.");
+    }
+    FooterSummary {
+        saved,
+        annotation,
+        accessible,
+    }
+}
 fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Option<String> {
     let id = match account {
         Value::Null => "default",
@@ -1370,7 +1480,64 @@ impl Coincide {
         self.model_input
             .update(cx, |input, cx| input.set_value(model, window, cx));
     }
+    pub(super) fn composer_selection_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(thread) = &self.selected else {
+            return div().into_any_element();
+        };
+        let draft = self.selection_ui.drafts.get(&text(thread, "id"));
+        let conflict = draft.is_some_and(|draft| {
+            thread["selection"] != draft.original
+                || thread["accessMode"] != draft.access
+                || thread["interactionMode"] != draft.interaction
+        });
+        let lock = capability_lock(
+            &self.selection_ui.capabilities,
+            self.running.contains(&text(thread, "id")),
+        );
+        let summary = footer_summary(
+            thread,
+            draft.is_some_and(SelectionDraft::has_edits),
+            conflict,
+            self.selection_ui.expanded,
+            lock.as_deref(),
+        );
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                Button::new("selection-disclosure")
+                    .label(summary.saved)
+                    .accessibility_label(summary.accessible.clone())
+                    .tooltip(summary.accessible)
+                    .icon(if self.selection_ui.expanded {
+                        gpui_kit::assets::IconName::ChevronUp
+                    } else {
+                        gpui_kit::assets::IconName::ChevronDown
+                    })
+                    .ghost()
+                    .compact()
+                    .w_full()
+                    .min_w_0()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.expanded = !this.selection_ui.expanded;
+                        cx.notify();
+                    })),
+            )
+            .when_some(summary.annotation, |view, annotation| {
+                view.child(div().text_xs().truncate().child(annotation))
+            })
+            .into_any_element()
+    }
+    pub(super) fn composer_selection_expanded(&self) -> bool {
+        self.selection_ui.expanded
+    }
     pub(super) fn composer_selection_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.selection_ui.expanded {
+            return div().into_any_element();
+        }
         let Some(thread) = &self.selected else {
             return div().into_any_element();
         };
@@ -1399,65 +1566,6 @@ impl Coincide {
                 &self.selection_ui.capabilities,
                 self.running.contains(&text(thread, "id")),
             );
-        let saved = &thread["selection"];
-        let model = if saved["modelID"] == "default" {
-            "Provider default".to_owned()
-        } else {
-            text(saved, "modelID")
-        };
-        let pending = draft.has_edits();
-        let saved_provider = text(saved, "provider");
-        let account = if default_account_id(&saved["accountID"]) == Some("default") {
-            "Default account".to_owned()
-        } else {
-            account_label(&saved["accountID"])
-        };
-        let access = mode_or_default(&thread["accessMode"], "approval");
-        let interaction = mode_or_default(&thread["interactionMode"], "build");
-        let access_label = match access.as_str() {
-            Some("approval") => "Approval required".to_owned(),
-            Some("fullAccess") => "Full access (no app approvals)".to_owned(),
-            _ => format!("Unsupported access {access}"),
-        };
-        let interaction_label = match interaction.as_str() {
-            Some("build") => "Build".to_owned(),
-            Some("plan") => "Plan".to_owned(),
-            _ => format!("Unsupported interaction {interaction}"),
-        };
-        let summary = format!(
-            "{} · {interaction_label} · {access_label} · {model} · {account}",
-            presentation::provider_name(&saved_provider)
-        );
-        let label = if self.selection_ui.expanded {
-            "Hide selection options"
-        } else if pending {
-            "Selection · edits pending"
-        } else {
-            "Selection options"
-        };
-        let header = div()
-            .mb_2()
-            .flex()
-            .items_center()
-            .gap_2()
-            .min_w_0()
-            .child(div().flex_1().min_w_0().truncate().text_sm().child(summary))
-            .child(
-                Button::new("selection-disclosure")
-                    .label(label)
-                    .compact()
-                    .tooltip(
-                        lock.clone()
-                            .unwrap_or_else(|| "Edit provider, model, account and modes".into()),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.selection_ui.expanded = !this.selection_ui.expanded;
-                        cx.notify();
-                    })),
-            );
-        if !self.selection_ui.expanded {
-            return header.into_any_element();
-        }
         let mut providers = div().flex().flex_wrap().gap_2();
         for provider in self.selection_ui.capabilities["providers"]
             .as_array()
@@ -1905,7 +2013,6 @@ impl Coincide {
             .flex_col()
             .gap_2()
             .min_w_0()
-            .child(header)
             // The outer composer accessory viewport already supplies a bounded,
             // persistent scrollbar. A second capped viewport hides controls
             // behind an independent scroll position without an accessible thumb.
@@ -1917,6 +2024,91 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn footer_reports_saved_values_while_proposed_choices_remain_pending() {
+        let thread = json!({"id":"t","selection":{"provider":"codex","modelID":"saved-model","effort":"high","speed":"priority","accountID":"named-account"},"accessMode":"approval","interactionMode":"build"});
+        let before = thread.clone();
+        let mut draft = SelectionDraft::from_thread(&thread);
+        draft.provider = "claude".into();
+        draft.custom = "proposed-model".into();
+        draft.proposed_effort = json!("xhigh");
+        draft.proposed_speed = json!("flex");
+        draft.proposed_access = json!("fullAccess");
+        draft.proposed_interaction = json!("plan");
+        let summary = footer_summary(&thread, draft.has_edits(), false, false, None);
+        assert!(
+            summary
+                .saved
+                .contains("Codex · saved-model · Effort high · Speed priority · Approval · Build")
+        );
+        assert!(summary.saved.contains("Account named-account"));
+        for proposed in [
+            "Claude",
+            "proposed-model",
+            "xhigh",
+            "flex",
+            "Full access",
+            "Plan",
+        ] {
+            assert!(!summary.saved.contains(proposed));
+        }
+        assert_eq!(summary.annotation.as_deref(), Some("Edits pending"));
+        assert!(summary.accessible.contains("Pending edits are not applied"));
+        assert_eq!(thread, before);
+    }
+    #[::core::prelude::v1::test]
+    fn footer_unset_values_do_not_invent_effective_effort_or_speed() {
+        let thread = json!({"selection":{"provider":"codex","modelID":"gpt-6-astra","effort":null,"speed":null,"accountID":null},"accessMode":null,"interactionMode":null});
+        let summary = footer_summary(&thread, false, false, true, None);
+        assert!(
+            summary
+                .saved
+                .contains("Effort automatic · Speed default · Approval · Build · Default account")
+        );
+        assert!(!summary.saved.contains("Medium"));
+        assert!(!summary.saved.contains("priority"));
+        assert!(
+            summary
+                .accessible
+                .starts_with("Hide selection options. Saved:")
+        );
+        assert!(
+            summary
+                .accessible
+                .contains("runtime support and authentication are not verified")
+        );
+        assert!(summary.annotation.is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn footer_unknown_stored_shapes_are_explicit_and_labels_are_bounded() {
+        let thread = json!({"selection":{"provider":"future-provider","modelID":"future-model","effort":4,"speed":{"future":"priority"},"accountID":[]},"accessMode":"future-access","interactionMode":"future-mode"});
+        let summary = footer_summary(
+            &thread,
+            true,
+            true,
+            false,
+            Some("Refresh capabilities before editing"),
+        );
+        assert!(summary.saved.contains("future-provider · future-model"));
+        assert!(
+            summary
+                .saved
+                .contains("Effort Unsupported numeric value · Speed Unsupported object value")
+        );
+        assert!(
+            summary
+                .saved
+                .contains("Access future-access · Interaction future-mode")
+        );
+        assert!(summary.saved.contains("Account Unsupported array value"));
+        assert!(summary.annotation.unwrap().contains(
+            "Edits pending · saved selection changed · Locked: Refresh capabilities before editing"
+        ));
+        let label = footer_value(&json!(format!("{}\nend", "é".repeat(600))), "not set");
+        assert!(label.chars().count() <= 513);
+        assert!(label.ends_with('…'));
+        assert!(!label.chars().any(char::is_control));
+    }
     #[::core::prelude::v1::test]
     fn selection_reload_uses_authoritative_fields_without_replacing_local_content() {
         let previous = json!({"id":"thread","selection":{"provider":"codex","speed":null},"accessMode":"approval","interactionMode":"build","draft":"exact unsaved café\n","draftContext":[{"quote":"keep"}],"rustDraftImages":[{"id":"keep-image"}],"items":[{"body":"loaded transcript"}],"opaque":{"keep":true}});
