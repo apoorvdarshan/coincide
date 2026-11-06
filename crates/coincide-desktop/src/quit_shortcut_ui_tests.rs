@@ -169,10 +169,11 @@ fn headless_actual_prebinding_hold_repeat_release_and_menu_distinction(cx: &mut 
         "explicit off keeps ordinary immediate binding"
     );
     cx.update(|cx| configure(&json!({"holdToQuit":true}), cx));
-    cx.update_window(settings, |_, _window, cx| {
-        cx.dispatch_action(&crate::app_menu::Quit)
-    })
-    .unwrap();
+    // Native menu callbacks enter App outside a borrowed window. Dispatching
+    // App::dispatch_action from update_window would try to borrow that active
+    // window twice; Window::dispatch_action then defers its focused delivery.
+    cx.update(|cx| cx.dispatch_action(&crate::app_menu::Quit));
+    cx.run_until_parked();
     assert!(
         quit.swap(false, Ordering::AcqRel),
         "menu Quit bypasses keyboard hold but uses retained normal signal"
