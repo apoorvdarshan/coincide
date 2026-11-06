@@ -67,7 +67,9 @@ pub fn patch(current: &Value, field: &str, value: Value) -> Result<Value> {
             "Invalid Appshots trigger"
         ),
         "shortcut" => ensure!(
-            value.is_null() || value["shortcut"].as_str().is_some_and(valid_shortcut),
+            value.is_null()
+                || (value["shortcut"].as_str().is_some_and(valid_shortcut)
+                    && value["keyCode"].as_u64().is_some_and(|code| code <= 127)),
             "Use Command or Control with a letter or number"
         ),
         _ => ensure!(value.is_boolean(), "Invalid Appshots toggle"),
@@ -80,7 +82,19 @@ pub fn patch(current: &Value, field: &str, value: Value) -> Result<Value> {
         raw.is_object(),
         "Appshots settings are malformed; original retained"
     );
-    raw[field] = value;
+    if field == "shortcut" && value.is_object() {
+        let mut shortcut = raw
+            .get("shortcut")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        for (key, value) in value.as_object().unwrap() {
+            shortcut[key] = value.clone();
+        }
+        raw[field] = shortcut;
+    } else {
+        raw[field] = value;
+    }
     Ok(json!({"appshots":raw}))
 }
 #[derive(Clone, Debug, Default)]
@@ -178,6 +192,34 @@ mod tests {
             patch(&current, "enabled", json!(true)).unwrap(),
             json!({"appshots":{"future":{"keep":1},"trigger":"new-trigger","enabled":true}})
         );
+    }
+    #[test]
+    fn recording_shortcut_preserves_future_metadata_and_refuses_unusable_key_codes() {
+        let current = json!({"appshots":{"shortcut":{"keyCode":0,"shortcut":"mod+a","future":{"keep":[1,2]}},"futureSetting":"keep"},"neighbor":7});
+        let before = current.clone();
+        let changed = patch(
+            &current,
+            "shortcut",
+            json!({"keyCode":7,"shortcut":"mod+x"}),
+        )
+        .unwrap();
+        assert_eq!(
+            changed,
+            json!({"appshots":{"shortcut":{"keyCode":7,"shortcut":"mod+x","future":{"keep":[1,2]}},"futureSetting":"keep"}})
+        );
+        assert_eq!(Settings::read(&changed).shortcut.as_deref(), Some("mod+x"));
+        for invalid in [
+            json!({"shortcut":"mod+x"}),
+            json!({"keyCode":128,"shortcut":"mod+x"}),
+            json!({"keyCode":-1,"shortcut":"mod+x"}),
+        ] {
+            assert!(patch(&current, "shortcut", invalid).is_err());
+            assert_eq!(current, before);
+        }
+        let removed = patch(&current, "shortcut", Value::Null).unwrap();
+        assert!(removed["appshots"]["shortcut"].is_null());
+        assert_eq!(removed["appshots"]["futureSetting"], "keep");
+        assert_eq!(current, before);
     }
     #[test]
     fn exact_recent_window_and_no_clock_reversal() {
