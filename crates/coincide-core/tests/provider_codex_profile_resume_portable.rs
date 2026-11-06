@@ -313,6 +313,15 @@ fn slots_phase(root: &Path, phase: &str) {
         let selection_a = engine.store.thread(&id).unwrap()["selection"].clone();
         let native_a = turn(&mut engine, &a, "A first", "thread/start", None, "A first");
         if ordinary {
+            assert_eq!(
+                call(
+                    &mut engine,
+                    "agent.selection.capabilities",
+                    json!({"threadId":id})
+                )["namedModels"]["accountCatalogReady"],
+                true,
+                "An active exact receipt keeps its ready catalog"
+            );
             ordinary_choice(&mut engine, &id, "codex", None, true);
         }
 
@@ -351,6 +360,25 @@ fn slots_phase(root: &Path, phase: &str) {
             call(&mut engine, "threads.open", json!({"threadId":other["id"]}));
             call(&mut engine, "threads.open", json!({"threadId":id}));
             assert_eq!(engine.active_thread(), Some(id.as_str()));
+            assert_eq!(
+                call(
+                    &mut engine,
+                    "agent.selection.capabilities",
+                    json!({"threadId":id})
+                )["namedModels"]["accountCatalogReady"],
+                false,
+                "GUI readiness must request ordinary warmup for the parked predeparture actor"
+            );
+            ordinary_choice(&mut engine, &id, "codex", None, true);
+            assert_eq!(
+                call(
+                    &mut engine,
+                    "agent.selection.capabilities",
+                    json!({"threadId":id})
+                )["namedModels"]["accountCatalogReady"],
+                true,
+                "Fresh authenticated actor completes GUI readiness without a manual Refresh"
+            );
             // Provider buttons/slash commands share this exact owner API.
             ordinary_choice(&mut engine, &id, "claude", None, false);
             choose(&mut engine, &a);
