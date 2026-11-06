@@ -1,7 +1,7 @@
 //! Compact conversation chrome. All actions retain their existing controllers;
 //! expanding secondary actions changes presentation only.
 use super::*;
-use gpui_kit::assets::IconName;
+use gpui_kit::{assets::IconName, component::tooltip::Tooltip};
 
 // Read only the selected conversation's persisted metadata. The independent
 // sidebar project filter is not the conversation's project or live Git HEAD.
