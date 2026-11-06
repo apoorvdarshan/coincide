@@ -937,6 +937,8 @@ impl Coincide {
                             image.candidate
                         )))
                         .label("Enlarge image")
+                        .compact()
+                        .max_w(px(240.))
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 this.open_historical_image(selection.clone(), window, cx)
