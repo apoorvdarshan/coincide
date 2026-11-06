@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import time
 
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image, ImageStat
 
 
 def command(*args, **kwargs):
@@ -62,7 +62,7 @@ def main():
                XDG_CACHE_HOME=str(home / "cache"), LANG="C.UTF-8", GDK_BACKEND="x11",
                COINCIDE_RUST_DATA_DIR=str(data), LIBGL_ALWAYS_SOFTWARE="1",
                VK_ICD_FILENAMES=str(icds[0]), GPUI_X11_SCALE_FACTOR="1")
-    for provider in ("CODEX", "CLAUDE", "CURSOR", "OPENCODE", "ANTIGRAVITY"):
+    for provider in ("CODEX", "CLAUDE", "CURSOR", "GROK", "OPENCODE", "ANTIGRAVITY"):
         env[f"COINCIDE_{provider}_EXECUTABLE"] = str(fixture / "never-execute" / provider)
     report = {"scope": "Linux X11 native smoke; software Vulkan; no providers",
               "binarySha256": hashlib.file_digest(binary.open("rb"), "sha256").hexdigest(),
@@ -107,7 +107,7 @@ def main():
     def quit_normally():
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
-        assert rpc("app.quit")["requested"] is True
+        command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
         assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
         process = None
         log.close()
@@ -140,17 +140,36 @@ def main():
         capture(window, "command-palette", "Open settings")
         command("xdotool", "key", "Return", env=env)
         time.sleep(0.6)
-        settings = capture(window, "settings", "Settings")
-        assert ImageChops.difference(before, settings).getbbox(), "Settings navigation did not change rendered pixels"
+        settings_window = wait_for("separate Settings window", lambda: command(
+            "xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+            "--name", "^All settings$", env=env).splitlines()[0])
+        assert settings_window != window, "Settings must leave the conversation in its own window"
+        capture(settings_window, "settings", "All settings")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
-        report["checks"].append("real keyboard command palette opened rendered Settings; draft preserved")
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
+        time.sleep(0.5)
+        matches = command("xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+                          "--name", "^All settings$", env=env).splitlines()
+        assert matches == [settings_window], "Opening Settings again must reuse its existing window"
+        command("xdotool", "windowfocus", "--sync", settings_window, env=env)
+        command("xdotool", "key", "--clearmodifiers", "ctrl+w", env=env)
+        def settings_closed():
+            result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+                                     "--name", "^All settings$"], capture_output=True, text=True, env=env)
+            return result.returncode == 1 and not result.stdout.strip()
+        wait_for("Settings closed independently", settings_closed)
+        assert process.poll() is None and rpc("threads.read", threadId=thread_id)["draft"] == draft
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        capture(window, "conversation-after-settings", "keyboard draft")
+        report["checks"].append("real keyboard palette opened separate Settings; reuse and close preserved main draft")
         quit_normally()
         window = start("restart")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         rpc("threads.open", threadId=thread_id)
         time.sleep(0.8)
         capture(window, "reopened-draft", "keyboard draft")
-        report["syntheticThread"] = rpc("threads.read", threadId=thread_id)
+        report["persistedDraftVerified"] = rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("normal Quit/reopen preserved and rendered the unsent native draft")
         quit_normally()
         report["passed"] = True
@@ -159,20 +178,22 @@ def main():
         report["error"] = str(error)
         raise
     finally:
-        if process is not None:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-            if log is not None:
-                log.close()
-        # Never upload the private Store directory: future runtime authority
-        # key files and provider homes must stay private even in fake fixtures.
+        drained = process is None or process.poll() is not None
+        if process is not None and process.poll() is None:
+            try:
+                rpc("app.quit")  # Failure cleanup only; cannot turn failed UI input into PASS.
+                process.wait(timeout=25)
+                drained = True
+            except (OSError, ValueError, AssertionError, subprocess.TimeoutExpired):
+                report["ownerPending"] = True
+                report["fixtureRetained"] = True
+        if log is not None:
+            log.close()
+        # Never upload the private Store or authority keys. A failed owner keeps
+        # its synthetic fixture until the runner ends; never erase beneath it.
         (artifacts / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-        shutil.rmtree(fixture)  # Only this task-created, credential-free fixture.
+        if drained:
+            shutil.rmtree(fixture)
     print(json.dumps(report))
 
 

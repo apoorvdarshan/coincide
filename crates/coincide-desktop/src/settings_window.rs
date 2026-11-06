@@ -67,9 +67,7 @@ impl Coincide {
         self.settings_window = None;
         self.settings_window_pending = false;
         self.settings_open = false;
-        self.keyboard.recording = None;
-        self.keyboard.restore = None;
-        self.keyboard.reset_confirm = false;
+        self.cancel_settings_shortcut();
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
         self.sync_transcription_binding(cx);
