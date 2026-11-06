@@ -257,6 +257,17 @@ impl Coincide {
         }
         cx.notify();
     }
+    pub(super) fn close_schedule_surface(&mut self) {
+        self.schedules_open = false;
+        self.schedule_editor.open = false;
+        self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+    }
+    pub(super) fn rebind_conversation_schedule_editor(&mut self, id: &str) {
+        if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
+            self.schedule_editor.open = false;
+            self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+        }
+    }
     pub(super) fn open_global_schedules(&mut self, cx: &mut Context<Self>) {
         self.schedule_editor.all_conversations = true;
         self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
@@ -264,11 +275,21 @@ impl Coincide {
         self.schedules_open = true;
         self.refresh_schedules(cx);
     }
-    pub(super) fn open_conversation_schedules(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_conversation_schedules(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_open = false;
+        self.ensure_inspector_space(window);
         self.schedule_editor.all_conversations = false;
         self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
         self.schedule_editor.open = false;
         self.schedules_open = true;
+        self.hide_selected_browser_surface(cx);
+        if self.terminal_on_right() {
+            self.terminal_open = false;
+        }
         self.refresh_schedules(cx);
     }
     fn schedule_action(
