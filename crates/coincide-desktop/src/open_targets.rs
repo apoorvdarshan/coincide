@@ -320,7 +320,13 @@ impl Coincide {
         } else {
             "The rail's Open In button and Open in Editor command use this preference. A missing app keeps its saved choice and uses the available fallback.".into()
         };
-        let mut row = div()
+        let current_label = choices
+            .iter()
+            .find(|choice| choice.value == selected)
+            .map(|choice| choice.label.clone())
+            .unwrap_or_else(|| "Automatic (first installed editor)".into());
+        let parent = cx.entity().downgrade();
+        div()
             .id("open-target-preferences")
             .role(Role::Group)
             .aria_label("Open project folders in")
@@ -332,38 +338,57 @@ impl Coincide {
             .gap_2()
             .child(
                 div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Open project folders in"),
-            )
-            .child(div().text_sm().child(caption));
-        let mut previous = None;
-        for (index, choice) in choices.into_iter().enumerate() {
-            if choice.group != previous {
-                if let Some(group) = choice.group {
-                    row = row.child(
+                    .flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(
                         div()
-                            .text_xs()
+                            .flex_1()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(group),
-                    );
-                }
-                previous = choice.group;
-            }
-            let label = choice.label;
-            let value = choice.value;
-            row = row.child(
-                Button::new(("open-target-preference", index))
-                    .label(label.clone())
-                    .accessibility_label(format!("Open project folders in {label}"))
-                    .selected(selected == value)
-                    .disabled(!choice.available)
-                    .compact()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.change_setting("preferredOpenTarget", value.clone(), window, cx)
-                    })),
-            );
-        }
-        row.into_any_element()
+                            .child("Open project folders in"),
+                    )
+                    .child(
+                        Button::new("open-target-preference")
+                            .label(current_label)
+                            .compact()
+                            .accessibility_label("Preferred application for project folders")
+                            .dropdown_caret(true)
+                            .dropdown_menu(move |mut menu, _, _| {
+                                let mut previous = None;
+                                for choice in &choices {
+                                    if choice.group != previous {
+                                        if let Some(group) = choice.group {
+                                            menu = menu
+                                                .item(PopupMenuItem::separator())
+                                                .item(PopupMenuItem::new(group).disabled(true));
+                                        }
+                                        previous = choice.group;
+                                    }
+                                    let parent = parent.clone();
+                                    let value = choice.value.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(choice.label.clone())
+                                            .checked(selected == value)
+                                            .disabled(!choice.available)
+                                            .on_click(move |_, window, cx| {
+                                                let _ = parent.update(cx, |this, cx| {
+                                                    this.change_setting(
+                                                        "preferredOpenTarget",
+                                                        value.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                            }),
+                                    );
+                                }
+                                menu
+                            }),
+                    ),
+            )
+            .child(div().text_sm().child(caption))
+            .into_any_element()
     }
     pub(super) fn open_folder(&self) -> Option<PathBuf> {
         let selected = self.selected.as_ref()?;
