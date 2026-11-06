@@ -79,7 +79,9 @@ public static class NativeUiSmoke {
     public static void Chord(IntPtr window,uint process,ushort key) {Send(window,process,new[]{Key(0x11,false),Key(key,false),Key(key,true),Key(0x11,true)});}
     public static void Enter(IntPtr window,uint process) {Send(window,process,new[]{Key(0x0D,false),Key(0x0D,true)});}
     public static void Type(IntPtr window,uint process,string text) {
-        var inputs=new List<Input>();foreach(char c in text){inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=4}}});inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=6}}});}Send(window,process,inputs.ToArray());
+        // Deliver native characters at keyboard pace, allowing WM_CHAR and
+        // the focused GPUI text handler to process each input in order.
+        foreach(char c in text){Send(window,process,new[]{new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=4}}},new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=6}}}});System.Threading.Thread.Sleep(20);}
     }
     public static void ComposerClick(IntPtr window,uint process) {
         Owned(window,process);Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");var point=new Point((rect.right-rect.left)/2,rect.bottom-190);if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target native composer");Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
@@ -199,6 +201,9 @@ try {
     Wait-Condition 'native thread became active' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
     Capture-Owned $main 'conversation'
     [NativeUiSmoke]::ComposerClick($main,[uint32]$script:OwnedProcess.Id)
+    # A click is not a text-handler readiness acknowledgement. Retain the
+    # focused native frame before delivering keyboard input.
+    Capture-Owned $main 'focused-composer'
     $draft='Windows native input draft survives restart'
     [NativeUiSmoke]::Type($main,[uint32]$script:OwnedProcess.Id,$draft)
     Capture-Owned $main 'native-input-attempt'

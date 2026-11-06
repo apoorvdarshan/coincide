@@ -138,6 +138,7 @@ pub(super) struct NativeScope {
     root: PathBuf,
     root_identity: Identity,
     master: PathBuf,
+    managed: Vec<coincide_core::native_instruction_profiles::NativeCodexInstructionHome>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct DiscoveredFile {
@@ -163,6 +164,7 @@ impl NativeScope {
             master: root.join(".config/coincide/AGENTS.md"),
             root,
             root_identity,
+            managed: Vec::new(),
         })
     }
     /// Scope identity comes from the locked Store, never a caller's root claim.
@@ -189,9 +191,13 @@ impl NativeScope {
             root_identity: native_file::path_identity(&root)?,
             master: root.join("AGENTS.md"),
             root,
+            managed: Vec::new(),
         })
     }
     fn validate(&self, store: &Store) -> Result<()> {
+        for home in &self.managed {
+            home.instruction_path(store)?;
+        }
         ensure!(
             self.root.is_dir() && native_file::path_identity(&self.root)? == self.root_identity,
             "Instruction scope directory changed"
@@ -315,6 +321,9 @@ impl NativeScope {
                 ] {
                     paths.push(self.root.join(name));
                 }
+                for home in store.native_codex_instruction_homes()? {
+                    paths.push(home.instruction_path(store)?);
+                }
             }
         }
         paths.sort();
@@ -362,11 +371,14 @@ impl NativeScope {
         store.save_document("instructions.json", &next)?;
         Metadata::from_document(Some(next))
     }
-    pub fn review_native(self, store: &Store) -> Result<NativeReviewPlan> {
+    pub fn review_native(mut self, store: &Store) -> Result<NativeReviewPlan> {
+        if matches!(self.kind, Kind::Global) {
+            self.managed = store.native_codex_instruction_homes()?;
+        }
         self.validate(store)?;
         let master = Observation::capture(&self.master)
             .context("Master folder must exist before reviewing links")?;
-        let paths: Vec<PathBuf> = match &self.kind {
+        let mut paths: Vec<PathBuf> = match &self.kind {
             Kind::Project { .. } => NAMES.iter().map(|n| self.root.join(n)).collect(),
             Kind::Global => [
                 ".claude/CLAUDE.md",
@@ -379,6 +391,12 @@ impl NativeScope {
             .map(|n| self.root.join(n))
             .collect(),
         };
+        for home in &self.managed {
+            let path = home.instruction_path(store)?;
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
         let mut targets = Vec::new();
         for path in paths {
             if path == self.master {
@@ -770,7 +788,7 @@ mod tests {
                 "coincide-native-instruction-scope-{}",
                 uuid::Uuid::new_v4()
             ));
-            fs::create_dir(&root).unwrap();
+            native_file::private_directory(&root).unwrap();
             let mut store = Store::open(&root.join("state.sqlite")).unwrap();
             let project = store.create_project(&root, Some("Synthetic")).unwrap();
             Self {
@@ -778,6 +796,30 @@ mod tests {
                 store,
                 id: project["id"].as_str().unwrap().into(),
             }
+        }
+        fn global_scope(&self) -> NativeScope {
+            let root = self.root.canonicalize().unwrap();
+            NativeScope {
+                kind: Kind::Global,
+                root_identity: native_file::path_identity(&root).unwrap(),
+                master: root.join("AGENTS.md"),
+                root,
+                managed: Vec::new(),
+            }
+        }
+        fn add_managed_accounts(&mut self) -> (String, String, PathBuf, PathBuf) {
+            let data = self.store.data_directory().unwrap();
+            for path in [data.join("providers"), data.join("providers/codex")] {
+                native_file::private_directory(&path).unwrap();
+            }
+            let a = uuid::Uuid::new_v4().to_string();
+            let b = uuid::Uuid::new_v4().to_string();
+            let ha = data.join("providers/codex").join(&a);
+            let hb = data.join("providers/codex").join(&b);
+            native_file::private_directory(&ha).unwrap();
+            native_file::private_directory(&hb).unwrap();
+            self.store.save_document("rust-codex-login-profiles.json",&json!({"version":1,"accounts":{a.clone():{"name":"Synthetic A","auth":"login","homePath":"/untrusted/ignored"},b.clone():{"name":"Synthetic B","auth":"login"}}})).unwrap();
+            (a, b, ha, hb)
         }
         fn scope(&self) -> NativeScope {
             NativeScope::project_native(&self.store, &self.id).unwrap()
@@ -787,6 +829,137 @@ mod tests {
         fn drop(&mut self) {
             let _ = self.store.close_for_shutdown();
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+    #[cfg(unix)]
+    #[::core::prelude::v1::test]
+    fn global_review_includes_trusted_account_homes_and_preserves_foreign_links_and_defaults() {
+        let mut fixture = Fixture::new();
+        let (_a, _b, ha, hb) = fixture.add_managed_accounts();
+        fs::write(fixture.root.join("AGENTS.md"), "Synthetic master\n").unwrap();
+        fs::write(ha.join("AGENTS.md"), "Synthetic account A\n").unwrap();
+        fs::write(fixture.root.join("foreign.md"), "Synthetic foreign content").unwrap();
+        std::os::unix::fs::symlink(fixture.root.join("foreign.md"), hb.join("AGENTS.md")).unwrap();
+        fs::create_dir(fixture.root.join(".codex")).unwrap();
+        let scope = fixture.global_scope();
+        let files = scope.discover_native(&fixture.store).unwrap();
+        assert!(files.iter().any(|f| f.path == ha.join("AGENTS.md")));
+        assert!(files.iter().any(|f| {
+            f.path
+                == fixture
+                    .root
+                    .canonicalize()
+                    .unwrap()
+                    .join(".codex/AGENTS.md")
+        }));
+        let plan = scope.review_native(&fixture.store).unwrap();
+        assert_eq!(plan.scope.managed.len(), 2);
+        assert!(
+            plan.targets
+                .iter()
+                .any(|t| t.path == ha.join("AGENTS.md") && t.state == TargetState::Differs)
+        );
+        assert!(
+            plan.targets
+                .iter()
+                .any(|t| t.path == hb.join("AGENTS.md") && t.state == TargetState::ForeignLink)
+        );
+        let choices = plan
+            .targets
+            .iter()
+            .map(|t| t.state.default_choice())
+            .collect::<Vec<_>>();
+        let (_, outcomes) = plan
+            .apply_native(&fixture.store, &choices, |path, expected, text| {
+                assert_eq!(fs::read_to_string(path).unwrap(), expected);
+                fs::write(path, text)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(outcomes.iter().all(|o| o.error.is_none()));
+        assert_eq!(
+            fs::read_link(ha.join("AGENTS.md")).unwrap(),
+            PathBuf::from("../../../AGENTS.md")
+        );
+        assert_eq!(
+            fs::read_to_string(ha.join("AGENTS.md")).unwrap(),
+            fs::read_to_string(fixture.root.join("AGENTS.md")).unwrap()
+        );
+        assert!(
+            fs::read_to_string(fixture.root.join("AGENTS.md"))
+                .unwrap()
+                .contains("Synthetic account A")
+        );
+        assert_eq!(
+            fs::read_to_string(hb.join("AGENTS.md")).unwrap(),
+            "Synthetic foreign content"
+        );
+        assert_eq!(
+            fs::read_link(hb.join("AGENTS.md")).unwrap(),
+            fixture.root.join("foreign.md")
+        );
+        assert!(
+            outcomes
+                .iter()
+                .find(|o| o.path == ha.join("AGENTS.md"))
+                .unwrap()
+                .backup
+                .as_ref()
+                .is_some_and(|p| fs::read_to_string(p).unwrap() == "Synthetic account A\n")
+        );
+        assert!(!ha.join("auth.json").exists());
+        assert!(!hb.join("auth.json").exists());
+    }
+    #[::core::prelude::v1::test]
+    fn removed_account_replaced_home_and_other_store_revoke_managed_review_before_any_effect() {
+        for change in ["removed", "replaced", "other-store"] {
+            let mut fixture = Fixture::new();
+            let (a, _b, ha, _hb) = fixture.add_managed_accounts();
+            let master = fixture.root.join("AGENTS.md");
+            fs::write(&master, "Synthetic master").unwrap();
+            fs::write(ha.join("AGENTS.md"), "Account A").unwrap();
+            let plan = fixture
+                .global_scope()
+                .review_native(&fixture.store)
+                .unwrap();
+            let choices = plan
+                .targets
+                .iter()
+                .map(|t| t.state.default_choice())
+                .collect::<Vec<_>>();
+            let mut other = None;
+            if change == "removed" {
+                let mut configuration = fixture
+                    .store
+                    .document("rust-codex-login-profiles.json")
+                    .unwrap()
+                    .unwrap();
+                configuration["accounts"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&a);
+                fixture
+                    .store
+                    .save_document("rust-codex-login-profiles.json", &configuration)
+                    .unwrap();
+            } else if change == "replaced" {
+                fs::rename(&ha, ha.with_file_name("old-managed-home")).unwrap();
+                native_file::private_directory(&ha).unwrap();
+            } else {
+                other = Some(Store::open(&fixture.root.join("other.sqlite")).unwrap());
+            }
+            let owner = other.as_ref().unwrap_or(&fixture.store);
+            let error = plan
+                .apply_native(owner, &choices, |_, _, _| {
+                    anyhow::bail!("must not reach master save")
+                })
+                .err()
+                .unwrap();
+            assert!(!error.to_string().contains("must not reach"), "{error}");
+            assert_eq!(fs::read_to_string(&master).unwrap(), "Synthetic master");
+            if let Some(mut other) = other {
+                other.close_for_shutdown().unwrap();
+            }
         }
     }
     #[::core::prelude::v1::test]

@@ -93,11 +93,23 @@ def main():
 
     def capture(window, stage, expected=None):
         path = artifacts / f"{stage}.png"
-        command("import", "-window", window, str(path), env=env)
-        with Image.open(path) as source:
-            image = source.convert("RGB")
-        assert image.width >= 800 and image.height >= 500, "Native window is too small"
-        assert max(ImageStat.Stat(image).stddev) > 8, "Window has no meaningful rendered content"
+        # A mapped window and a live Core do not acknowledge the first Vulkan
+        # presentation. Wait for actual pixels using the existing bounded
+        # readiness deadline; retain every blank frame as failure provenance.
+        frame = 0
+        def presented_frame():
+            nonlocal frame
+            observed = artifacts / f"{stage}-frame-{frame:03}.png"
+            frame += 1
+            command("import", "-window", window, str(observed), env=env)
+            with Image.open(observed) as source:
+                image = source.convert("RGB")
+            assert image.width >= 800 and image.height >= 500, "Native window is too small"
+            if max(ImageStat.Stat(image).stddev) <= 8:
+                return None
+            observed.replace(path)
+            return image
+        image = wait_for(f"presented native frame for {stage}", presented_frame)
         ocr_path, segmentation = path, "11"
         if stage == "command-palette":
             # The captured palette is visibly correct, but sparse whole-window
@@ -135,7 +147,6 @@ def main():
         rpc("threads.patch", threadId=thread_id, patch={"title": "Native Linux smoke"})
         rpc("threads.open", threadId=thread_id)
         wait_for("active native thread", lambda: rpc("app.status")["activeThread"] == thread_id)
-        time.sleep(0.8)  # Allow the native UI timer to consume the open request.
         before = capture(window, "conversation", "Native Linux smoke")
         # Real X11 input into the production textarea; RPC reads only verify it.
         command("xdotool", "mousemove", "--window", window,
