@@ -50,25 +50,59 @@ impl PreparedAppshot {
             text,
         })
     }
+    /// Explicit receipt for the files this preparation created. Unrelated files
+    /// are retained. Identity changes or removal failures remain errors so a
+    /// native owner can retain custody and retry instead of claiming cleanup.
+    pub fn try_discard(&mut self) -> Result<()> {
+        if self.retained {
+            return Ok(());
+        }
+        let directory = self
+            .image
+            .path
+            .parent()
+            .context("Missing image directory")?;
+        match std::fs::symlink_metadata(directory) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                bail!(
+                    "Private capture directory disappeared before cleanup could verify its identity"
+                );
+            }
+            Err(error) => return Err(error.into()),
+            _ => {}
+        }
+        ensure!(
+            std::fs::canonicalize(directory)?.as_path() == directory
+                && crate::private_fs::identity(directory)? == self.cleanup_identity,
+            "Private capture directory identity changed; cleanup retained"
+        );
+        for path in [&self.image.path, &self.image.original_path] {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            ensure!(
+                matches!(std::fs::symlink_metadata(path),Err(error)if error.kind()==std::io::ErrorKind::NotFound),
+                "Private capture file is still present after cleanup"
+            );
+        }
+        match std::fs::remove_dir(directory) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => return Err(error.into()),
+        }
+        self.retained = true;
+        Ok(())
+    }
 }
 impl Drop for PreparedAppshot {
     fn drop(&mut self) {
-        if self.retained {
-            return;
-        }
-        let Some(directory) = self.image.path.parent() else {
-            return;
-        };
-        // Remove only the exact generated files in the directory we created.
-        // Replaced directories and unrelated files are never traversed/deleted.
-        if std::fs::canonicalize(directory).ok().as_deref() != Some(directory)
-            || crate::private_fs::identity(directory).ok() != Some(self.cleanup_identity)
-        {
-            return;
-        }
-        let _ = std::fs::remove_file(&self.image.path);
-        let _ = std::fs::remove_file(&self.image.original_path);
-        let _ = std::fs::remove_dir(directory);
+        let _ = self.try_discard();
     }
 }
 impl Engine {
@@ -128,6 +162,21 @@ impl Engine {
         &mut self,
         ticket: AppshotTicket,
         mut prepared: PreparedAppshot,
+    ) -> Result<Value> {
+        let result = self.native_appshot_deliver_owned(ticket, &mut prepared);
+        if result.is_err() {
+            prepared
+                .try_discard()
+                .context("Appshot was not attached and private capture cleanup is incomplete")?;
+        }
+        result
+    }
+    /// The desktop retains this object through failure, obtaining an explicit
+    /// cleanup receipt before its native owner can report shutdown readiness.
+    pub fn native_appshot_deliver_owned(
+        &mut self,
+        ticket: AppshotTicket,
+        prepared: &mut PreparedAppshot,
     ) -> Result<Value> {
         self.require_background_admission()?;
         ensure!(
