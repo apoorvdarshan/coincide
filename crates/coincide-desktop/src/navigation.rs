@@ -36,6 +36,7 @@ impl Coincide {
             .gap_1()
             .child(
                 div()
+                    .id("sidebar-section-projects")
                     .role(Role::Heading)
                     .text_xs()
                     .text_color(self.color(0xe4e9f2).opacity(0.55))
