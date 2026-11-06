@@ -143,6 +143,7 @@ impl Coincide {
                             .compact()
                             .selected(self.workspace_open)
                             .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear_inspector_placeholders();
                                 this.session_import_open = false;
                                 this.workspace_open = !this.workspace_open;
                                 if this.workspace_open {
@@ -155,6 +156,7 @@ impl Coincide {
                                 }
                                 this.settings_open = false;
                                 this.sync_transcription_binding(cx);
+                                this.remember_current_inspector(cx);
                                 cx.notify();
                             })),
                     )
@@ -224,8 +226,6 @@ impl Coincide {
                                     this.transcription_open = false;
                                     this.settings_open = open;
                                     this.provider_settings.open = false;
-                                    this.workspace_open = false;
-                                    this.schedules_open = false;
                                     this.sync_credentials(cx);
                                     this.sync_transcription_binding(cx);
                                     cx.notify();

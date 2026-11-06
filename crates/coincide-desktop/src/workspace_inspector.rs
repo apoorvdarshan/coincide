@@ -24,6 +24,7 @@ impl Coincide {
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.github_open = false;
                                     this.github_threads_open = false;
+                                    this.remember_current_inspector(cx);
                                     this.sync_github_context(cx);
                                     cx.notify();
                                 })),
@@ -34,6 +35,7 @@ impl Coincide {
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.github_open = true;
                                     this.github_threads_open = false;
+                                    this.remember_current_inspector(cx);
                                     this.sync_workspace_context(cx);
                                     cx.notify();
                                 })),
@@ -41,6 +43,7 @@ impl Coincide {
                         .child(Button::new("workspace-github-threads-tab").label("Inline review threads")
                             .on_click(cx.listener(|this,_,window,cx|{
                                 this.github_open=false;this.github_threads_open=true;this.github_threads_scope_stale=false;
+                                this.remember_current_inspector(cx);
                                 this.sync_workspace_context(cx);
                                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                                 this.github_threads_seed=loaded.clone();

@@ -24,6 +24,9 @@ impl Coincide {
                         .is_some_and(|current| current.entity_id() == workspace.entity_id())
                 {
                     self.terminal_open = false;
+                    if self.terminal_on_right() {
+                        self.remember_inspector_choice(None, cx);
+                    }
                     self.sync_terminal_workspace(window, cx);
                     if window.is_window_active() {
                         self.composer.read(cx).focus_handle(cx).focus(window, cx);

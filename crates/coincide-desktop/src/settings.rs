@@ -1159,8 +1159,7 @@ impl Coincide {
             K::Palette => self.toggle_palette(window, cx),
             K::Sidebar => self.toggle_sidebar(window, cx),
             K::Terminal => {
-                if self.settings_in_main_window() || self.schedules_open || self.selected.is_none()
-                {
+                if !self.chat_visible() {
                     return;
                 }
                 self.terminal(window, cx);
