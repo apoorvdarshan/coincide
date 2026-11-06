@@ -59,6 +59,7 @@ mod quit_mount;
 mod scheduling;
 mod session_import;
 mod settings;
+mod settings_navigation;
 mod settings_window;
 mod shutdown_runtime;
 mod terminal_context_mount;
@@ -356,6 +357,7 @@ struct Coincide {
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
+    settings_navigation: settings_navigation::State,
     instructions_panel: Entity<instructions::InstructionsPanel>,
     models_settings: models_settings::ModelsSettings,
     archive_settings: archive_settings::ArchiveSettings,
@@ -764,7 +766,7 @@ impl Coincide {
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),
@@ -1098,6 +1100,7 @@ impl Coincide {
             settings_open: false,
             thread_actions_open: false,
             settings_search,
+            settings_navigation: Default::default(),
             settings_section: Default::default(),
             instructions_panel,
             models_settings,

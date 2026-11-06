@@ -143,6 +143,7 @@ impl Coincide {
     }
 
     pub(super) fn settings_window_closed(&mut self, cx: &mut Context<Self>) {
+        self.settings_navigation.cancel_drag();
         self.archive_settings.close_review();
         self.settings_window = None;
         self.settings_window_pending = false;
@@ -198,7 +199,7 @@ impl Coincide {
                         size(px(860.), px(640.)),
                         cx,
                     ))),
-                    window_min_size: Some(size(px(640.), px(440.))),
+                    window_min_size: Some(size(px(760.), px(500.))),
                     ..Default::default()
                 },
                 cx,

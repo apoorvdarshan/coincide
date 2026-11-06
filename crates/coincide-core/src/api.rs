@@ -664,6 +664,7 @@ impl Engine {
             }
             "agent.models.refresh" => {
                 let provider = crate::model_catalog::refresh_provider(p)?;
+                self.require_provider_enabled(provider)?;
                 let executable = if crate::model_catalog::supported(provider) {
                     let variable = if provider == "codex" { "COINCIDE_CODEX_EXECUTABLE" } else { "COINCIDE_CLAUDE_EXECUTABLE" };
                     std::env::var_os(variable).map(PathBuf::from).or_else(|| {
@@ -682,13 +683,18 @@ impl Engine {
             }
             "agent.selection.capabilities" => {
                 let mut result = crate::composer_selection::capabilities();
+                self.apply_provider_preferences(&mut result)?;
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
                     if codex_profile_models_api::named_thread(&thread) {
-                        return Ok(self.codex_profile_model_capabilities(&thread));
+                        let mut named = self.codex_profile_model_capabilities(&thread);
+                        self.apply_provider_preferences(&mut named)?;
+                        return Ok(named);
                     }
-                    let reason = if !thread["rustBotContext"].is_null() {
+                    let reason = if let Err(error) = self.require_provider_enabled(text(&thread["selection"], "provider").as_str()) {
+                        Some(error.to_string())
+                    } else if !thread["rustBotContext"].is_null() {
                         Some("Bot selection is fixed for this conversation; create a new bot conversation".to_owned())
                     } else if self.store.is_imported(id)? {
                         Some("Fork an imported thread before changing its provider".to_owned())
@@ -869,6 +875,7 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"

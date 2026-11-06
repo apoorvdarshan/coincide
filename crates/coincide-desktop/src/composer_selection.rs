@@ -2441,6 +2441,7 @@ impl Coincide {
             .as_array()
             .into_iter()
             .flatten()
+            .filter(|provider| provider["enabled"] != false)
         {
             let id = text(provider, "provider");
             let source = source.clone();

@@ -19,9 +19,10 @@ pub(super) enum SettingsSection {
     Media,
     ComputerUse,
     Usage,
+    Provider(coincide_core::provider_catalog::ProviderId),
 }
 impl SettingsSection {
-    fn id(self) -> &'static str {
+    pub(super) fn id(self) -> &'static str {
         match self {
             Self::General => "general",
             Self::Instructions => "instructions",
@@ -39,6 +40,7 @@ impl SettingsSection {
             Self::Media => "media",
             Self::ComputerUse => "computer-use",
             Self::Usage => "usage",
+            Self::Provider(provider) => super::settings_navigation::provider_key(provider),
         }
     }
     pub(super) fn label(self) -> &'static str {
@@ -58,7 +60,10 @@ impl SettingsSection {
             Self::Browser => "Browser",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
-            Self::Usage => "Usage and limits",
+            Self::Usage => "Usage",
+            Self::Provider(provider) => {
+                coincide_core::provider_catalog::provider(provider).display_name
+            }
         }
     }
 }
@@ -440,7 +445,12 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        if provider_preferences_changed {
+            self.selection_ui.capability_cache.invalidate();
+            self.refresh_selection_capabilities(cx);
+        }
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
@@ -566,7 +576,7 @@ impl Coincide {
             .into_any_element()
     }
 
-    pub(super) fn settings_surface(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn settings_detail_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         if (self.bots_open || self.transcription_open || self.notifications_open)
             && !self.provider_settings.open
         {
@@ -680,6 +690,8 @@ impl Coincide {
                 .into_any_element()
         } else if self.provider_settings.open {
             self.antigravity_settings(cx)
+        } else if let SettingsSection::Provider(provider) = self.settings_section {
+            self.provider_preferences_pane(provider, cx)
         } else {
             self.settings_pane(cx)
         }
@@ -687,51 +699,13 @@ impl Coincide {
 
     pub(super) fn settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         use SettingsSection as S;
-        let query = self.settings_search.read(cx).value().to_string();
-        let filtering = if query.trim().is_empty() {
-            self.settings_section
-        } else {
-            S::All
-        };
+        // Search belongs to the sidebar. Results navigate to a retained pane;
+        // typing never substitutes another detail owner or editor.
+        let query = String::new();
+        let filtering = self.settings_section;
         let matches = |section, terms| settings_match(filtering, section, &query, terms);
         let setting =
             |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
-        // Match the Swift Settings sidebar: destinations remain fixed while
-        // the selected pane scrolls independently on every desktop platform.
-        let mut nav = div().flex().flex_col().gap_1();
-        for section in [
-            S::General,
-            S::Models,
-            S::Usage,
-            S::Instructions,
-            S::Archive,
-            S::Keyboard,
-            S::Voice,
-            S::Browser,
-            S::ComputerUse,
-            S::Media,
-            S::Accounts,
-            S::About,
-        ] {
-            nav = nav.child(
-                Button::new(SharedString::from(format!(
-                    "settings-section-{}",
-                    section.id()
-                )))
-                .label(section.label())
-                .w_full()
-                .ghost()
-                .when(self.settings_section == section, |button| button.primary())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.archive_settings.close_review();
-                    this.settings_section = section;
-                    if section == S::Archive {
-                        this.refresh_archive_settings(cx);
-                    }
-                    cx.notify();
-                })),
-            );
-        }
         let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
         if matches(
@@ -1021,69 +995,35 @@ impl Coincide {
             ));
         }
         div()
-            .id("settings-pane")
+            .id("settings-detail-form")
             .flex_1()
-            .flex_basis(px(0.))
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
             .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
             .child(
                 div()
-                    .id("settings-sidebar")
-                    .w(px(220.))
-                    .min_w(px(200.))
-                    .flex_shrink_0()
                     .flex()
-                    .flex_col()
-                    .gap_3()
-                    .p_3()
-                    .bg(self.color(0x151922))
-                    .border_r_1()
-                    .border_color(self.color(0x29303d))
-                    .child(Input::new(&self.settings_search))
-                    .child(
-                        div()
-                            .id("settings-destinations")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(nav),
-                    ),
+                    .justify_between()
+                    .items_center()
+                    .child(div().flex_1().min_w_0().text_xl().child(filtering.label()))
+                    .child(Button::new("settings-done").label("Done").on_click(
+                        cx.listener(|this, _, window, cx| this.close_settings_panel(window, cx)),
+                    )),
             )
             .child(
                 div()
+                    .id("settings-results")
                     .flex_1()
-                    .flex_basis(px(0.))
                     .min_w_0()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .p_4()
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().flex_1().min_w_0().text_xl().child(filtering.label()))
-                            .child(Button::new("settings-done").label("Done").on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.close_settings_panel(window, cx);
-                                }),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .id("settings-results")
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(content),
-                    )
-                    .child(div().text_sm().child(self.settings_status.clone())),
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(content),
             )
+            .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
     }
 
