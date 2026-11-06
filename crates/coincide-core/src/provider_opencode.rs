@@ -183,6 +183,7 @@ impl Server {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        crate::provider_configuration::apply_to_child(&mut command, false)?;
         isolate_environment(&mut command);
         command
             .env_remove("OPENCODE_SERVER_PASSWORD")

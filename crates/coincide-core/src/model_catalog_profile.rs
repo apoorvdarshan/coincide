@@ -23,6 +23,8 @@ impl FileStamp {
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct NamedBinding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configuration: Option<crate::provider_configuration::Stamp>,
     pub(super) profile: LaunchContext,
     thread: String,
     pub(super) cwd: PathBuf,
@@ -56,6 +58,7 @@ impl NamedBinding {
             Err(error) => return Err(error),
         };
         Ok(Self {
+            configuration: crate::provider_configuration::current_stamp(),
             profile,
             thread: thread.into(),
             cwd: cwd.into(),

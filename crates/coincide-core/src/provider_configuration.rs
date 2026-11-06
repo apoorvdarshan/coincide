@@ -1,0 +1,1018 @@
+//! Native-only executable/environment grants. Settings/import JSON is display
+//! data and can never mint these HMAC-authenticated, Store-inode-bound grants.
+//! Private environment values are neither Debug nor exposed by any JSON method.
+use super::*;
+use ring::{
+    hmac,
+    rand::{SecureRandom, SystemRandom},
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::Command,
+};
+const LIMIT: usize = 4 * 1024 * 1024;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Stamp {
+    source: PathBuf,
+    identity: crate::private_fs::Identity,
+    provider: String,
+    revision: String,
+    digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Binary {
+    requested: PathBuf,
+    canonical: PathBuf,
+    link: crate::private_fs::Identity,
+    target: crate::private_fs::Identity,
+    length: u64,
+    modified: u128,
+    digest: String,
+}
+impl Binary {
+    fn capture(path: &Path) -> Result<Self> {
+        ensure!(path.is_absolute(), "Choose an absolute executable path");
+        let canonical = path.canonicalize().context("Executable is unavailable")?;
+        let file = File::open(&canonical).context("Executable cannot be opened")?;
+        let metadata = file.metadata()?;
+        ensure!(
+            metadata.is_file() && metadata.len() <= 512 * 1024 * 1024,
+            "Executable is not a bounded regular file"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            ensure!(
+                metadata.permissions().mode() & 0o111 != 0,
+                "File is not executable"
+            );
+        }
+        #[cfg(windows)]
+        ensure!(
+            canonical
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(
+                    |value| value.eq_ignore_ascii_case("exe") || value.eq_ignore_ascii_case("com")
+                ),
+            "Choose the native executable, not a command-shell wrapper"
+        );
+        let mut digest = Sha256::new();
+        let mut reader = file.take(512 * 1024 * 1024 + 1);
+        let mut buffer = [0u8; 32768];
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            digest.update(&buffer[..n]);
+        }
+        Ok(Self {
+            requested: path.into(),
+            canonical: canonical.clone(),
+            link: crate::private_fs::identity(path)?,
+            target: crate::private_fs::identity(&canonical)?,
+            length: metadata.len(),
+            modified: metadata
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
+            digest: crate::digest_hex::lower_hex(digest.finalize()),
+        })
+    }
+    fn validate_metadata(&self) -> Result<()> {
+        let canonical = self.requested.canonicalize()?;
+        let metadata = fs::metadata(&canonical)?;
+        ensure!(
+            canonical == self.canonical
+                && crate::private_fs::identity(&self.requested)? == self.link
+                && crate::private_fs::identity(&canonical)? == self.target
+                && metadata.is_file()
+                && metadata.len() == self.length
+                && metadata
+                    .modified()?
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_nanos()
+                    == self.modified,
+            "Approved executable changed; choose and save it again"
+        );
+        Ok(())
+    }
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            Self::capture(&self.requested)? == *self,
+            "Approved executable changed; choose and save it again"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Record {
+    revision: String,
+    executable: Option<Binary>,
+    custom: bool,
+    environment: BTreeMap<String, String>,
+}
+/// Native editor data only. Deliberately not Debug or Serialize.
+pub struct Snapshot {
+    pub executable: Option<PathBuf>,
+    pub environment: BTreeMap<String, String>,
+    pub baseline: String,
+    pub approved: bool,
+}
+/// Opaque native prepare/apply proof. Never accepted through agent JSON.
+pub struct Prepared {
+    source: PathBuf,
+    identity: crate::private_fs::Identity,
+    provider: String,
+    baseline: String,
+    record: Record,
+}
+#[derive(Clone)]
+pub(crate) struct LaunchConfiguration {
+    stamp: Stamp,
+    record: Record,
+}
+thread_local! { static CURRENT: RefCell<Option<LaunchConfiguration>>=const {RefCell::new(None)}; }
+pub(crate) struct Scope(Option<LaunchConfiguration>);
+impl Drop for Scope {
+    fn drop(&mut self) {
+        CURRENT.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+pub(crate) fn enter(configuration: Option<LaunchConfiguration>) -> Scope {
+    Scope(CURRENT.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), configuration)))
+}
+pub(crate) fn current() -> Option<LaunchConfiguration> {
+    CURRENT.with(|slot| slot.borrow().clone())
+}
+pub(crate) fn current_stamp() -> Option<Stamp> {
+    CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
+}
+pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
+    let Some(configuration) = current() else {
+        return Ok(());
+    };
+    configuration
+        .record
+        .executable
+        .as_ref()
+        .map(Binary::validate)
+        .transpose()?;
+    if let Some(binary) = &configuration.record.executable {
+        ensure!(
+            Path::new(command.get_program()) == binary.requested
+                || Path::new(command.get_program()) == binary.canonical,
+            "Child executable differs from the approved provider executable"
+        );
+    }
+    for (key, value) in &configuration.record.environment {
+        if named {
+            ensure!(
+                !sensitive_for_profile(key),
+                "A named subscription profile cannot accept provider auth, endpoint or proxy overrides"
+            );
+        }
+        command.env(key, value);
+    }
+    Ok(())
+}
+fn sensitive_for_profile(key: &str) -> bool {
+    let key = key.to_ascii_uppercase();
+    [
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "CREDENTIAL",
+        "PROXY",
+        "BASE_URL",
+        "ENDPOINT",
+    ]
+    .iter()
+    .any(|part| key.contains(part))
+        || key.starts_with("OPENAI_")
+        || key.starts_with("CODEX_")
+}
+fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
+    ensure!(
+        values.len() <= 128
+            && values
+                .iter()
+                .map(|(key, value)| key.len() + value.len())
+                .sum::<usize>()
+                <= 64 * 1024,
+        "Environment exceeds its private storage bound"
+    );
+    let mut folded = std::collections::HashSet::new();
+    for (key, value) in values {
+        ensure!(
+            !key.is_empty()
+                && key.len() <= 256
+                && key.bytes().enumerate().all(|(i, c)| c == b'_'
+                    || c.is_ascii_alphabetic()
+                    || (i > 0 && c.is_ascii_digit()))
+                && !value.contains('\0'),
+            "Environment names must use letters, digits and underscores"
+        );
+        let upper = key.to_ascii_uppercase();
+        ensure!(
+            folded.insert(upper.clone()),
+            "Duplicate environment variable name"
+        );
+        ensure!(
+            !upper.starts_with("COINCIDE_")
+                && !matches!(
+                    upper.as_str(),
+                    "HOME"
+                        | "USERPROFILE"
+                        | "CODEX_HOME"
+                        | "CLAUDE_CONFIG_DIR"
+                        | "GROK_HOME"
+                        | "XDG_DATA_HOME"
+                        | "XDG_CONFIG_HOME"
+                        | "CODEX_SESSION_ID"
+                        | "CODEX_THREAD_ID"
+                        | "CODEX_TOOL_CALL_ID"
+                ),
+            "Account homes and Coincide control variables are managed by their own trusted owners"
+        );
+    }
+    Ok(())
+}
+fn source(store: &Store) -> Result<(PathBuf, crate::private_fs::Identity)> {
+    let path = store.resume_source_path()?;
+    Ok((path.clone(), crate::private_fs::identity(&path)?))
+}
+fn directory(path: &Path) -> Result<PathBuf> {
+    Ok(path
+        .parent()
+        .context("Store directory is unavailable")?
+        .join(format!(
+            ".{}.native-provider-configuration-v1",
+            path.file_name()
+                .context("Store filename is unavailable")?
+                .to_str()
+                .context("Store filename is invalid")?
+        )))
+}
+fn private(path: &Path, directory: bool) -> Result<()> {
+    #[cfg(windows)]
+    {
+        return crate::private_fs::windows::verify(path, directory);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::symlink_metadata(path)?;
+        ensure!(
+            !meta.file_type().is_symlink()
+                && if directory {
+                    meta.is_dir()
+                } else {
+                    meta.is_file() && meta.nlink() == 1
+                },
+            "Invalid private provider configuration path"
+        );
+        ensure!(
+            meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o077 == 0,
+            "Provider configuration ownership or permissions are unsafe"
+        );
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("Private provider configuration is unavailable")
+}
+fn open_file(path: &Path, new: bool) -> Result<File> {
+    #[cfg(windows)]
+    {
+        return crate::private_fs::windows::open_file(path, new);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        Ok(fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(new)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?)
+    }
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("Private provider configuration is unavailable")
+}
+struct Private {
+    directory: PathBuf,
+    lease: File,
+    key: hmac::Key,
+    source: Value,
+}
+impl Private {
+    fn open(store: &Store, create: bool) -> Result<Option<Self>> {
+        let (path, identity) = source(store)?;
+        let directory = directory(&path)?;
+        if fs::symlink_metadata(&directory)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
+            if !create {
+                return Ok(None);
+            }
+            private(path.parent().context("Store directory missing")?, true)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new().mode(0o700).create(&directory)?;
+            }
+            #[cfg(windows)]
+            crate::private_fs::windows::create_directory(&directory)?;
+        }
+        private(path.parent().context("Store directory missing")?, true)?;
+        private(&directory, true)?;
+        let key_path = directory.join("authority.key");
+        let record = directory.join("configuration.json");
+        let mut lease = if key_path.try_exists()? {
+            open_file(&key_path, false)?
+        } else {
+            ensure!(
+                create && !record.try_exists()?,
+                "Provider configuration authority key is missing"
+            );
+            let mut file = open_file(&key_path, true)?;
+            let mut secret = [0u8; 32];
+            SystemRandom::new()
+                .fill(&mut secret)
+                .map_err(|_| anyhow::anyhow!("Could not create provider configuration key"))?;
+            file.write_all(&secret)?;
+            file.sync_all()?;
+            secret.fill(0);
+            file
+        };
+        private(&key_path, false)?;
+        lease
+            .try_lock()
+            .context("Provider configuration is busy in another owner")?;
+        ensure!(
+            lease.metadata()?.len() == 32,
+            "Invalid provider configuration key"
+        );
+        use std::io::{Seek, SeekFrom};
+        lease.seek(SeekFrom::Start(0))?;
+        let mut secret = [0u8; 32];
+        lease.read_exact(&mut secret)?;
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
+        secret.fill(0);
+        Ok(Some(Self {
+            directory,
+            lease,
+            key,
+            source: json!({"path":path,"identity":identity,"version":1}),
+        }))
+    }
+    fn read(&self) -> Result<Value> {
+        let path = self.directory.join("configuration.json");
+        if !path.try_exists()? {
+            return Ok(json!({"source":self.source,"providers":{},"sessions":{}}));
+        }
+        private(&path, false)?;
+        ensure!(
+            fs::metadata(&path)?.len() <= LIMIT as u64,
+            "Provider configuration exceeds its bound"
+        );
+        let bytes = fs::read(&path)?;
+        let envelope: Value =
+            serde_json::from_slice(&bytes).context("Private provider configuration is invalid")?;
+        let payload = serde_json::to_vec(&envelope["payload"])?;
+        let tag = envelope["tag"]
+            .as_str()
+            .context("Provider configuration seal missing")?;
+        ensure!(
+            tag.len() == 64 && tag.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "Invalid provider configuration seal"
+        );
+        let tag = (0..32)
+            .map(|i| u8::from_str_radix(&tag[i * 2..i * 2 + 2], 16))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        hmac::verify(&self.key, &payload, &tag)
+            .map_err(|_| anyhow::anyhow!("Provider configuration seal is invalid"))?;
+        ensure!(
+            envelope["payload"]["source"] == self.source,
+            "Provider configuration belongs to another Store"
+        );
+        Ok(envelope["payload"].clone())
+    }
+    fn write(&self, payload: &Value) -> Result<()> {
+        let data = serde_json::to_vec(payload)?;
+        let tag = hmac::sign(&self.key, &data);
+        let bytes = serde_json::to_vec(
+            &json!({"payload":payload,"tag":crate::digest_hex::lower_hex(tag.as_ref())}),
+        )?;
+        ensure!(
+            bytes.len() <= LIMIT,
+            "Provider configuration exceeds its bound"
+        );
+        let temporary = self.directory.join(format!(".save-{}", Uuid::new_v4()));
+        let mut file = open_file(&temporary, true)?;
+        let result = (|| -> Result<()> {
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            private(&temporary, false)?;
+            fs::rename(&temporary, self.directory.join("configuration.json"))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+}
+impl Drop for Private {
+    fn drop(&mut self) {
+        let _ = self.lease.unlock();
+    }
+}
+fn read_record(payload: &Value, provider: &str) -> Result<Option<Record>> {
+    payload["providers"]
+        .get(provider)
+        .map(|value| {
+            serde_json::from_value(value.clone()).context("Private provider record is invalid")
+        })
+        .transpose()
+}
+fn provider_id(provider: &str) -> Result<()> {
+    agent::Provider::from_name(provider)?;
+    ensure!(
+        matches!(
+            provider,
+            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+        ),
+        "Unsupported provider"
+    );
+    Ok(())
+}
+fn default_executable(provider: &str) -> Option<PathBuf> {
+    let variable = format!("COINCIDE_{}_EXECUTABLE", provider.to_ascii_uppercase());
+    std::env::var_os(variable).map(PathBuf::from).or_else(|| {
+        crate::provider_catalog::discover_installed_tools()
+            .providers
+            .into_iter()
+            .find(|entry| {
+                serde_json::to_value(entry.provider)
+                    .ok()
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    == Some(provider)
+            })
+            .and_then(|entry| entry.executable)
+    })
+}
+impl Engine {
+    pub fn native_provider_configuration(&self, provider: &str) -> Result<Snapshot> {
+        provider_id(provider)?;
+        let record = Private::open(&self.store, false)?
+            .map(|owner| owner.read())
+            .transpose()?
+            .map(|payload| read_record(&payload, provider))
+            .transpose()?
+            .flatten();
+        Ok(match record {
+            Some(record) => Snapshot {
+                executable: record
+                    .executable
+                    .filter(|_| record.custom)
+                    .map(|binary| binary.requested),
+                environment: record.environment,
+                baseline: record.revision,
+                approved: true,
+            },
+            None => Snapshot {
+                executable: None,
+                environment: BTreeMap::new(),
+                baseline: "unconfigured".into(),
+                approved: false,
+            },
+        })
+    }
+    pub fn prepare_native_provider_configuration(
+        &self,
+        provider: &str,
+        baseline: &str,
+        executable: Option<&Path>,
+        environment: BTreeMap<String, String>,
+    ) -> Result<Prepared> {
+        self.require_admissions()?;
+        provider_id(provider)?;
+        validate_environment(&environment)?;
+        let current = self.native_provider_configuration(provider)?;
+        ensure!(
+            current.baseline == baseline,
+            "Provider configuration changed; reload before saving"
+        );
+        let binary = if let Some(path) = executable {
+            Some(Binary::capture(path)?)
+        } else if !environment.is_empty() {
+            Some(Binary::capture(&default_executable(provider).context(
+                "Choose an executable before configuring its environment",
+            )?)?)
+        } else {
+            None
+        };
+        let (source, identity) = source(&self.store)?;
+        Ok(Prepared {
+            source,
+            identity,
+            provider: provider.into(),
+            baseline: baseline.into(),
+            record: Record {
+                revision: Uuid::new_v4().to_string(),
+                executable: binary,
+                custom: executable.is_some(),
+                environment,
+            },
+        })
+    }
+    pub fn apply_native_provider_configuration(&mut self, prepared: Prepared) -> Result<Snapshot> {
+        self.require_admissions()?;
+        ensure!(
+            source(&self.store)? == (prepared.source.clone(), prepared.identity),
+            "Provider configuration review belongs to another Store"
+        );
+        prepared
+            .record
+            .executable
+            .as_ref()
+            .map(Binary::validate)
+            .transpose()?;
+        let owner = Private::open(&self.store, true)?
+            .context("Provider configuration store unavailable")?;
+        let mut payload = owner.read()?;
+        let baseline = read_record(&payload, &prepared.provider)?
+            .map(|record| record.revision)
+            .unwrap_or_else(|| "unconfigured".into());
+        ensure!(
+            baseline == prepared.baseline,
+            "Provider configuration changed; drafts were retained"
+        );
+        payload["providers"][&prepared.provider] = serde_json::to_value(&prepared.record)?;
+        self.store
+            .mark_native_provider_configuration(&prepared.provider)?;
+        owner.write(&payload)?;
+        drop(owner);
+        self.revision += 1;
+        self.native_provider_configuration(&prepared.provider)
+    }
+    pub(crate) fn provider_launch_configuration(
+        &self,
+        provider: &str,
+    ) -> Result<Option<LaunchConfiguration>> {
+        provider_id(provider)?;
+        let Some(owner) = Private::open(&self.store, false)? else {
+            ensure!(
+                !self
+                    .store
+                    .requires_native_provider_configuration(provider)?,
+                "Approved provider configuration is missing; save it again in native Settings before running"
+            );
+            return Ok(None);
+        };
+        let payload = owner.read()?;
+        let Some(record) = read_record(&payload, provider)? else {
+            ensure!(
+                !self
+                    .store
+                    .requires_native_provider_configuration(provider)?,
+                "Approved provider configuration is missing; save it again in native Settings before running"
+            );
+            return Ok(None);
+        };
+        validate_environment(&record.environment)?;
+        record
+            .executable
+            .as_ref()
+            .map(Binary::validate_metadata)
+            .transpose()?;
+        let (source, identity) = source(&self.store)?;
+        let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(&record)?));
+        Ok(Some(LaunchConfiguration {
+            stamp: Stamp {
+                source,
+                identity,
+                provider: provider.into(),
+                revision: record.revision.clone(),
+                digest,
+            },
+            record,
+        }))
+    }
+    pub(crate) fn native_provider_scope_for_command(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<Scope> {
+        let provider = if method.starts_with("providers.codex.")
+            || method.starts_with("usage.codex")
+        {
+            Some("codex".to_owned())
+        } else if matches!(
+            method,
+            "agent.models.refresh"
+                | "agent.models.status"
+                | "agent.select"
+                | "agent.provider.select"
+                | "agent.selection.capabilities"
+        ) {
+            params["provider"].as_str().map(str::to_owned).or_else(|| {
+                params["threadId"]
+                    .as_str()
+                    .and_then(|id| self.store.thread(id).ok())
+                    .and_then(|thread| thread["selection"]["provider"].as_str().map(str::to_owned))
+            })
+        } else {
+            None
+        };
+        Ok(enter(
+            provider
+                .as_deref()
+                .map(|provider| self.provider_launch_configuration(provider))
+                .transpose()?
+                .flatten(),
+        ))
+    }
+}
+impl LaunchConfiguration {
+    pub(crate) fn validate_launch(&self) -> Result<()> {
+        self.record
+            .executable
+            .as_ref()
+            .map(Binary::validate)
+            .transpose()?;
+        Ok(())
+    }
+    pub(crate) fn approved_executable(&self) -> Option<PathBuf> {
+        self.record
+            .executable
+            .as_ref()
+            .map(|binary| binary.requested.clone())
+    }
+    pub(crate) fn executable(&self, fallback: PathBuf) -> PathBuf {
+        self.record
+            .executable
+            .as_ref()
+            .map(|binary| binary.requested.clone())
+            .unwrap_or(fallback)
+    }
+    pub(crate) fn stamp(&self) -> Stamp {
+        self.stamp.clone()
+    }
+}
+
+pub(crate) fn current_executable(fallback: PathBuf) -> PathBuf {
+    current()
+        .map(|scope| scope.executable(fallback.clone()))
+        .unwrap_or(fallback)
+}
+impl Engine {
+    pub(crate) fn native_configuration_session_allowed(
+        &self,
+        provider: &str,
+        thread: &str,
+        session: &str,
+    ) -> Result<bool> {
+        let Some(stamp) = current_stamp() else {
+            return Ok(true);
+        };
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(false);
+        };
+        let payload = owner.read()?;
+        let id = crate::digest_hex::lower_hex(Sha256::digest(format!(
+            "{provider}\0{thread}\0{session}"
+        )));
+        Ok(payload["sessions"][id] == serde_json::to_value(stamp)?)
+    }
+    pub(crate) fn remember_native_configuration_session(
+        &self,
+        provider: &str,
+        thread: &str,
+        session: &str,
+        stamp: Option<&Stamp>,
+    ) -> Result<()> {
+        let Some(stamp) = stamp else {
+            return Ok(());
+        };
+        let owner = Private::open(&self.store, false)?.context("Provider configuration missing")?;
+        let mut payload = owner.read()?;
+        let id = crate::digest_hex::lower_hex(Sha256::digest(format!(
+            "{provider}\0{thread}\0{session}"
+        )));
+        if payload["sessions"][&id] == serde_json::to_value(stamp)? {
+            return Ok(());
+        }
+        ensure!(
+            payload["sessions"]
+                .as_object()
+                .is_some_and(|rows| rows.len() < 4096),
+            "Private provider session bindings exceed their bound"
+        );
+        payload["sessions"][id] = serde_json::to_value(stamp)?;
+        owner.write(&payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (tempfile::TempDir, Engine, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join(if cfg!(windows) {
+            "synthetic-provider.exe"
+        } else {
+            "synthetic-provider"
+        });
+        fs::write(
+            &binary,
+            b"synthetic executable bytes, never run by this fixture",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let engine = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        (root, engine, binary)
+    }
+    fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
+        let baseline = engine
+            .native_provider_configuration(provider)
+            .unwrap()
+            .baseline;
+        let plan = engine
+            .prepare_native_provider_configuration(
+                provider,
+                &baseline,
+                Some(binary),
+                BTreeMap::from([("SYNTHETIC_API_KEY".into(), value.into())]),
+            )
+            .unwrap();
+        engine.apply_native_provider_configuration(plan).unwrap();
+    }
+    #[test]
+    fn imported_settings_and_agent_json_cannot_grant_executable_or_environment_authority() {
+        let (_root, mut engine, binary) = fixture();
+        let settings = json!({"providers":{"codex":{"executablePath":binary,"environment":{"SYNTHETIC_API_KEY":"fixture-not-a-real-key"}}}});
+        engine
+            .store
+            .save_document("settings.json", &settings)
+            .unwrap();
+        assert!(
+            !engine
+                .native_provider_configuration("codex")
+                .unwrap()
+                .approved
+        );
+        assert!(
+            engine
+                .provider_launch_configuration("codex")
+                .unwrap()
+                .is_none()
+        );
+        for method in [
+            "providers.configuration.save",
+            "providers.configuration.apply",
+            "provider.environment.set",
+        ] {
+            assert!(engine.execute(method, &settings).is_err());
+        }
+        assert_eq!(
+            engine.store.document("settings.json").unwrap(),
+            Some(settings)
+        );
+        assert!(
+            engine
+                .provider_launch_configuration("codex")
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[test]
+    fn native_save_cas_keeps_private_values_out_of_settings_and_survives_restart() {
+        let (root, mut first, binary) = fixture();
+        let stale = first
+            .prepare_native_provider_configuration(
+                "codex",
+                "unconfigured",
+                Some(&binary),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        let mut second = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        save(&mut second, "codex", &binary, "fixture-not-a-real-key");
+        assert!(first.apply_native_provider_configuration(stale).is_err());
+        assert_eq!(
+            first
+                .native_provider_configuration("codex")
+                .unwrap()
+                .environment["SYNTHETIC_API_KEY"],
+            "fixture-not-a-real-key"
+        );
+        assert!(first.store.document("settings.json").unwrap().is_none());
+        let stamp = first
+            .provider_launch_configuration("codex")
+            .unwrap()
+            .unwrap()
+            .stamp();
+        drop(first);
+        drop(second);
+        let reopened = Engine::fixture(Store::open(&root.path().join("state.sqlite")).unwrap());
+        assert_eq!(
+            reopened
+                .provider_launch_configuration("codex")
+                .unwrap()
+                .unwrap()
+                .stamp(),
+            stamp
+        );
+    }
+    #[test]
+    fn all_six_providers_capture_child_only_environment_and_env_only_edits_change_proof_identity() {
+        let (_root, mut engine, binary) = fixture();
+        for provider in [
+            "claude",
+            "codex",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            save(&mut engine, provider, &binary, "fixture-first");
+            let first = engine
+                .provider_launch_configuration(provider)
+                .unwrap()
+                .unwrap();
+            let stamp = first.stamp();
+            {
+                let _scope = enter(Some(first));
+                let mut child = Command::new(&binary);
+                apply_to_child(&mut child, false).unwrap();
+                assert!(
+                    child
+                        .get_envs()
+                        .any(|(key, value)| key == "SYNTHETIC_API_KEY"
+                            && value == Some(std::ffi::OsStr::new("fixture-first")))
+                );
+                assert!(apply_to_child(&mut Command::new(&binary), true).is_err());
+            }
+            assert!(current().is_none());
+            save(&mut engine, provider, &binary, "fixture-second");
+            assert_ne!(
+                engine
+                    .provider_launch_configuration(provider)
+                    .unwrap()
+                    .unwrap()
+                    .stamp(),
+                stamp
+            );
+            // No global environment setter exists in production or this test.
+        }
+    }
+    #[test]
+    fn native_resume_ids_are_bound_to_the_exact_configured_endpoint_and_environment() {
+        let (_root, mut engine, binary) = fixture();
+        save(&mut engine, "codex", &binary, "fixture-first");
+        let first = engine
+            .provider_launch_configuration("codex")
+            .unwrap()
+            .unwrap();
+        {
+            let _scope = enter(Some(first.clone()));
+            assert!(
+                !engine
+                    .native_configuration_session_allowed("codex", "thread", "native-session")
+                    .unwrap()
+            );
+            engine
+                .remember_native_configuration_session(
+                    "codex",
+                    "thread",
+                    "native-session",
+                    Some(&first.stamp()),
+                )
+                .unwrap();
+            assert!(
+                engine
+                    .native_configuration_session_allowed("codex", "thread", "native-session")
+                    .unwrap()
+            );
+        }
+        save(&mut engine, "codex", &binary, "fixture-second");
+        let _scope = enter(engine.provider_launch_configuration("codex").unwrap());
+        assert!(
+            !engine
+                .native_configuration_session_allowed("codex", "thread", "native-session")
+                .unwrap()
+        );
+    }
+    #[test]
+    fn pin_changes_and_private_record_tampering_never_fall_back_to_path() {
+        let (root, mut engine, binary) = fixture();
+        save(&mut engine, "claude", &binary, "fixture-first");
+        let captured = engine
+            .provider_launch_configuration("claude")
+            .unwrap()
+            .unwrap();
+        let modified = fs::metadata(&binary).unwrap().modified().unwrap();
+        let before = fs::read(&binary).unwrap();
+        let mut changed = before.clone();
+        changed[0] ^= 1;
+        fs::write(&binary, &changed).unwrap();
+        File::options()
+            .write(true)
+            .open(&binary)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert!(captured.validate_launch().is_err());
+        let _scope = enter(Some(captured));
+        assert!(apply_to_child(&mut Command::new(&binary), false).is_err());
+        drop(_scope);
+        let path = directory(&root.path().join("state.sqlite"))
+            .unwrap()
+            .join("configuration.json");
+        let mut envelope: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        envelope["payload"]["providers"]["claude"]["environment"]["SYNTHETIC_API_KEY"] =
+            json!("forged-fixture");
+        fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        assert!(engine.native_provider_configuration("claude").is_err());
+    }
+    #[test]
+    fn removing_an_approved_private_record_never_restores_ambient_path_authority() {
+        let (root, mut engine, binary) = fixture();
+        save(&mut engine, "codex", &binary, "fixture-first");
+        let directory = directory(&root.path().join("state.sqlite")).unwrap();
+        fs::remove_file(directory.join("configuration.json")).unwrap();
+        assert!(engine.provider_launch_configuration("codex").is_err());
+        let snapshot = engine.native_provider_configuration("codex").unwrap();
+        assert!(!snapshot.approved);
+        let plan = engine
+            .prepare_native_provider_configuration(
+                "codex",
+                &snapshot.baseline,
+                Some(&binary),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        engine.apply_native_provider_configuration(plan).unwrap();
+        assert!(
+            engine
+                .provider_launch_configuration("codex")
+                .unwrap()
+                .is_some()
+        );
+    }
+    #[test]
+    fn reserved_homes_control_names_duplicates_and_oversized_values_are_rejected_before_private_writes()
+     {
+        let (root, engine, binary) = fixture();
+        for key in [
+            "HOME",
+            "CODEX_HOME",
+            "XDG_DATA_HOME",
+            "COINCIDE_CONTROL_SOCKET",
+            "CODEX_SESSION_ID",
+            "bad=name",
+        ] {
+            assert!(
+                engine
+                    .prepare_native_provider_configuration(
+                        "codex",
+                        "unconfigured",
+                        Some(&binary),
+                        BTreeMap::from([(key.into(), "fixture".into())])
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            engine
+                .prepare_native_provider_configuration(
+                    "codex",
+                    "unconfigured",
+                    Some(&binary),
+                    BTreeMap::from([("FOO".into(), "one".into()), ("foo".into(), "two".into())])
+                )
+                .is_err()
+        );
+        assert!(
+            !directory(&root.path().join("state.sqlite"))
+                .unwrap()
+                .exists()
+        );
+    }
+}

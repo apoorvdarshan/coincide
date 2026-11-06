@@ -190,6 +190,7 @@ impl Transport {
         if let Some(profile) = codex_profile {
             profile.configure(&mut command)?;
         }
+        crate::provider_configuration::apply_to_child(&mut command, codex_profile.is_some())?;
         // Apply parent-control isolation after the named profile clears ambient
         // environment, so the deliberately unbound socket is retained.
         isolate_environment(&mut command);

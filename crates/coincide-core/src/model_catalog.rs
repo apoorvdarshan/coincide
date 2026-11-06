@@ -279,6 +279,7 @@ impl ModelCatalog {
                         && profile::same_scope(job.named.as_ref(), named.as_ref())
                 })
             && job.named == named
+            && job.binding == binding
             && !job.cancelled.load(Ordering::Acquire)
             && (job.response["state"] == "loading"
                 || (reuse == RefreshReuse::AuthenticatedReadyOrLoading
@@ -343,7 +344,9 @@ impl ModelCatalog {
             let tx = self.tx.clone();
             let worker_id = id.clone();
             let worker_cancelled = cancelled.clone();
+            let configuration = crate::provider_configuration::current();
             let worker = std::thread::spawn(move || {
+                let _configuration_scope = crate::provider_configuration::enter(configuration);
                 let result = work(&worker_cancelled);
                 // Backpressure remains on the worker. Polling must continue
                 // during shutdown so neither response nor join ACK is lost.
@@ -719,7 +722,7 @@ impl<'a> ProcessRpc<'a> {
             "Model discovery cancelled"
         );
         let started = Instant::now();
-        let mut command = Command::new(executable);
+        let mut command = Command::new(&executable);
         match provider {
             "codex" => {
                 if let Some(named) = named {
@@ -787,6 +790,7 @@ impl<'a> ProcessRpc<'a> {
         for key in ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_TOOL_CALL_ID"] {
             command.env_remove(key);
         }
+        crate::provider_configuration::apply_to_child(&mut command, named.is_some())?;
         command.env(
             "COINCIDE_CONTROL_SOCKET",
             std::env::temp_dir().join(format!("coincide-unbound-{}.sock", uuid::Uuid::new_v4())),

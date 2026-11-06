@@ -31,6 +31,7 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
     engine.runs.insert(
         id.into(),
         Running {
+            configuration: None,
             usage_context: None,
             session,
             provider: "codex".into(),

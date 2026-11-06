@@ -126,6 +126,7 @@ fn combined_repair_obeys_existing_bot_import_running_recovery_and_freeze_gates()
     engine.runs.insert(
         id.clone(),
         Running {
+            configuration: None,
             usage_context: None,
             session: Session::fixture_worker(|_, _| {}),
             provider: "codex".into(),

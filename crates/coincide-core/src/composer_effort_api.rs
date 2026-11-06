@@ -2,6 +2,11 @@
 use super::*;
 impl Engine {
     pub(super) fn composer_codex_executable(&self) -> Result<PathBuf> {
+        if let Some(executable) = crate::provider_configuration::current()
+            .and_then(|configuration| configuration.approved_executable())
+        {
+            return Ok(executable);
+        }
         std::env::var_os("COINCIDE_CODEX_EXECUTABLE")
             .map(PathBuf::from)
             .or_else(|| {

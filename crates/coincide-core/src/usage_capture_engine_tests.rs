@@ -32,6 +32,7 @@ fn failed_atomic_finish_retains_usage_after_run_retirement_and_shutdown_retry_de
     engine.insert_running(
         id.clone(),
         Running {
+            configuration: None,
             usage_context: Some(agent::usage_capture::TurnContext::new(&before)),
             session,
             provider: "codex".into(),

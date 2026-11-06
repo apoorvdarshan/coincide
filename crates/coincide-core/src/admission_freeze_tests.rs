@@ -46,6 +46,7 @@ fn insert_worker(engine: &mut Engine, id: &str, session: Session) {
     engine.insert_running(
         id.into(),
         Running {
+            configuration: None,
             usage_context: None,
             session,
             provider: "codex".into(),

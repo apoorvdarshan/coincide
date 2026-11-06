@@ -177,6 +177,7 @@ fn invalid_inputs_root_rebinding_busy_and_capacity_fail_before_dispatch() {
     engine.runs.insert(
         owner.clone(),
         Running {
+            configuration: None,
             usage_context: None,
             session: Session::start(Launch {
                 executable: root.join("nonexistent-fixture-provider"),

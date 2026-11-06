@@ -4,6 +4,7 @@ use std::{path::Path, time::SystemTime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct EffortExecutable {
+    configuration: Option<crate::provider_configuration::Stamp>,
     requested: PathBuf,
     canonical: PathBuf,
     length: u64,
@@ -21,6 +22,7 @@ impl EffortExecutable {
         let identity = crate::private_fs::identity(&canonical)?;
         ensure!(metadata.is_file(), "Provider executable is not a file");
         Ok(Self {
+            configuration: crate::provider_configuration::current_stamp(),
             requested: path.into(),
             canonical,
             length: metadata.len(),

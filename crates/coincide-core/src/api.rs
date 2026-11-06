@@ -128,6 +128,9 @@ mod workspace_api;
 #[path = "workspace_runtime_tests.rs"]
 mod workspace_runtime_tests;
 
+#[path="provider_configuration.rs"]
+pub mod provider_configuration;
+
 pub type SharedEngine = Arc<Mutex<Engine>>;
 pub use idle_sleep::IdleShutdownStatus;
 /// Sampled provider Rust-thread ownership, not whole-app quiescence or process
@@ -140,6 +143,7 @@ pub struct ProviderWorkersStatus {
     pub unclassified: u64,
 }
 struct Running {
+    configuration: Option<provider_configuration::Stamp>,
     usage_context: Option<agent::usage_capture::TurnContext>,
     session: Session,
     provider: String,
@@ -308,6 +312,7 @@ impl Engine {
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
         self.require_admissions()?;
+        let _provider_configuration_scope=self.native_provider_scope_for_command(method,p)?;
         if method == "threads.resolve_id" {
             return self.resolve_thread_id_command(p);
         }
@@ -675,6 +680,7 @@ impl Engine {
                             .find(|entry| entry["provider"] == provider)?["executable"].as_str().map(PathBuf::from)
                     })
                 } else { None };
+                let executable=executable.map(provider_configuration::current_executable).or_else(||provider_configuration::current().and_then(|configuration|configuration.approved_executable()));
                 let result = self.model_catalog.refresh(provider, executable)?;
                 self.revision += 1;
                 Ok(result)
@@ -878,6 +884,9 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        let native_configuration=self.provider_launch_configuration(text(&v["selection"],"provider").as_str())?;
+        if let Some(configuration)=&native_configuration {configuration.validate_launch()?;}
+        let _provider_configuration_scope=provider_configuration::enter(native_configuration);
         self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
@@ -1005,7 +1014,7 @@ impl Engine {
             "Draft images exceed 20 MiB"
         );
         let saved_session = agent::provider_session(&v, &provider);
-        let allowed_session = self.unrevoked_provider_session(&v, &provider)?;
+        let allowed_session = self.unrevoked_provider_session(&v, &provider)?.filter(|session|self.native_configuration_session_allowed(&provider,&id,session).unwrap_or(false));
         if codex_profile.is_some() && saved_session.is_some() && allowed_session.is_none() {
             // Undo restores exact content, while deletion permanently consumes
             // every old continuation opportunity, including private receipts.
@@ -1126,6 +1135,7 @@ impl Engine {
             });
         // Use exactly the executable whose catalog authorized effort, not a
         // later PATH lookup or another configured provider/account.
+        let executable=provider_configuration::current_executable(executable);
         let executable = if let Some(profile) = &codex_profile {
             profile.executable().to_path_buf()
         } else if effort_proof.is_some() {
@@ -1174,6 +1184,7 @@ impl Engine {
         self.insert_running(
             id,
             Running {
+                configuration:provider_configuration::current_stamp(),
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
                 session: Session::start_with_mode_policy_and_profile(
                     adapter,
@@ -1742,6 +1753,9 @@ impl Engine {
                 }
                 match event {
                     Event::Session(session) => {
+                        if self.remember_native_configuration_session(&self.runs[&id].provider,&id,&session,self.runs[&id].configuration.as_ref()).is_err() {
+                            append(&mut v,"notice","Provider session configuration could not be bound; a future turn will start a fresh provider session.",None);
+                        }
                         if let Some(account) = self.runs[&id].session.codex_profile_account() {
                             agent::set_provider_session_for_account(
                                 &mut v,

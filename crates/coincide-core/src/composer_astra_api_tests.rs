@@ -273,6 +273,7 @@ fn unproved_automatic_default_replacement_flag_never_unlocks_other_states() {
     engine.runs.insert(
         id.clone(),
         Running {
+            configuration: None,
             usage_context: None,
             session: Session::fixture_worker(|_, _| {}),
             provider: "codex".into(),
