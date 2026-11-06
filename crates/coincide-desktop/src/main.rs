@@ -2588,7 +2588,12 @@ impl Coincide {
             }
             engine.ui_available = self.browser.is_some();
             let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
-            if engine.active_thread() != selected.as_deref()
+            let pending_open_compatible = engine
+                .requested_open
+                .as_ref()
+                .is_none_or(|requested| Some(requested.as_str()) == selected.as_deref());
+            if pending_open_compatible
+                && engine.active_thread() != selected.as_deref()
                 && let Err(error) = engine.set_active_thread(selected)
             {
                 let _ = engine.set_active_thread(None);
