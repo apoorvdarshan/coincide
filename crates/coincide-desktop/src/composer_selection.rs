@@ -4,6 +4,8 @@
 use super::*;
 use anyhow::Context as _;
 use std::collections::HashMap;
+#[path = "composer_selection_cache.rs"]
+mod capability_cache;
 #[path = "codex_profile_models.rs"]
 mod named_models;
 
@@ -602,6 +604,7 @@ pub(super) struct ComposerSelection {
     drafts: HashMap<String, SelectionDraft>,
     bound: Option<String>,
     context: Option<(String, Value, bool)>,
+    capability_cache: capability_cache::CapabilityCache,
     capabilities: Value,
     accounts: Value,
     error: String,
@@ -969,15 +972,22 @@ impl Coincide {
             let running = self.running.contains(&id);
             (id, json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}), running)
         });
-        if self.selection_ui.context == context {
-            return;
+        if self.selection_ui.context != context {
+            self.selection_ui.context = context.clone();
+            self.selection_ui.capability_cache.invalidate();
         }
-        self.selection_ui.context = context.clone();
-        let Some((id, _selection, _)) = context else {
+        let Some((id, selection, running)) = context else {
             self.selection_ui.bound = None;
             self.selection_ui.capabilities = Value::Null;
             return;
         };
+        if self
+            .selection_ui
+            .capability_cache
+            .is_current(&(id.clone(), selection, running))
+        {
+            return;
+        }
         let draft = self
             .selection_ui
             .drafts
@@ -992,41 +1002,58 @@ impl Coincide {
         self.refresh_selection_capabilities(cx);
     }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+        let Some(thread) = self.selected.as_ref() else {
             return;
         };
-        let expected=self.selected.as_ref().map(|thread| json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}));
-        let result = (|| -> Result<Value> {
-            let mut engine = try_state(&self.engine)?;
-            let current = engine.store.thread(&id)?;
-            anyhow::ensure!(
-                expected
-                    == Some(
-                        json!({"selection":current["selection"],"accessMode":current["accessMode"],"interactionMode":current["interactionMode"]})
-                    ),
-                "Saved selection changed; reload before refreshing capabilities"
-            );
-            selection_response(
-                &mut engine,
-                "agent.selection.capabilities",
-                json!({"threadId":id}),
-            )
-        })();
-        match result {
-            Ok(capabilities) => {
-                self.selection_ui.capabilities = capabilities;
-                self.selection_ui.error.clear();
+        let id = text(thread, "id");
+        let scope = (
+            id.clone(),
+            capability_cache::selection_envelope(thread),
+            self.running.contains(&id),
+        );
+        self.selection_ui.context = Some(scope.clone());
+        self.selection_ui.capability_cache.invalidate();
+        let result = self
+            .selection_ui
+            .capability_cache
+            .read(&self.engine, &scope);
+        let (capabilities, error, read_accounts) = match result {
+            capability_cache::Read::Cached => return,
+            capability_cache::Read::Pending(reason) => (
+                capability_cache::closed_capabilities(&scope, reason),
+                reason.into(),
+                false,
+            ),
+            capability_cache::Read::Ready(Ok(capabilities)) => (capabilities, String::new(), true),
+            capability_cache::Read::Ready(Err(error)) => {
+                let reason = format!("Capabilities unavailable: {error}");
+                (
+                    capability_cache::closed_capabilities(&scope, &reason),
+                    reason,
+                    false,
+                )
             }
-            Err(error) => {
-                self.selection_ui.capabilities = Value::Null;
-                self.selection_ui.error = format!("Capabilities unavailable: {error}");
-            }
+        };
+        // This metadata-only endpoint runs once after an authoritative read,
+        // never on every frame while a busy Engine handoff is pending.
+        let accounts = if read_accounts {
+            call(&self.engine, "providers.antigravity.status", json!({}))
+                .map(|status| status["accounts"].clone())
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        let changed = self.selection_ui.capabilities != capabilities
+            || self.selection_ui.error != error
+            || self.selection_ui.accounts != accounts;
+        self.selection_ui.capabilities = capabilities;
+        self.selection_ui.error = error;
+        self.selection_ui.accounts = accounts;
+        // A pending handoff uses the existing tick/next actual UI update.
+        // Repeated lock contention must not create a notify/render retry loop.
+        if changed {
+            cx.notify();
         }
-        // This endpoint reads configured account metadata only, not vaults or auth.
-        self.selection_ui.accounts = call(&self.engine, "providers.antigravity.status", json!({}))
-            .map(|status| status["accounts"].clone())
-            .unwrap_or(Value::Null);
-        cx.notify();
     }
     pub(super) fn selection_model_changed(&mut self, cx: &mut Context<Self>) {
         if let Some(draft) = self
