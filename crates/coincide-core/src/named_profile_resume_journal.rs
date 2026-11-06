@@ -204,6 +204,22 @@ impl Journal {
         }
         Ok(value.get("receipt").cloned())
     }
+    pub(super) fn keys(&self) -> Result<Vec<String>> {
+        self.validate()?;
+        let mut statement = self.db.prepare("SELECT id FROM receipts LIMIT 129")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut keys = self.tickets.keys().cloned().collect::<Vec<_>>();
+        for row in rows {
+            keys.push(row?);
+        }
+        keys.sort();
+        keys.dedup();
+        ensure!(
+            keys.len() <= 128,
+            "Continuation slot count exceeds its bound"
+        );
+        Ok(keys)
+    }
     fn save_tickets(&mut self) -> Result<()> {
         let bytes = serde_json::to_vec(&self.tickets)?;
         ensure!(

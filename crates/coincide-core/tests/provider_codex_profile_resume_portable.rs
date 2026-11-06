@@ -144,6 +144,151 @@ fn phase(root: &Path, phase: &str) {
     }
     engine.close_store_after_core_shutdown().unwrap();
 }
+fn slots_phase(root: &Path, phase: &str) {
+    let mut engine = Engine::new(Store::open(&root.join("state/state.sqlite")).unwrap());
+    let metadata = root.join("fixture.json");
+    let saved_path = root.join("slot-fixture.json");
+    let (id, a, b) = if phase == "slots-seed" {
+        let project = call(
+            &mut engine,
+            "projects.create",
+            json!({"path":root,"name":"Private account slots"}),
+        );
+        let thread = call(
+            &mut engine,
+            "threads.create",
+            json!({"projectId":project["id"]}),
+        );
+        let id = text(&thread, "id");
+        engine.set_active_thread(Some(id.clone())).unwrap();
+        let a = call(
+            &mut engine,
+            "providers.codex.profiles.create",
+            json!({"name":"A"}),
+        );
+        let b = call(
+            &mut engine,
+            "providers.codex.profiles.create",
+            json!({"name":"B"}),
+        );
+        (id, text(&a, "id"), text(&b, "id"))
+    } else {
+        let saved: Value = serde_json::from_slice(&fs::read(&saved_path).unwrap()).unwrap();
+        (text(&saved, "id"), text(&saved, "a"), text(&saved, "b"))
+    };
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let choose = |engine: &mut Engine, account: &str| {
+        let thread = engine.store.thread(&id).unwrap();
+        call(
+            engine,
+            "providers.codex.profiles.select",
+            json!({"threadId":id,"accountId":account,"expectedSelection":thread["selection"]}),
+        );
+        refresh(engine, &id);
+    };
+    let turn = |engine: &mut Engine,
+                account: &str,
+                request: &str,
+                expected_method: &str,
+                expected_native: Option<&str>,
+                outgoing: &str|
+     -> String {
+        fs::write(&metadata,serde_json::to_vec(&json!({"expected":expected_method,"native":expected_native,"turn":outgoing,"account":account})).unwrap()).unwrap();
+        call(engine, "agent.send", json!({"threadId":id,"text":request}));
+        wait(engine, "slot saved and actual joined", |engine| {
+            call(engine, "app.status", json!({}))["running"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+                && engine.provider_workers_status().running == 0
+        });
+        // Poll once after the worker observer reports Returned: the registry
+        // must mint only after that observation and final successful save.
+        engine.poll();
+        let thread = engine.store.thread(&id).unwrap();
+        assert!(
+            thread["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["kind"] != "error"),
+            "{thread}"
+        );
+        let native = text(&thread["sessions"]["codex"], "sessionID");
+        if let Some(expected) = expected_native {
+            assert_eq!(native, expected);
+        }
+        native
+    };
+    if phase == "slots-seed" {
+        fs::write(&metadata, b"{}").unwrap();
+        choose(&mut engine, &a);
+        let native_a = turn(&mut engine, &a, "A first", "thread/start", None, "A first");
+        choose(&mut engine, &b);
+        let native_b = turn(
+            &mut engine,
+            &b,
+            "B first",
+            "thread/start",
+            None,
+            "Earlier conversation context (historical messages, not a new user request):\n\nuser: A first\n\nCurrent user request:\nB first",
+        );
+        assert_ne!(native_a, native_b);
+        choose(&mut engine, &a);
+        turn(
+            &mut engine,
+            &a,
+            "A second",
+            "thread/resume",
+            Some(&native_a),
+            "Earlier conversation context (historical messages, not a new user request):\n\nuser: B first\n\nCurrent user request:\nA second",
+        );
+        choose(&mut engine, &b);
+        turn(
+            &mut engine,
+            &b,
+            "B second",
+            "thread/resume",
+            Some(&native_b),
+            "Earlier conversation context (historical messages, not a new user request):\n\nuser: A second\n\nCurrent user request:\nB second",
+        );
+        choose(&mut engine, &a);
+        fs::write(
+            &saved_path,
+            serde_json::to_vec(&json!({"id":id,"a":a,"b":b,"nativeA":native_a,"nativeB":native_b}))
+                .unwrap(),
+        )
+        .unwrap();
+    } else {
+        let saved: Value = serde_json::from_slice(&fs::read(&saved_path).unwrap()).unwrap();
+        refresh(&mut engine, &id);
+        turn(
+            &mut engine,
+            &a,
+            "A after restart",
+            "thread/resume",
+            saved["nativeA"].as_str(),
+            "Earlier conversation context (historical messages, not a new user request):\n\nuser: B second\n\nCurrent user request:\nA after restart",
+        );
+        turn(
+            &mut engine,
+            &a,
+            "A no duplicate",
+            "thread/resume",
+            saved["nativeA"].as_str(),
+            "A no duplicate",
+        );
+    }
+    engine.freeze_admissions();
+    engine.request_core_owner_shutdown().unwrap();
+    wait(&mut engine, "slot shutdown drained", |engine| {
+        engine
+            .poll_core_owner_shutdown()
+            .unwrap()
+            .rust_owners_drained()
+    });
+    engine.close_store_after_core_shutdown().unwrap();
+}
 fn provider() {
     let home = PathBuf::from(std::env::var_os("CODEX_HOME").expect("private home"));
     let root = home.ancestors().nth(4).unwrap();
@@ -185,10 +330,21 @@ fn provider() {
                 );
                 native = if method == "thread/start" {
                     let value = format!("portable-{}", uuid::Uuid::new_v4());
-                    fs::write(root.join("native-session"), &value).unwrap();
+                    fs::write(
+                        root.join(format!(
+                            "native-session-{}",
+                            home.file_name().unwrap().to_string_lossy()
+                        )),
+                        &value,
+                    )
+                    .unwrap();
                     value
                 } else {
-                    let value = fs::read_to_string(root.join("native-session")).unwrap();
+                    let value = fs::read_to_string(root.join(format!(
+                        "native-session-{}",
+                        home.file_name().unwrap().to_string_lossy()
+                    )))
+                    .unwrap();
                     assert_eq!(frame["params"]["threadId"], value);
                     assert_eq!(config["native"], value);
                     value
@@ -224,7 +380,12 @@ fn main() {
         return;
     }
     if let Some(phase_name) = std::env::var_os("COINCIDE_PORTABLE_PHASE") {
-        phase(
+        let run = if phase_name.to_str().unwrap().starts_with("slots-") {
+            slots_phase
+        } else {
+            phase
+        };
+        run(
             &PathBuf::from(std::env::var_os("COINCIDE_PORTABLE_ROOT").unwrap()),
             phase_name.to_str().unwrap(),
         );
@@ -238,7 +399,20 @@ fn main() {
     }
     let root = dir.path().canonicalize().unwrap();
     let executable = std::env::current_exe().unwrap();
-    for stage in ["seed", "resume"] {
+    for stage in ["seed", "resume", "slots-seed", "slots-resume"] {
+        let phase_root = if stage.starts_with("slots-") {
+            root.join("slots")
+        } else {
+            root.clone()
+        };
+        if !phase_root.exists() {
+            fs::create_dir(&phase_root).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&phase_root, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
         let mut command = Command::new(&executable);
         command.env_clear();
         for name in ["PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TMP", "TEMP"] {
@@ -247,8 +421,8 @@ fn main() {
             }
         }
         let output = command
-            .env("HOME", &root)
-            .env("COINCIDE_PORTABLE_ROOT", &root)
+            .env("HOME", &phase_root)
+            .env("COINCIDE_PORTABLE_ROOT", &phase_root)
             .env("COINCIDE_PORTABLE_PHASE", stage)
             .env("COINCIDE_CODEX_EXECUTABLE", &executable)
             .env("OPENAI_API_KEY", "synthetic-must-not-inherit")

@@ -31,7 +31,17 @@ impl Engine {
         if prior != next
             && let Some(prior) = prior
         {
+            if let Some(id) = &self.active_thread {
+                let departing = self.store.thread(id)?;
+                self.park_named_departure(&departing)?;
+            }
             self.computer_use_selection_changed(prior);
+        }
+        if prior != next
+            && let Some(id) = &selected
+        {
+            let arriving = self.store.thread(id)?;
+            self.park_named_departure(&arriving)?;
         }
         if self.active_thread != selected {
             self.active_thread = selected;

@@ -29,6 +29,9 @@ mod profile;
 mod profile_limits;
 pub(crate) use profile::{NamedBinding, NamedModelProof};
 pub(crate) use profile_limits::LimitsBinding;
+#[path = "model_catalog_resume.rs"]
+mod resume;
+pub(crate) use resume::{NamedCatalogFence, NamedResumeAdmission};
 #[cfg(windows)]
 #[path = "model_catalog_windows.rs"]
 mod windows;
