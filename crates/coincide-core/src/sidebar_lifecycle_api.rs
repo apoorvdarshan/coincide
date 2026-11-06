@@ -260,13 +260,10 @@ mod tests {
         expected["projectID"] = json!(b);
         clear_sessions(&mut expected);
         assert_eq!(engine.store.thread(&id).unwrap(), expected);
-        engine
-            .store
-            .patch_thread(
-                &id,
-                &json!({"draft":"Typed after move; preserve on Undo","future":{"keep":"new"}}),
-            )
-            .unwrap();
+        let mut edited = engine.store.thread(&id).unwrap();
+        edited["draft"] = json!("Typed after move; preserve on Undo");
+        edited["future"] = json!({"keep":"new"});
+        engine.store.save(&edited).unwrap();
         expected = before.clone();
         expected["draft"] = json!("Typed after move; preserve on Undo");
         expected["future"] = json!({"keep":"new"});
@@ -306,10 +303,9 @@ mod tests {
         other.save(&before).unwrap();
         assert!(engine.apply_native_thread_move(plan).is_err());
         assert_eq!(engine.store.thread(&id).unwrap(), before);
-        engine
-            .store
-            .patch_thread(&id, &json!({"worktreePath":dir.path().join("source")}))
-            .unwrap();
+        let mut worktree = before.clone();
+        worktree["worktreePath"] = json!(dir.path().join("source"));
+        engine.store.save(&worktree).unwrap();
         assert!(engine.prepare_native_thread_move(&id, &b).is_err());
         engine.store.save(&before).unwrap();
         let plan = engine.prepare_native_thread_move(&id, &b).unwrap();

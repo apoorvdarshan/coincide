@@ -330,10 +330,9 @@ mod tests {
         other.save(&before).unwrap();
         assert!(engine.apply_native_thread_deletion(plan).is_err());
         assert_eq!(engine.store.thread(&id).unwrap(), before);
-        engine
-            .store
-            .patch_thread(&id, &json!({"botID":Uuid::new_v4().to_string()}))
-            .unwrap();
+        let mut bot = before.clone();
+        bot["botID"] = json!(Uuid::new_v4().to_string());
+        engine.store.save(&bot).unwrap();
         assert!(engine.prepare_native_conversation_deletion(&[id]).is_err());
     }
     #[test]
