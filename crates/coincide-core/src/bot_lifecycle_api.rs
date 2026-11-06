@@ -259,7 +259,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             engine
-                .call("schedules.delete", &json!({"scheduleId":schedule_id}))
+                .execute("schedules.delete", &json!({"scheduleId":schedule_id}))
                 .unwrap()["removed"],
             true
         );
