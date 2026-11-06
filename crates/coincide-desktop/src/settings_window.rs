@@ -109,11 +109,16 @@ impl Coincide {
         }
         if let Some(command) = self.keyboard_command(key, false, false, false) {
             let main = self.main_window;
+            let owner = cx.entity().downgrade();
             cx.defer(move |cx| {
-                main.update(cx, |owner, window, cx| {
+                main.update(cx, |_, window, cx| {
                     window.activate_window();
-                    owner.run_keyboard_command(command, window, cx);
-                    cx.notify();
+                    owner
+                        .update(cx, |owner, cx| {
+                            owner.run_keyboard_command(command, window, cx);
+                            cx.notify();
+                        })
+                        .ok();
                 })
                 .ok();
             });

@@ -353,7 +353,7 @@ struct Coincide {
     settings_section: settings::SettingsSection,
     settings_window: Option<gpui_kit::WindowHandle<settings_window::SettingsWindow>>,
     settings_window_pending: bool,
-    main_window: gpui_kit::WindowHandle<Coincide>,
+    main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
@@ -1042,10 +1042,7 @@ impl Coincide {
             settings_section: Default::default(),
             settings_window: None,
             settings_window_pending: false,
-            main_window: window
-                .window_handle()
-                .downcast()
-                .expect("Coincide main window"),
+            main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
             keyboard,
             usage_history,
