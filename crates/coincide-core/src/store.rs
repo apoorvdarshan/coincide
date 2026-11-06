@@ -1,3 +1,6 @@
+#[path = "store_thread_idle.rs"]
+mod thread_idle;
+pub(crate) use thread_idle::NewThreadRow;
 #[path = "thread_navigation_cache.rs"]
 mod navigation_cache;
 #[path = "store_project_defaults.rs"]
@@ -270,6 +273,7 @@ impl Store {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
+        db.execute_batch("CREATE INDEX IF NOT EXISTS thread_summaries_snooze ON thread_summaries(snoozed_until) WHERE snoozed_until IS NOT NULL;")?;
         Ok(Self {
             db: Some(db),
             selection_scopes: Default::default(),

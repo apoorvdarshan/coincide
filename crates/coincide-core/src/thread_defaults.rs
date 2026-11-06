@@ -70,6 +70,15 @@ fn global_defaults(settings: Option<&Value>, fallback: &Value) -> Result<Option<
 }
 impl Engine {
     pub(super) fn create_ordinary_thread(&mut self, params: &Value) -> Result<Value> {
+        let thread = self.prepare_ordinary_thread(params)?;
+        self.store.save(&thread)?;
+        self.revision += 1;
+        Ok(thread)
+    }
+    /// Pure preparation is also used by the native New Thread reuse admission.
+    /// It validates the exact same global/project defaults without making an
+    /// empty conversation durable before the reuse decision is complete.
+    pub(super) fn prepare_ordinary_thread(&mut self, params: &Value) -> Result<Value> {
         self.require_admissions()?;
         let fields = params
             .as_object()
@@ -208,8 +217,6 @@ impl Engine {
             thread["worktreePath"] = json!(cwd);
         }
         // All validation, account policy and cwd checks precede the first write.
-        self.store.save(&thread)?;
-        self.revision += 1;
         Ok(thread)
     }
 }
