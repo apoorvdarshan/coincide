@@ -62,7 +62,20 @@ mod tests {
     use crate::computer_use::{Authority, Failure};
     fn fixture() -> (tempfile::TempDir, Engine, String, String, Authority) {
         let dir = tempfile::tempdir().unwrap();
-        let mut e = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let data = dir.path().join("private-data");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&data)
+                .unwrap();
+        }
+        #[cfg(windows)]
+        crate::private_fs::windows::create_directory(&data).unwrap();
+        #[cfg(not(any(unix, windows)))]
+        std::fs::create_dir(&data).unwrap();
+        let mut e = Engine::fixture(Store::open(&data.join("state.sqlite")).unwrap());
         let a = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
         let b = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
         e.set_active_thread(Some(a.clone())).unwrap();
