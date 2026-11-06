@@ -556,7 +556,8 @@ fn profile_access_fixture_child() {
         .iter()
         .find(|row| row["provider"] == "codex")
         .unwrap();
-    assert_eq!(codex["interactionModes"], json!(["build"]));
+    assert_eq!(codex["interactionModes"], json!(["build", "plan"]));
+    assert_eq!(caps["namedModels"]["planSupported"], true);
     for stale in [
         request,
         access_request(
@@ -602,7 +603,7 @@ fn profile_access_fixture_child() {
         );
     }
     for (field, value) in [
-        ("interactionMode", json!("plan")),
+        ("interactionMode", json!("unknown-mode")),
         ("effort", json!("high")),
         ("speed", json!("priority")),
     ] {

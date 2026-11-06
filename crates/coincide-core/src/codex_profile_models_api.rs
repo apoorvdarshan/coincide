@@ -42,6 +42,11 @@ impl Engine {
         if shape["accessMode"] == "fullAccess" {
             shape["accessMode"] = json!("approval");
         }
+        // Identity/read repair does not authorize Plan or persist this alias.
+        // Its temporary default model must not trap a saved Plan after restart.
+        if shape["interactionMode"] == "plan" {
+            shape["interactionMode"] = json!("build");
+        }
         let profile = self
             .codex_login_context(&shape)?
             .context("Missing named Codex profile")?;
@@ -76,7 +81,7 @@ impl Engine {
             .as_ref()
             .and_then(|proof| proof.as_ref().err())
             .map(ToString::to_string);
-        let full_access = base_reason.is_none() && matches!(proof, Some(Ok(Some(_))));
+        let explicit_model_ready = base_reason.is_none() && matches!(proof, Some(Ok(Some(_))));
         let effort = binding
             .as_ref()
             .map(|binding| self.model_catalog.named_effort_capability(thread, binding))
@@ -94,19 +99,23 @@ impl Engine {
         result["lockReason"] = json!(reason);
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
             "refreshAllowed":base_reason.is_none(),"reason":base_reason,"authenticationChecked":false,
-            "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":false,"fullAccessSupported":full_access});
+            "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":false,"fullAccessSupported":explicit_model_ready,"planSupported":explicit_model_ready});
         if let Some(codex) = result["providers"]
             .as_array_mut()
             .and_then(|rows| rows.iter_mut().find(|row| row["provider"] == "codex"))
         {
             codex["accountPolicy"] = json!("configured_codex_profile");
             codex["customModel"] = json!({"supported":false,"reason":"Choose a model reported by this exact profile's refreshed catalog"});
-            codex["accessModes"] = if full_access {
+            codex["accessModes"] = if explicit_model_ready {
                 json!(["approval", "fullAccess"])
             } else {
                 json!(["approval"])
             };
-            codex["interactionModes"] = json!(["build"]);
+            codex["interactionModes"] = if explicit_model_ready {
+                json!(["build", "plan"])
+            } else {
+                json!(["build"])
+            };
             codex["effort"] = effort;
             codex["speed"] = speed;
         }
@@ -129,6 +138,7 @@ impl Engine {
                 "requestId",
                 "model",
                 "accessMode",
+                "interactionMode",
                 "effort",
                 "speed",
                 "expectedAccessMode",
@@ -172,15 +182,24 @@ impl Engine {
             .iter()
             .all(|option| p.get(*option).is_none_or(Value::is_null))
             && thread["selection"]["modelID"] == model
-            && !fields.contains_key("accessMode");
+            && !fields.contains_key("accessMode")
+            && !fields.contains_key("interactionMode");
+        let build_only = p.get("interactionMode") == Some(&json!("build"))
+            && thread["interactionMode"] == "plan"
+            && thread["selection"]["modelID"] == model
+            && ["accessMode", "effort", "speed"]
+                .iter()
+                .all(|key| !fields.contains_key(*key));
         if fields.contains_key("accessMode")
+            || fields.contains_key("interactionMode")
             || fields.contains_key("effort")
             || fields.contains_key("speed")
         {
             ensure!(
-                fields.contains_key("expectedAccessMode")
-                    && fields.contains_key("expectedInteractionMode")
-                    && p.get("expectedAccessMode") == thread.get("accessMode")
+                // Omission captures actual absence; explicit null remains a
+                // different baseline. Present saved fields still require their
+                // corresponding expectation, including when saved as null.
+                p.get("expectedAccessMode") == thread.get("accessMode")
                     && p.get("expectedInteractionMode") == thread.get("interactionMode"),
                 "Conversation modes changed; reload profile controls"
             );
@@ -188,12 +207,16 @@ impl Engine {
             ensure!(
                 !fields.contains_key("expectedAccessMode")
                     && !fields.contains_key("expectedInteractionMode"),
-                "Expected modes require an explicit access mode, effort or speed"
+                "Expected modes require an explicit access mode, interaction mode, effort or speed"
             );
         }
         if let Some(access) = p.get("accessMode") {
             ensure!(access.is_string(), "Access mode must be text");
             thread["accessMode"] = access.clone();
+        }
+        if let Some(mode) = p.get("interactionMode") {
+            ensure!(mode.is_string(), "Interaction mode must be text");
+            thread["interactionMode"] = mode.clone();
         }
         for option in ["effort", "speed"] {
             if let Some(value) = p.get(option) {
@@ -202,13 +225,13 @@ impl Engine {
         }
         thread["selection"]["modelID"] = json!(model);
         profiles::validate_model_thread(&thread)?;
-        if clear_only {
+        if clear_only || build_only {
             ensure!(
                 !fields.contains_key("requestId"),
-                "Option repair does not accept catalog authority"
+                "Option/Build repair does not accept catalog authority"
             );
-            // Only removes this exact stored option. An unproved model or mode
-            // remains locked by the ordinary named turn preflight after save.
+            // Remove only explicitly null options, or clear this exact saved
+            // Plan to Build. An unproved model/options remain Send-locked.
             let mut syntax = profiles::validation_view(&thread);
             let selection = syntax["selection"].as_object_mut().unwrap();
             for option in ["effort", "speed"] {

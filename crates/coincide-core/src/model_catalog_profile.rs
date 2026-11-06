@@ -477,6 +477,81 @@ mod tests {
         assert!(catalog.refresh_named(binding).is_err());
     }
     #[test]
+    fn named_plan_and_build_use_captured_options_and_revocable_profile_policy() {
+        use crate::composer_policy::{CollaborationHistory, Origin, Policy};
+        let (_dir, binding, mut document) = fixture();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "plan-a");
+        catalog.jobs.get_mut("plan-a").unwrap().response["models"] = json!([
+            {"id":"synthetic-a","reportedEfforts":["high"],
+             "reportedSpeeds":[{"id":"priority","name":"Fast"}]}
+        ]);
+        document["selection"]["effort"] = json!("high");
+        document["selection"]["speed"] = json!("priority");
+        document["interactionMode"] = json!("plan");
+        document["accessMode"] = json!("fullAccess");
+        let proof = catalog
+            .named_model_proof(&document, &binding, Some("plan-a"))
+            .unwrap()
+            .unwrap();
+        let plan = Policy::parse_named(&document, Origin::Ordinary, Some(&proof)).unwrap();
+        plan.preflight().unwrap();
+        let fields = plan
+            .codex_turn_fields("native-a", None, CollaborationHistory::NeverApplied)
+            .unwrap();
+        assert_eq!(
+            fields["collaborationMode"],
+            json!({"mode":"plan","settings":{"model":"synthetic-a","reasoning_effort":"high","developer_instructions":null}})
+        );
+        assert_eq!(fields["approvalPolicy"], "never");
+        assert_eq!(fields["sandboxPolicy"]["type"], "dangerFullAccess");
+        assert_eq!(plan.codex_speed(), Some("priority"));
+        assert!(Policy::parse_named(&document, Origin::Ordinary, None).is_err());
+        assert!(Policy::parse_named(&document, Origin::Imported, Some(&proof)).is_err());
+        assert!(Policy::parse_named(&document, Origin::FrozenBot, Some(&proof)).is_err());
+        document["interactionMode"] = json!("build");
+        let build = Policy::parse_named(&document, Origin::Ordinary, Some(&proof)).unwrap();
+        let fields = build
+            .codex_turn_fields("native-a", None, CollaborationHistory::PreviouslyApplied)
+            .unwrap();
+        assert_eq!(fields["collaborationMode"]["mode"], "default");
+        assert_eq!(
+            fields["collaborationMode"]["settings"]["reasoning_effort"],
+            "high"
+        );
+        assert_eq!(fields["approvalPolicy"], "never");
+        assert_eq!(build.codex_speed(), Some("priority"));
+        // Captured Plan is independent of the later stored mode and permissions.
+        document["accessMode"] = json!("approval");
+        assert_eq!(
+            plan.codex_turn_fields("native-a", None, CollaborationHistory::NeverApplied)
+                .unwrap()["collaborationMode"]["mode"],
+            "plan"
+        );
+        for mode in ["unknown", "PLAN"] {
+            document["interactionMode"] = json!(mode);
+            assert!(Policy::parse_named(&document, Origin::Ordinary, Some(&proof)).is_err());
+        }
+        document["interactionMode"] = json!("plan");
+        for model in ["default", "gpt-6-astra", "missing"] {
+            document["selection"]["modelID"] = json!(model);
+            assert!(
+                catalog
+                    .named_model_proof(&document, &binding, Some("plan-a"))
+                    .is_err()
+            );
+        }
+        catalog.jobs["plan-a"]
+            .cancelled
+            .store(true, Ordering::Release);
+        assert!(plan.preflight().is_err());
+        assert!(
+            build
+                .codex_turn_fields("native-a", None, CollaborationHistory::PreviouslyApplied)
+                .is_err()
+        );
+    }
+    #[test]
     fn named_speed_binds_combined_options_policy_and_revocation() {
         let (_dir, binding, mut document) = fixture();
         let mut catalog = ModelCatalog::default();
