@@ -89,8 +89,7 @@ impl Engine {
                 "Text-only steering cannot deliver attached context or images; send them separately"
             );
         }
-        let effort_proof = self.composer_thread_effort_proof(&stored)?;
-        crate::composer_selection::validate_thread_with_proof(&stored, effort_proof.as_ref())?;
+        self.validate_native_follow_up_policy(&stored)?;
         ensure!(
             stored["interactionMode"]
                 .as_str()

@@ -17,19 +17,15 @@ struct ModifiedSend;
 #[action(namespace = coincide_follow_up, no_json, no_register)]
 struct ShiftModifiedSend;
 pub(super) fn init(cx: &mut App) {
-    let modifier = if cfg!(target_os = "macos") {
-        "cmd"
+    let (send, alternate) = if cfg!(target_os = "macos") {
+        ("cmd-enter", "cmd-shift-enter")
     } else {
-        "ctrl"
+        ("ctrl-enter", "ctrl-shift-enter")
     };
     cx.bind_keys([
+        KeyBinding::new(send, ModifiedSend, Some("CoincideFileSuggestions > Input")),
         KeyBinding::new(
-            &format!("{modifier}-enter"),
-            ModifiedSend,
-            Some("CoincideFileSuggestions > Input"),
-        ),
-        KeyBinding::new(
-            &format!("{modifier}-shift-enter"),
+            alternate,
             ShiftModifiedSend,
             Some("CoincideFileSuggestions > Input"),
         ),

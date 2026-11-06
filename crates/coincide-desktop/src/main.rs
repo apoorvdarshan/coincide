@@ -4349,7 +4349,7 @@ impl Render for Coincide {
                                                         .icon(composer_follow_up_mount::dispatch_icon(self.composer_send_dispatch(false)))
                                                         .w(px(28.)).h(px(28.)).rounded(px(14.)).p_0()
                                                         .on_click(cx.listener(
-                                                            |this, event, window, cx| {
+                                                            |this, event: &gpui_kit::ClickEvent, window, cx| {
                                                                 let modifiers = event.modifiers();
                                                                 let alternate = if cfg!(target_os = "macos") { modifiers.platform } else { modifiers.control };
                                                                 this.send_selected(alternate, window, cx)

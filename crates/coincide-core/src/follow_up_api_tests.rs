@@ -327,7 +327,12 @@ fn unknown_after_primary_finished_keeps_exact_native_context_denied_across_reope
     );
     assert!(!guard.load(std::sync::atomic::Ordering::Acquire));
     let mut unrelated = saved.clone();
-    unrelated["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
+    let unrelated_account = Uuid::new_v4().to_string();
+    unrelated["selection"]["accountID"] = json!(unrelated_account);
+    // A different selection cannot adopt the current default session. Supply
+    // its own account-bound cached descriptor, deliberately with the same ID,
+    // to prove the uncertainty denial is scoped to the original account.
+    unrelated["accountSessions"] = json!({format!("codex/{unrelated_account}"):{"accountID":unrelated_account,"sessionID":"native-thread","seenItemCount":0}});
     assert_eq!(
         engine
             .unrevoked_provider_session(&unrelated, "codex")

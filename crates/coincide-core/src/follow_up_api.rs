@@ -56,6 +56,31 @@ impl State {
 }
 use choice::scope;
 impl Engine {
+    /// Named follow-ups use the selected account's actual private catalog and
+    /// policy, just like normal turn admission; never borrow a default proof.
+    pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {
+        if let Some(profile) = self.codex_login_context(thread)? {
+            let binding = crate::model_catalog::NamedBinding::capture(
+                profile,
+                required(thread, "id")?,
+                &self.working_directory(thread)?,
+            )?;
+            self.model_catalog
+                .named_resume_admission(thread, &binding)?;
+            let proof = self
+                .model_catalog
+                .named_model_proof(thread, &binding, None)?;
+            crate::composer_policy::Policy::parse_named(
+                thread,
+                crate::composer_policy::Origin::Ordinary,
+                proof.as_ref(),
+            )?
+            .preflight()
+        } else {
+            let proof = self.composer_thread_effort_proof(thread)?;
+            crate::composer_selection::validate_thread_with_proof(thread, proof.as_ref())
+        }
+    }
     pub fn choose_native_follow_up(
         &mut self,
         expected: &Value,
@@ -185,8 +210,7 @@ impl Engine {
                 .is_some_and(|(owner, _)| owner == &id)),
             "Wait for image imports to finish before sending a follow-up"
         );
-        let proof = self.composer_thread_effort_proof(&current)?;
-        crate::composer_selection::validate_thread_with_proof(&current, proof.as_ref())?;
+        self.validate_native_follow_up_policy(&current)?;
         let cwd = self.working_directory(&current)?;
         self.bot_instructions(&current, &cwd)?;
         let settings = self
