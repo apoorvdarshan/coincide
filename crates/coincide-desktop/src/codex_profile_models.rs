@@ -11,6 +11,7 @@ fn catalog_scope(catalog: &Value, thread: &Value) -> bool {
 }
 struct NamedModelOptions<'a> {
     access: Option<&'a str>,
+    interaction: Option<&'a str>,
     effort: Option<&'a Value>,
     speed: Option<&'a Value>,
     expected_access: &'a Value,
@@ -84,6 +85,9 @@ impl Coincide {
             if let Some(speed) = options.speed {
                 params["speed"] = speed.clone();
             }
+            if let Some(mode) = options.interaction {
+                params["interactionMode"] = json!(mode);
+            }
             if let Some(access) = options.access {
                 params["accessMode"] = json!(access);
             }
@@ -96,7 +100,7 @@ impl Coincide {
             Ok(thread) => {
                 self.accept_saved_provider_selection(thread);
                 self.status =
-                    "Profile model/access/effort/speed saved. This profile is authenticated again before every turn."
+                    "Profile model/mode/access/effort/speed saved. This profile is authenticated again before every turn."
                         .into();
             }
             Err(error) => self.status = format!("Profile model was not changed: {error}"),
@@ -122,11 +126,15 @@ impl Coincide {
         let default_id = id.clone();
         let default_selection = selection.clone();
         let elevated = thread["accessMode"] == "fullAccess";
+        let planning = thread["interactionMode"] == "plan";
         let clear_effort = !thread["selection"]["effort"].is_null();
         let clear_speed = !thread["selection"]["speed"].is_null();
         let mut default_label = "Provider default".to_owned();
         if elevated {
             default_label.push_str(", approval");
+        }
+        if planning {
+            default_label.push_str(", Build");
         }
         if clear_effort {
             default_label.push_str(", clear effort");
@@ -138,10 +146,10 @@ impl Coincide {
         let default_interaction = thread["interactionMode"].clone();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
-            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Full access, reasoning effort and faster speeds require this profile’s refreshed model catalog. Plan, bots and native resume remain unavailable."))
+            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. Bots and native resume remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("named-profile-model-default").label(default_label).disabled(disabled)
-                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || clear_effort || clear_speed {Some(NamedModelOptions{access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:&default_access,expected_interaction:&default_interaction})}else{None},cx))))
+                    .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || planning || clear_effort || clear_speed {Some(NamedModelOptions{interaction:if planning {Some("build")}else{None},access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:&default_access,expected_interaction:&default_interaction})}else{None},cx))))
                 .child(Button::new("named-profile-model-refresh").label("Refresh profile models").disabled(disabled || self.selection_ui.catalog_request.is_some())
                     .on_click(cx.listener(move |this,_,_,cx|this.refresh_named_profile_models(&refresh_id,&refresh_selection,cx)))));
         if let Some(reason) = self.selection_ui.capabilities["lockReason"].as_str() {
@@ -213,6 +221,55 @@ impl Coincide {
             && catalog_scope(catalog, thread)
             && catalog["state"] == "ready"
             && catalog["authenticationChecked"] == true;
+        let plan_ready = access_ready && caps["planSupported"] == true;
+        let mut mode_controls = div()
+            .id("named-profile-mode-controls")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_sm().child("Interaction mode"));
+        let mut modes = div().flex().flex_wrap().gap_2();
+        for (mode, label) in [("build", "Build"), ("plan", "Plan")] {
+            let row_id = id.clone();
+            let row_selection = selection.clone();
+            let row_model = model.clone();
+            let row_request = request.clone();
+            let expected_access = thread["accessMode"].clone();
+            let expected_interaction = thread["interactionMode"].clone();
+            modes = modes.child(
+                Button::new(SharedString::from(format!("named-profile-mode-{mode}")))
+                    .label(label)
+                    .disabled(if mode == "build" {
+                        disabled || !planning
+                    } else {
+                        !plan_ready || planning
+                    })
+                    .when(planning == (mode == "plan"), |button| button.primary())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_named_profile_model(
+                            &row_id,
+                            &row_selection,
+                            &row_model,
+                            if mode == "build" {
+                                None
+                            } else {
+                                Some(&row_request)
+                            },
+                            Some(NamedModelOptions {
+                                interaction: Some(mode),
+                                access: None,
+                                effort: None,
+                                speed: None,
+                                expected_access: &expected_access,
+                                expected_interaction: &expected_interaction,
+                            }),
+                            cx,
+                        )
+                    })),
+            );
+        }
+        mode_controls = mode_controls.child(modes).child(div().text_xs().child("Plan uses this profile’s exact model, effort and speed. Build clears only Plan; it keeps permissions and options. Unproved saved models remain locked until Refresh. No message is sent."));
+        pane = pane.child(mode_controls);
         let mut access_controls = div().flex().flex_wrap().gap_2();
         for (access, label) in [
             ("approval", "Approval required"),
@@ -236,6 +293,7 @@ impl Coincide {
                             &row_model,
                             Some(&row_request),
                             Some(NamedModelOptions {
+                                interaction: None,
                                 access: Some(access),
                                 effort: None,
                                 speed: None,
@@ -279,6 +337,7 @@ impl Coincide {
                             &row_model,
                             None,
                             Some(NamedModelOptions {
+                                interaction: None,
                                 access: None,
                                 effort: Some(&Value::Null),
                                 speed: None,
@@ -322,6 +381,7 @@ impl Coincide {
                             &row_model,
                             Some(&row_request),
                             Some(NamedModelOptions {
+                                interaction: None,
                                 access: None,
                                 effort: Some(&row_effort),
                                 speed: None,
@@ -371,6 +431,7 @@ impl Coincide {
                             &row_model,
                             None,
                             Some(NamedModelOptions {
+                                interaction: None,
                                 access: None,
                                 effort: None,
                                 speed: Some(&Value::Null),
@@ -418,6 +479,7 @@ impl Coincide {
                             &row_model,
                             Some(&row_request),
                             Some(NamedModelOptions {
+                                interaction: None,
                                 access: None,
                                 effort: None,
                                 speed: Some(&row_speed),
