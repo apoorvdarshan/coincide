@@ -62,6 +62,7 @@ mod project_management;
 mod project_management_mount;
 mod provider_configuration_ui;
 mod provider_settings;
+mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
 mod scheduling;
@@ -4608,6 +4609,20 @@ fn schedule_date(value: &Value) -> String {
         .unwrap_or_else(|_| "Unavailable".into())
 }
 fn main() -> Result<()> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--native-provider-setup")
+    {
+        anyhow::ensure!(
+            arguments.len() == 2,
+            "Native setup requires one sealed handoff path"
+        );
+        let code = coincide_core::provider_configuration::run_native_provider_setup(
+            std::path::Path::new(&arguments[1]),
+        )?;
+        std::process::exit(code);
+    }
     let data = control::data_directory()?;
     let store = Store::open(&data.join("coincide.sqlite"))?;
     let media_data = store.data_directory()?;

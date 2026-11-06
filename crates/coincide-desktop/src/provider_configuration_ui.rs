@@ -3,7 +3,7 @@
 use super::*;
 use coincide_core::{
     native_ui_edits::{NativeUiEditLease, NativeUiEditors},
-    provider_configuration::{ProbeReport, Snapshot},
+    provider_configuration::{ProbeReport, SetupAction, Snapshot},
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -70,12 +70,17 @@ enum Request {
         environment: BTreeMap<String, String>,
     },
     Check,
+    Setup {
+        action: SetupAction,
+        baseline: String,
+    },
 }
 enum Outcome {
     Loaded(Snapshot),
     Saved(Snapshot),
     Checked(ProbeReport, Option<Value>),
     ManagedChecked(usize),
+    SetupHandedOff,
 }
 struct Reply {
     provider: String,
@@ -358,13 +363,17 @@ impl Panel {
             Request::Load => "Loading saved settings…",
             Request::Save { .. } => "Saving settings…",
             Request::Check => "Checking provider…",
+            Request::Setup { .. } => "Opening setup in a separate terminal…",
         }
         .into();
+        let custody =
+            matches!(&request, Request::Setup { .. }).then(|| editor.lease.pending_native_action());
         let engine = self.engine.clone();
         let sender = self.sender.clone();
         let provider = provider.to_owned();
         let selected = provider.clone();
         if self.workers.spawn(move |admission| {
+            let _custody = custody;
             let result = (|| -> Result<Outcome> {
                 anyhow::ensure!(admission.allowed(), "Settings are closing");
                 match request {
@@ -389,6 +398,22 @@ impl Panel {
                         Ok(Outcome::Saved(
                             owner.apply_native_provider_configuration(plan)?,
                         ))
+                    }
+                    Request::Setup { action, baseline } => {
+                        let helper = std::env::current_exe()?;
+                        let mut handoff = {
+                            let owner = try_state(&engine)?;
+                            anyhow::ensure!(
+                                owner.native_provider_configuration(&provider)?.baseline
+                                    == baseline,
+                                "Provider configuration changed; reload before setup"
+                            );
+                            owner.prepare_native_provider_setup(&provider, action, &helper)?
+                        };
+                        super::provider_setup_terminal::hand_off(&mut handoff, &helper, &|| {
+                            admission.allowed()
+                        })?;
+                        Ok(Outcome::SetupHandedOff)
                     }
                     Request::Check if provider == "antigravity" => {
                         let status = call(&engine, "providers.antigravity.status", json!({}))?;
@@ -463,6 +488,14 @@ impl Panel {
             match reply.result {
                 Ok(Outcome::Loaded(snapshot)) | Ok(Outcome::Saved(snapshot)) => {
                     self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
+                }
+                Ok(Outcome::SetupHandedOff) => {
+                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                        editor.notice = "Handed off to a separate terminal. Installation and sign-in are not verified; choose Check Again after finishing there.".into();
+                        editor.report = None;
+                        editor.catalog = None;
+                        editor.checked = None;
+                    }
                 }
                 Ok(Outcome::ManagedChecked(accounts)) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
@@ -825,8 +858,14 @@ impl Panel {
             }
             Part::Setup => {
                 pane = pane.child(div().font_weight(FontWeight::SEMIBOLD).child("Setup"));
-                for (label, command) in setup_commands(&provider) {
-                    let copy = command.to_owned();
+                for command in coincide_core::provider_configuration::setup_commands(
+                    &provider,
+                    (!editor.saved_path.is_empty())
+                        .then(|| std::path::Path::new(&editor.saved_path)),
+                ) {
+                    let label = command.label;
+                    let action = command.action;
+                    let copy = command.display.clone();
                     pane = pane.child(
                         div()
                             .flex()
@@ -836,7 +875,7 @@ impl Panel {
                                 div()
                                     .flex_1()
                                     .child(label)
-                                    .child(div().text_sm().child(command)),
+                                    .child(div().text_sm().child(command.display)),
                             )
                             .child(
                                 Button::new(SharedString::from(format!(
@@ -846,6 +885,26 @@ impl Panel {
                                 .on_click(move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
                                 }),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "provider-setup-run-{label}"
+                                )))
+                                .label("Run in Terminal")
+                                .disabled(!loaded || dirty || busy)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let provider = this.active.clone();
+                                        if let Some(editor) = this.editors.get(&provider) {
+                                            let baseline = editor.baseline.clone();
+                                            this.start(
+                                                &provider,
+                                                Request::Setup { action, baseline },
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                )),
                             ),
                     );
                 }
@@ -904,31 +963,6 @@ fn expand_path(path: &str) -> Result<Option<PathBuf>> {
         return Ok(Some(PathBuf::from(home).join(rest)));
     }
     Ok(Some(PathBuf::from(path)))
-}
-fn setup_commands(provider: &str) -> Vec<(&'static str, &'static str)> {
-    match provider {
-        "claude" => vec![
-            ("Install", "curl -fsSL https://claude.ai/install.sh | bash"),
-            ("Sign in", "claude auth login"),
-        ],
-        "codex" => vec![
-            (
-                "Install",
-                "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
-            ),
-            ("Sign in", "codex login"),
-        ],
-        "cursor" => vec![
-            ("Install", "curl https://cursor.com/install -fsS | bash"),
-            ("Sign in", "cursor-agent login"),
-        ],
-        "grok" => vec![("Sign in", "grok login")],
-        "opencode" => vec![
-            ("Install", "curl -fsSL https://opencode.ai/install | bash"),
-            ("Sign in", "opencode auth login"),
-        ],
-        _ => Vec::new(),
-    }
 }
 fn setup_website(provider: &str) -> &'static str {
     match provider {

@@ -38,6 +38,8 @@ pub(crate) mod metadata_capture;
 pub mod native_instruction_git;
 #[path = "provider_opencode.rs"]
 mod opencode;
+#[path = "provider_setup_process.rs"]
+pub(crate) mod setup_process;
 #[path = "provider_transport.rs"]
 mod transport;
 #[cfg(windows)]

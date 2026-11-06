@@ -325,7 +325,16 @@ struct Private {
 }
 impl Private {
     fn open(store: &Store, create: bool) -> Result<Option<Self>> {
-        let (path, identity) = source(store)?;
+        let (path, _) = source(store)?;
+        Self::open_path(&path, create)
+    }
+    fn open_path(path: &Path, create: bool) -> Result<Option<Self>> {
+        ensure!(
+            path.is_absolute() && path.is_file(),
+            "Provider source is unavailable"
+        );
+        let path = path.to_path_buf();
+        let identity = crate::private_fs::identity(&path)?;
         let directory = directory(&path)?;
         if fs::symlink_metadata(&directory)
             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
@@ -927,10 +936,16 @@ impl Engine {
     }
 }
 
+#[path = "provider_setup.rs"]
+mod setup;
+pub use setup::{
+    SetupAction, SetupCommand, SetupHandoff, run_native_provider_setup, setup_commands,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn fixture() -> (tempfile::TempDir, Engine, PathBuf) {
+    pub(super) fn fixture() -> (tempfile::TempDir, Engine, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join(if cfg!(windows) {
             "synthetic-provider.exe"
@@ -953,7 +968,7 @@ mod tests {
             Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
     }
-    fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
+    pub(super) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
         let baseline = engine
             .native_provider_configuration(provider)
             .unwrap()

@@ -139,7 +139,7 @@ fn read_available<T: Read + std::os::windows::io::AsRawHandle>(
     Ok(n == 0)
 }
 #[cfg(unix)]
-fn exited(child: &OwnedChild) -> Result<Option<bool>> {
+pub(super) fn exited(child: &OwnedChild) -> Result<Option<bool>> {
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     ensure!(
         unsafe {
@@ -161,7 +161,7 @@ fn exited(child: &OwnedChild) -> Result<Option<bool>> {
     }
 }
 #[cfg(windows)]
-fn exited(child: &OwnedChild) -> Result<Option<bool>> {
+pub(super) fn exited(child: &OwnedChild) -> Result<Option<bool>> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::{
         Foundation::WAIT_OBJECT_0,
