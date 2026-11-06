@@ -59,7 +59,9 @@ if named:
 if r['method']=='model/list':
  if mode=='auth-change':write({'method':'account/updated','params':{}})
  advertised='priority' if not named or model=='synthetic-a' else 'ultrafast'
- write({'id':r['id'],'result':{'data':[{'model':model,'serviceTiers':[{'id':advertised,'name':'Synthetic '+advertised}]},{'model':'default','serviceTiers':[{'id':'priority','name':'Synthetic hostile default'}]},{'model':'gpt-6-astra','serviceTiers':[{'id':'priority','name':'Synthetic hostile Astra'}]}],'nextCursor':None}})
+ row={'model':model,'serviceTiers':[{'id':advertised,'name':'Synthetic '+advertised}]}
+ if named and model=='synthetic-a':row['supportedReasoningEfforts']=[{'reasoningEffort':'high'}]
+ write({'id':r['id'],'result':{'data':[row,{'model':'default','serviceTiers':[{'id':'priority','name':'Synthetic hostile default'}]},{'model':'gpt-6-astra','serviceTiers':[{'id':'priority','name':'Synthetic hostile Astra'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
 assert named and r['method']=='thread/start' and r['params']['model']==model
 assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
@@ -71,8 +73,10 @@ r=read();assert r['method']=='turn/start'
 assert r['params']['model']==model
 if tier=='omit':assert 'serviceTier' not in r['params'],r['params']
 else:assert r['params']['serviceTier']==tier,r['params']
-assert 'effort' not in r['params']
-assert r['params']['collaborationMode']=={'mode':'default','settings':{'model':model,'reasoning_effort':None,'developer_instructions':None}}
+expected_effort='high' if model=='synthetic-a' else None
+if expected_effort is None:assert 'effort' not in r['params']
+else:assert r['params']['effort']==expected_effort
+assert r['params']['collaborationMode']=={'mode':'default','settings':{'model':model,'reasoning_effort':expected_effort,'developer_instructions':None}}
 assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandboxPolicy']=={'type':'readOnly'}
 write({'id':r['id'],'result':{'turn':{'id':'synthetic-speed-turn'}}})
 if mode=='hold-turn':
@@ -338,13 +342,22 @@ fn speed_fixture_child() {
     let mut stale = params(&e, &id, "synthetic-a", json!("priority"), Some(&second));
     stale["expectedInteractionMode"] = json!("plan");
     refuse(&mut e, &root, SELECT, stale);
-    let chosen = choose(&mut e, &id, &root, "synthetic-a", "priority", &second);
+    let speed_only = choose(&mut e, &id, &root, "synthetic-a", "priority", &second);
+    // Combine both options through the authenticated exact-profile API before
+    // the same A turns; all Standard resets retain the separately chosen effort.
+    let mut combined = params(&e, &id, "synthetic-a", json!("priority"), Some(&second));
+    combined["effort"] = json!("high");
+    let chosen = call(&mut e, SELECT, combined);
+    let mut expected = speed_only;
+    expected["selection"]["effort"] = json!("high");
+    assert_eq!(chosen, expected);
     let caps = call(
         &mut e,
         "agent.selection.capabilities",
         json!({"threadId":id}),
     );
     assert_eq!(caps["namedModels"]["speedSupported"], true);
+    assert_eq!(caps["namedModels"]["effortSupported"], true);
     let c = caps["providers"]
         .as_array()
         .unwrap()
@@ -354,6 +367,7 @@ fn speed_fixture_child() {
     assert_eq!(c["speed"]["choices"].as_array().unwrap().len(), 1);
     assert_eq!(c["speed"]["choices"][0]["id"], "priority");
     assert_eq!(c["speed"]["provenance"], "named_profile_model_list");
+    assert_eq!(c["effort"]["choices"], json!(["high"]));
     let omitted = call(
         &mut e,
         SELECT,
@@ -379,6 +393,7 @@ fn speed_fixture_child() {
     let mut expected = before;
     expected["selection"]["speed"] = Value::Null;
     assert_eq!(cleared, expected);
+    assert_eq!(cleared["selection"]["effort"], "high");
     for (ack, expected_tier) in [
         ("priority", "default"),
         ("missing", "omit"),
@@ -395,6 +410,7 @@ fn speed_fixture_child() {
     }
     let mut repair = params(&e, &id, "default", Value::Null, None);
     repair["accessMode"] = json!("approval");
+    repair["effort"] = Value::Null;
     call(&mut e, SELECT, repair);
     select_profile(&mut e, &id, &b);
     let default = call(&mut e, "agent.models.refresh", json!({"provider":"codex"}));
@@ -572,6 +588,16 @@ fn speed_fixture_child() {
         (5, &hb, Some("ultrafast")),
     ] {
         assert_eq!(turns[index]["home"], json!(home));
+        let expected_effort = if home == &ha { Some("high") } else { None };
+        if let Some(effort) = expected_effort {
+            assert_eq!(turns[index]["params"]["effort"], effort);
+        } else {
+            assert!(turns[index]["params"].get("effort").is_none());
+        }
+        assert_eq!(
+            turns[index]["params"]["collaborationMode"]["settings"]["reasoning_effort"],
+            json!(expected_effort)
+        );
         match tier {
             Some(tier) => assert_eq!(turns[index]["params"]["serviceTier"], tier),
             None => assert!(turns[index]["params"].get("serviceTier").is_none()),
