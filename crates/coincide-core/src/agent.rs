@@ -32,6 +32,8 @@ mod cursor;
 mod grok;
 #[path = "provider_images.rs"]
 mod images;
+#[path = "native_instruction_git_process.rs"]
+pub mod native_instruction_git;
 #[path = "provider_opencode.rs"]
 mod opencode;
 #[path = "provider_transport.rs"]
