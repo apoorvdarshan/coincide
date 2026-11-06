@@ -393,6 +393,10 @@ mod tests {
             .unwrap();
         let original_key = journal.key_path.clone();
         let original_db = journal.db_path.clone();
+        // A stale copy is taken only after the original owner releases its
+        // lease. Windows correctly refuses reading a key held by an active
+        // exclusive file lock; the fixture must not weaken that production gate.
+        drop(journal);
         let other = Store::open(&store.data_directory().unwrap().join("other.sqlite")).unwrap();
         let b = Journal::open(&other).unwrap();
         let key = b.key_path.clone();
