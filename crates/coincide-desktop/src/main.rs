@@ -835,6 +835,8 @@ impl Coincide {
         if let Ok(mut engine) = engine.try_lock() {
             engine.ui_available = browser.is_some();
         }
+        #[cfg(target_os = "macos")]
+        let mut composer_sizing = macos_chat_layout::ComposerSizing::default();
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
@@ -885,7 +887,7 @@ impl Coincide {
                 this.sync_transcription_binding(cx);
             }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
-            cx.observe(&composer, |this, _, cx| {
+            cx.observe(&composer, move |this, _, cx| {
                 let composer = this.composer.read(cx);
                 this.composer_files.observe_composer(
                     composer.value().to_string(),
@@ -897,10 +899,18 @@ impl Coincide {
                 // caret-away/back sequence; hidden unfocused composer is stable.
                 this.transcription_target.changed();
                 this.sync_transcription_binding(cx);
-                // Native wrapping and line metrics can change without a text
-                // edit (for example on window resize). Refit the Mac composer.
+                // Cursor/selection notifications do not change composer height.
+                // Only a changed native wrapped-text measurement refits it.
                 #[cfg(target_os = "macos")]
-                cx.notify();
+                {
+                    let composer = this.composer.read(cx);
+                    if composer_sizing.changed(
+                        composer.display_map().wrap_row_count(),
+                        composer.line_height().map(f32::from).unwrap_or(20.),
+                    ) {
+                        cx.notify();
+                    }
+                }
             }),
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
                 if this.media.shutdown_requested { return; }
@@ -3409,7 +3419,9 @@ impl Coincide {
         }
         let body = text(item, "text");
         #[cfg(target_os = "macos")]
-        if kind == "notice" {
+        // The active find target uses the existing expanded native body so a
+        // later-line match remains visible. Clearing Find remounts the compact row.
+        if kind == "notice" && !find_revealed {
             return self.notice_row(&source_id, &item_id, body, window, cx);
         }
         let copy_empty = body.is_empty();

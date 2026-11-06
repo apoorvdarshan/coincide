@@ -5,7 +5,26 @@ use super::*;
 /// inset; ComposerViewController caps the text viewport at 40% of the window.
 pub(super) fn composer_height(rows: usize, line_height: f32, window_height: f32) -> f32 {
     let maximum = (window_height * 0.4).round().max(60.);
-    ((rows.max(2) as f32 * line_height).ceil() + 6.).min(maximum)
+    content_height(rows, line_height).min(maximum)
+}
+
+fn content_height(rows: usize, line_height: f32) -> f32 {
+    (rows.max(2) as f32 * line_height).ceil() + 6.
+}
+
+#[derive(Default)]
+pub(super) struct ComposerSizing {
+    last_height: Option<f32>,
+}
+impl ComposerSizing {
+    pub(super) fn changed(&mut self, rows: usize, line_height: f32) -> bool {
+        let height = content_height(rows, line_height);
+        if self.last_height == Some(height) {
+            return false;
+        }
+        self.last_height = Some(height);
+        true
+    }
 }
 
 fn notice_label(body: &str) -> &str {
@@ -25,16 +44,17 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Retain the complete native text/find state and full-message copy.
-        // The clipped one-line viewport matches NoticeCell; unlike a work-log
-        // card, a notice has no title, disclosure, background or border.
-        let finding = self.find_context_available() && self.transcript_find.read(cx).is_open();
-        let shown = if finding {
-            body.clone()
-        } else {
-            notice_label(&body).to_owned()
-        };
-        let native = self.find_body(thread, item, shown, finding, window, cx);
+        // Only non-target notices enter this compact renderer. The selected
+        // find target takes message()'s expanded, complete native-text path.
+        // Full-message copy still resolves the original stored item below.
+        let native = self.find_body(
+            thread,
+            item,
+            notice_label(&body).to_owned(),
+            false,
+            window,
+            cx,
+        );
         let source = thread.to_owned();
         let item_id = item.to_owned();
         let copy = Button::new(SharedString::from(format!("copy-message-{thread}-{item}")))
@@ -94,7 +114,19 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{composer_height, notice_label};
+    use super::{ComposerSizing, composer_height, notice_label};
+
+    #[test]
+    fn repeated_geometry_and_selection_notifications_do_not_refit_parent() {
+        let mut sizing = ComposerSizing::default();
+        assert!(sizing.changed(1, 18.));
+        assert!(!sizing.changed(1, 18.));
+        assert!(!sizing.changed(2, 18.)); // Still the two-line minimum.
+        assert!(sizing.changed(3, 18.));
+        assert!(!sizing.changed(3, 18.));
+        assert!(sizing.changed(3, 20.));
+        assert!(!sizing.changed(3, 20.));
+    }
 
     #[test]
     fn notice_matches_swift_first_nonempty_line_without_changing_copy_source() {
