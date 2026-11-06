@@ -63,7 +63,7 @@ pub trait CommandRunner {
 }
 pub trait LeaseProcess: Send {
     fn check_running(&mut self) -> Result<()>;
-    /// Idempotent. Errors retain ownership so release can be retried.
+    /// Idempotent. Errors retain the lease; lost cleanup authority stays failed.
     fn stop(&mut self) -> Result<()>;
 }
 
@@ -151,6 +151,7 @@ mod process {
         child: Child,
         input: Option<ChildStdin>,
         reaped: bool,
+        cleanup_failure: Option<String>,
         #[cfg(test)]
         reap_receipt: Option<ReapReceipt>,
     }
@@ -176,6 +177,7 @@ mod process {
                 child,
                 input,
                 reaped: false,
+                cleanup_failure: None,
                 #[cfg(test)]
                 reap_receipt: None,
             };
@@ -221,12 +223,7 @@ mod process {
             }
             bail!("idle sleep utility readiness timed out")
         }
-    }
-    impl LeaseProcess for Lease {
-        fn check_running(&mut self) -> Result<()> {
-            if self.reaped {
-                bail!("idle sleep utility is no longer running");
-            }
+        fn leader_exit_status(&mut self) -> Result<Option<i32>> {
             // Health checks must not reap the leader: its PID pins the process
             // group until stop() has signalled any surviving descendants.
             let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -240,51 +237,102 @@ mod process {
             };
             if result != 0 {
                 let error = std::io::Error::last_os_error();
-                if error.kind() == ErrorKind::Interrupted {
-                    return Ok(());
-                }
                 if error.raw_os_error() == Some(libc::ECHILD) {
                     // Ownership was lost (for example an external SIGCHLD
                     // reaper); never signal a potentially recycled group ID.
                     self.reaped = true;
+                    self.cleanup_failure = Some(format!(
+                        "idle sleep child ownership lost before group cleanup: {error}"
+                    ));
                 }
                 return Err(error).context("inspect idle sleep utility");
             }
-            if unsafe { info.si_pid() } != 0 {
-                bail!("idle sleep utility exited (status {})", unsafe {
-                    info.si_status()
-                });
+            Ok((unsafe { info.si_pid() } != 0).then(|| unsafe { info.si_status() }))
+        }
+        fn reap_owned(&mut self) -> Result<()> {
+            let waited = self.child.wait();
+            #[cfg(test)]
+            if let (Ok(status), Some(receipt)) = (&waited, &self.reap_receipt) {
+                *receipt.lock().unwrap() = Some((self.child.id(), *status));
             }
+            if let Err(error) = waited {
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    self.reaped = true;
+                    self.cleanup_failure = Some(format!(
+                        "idle sleep child ownership lost while reaping: {error}"
+                    ));
+                }
+                return Err(error).context("reap idle sleep utility");
+            }
+            self.reaped = true;
             Ok(())
         }
-        fn stop(&mut self) -> Result<()> {
-            // Closing stdin releases the helper even when the leader already died.
-            self.input.take();
-            if !self.reaped {
-                let pid = i32::try_from(self.child.id()).context("invalid idle sleep child PID")?;
-                // SAFETY: only our unreaped child's isolated process group is
-                // signalled, never the app's or another task's process group.
-                let result = unsafe { libc::kill(-pid, libc::SIGKILL) };
-                if result != 0 {
-                    let error = std::io::Error::last_os_error();
-                    if error.raw_os_error() != Some(libc::ESRCH) {
-                        return Err(error).context("stop idle sleep process group");
-                    }
-                }
-                let waited = self.child.wait();
-                #[cfg(test)]
-                if let (Ok(status), Some(receipt)) = (&waited, &self.reap_receipt) {
-                    *receipt.lock().unwrap() = Some((self.child.id(), *status));
-                }
-                if let Err(error) = waited {
-                    if error.raw_os_error() == Some(libc::ECHILD) {
-                        self.reaped = true;
-                    }
-                    return Err(error).context("reap idle sleep utility");
-                }
-                self.reaped = true;
+        fn stop_with_signal(
+            &mut self,
+            signal: impl FnOnce(i32) -> std::io::Result<()>,
+        ) -> Result<()> {
+            if let Some(failure) = &self.cleanup_failure {
+                bail!("{failure}");
             }
-            Ok(())
+            if self.reaped {
+                return Ok(());
+            }
+            // Prove the child is still ours without releasing its PID/group pin.
+            let _ = self.leader_exit_status()?;
+            let pid = i32::try_from(self.child.id()).context("invalid idle sleep child PID")?;
+            // Keep stdin held until after the signal. EOF first lets the helper
+            // become a zombie-only group, for which Darwin killpg returns EPERM.
+            if let Err(error) = signal(-pid) {
+                // A failed group signal is never cleanup acknowledgement. Reap
+                // an already-exited owned leader, but retain the group failure:
+                // after reap we must neither retry that numeric group nor report
+                // release. A live child keeps its input/ownership; do not wait.
+                if self.leader_exit_status()?.is_some() {
+                    let group_absent = error.raw_os_error() == Some(libc::ESRCH);
+                    if !group_absent {
+                        self.cleanup_failure =
+                            Some(format!("stop idle sleep process group: {error}"));
+                    }
+                    self.input.take();
+                    self.reap_owned()?;
+                    if group_absent {
+                        return Ok(());
+                    }
+                }
+                return Err(error).context("stop idle sleep process group");
+            }
+            self.input.take();
+            self.reap_owned()
+        }
+    }
+    impl LeaseProcess for Lease {
+        fn check_running(&mut self) -> Result<()> {
+            if self.reaped {
+                bail!("idle sleep utility is no longer running");
+            }
+            match self.leader_exit_status() {
+                Ok(None) => Ok(()),
+                Ok(Some(status)) => bail!("idle sleep utility exited (status {status})"),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == ErrorKind::Interrupted) =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        }
+        fn stop(&mut self) -> Result<()> {
+            self.stop_with_signal(|group| {
+                // SAFETY: only the unreaped, owned child's isolated group is
+                // signalled. No Child wait/reap occurs before this call.
+                if unsafe { libc::kill(group, libc::SIGKILL) } == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            })
         }
     }
     impl Drop for Lease {
@@ -304,12 +352,133 @@ mod process {
         // These commands have no power effects: no inhibitor utility is used.
         #[test]
         fn harmless_helper_is_reaped_on_explicit_release() {
+            use std::os::unix::process::ExitStatusExt;
             let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            let pid = lease.child.id();
+            let receipt: ReapReceipt = Default::default();
+            lease.reap_receipt = Some(receipt.clone());
             lease.check_running().unwrap();
             lease.stop().unwrap();
             assert!(lease.reaped);
-            assert!(lease.child.try_wait().unwrap().is_some());
+            assert_eq!(
+                receipt.lock().unwrap().unwrap(),
+                (pid, std::process::ExitStatus::from_raw(libc::SIGKILL)),
+                "group signal must precede the EOF that would normally exit cat"
+            );
             lease.stop().unwrap();
+        }
+        fn await_owned_exit(lease: &mut Lease) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while lease.leader_exit_status().unwrap().is_none() {
+                assert!(Instant::now() < deadline, "fixture leader did not exit");
+                std::thread::yield_now();
+            }
+            assert!(!lease.reaped, "exit inspection must retain the child pin");
+        }
+        #[test]
+        fn exited_leader_signal_failure_reaps_owned_child_but_stays_failed() {
+            use std::os::unix::process::ExitStatusExt;
+            let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            let pid = lease.child.id();
+            let receipt: ReapReceipt = Default::default();
+            lease.reap_receipt = Some(receipt.clone());
+            lease.input.take();
+            await_owned_exit(&mut lease);
+            // Inject only the group signal error; leader exit and Child.wait
+            // are real. This deterministically covers Darwin's zombie EPERM.
+            let error = lease
+                .stop_with_signal(|group| {
+                    assert_eq!(group, -(pid as i32));
+                    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+                })
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .raw_os_error(),
+                Some(libc::EPERM)
+            );
+            assert!(lease.reaped);
+            assert_eq!(
+                receipt.lock().unwrap().unwrap(),
+                (pid, std::process::ExitStatus::from_raw(0))
+            );
+            assert!(
+                lease
+                    .stop_with_signal(|_| panic!("never signal a reaped group"))
+                    .is_err()
+            );
+            assert!(lease.stop().is_err(), "failed group cleanup stays sticky");
+        }
+        #[test]
+        fn absent_group_only_acknowledges_cleanup_after_owned_leader_exit() {
+            use std::os::unix::process::ExitStatusExt;
+            let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            let pid = lease.child.id();
+            let receipt: ReapReceipt = Default::default();
+            lease.reap_receipt = Some(receipt.clone());
+            lease.input.take();
+            await_owned_exit(&mut lease);
+            lease
+                .stop_with_signal(|group| {
+                    assert_eq!(group, -(pid as i32));
+                    Err(std::io::Error::from_raw_os_error(libc::ESRCH))
+                })
+                .unwrap();
+            assert_eq!(
+                receipt.lock().unwrap().unwrap(),
+                (pid, std::process::ExitStatus::from_raw(0))
+            );
+            assert!(lease.reaped && lease.cleanup_failure.is_none());
+            lease
+                .stop_with_signal(|_| panic!("never signal a reaped group"))
+                .unwrap();
+        }
+        #[test]
+        fn live_leader_signal_failure_neither_closes_input_nor_waits() {
+            use std::os::unix::process::ExitStatusExt;
+            let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            let pid = lease.child.id();
+            let receipt: ReapReceipt = Default::default();
+            lease.reap_receipt = Some(receipt.clone());
+            for failure in [libc::EPERM, libc::ESRCH] {
+                assert!(
+                    lease
+                        .stop_with_signal(|group| {
+                            assert_eq!(group, -(pid as i32));
+                            Err(std::io::Error::from_raw_os_error(failure))
+                        })
+                        .is_err()
+                );
+                assert!(lease.input.is_some());
+                assert!(!lease.reaped);
+                assert!(receipt.lock().unwrap().is_none());
+                lease.check_running().unwrap();
+            }
+            // The still-owned live group may be retried, unlike a reaped one.
+            lease.stop().unwrap();
+            assert_eq!(
+                receipt.lock().unwrap().unwrap(),
+                (pid, std::process::ExitStatus::from_raw(libc::SIGKILL))
+            );
+        }
+        #[test]
+        fn lost_child_ownership_never_signals_or_reports_cleanup_success() {
+            let mut lease = Lease::start(&fixture(HELPER)).unwrap();
+            lease.input.take();
+            await_owned_exit(&mut lease);
+            // Consume the actual Child wait outside Lease's receipt boundary to
+            // model ownership loss, without a post-reap numeric PID operation.
+            assert!(lease.child.wait().unwrap().success());
+            assert!(
+                lease
+                    .stop_with_signal(|_| panic!("lost ownership must veto the signal"))
+                    .is_err()
+            );
+            assert!(lease.reaped);
+            assert!(lease.cleanup_failure.is_some());
+            assert!(lease.stop().is_err());
         }
         #[test]
         fn harmless_helper_is_reaped_on_drop() {
@@ -380,6 +549,7 @@ mod process {
                 child,
                 input,
                 reaped: false,
+                cleanup_failure: None,
                 reap_receipt: None,
             };
             let deadline = Instant::now() + Duration::from_secs(2);
