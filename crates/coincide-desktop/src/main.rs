@@ -39,6 +39,7 @@ mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
 mod microphone_settings;
+mod models_settings;
 mod native_quit;
 mod navigation;
 mod navigation_rail;
@@ -353,6 +354,7 @@ struct Coincide {
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
     instructions_panel: Entity<instructions::InstructionsPanel>,
+    models_settings: models_settings::ModelsSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
     settings_section: settings::SettingsSection,
@@ -737,6 +739,7 @@ impl Coincide {
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let instructions_panel =
             cx.new(|cx| instructions::InstructionsPanel::new(native_editors.editor(), window, cx));
+        let models_settings = models_settings::ModelsSettings::new(window, cx);
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -986,6 +989,7 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.extend(models_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let threads = call(&engine, "threads.list", json!({}))
@@ -1053,6 +1057,7 @@ impl Coincide {
             settings_search,
             settings_section: Default::default(),
             instructions_panel,
+            models_settings,
             instruction_quit_prompt_pending: false,
             instruction_quit_task: None,
             settings_window: None,

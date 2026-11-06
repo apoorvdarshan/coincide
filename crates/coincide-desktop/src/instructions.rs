@@ -9,6 +9,7 @@ use gpui_kit::{
         button::*,
         input::{InputEvent, Textarea, TextareaState},
     },
+    prelude::FluentBuilder,
     *,
 };
 

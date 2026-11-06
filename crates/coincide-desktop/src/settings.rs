@@ -5,6 +5,7 @@ pub(super) enum SettingsSection {
     #[default]
     General,
     Instructions,
+    Models,
     About,
     All,
     Appearance,
@@ -23,6 +24,7 @@ impl SettingsSection {
         match self {
             Self::General => "general",
             Self::Instructions => "instructions",
+            Self::Models => "models",
             Self::About => "about",
             Self::All => "all",
             Self::Appearance => "appearance",
@@ -41,6 +43,7 @@ impl SettingsSection {
         match self {
             Self::General => "General",
             Self::Instructions => "Instructions",
+            Self::Models => "Models",
             Self::About => "About",
             Self::All => "Search results",
             Self::Appearance => "Appearance",
@@ -695,6 +698,7 @@ impl Coincide {
         let mut nav = div().flex().flex_col().gap_1();
         for section in [
             S::General,
+            S::Models,
             S::Usage,
             S::Instructions,
             S::Keyboard,
@@ -722,6 +726,11 @@ impl Coincide {
         }
         let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
+        if matches(S::Models, "models favorite hidden custom providers catalog") {
+            count += 1;
+            content =
+                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
+        }
         if matches(
             S::About,
             "about version help community website github discord contact privacy terms license acknowledgements",

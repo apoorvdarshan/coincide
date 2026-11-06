@@ -711,7 +711,7 @@ pub(super) struct ComposerSelection {
     capabilities: Value,
     accounts: Value,
     error: String,
-    catalog: Value,
+    pub(super) catalog: Value,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
     expanded: bool,
