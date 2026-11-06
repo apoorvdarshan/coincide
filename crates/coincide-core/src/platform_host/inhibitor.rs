@@ -469,7 +469,12 @@ mod process {
         const LOST_OWNER_HOME: &str = "COINCIDE_INHIBITOR_OWNERSHIP_FIXTURE";
         #[test]
         fn lost_child_ownership_never_signals_or_reports_cleanup_success() {
+            use std::os::unix::fs::PermissionsExt;
             let temporary = tempfile::tempdir().unwrap();
+            // This fixture owns the new empty directory; never depend on the
+            // caller's umask or tempfile's default permissions for private HOME.
+            std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
             let home = temporary.path().canonicalize().unwrap();
             let output = Command::new(std::env::current_exe().unwrap())
                 .args([
