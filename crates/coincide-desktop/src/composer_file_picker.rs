@@ -466,6 +466,7 @@ impl Coincide {
             let candidate = file.clone();
             results = results.child(
                 div()
+                    .id(("composer-file-row", index))
                     .role(Role::ListItem)
                     .aria_label(format!("Project file {}", file.path()))
                     .flex()
