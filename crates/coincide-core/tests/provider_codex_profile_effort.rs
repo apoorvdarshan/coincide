@@ -223,7 +223,7 @@ fn settle(e: &mut Engine) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
-fn finish(e: &mut Engine) {
+fn finish(e: &mut Engine, expected_provider_returns: u64) -> u64 {
     e.freeze_admissions();
     e.request_model_catalog_shutdown().unwrap();
     let d = Instant::now() + Duration::from_secs(10);
@@ -238,6 +238,15 @@ fn finish(e: &mut Engine) {
         assert!(Instant::now() < d);
         std::thread::sleep(Duration::from_millis(2));
     }
+    let workers = e.provider_workers_status();
+    assert_eq!(workers.running, 0);
+    assert_eq!(workers.panicked, 0);
+    assert_eq!(workers.unclassified, 0);
+    assert_eq!(
+        workers.returned, expected_provider_returns,
+        "Each Engine must retain its own exact provider join receipts"
+    );
+    workers.returned
 }
 fn marker(p: &Path) {
     let d = Instant::now() + Duration::from_secs(10);
@@ -403,7 +412,7 @@ fn effort_fixture_child() {
     settle(&mut e);
     let saved = e.store.thread(&id).unwrap();
     let saved_raw = raw(&root);
-    finish(&mut e);
+    let mut provider_returns = finish(&mut e, 2);
     drop(e);
     // Stored effort has no authority after restart; Refresh remains reachable.
     let mut e = Engine::new(Store::open(&db).unwrap());
@@ -420,7 +429,7 @@ fn effort_fixture_child() {
     let reopened = refresh(&mut e, &id);
     assert_eq!(reopened["state"], "ready");
     assert_eq!(raw(&root), saved_raw);
-    finish(&mut e);
+    provider_returns += finish(&mut e, 0);
     drop(e);
     let mut e = Engine::new(Store::open(&db).unwrap());
     e.set_active_thread(Some(id.clone())).unwrap();
@@ -516,12 +525,10 @@ fn effort_fixture_child() {
         json!({"threadId":id,"accountId":b,"expectedSelection":current["selection"]}),
     );
     marker(&hb.join("blocked"));
-    finish(&mut e);
-    let ws = e.provider_workers_status();
-    assert_eq!(ws.running, 0);
-    assert_eq!(ws.panicked, 0);
-    assert_eq!(ws.unclassified, 0);
-    assert!(ws.returned >= 3);
+    provider_returns += finish(&mut e, 1);
+    // Three actual turns across three distinct Engine owners: A+B, read-only
+    // restart, then the held/cancelled B turn. Restart cannot carry counters.
+    assert_eq!(provider_returns, 3);
     assert_eq!(e.store.thread(&text(&other, "id")).unwrap(), other);
     assert_eq!(
         e.store.document("effort-fixture.json").unwrap(),
