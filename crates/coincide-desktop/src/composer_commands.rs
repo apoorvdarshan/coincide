@@ -5,11 +5,12 @@ pub(super) enum Command {
     Model,
     Plan,
     Build,
+    UsageLimits,
 }
 impl Command {
     pub fn mode(self) -> Option<&'static str> {
         match self {
-            Self::Model => None,
+            Self::Model | Self::UsageLimits => None,
             Self::Plan => Some("plan"),
             Self::Build => Some("build"),
         }
@@ -18,6 +19,7 @@ impl Command {
 pub(super) fn standalone(text: &str) -> Option<Command> {
     match text.trim().to_ascii_lowercase().as_str() {
         "/model" => Some(Command::Model),
+        "/usage-limits" => Some(Command::UsageLimits),
         "/plan" => Some(Command::Plan),
         "/build" | "/default" => Some(Command::Build),
         _ => None,
@@ -87,6 +89,7 @@ mod tests {
             ("\t/Plan ", Command::Plan),
             ("/build", Command::Build),
             ("/default", Command::Build),
+            (" /USAGE-LIMITS\n", Command::UsageLimits),
         ] {
             assert_eq!(standalone(raw), Some(expected));
         }
@@ -100,6 +103,10 @@ mod tests {
             "/model/x",
             "plan",
             "/plan\nmore",
+            "/usage-limits now",
+            "/usage-limits/x",
+            "/codex",
+            "/claude",
         ] {
             assert_eq!(standalone(raw), None);
         }
@@ -122,22 +129,24 @@ mod tests {
     }
     #[test]
     fn attachments_context_and_invalid_payloads_stay_literal_unconsumed() {
-        for (field, payload) in [
-            ("rustDraftImages", json!([{"id":"image"}])),
-            ("draftContext", json!([{"kind":"quote"}])),
-            ("draftContext", json!({"malformed":true})),
-            ("rustDraftImages", json!(false)),
-        ] {
-            let mut thread = json!({"id":"a","draft":"/model"});
-            thread[field] = payload;
-            let original = thread.clone();
-            assert!(
-                intercept(&thread, "/model", |_| panic!(
-                    "must not consume content as control"
-                ))
-                .is_none()
-            );
-            assert_eq!(thread, original);
+        for command in ["/model", "/usage-limits"] {
+            for (field, payload) in [
+                ("rustDraftImages", json!([{"id":"image"}])),
+                ("draftContext", json!([{"kind":"quote"}])),
+                ("draftContext", json!({"malformed":true})),
+                ("rustDraftImages", json!(false)),
+            ] {
+                let mut thread = json!({"id":"a","draft":command});
+                thread[field] = payload;
+                let original = thread.clone();
+                assert!(
+                    intercept(&thread, command, |_| panic!(
+                        "must not consume content as control"
+                    ))
+                    .is_none()
+                );
+                assert_eq!(thread, original);
+            }
         }
         assert_eq!(
             intercept(

@@ -494,10 +494,13 @@ fn command_params(
     if let Some(reason) = capability_lock(capabilities, running) {
         anyhow::bail!(reason);
     }
-    // Swift /model opens its picker, rather than applying/validating a mode.
+    // Swift /model and /usage-limits open controls, rather than changing a mode.
     // Preserve the authoritative capability/active/origin locks above; merely
     // showing existing choices must not invent another mode-change gate.
-    if command == crate::composer_commands::Command::Model {
+    if matches!(
+        command,
+        crate::composer_commands::Command::Model | crate::composer_commands::Command::UsageLimits
+    ) {
         return Ok(None);
     }
     let mut draft = SelectionDraft::from_thread(thread);
@@ -513,11 +516,13 @@ fn command_params(
     command.mode().map(|_| draft.params(thread)).transpose()
 }
 /// Invoked under one Engine try-lock. Only existing validated selection/draft
-/// endpoints are used, never Send/queue. Every rejection remains intercepted.
+/// endpoints and already-reported limits status are used, never Send/queue or
+/// provider refresh. Every rejection remains intercepted.
 fn command_transaction(
     submission: &crate::composer_commands::Submission,
     command: crate::composer_commands::Command,
     running: bool,
+    reported: Option<&crate::codex_limits_view::Observation>,
     mut invoke: impl FnMut(&str, Value) -> Result<Value>,
 ) -> Result<Value> {
     let id = &submission.thread["id"];
@@ -528,6 +533,35 @@ fn command_transaction(
     );
     let capabilities = invoke("agent.selection.capabilities", json!({"threadId":id}))?;
     let params = command_params(&current, command, &capabilities, running)?;
+    if command == crate::composer_commands::Command::UsageLimits {
+        anyhow::ensure!(
+            current["selection"]["provider"] == "codex"
+                && default_account_id(&current["selection"]["accountID"]) == Some("default"),
+            "Only already-reported default Codex runtime limits are connected here; named-profile and other-agent limits are unavailable"
+        );
+        let reported = reported.context("No reported limit windows are available. Open Usage and limits and explicitly Refresh Codex limits first")?;
+        anyhow::ensure!(
+            crate::codex_limits_mount::has_reported_windows(reported),
+            "No reported limit windows are available"
+        );
+        // Status revalidates the exact existing observation and executable
+        // context. It does not refresh, start a provider or read credentials.
+        let value = invoke(
+            "usage.codexLimits.status",
+            json!({"requestId":reported.request_id}),
+        )?;
+        let fresh = crate::codex_limits_view::decode(&value).map_err(|_| {
+            anyhow::anyhow!(
+                "Reported limits are unavailable or their context changed; command draft retained"
+            )
+        })?;
+        anyhow::ensure!(
+            fresh.request_id == reported.request_id
+                && fresh.generation == reported.generation
+                && crate::codex_limits_mount::has_reported_windows(&fresh),
+            "Reported limit windows are no longer current; command draft retained"
+        );
+    }
     let ack = if let Some(params) = params {
         invoke("agent.select", params)?
     } else {
@@ -556,7 +590,7 @@ fn command_transaction(
     let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))
         .map_err(|error| anyhow::anyhow!("{}: {error}", if command.mode().is_some() {
             "Mode was saved, but command draft clearing failed; draft retained"
-        } else { "Model controls were validated, but command draft clearing failed; draft retained" }))?;
+        } else if command == crate::composer_commands::Command::UsageLimits { "Reported limits were validated, but command draft clearing failed; draft retained" } else { "Model controls were validated, but command draft clearing failed; draft retained" }))?;
     anyhow::ensure!(
         cleared["id"] == *id && cleared["draft"] == "",
         "Draft clear was not acknowledged; local draft retained"
@@ -814,6 +848,11 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let reported = if command == crate::composer_commands::Command::UsageLimits {
+            self.codex_limits.reported_observation()
+        } else {
+            None
+        };
         let result = (|| -> Result<Value> {
             let id = text(&submission.thread, "id");
             anyhow::ensure!(
@@ -849,6 +888,7 @@ impl Coincide {
                 &submission,
                 command,
                 self.running.contains(&id),
+                reported.as_ref(),
                 |method, params| {
                     let response = engine.dispatch(json!({"method":method,"params":params}));
                     if let Some(error) = response.get("error") {
@@ -883,10 +923,18 @@ impl Coincide {
                         .update(cx, |input, cx| input.set_value("", window, cx));
                     if command == crate::composer_commands::Command::Model {
                         self.selection_ui.expanded = true;
+                    } else if command == crate::composer_commands::Command::UsageLimits {
+                        self.open_settings_panel(window, cx);
+                        self.settings_section = crate::settings::SettingsSection::Usage;
+                        self.settings_search
+                            .update(cx, |input, cx| input.set_value("", window, cx));
                     }
                     self.status = match command {
                         crate::composer_commands::Command::Model => {
                             "Model controls opened. Choose and Apply a selection explicitly."
+                        }
+                        crate::composer_commands::Command::UsageLimits => {
+                            "Reported default Codex runtime limits opened. Account identity is unverified. No refresh or message was sent."
                         }
                         crate::composer_commands::Command::Plan => {
                             "Plan mode saved. No message was sent."
@@ -2450,7 +2498,7 @@ mod tests {
             crate::composer_commands::Submission::new(&stored, stored["draft"].as_str().unwrap());
         let mut calls = Vec::new();
         let mut reads = 0;
-        let result = command_transaction(&submission, command, false, |method, params| {
+        let result = command_transaction(&submission, command, false, None, |method, params| {
             calls.push(method.to_owned());
             match method {
                 "threads.read" => {
@@ -2635,6 +2683,173 @@ mod tests {
             )
             .is_err()
         );
+    }
+    fn reported_limits() -> Value {
+        json!({"requestId":"reported","provider":"codex","accountScope":"default_runtime_account_identity_unknown","accountIdentityVerified":false,"state":"ready","generation":7,"observedAtEpochMs":1234,"error":null,
+            "snapshot":{"provenance":"codex_app_server_account_rate_limits","accountScope":"default_runtime_account_identity_unknown","accountIdentityVerified":false,"main":{"id":"codex","displayName":null,"plan":null,"windows":[{"position":"primary","usedPercent":25,"remainingPercent":null,"durationMinutes":null,"resetsAtEpochSeconds":null}],"credits":null,"notes":[]},"modelBuckets":[]}})
+    }
+    fn fake_usage_command(
+        mut stored: Value,
+        reported: Option<crate::codex_limits_view::Observation>,
+        response: Value,
+        fault: &str,
+    ) -> (Result<Value>, Value, Vec<String>) {
+        let submission =
+            crate::composer_commands::Submission::new(&stored, stored["draft"].as_str().unwrap());
+        let mut calls = Vec::new();
+        let mut reads = 0;
+        let result = command_transaction(
+            &submission,
+            crate::composer_commands::Command::UsageLimits,
+            fault == "running",
+            reported.as_ref(),
+            |method, params| {
+                calls.push(method.to_owned());
+                match method {
+                    "threads.read" => {
+                        reads += 1;
+                        if reads == 1 && fault == "stale-account" {
+                            stored["selection"]["accountID"] = json!("other");
+                        }
+                        if reads == 2 && fault == "late-draft" {
+                            stored["draft"] = json!("newer café draft");
+                        }
+                        if reads == 2 && fault == "late-context" {
+                            stored["draftContext"] =
+                                json!([{"kind":"quote","text":"new reference"}]);
+                        }
+                        Ok(stored.clone())
+                    }
+                    "agent.selection.capabilities" => {
+                        Ok(command_capabilities("codex", fault == "locked"))
+                    }
+                    "usage.codexLimits.status" => {
+                        assert_eq!(params, json!({"requestId":"reported"}));
+                        if fault == "status" {
+                            anyhow::bail!("synthetic revoked limits context");
+                        }
+                        Ok(response.clone())
+                    }
+                    "threads.patch" => {
+                        assert_eq!(params, json!({"threadId":"thread","patch":{"draft":""}}));
+                        if fault == "clear" {
+                            anyhow::bail!("synthetic draft persistence failure");
+                        }
+                        stored["draft"] = json!("");
+                        Ok(stored.clone())
+                    }
+                    _ => panic!(
+                        "Usage opener must never select, refresh, authenticate, send or queue"
+                    ),
+                }
+            },
+        );
+        (result, stored, calls)
+    }
+    #[::core::prelude::v1::test]
+    fn usage_limits_reads_only_current_reported_status_then_clears_exact_draft() {
+        let mut original = command_thread("  /usage-limits\n");
+        original["selection"]["futureOption"] = json!({"retain":[true,"中文"]});
+        original["sessions"] = json!({"codex":{"sessionID":"opaque"}});
+        original["futureThread"] = json!([true, 42]);
+        let observation = crate::codex_limits_view::decode(&reported_limits()).unwrap();
+        let (result, stored, calls) =
+            fake_usage_command(original.clone(), Some(observation), reported_limits(), "");
+        assert!(result.is_ok());
+        let mut expected = original;
+        expected["draft"] = json!("");
+        assert_eq!(stored, expected);
+        assert_eq!(
+            calls,
+            vec![
+                "threads.read",
+                "agent.selection.capabilities",
+                "usage.codexLimits.status",
+                "threads.read",
+                "threads.patch"
+            ]
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn usage_limits_missing_scoped_stale_and_credits_only_reports_never_clear_or_send() {
+        for case in [
+            "missing",
+            "provider",
+            "named-account",
+            "invalid-account",
+            "request",
+            "generation",
+            "loading",
+            "failed",
+            "scope",
+            "identity",
+            "credits-only",
+            "locked",
+            "running",
+            "status",
+        ] {
+            let mut original = command_thread("\t/usage-limits ");
+            let mut response = reported_limits();
+            let mut observation = Some(crate::codex_limits_view::decode(&response).unwrap());
+            match case {
+                "missing" => observation = None,
+                "provider" => original["selection"]["provider"] = json!("claude"),
+                "named-account" => original["selection"]["accountID"] = json!("named-profile"),
+                "invalid-account" => original["selection"]["accountID"] = json!(false),
+                "request" => response["requestId"] = json!("superseded"),
+                "generation" => response["generation"] = json!(8),
+                "loading" => {
+                    response["state"] = json!("loading");
+                    response["snapshot"] = Value::Null;
+                }
+                "failed" => {
+                    response["state"] = json!("failed");
+                    response["snapshot"] = Value::Null;
+                    response["error"] = json!("cancelled");
+                }
+                "scope" => response["accountScope"] = json!("named-account"),
+                "identity" => response["accountIdentityVerified"] = json!(true),
+                "credits-only" => {
+                    response["snapshot"]["main"]["windows"] = json!([]);
+                    response["snapshot"]["main"]["credits"] =
+                        json!({"hasCredits":true,"unlimited":false,"balance":"3"});
+                }
+                _ => {}
+            }
+            let (result, stored, calls) =
+                fake_usage_command(original.clone(), observation, response, case);
+            assert!(result.is_err(), "{case}");
+            assert_eq!(stored, original, "{case}");
+            assert!(!calls.iter().any(|call| call == "threads.patch"), "{case}");
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn usage_limits_late_draft_context_or_clear_failure_preserves_actual_content() {
+        for fault in ["late-draft", "late-context", "stale-account", "clear"] {
+            let original = command_thread(" /usage-limits\n");
+            let observation = crate::codex_limits_view::decode(&reported_limits()).unwrap();
+            let (result, stored, calls) = fake_usage_command(
+                original.clone(),
+                Some(observation),
+                reported_limits(),
+                fault,
+            );
+            assert!(result.is_err());
+            if fault == "late-draft" {
+                assert_eq!(stored["draft"], "newer café draft");
+            } else {
+                assert_eq!(stored["draft"], original["draft"]);
+            }
+            if fault == "late-context" {
+                assert_eq!(
+                    stored["draftContext"],
+                    json!([{"kind":"quote","text":"new reference"}])
+                )
+            }
+            if fault != "clear" {
+                assert!(!calls.iter().any(|call| call == "threads.patch"));
+            }
+        }
     }
     fn effort_provider() -> Value {
         json!({"provider":"codex","effort":{"supported":true,"choices":["low","high"],"reportedDefault":"low","requiresExplicitModel":true,"provenance":"provider_model_list"}})

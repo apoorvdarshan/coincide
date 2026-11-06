@@ -68,10 +68,22 @@ impl Driver {
             }
         }
     }
+    fn reported_observation(&self) -> Option<Observation> {
+        if self.closed {
+            return None;
+        }
+        self.current
+            .as_ref()
+            .filter(|value| has_reported_windows(value))
+            .cloned()
+    }
     fn close(&mut self) {
         self.closed = true;
         self.current = None;
     }
+}
+pub(super) fn has_reported_windows(value: &Observation) -> bool {
+    matches!(&value.phase, Phase::Ready { buckets, .. } if buckets.iter().any(|bucket| !bucket.windows.is_empty()))
 }
 pub struct Mount {
     pub panel: Entity<LimitsView>,
@@ -105,6 +117,10 @@ impl Mount {
         {
             self.panel.update(cx, |panel, cx| panel.set(phase, cx));
         }
+    }
+    /// Already-reported metadata only; showing limits never starts a read.
+    pub(super) fn reported_observation(&self) -> Option<Observation> {
+        self.driver.reported_observation()
     }
     pub fn request_shutdown(&mut self) {
         self.driver.close();
@@ -186,6 +202,54 @@ mod tests {
             Some(Phase::Failed(_))
         ));
         assert!(driver.current.is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn reported_window_gate_excludes_idle_loading_credits_only_and_revoked_observations() {
+        use crate::codex_limits_view::{Bucket, Credits, WindowReport};
+        let mut driver = Driver::default();
+        assert!(driver.reported_observation().is_none());
+        driver.refresh(|_, _| Ok(loading("reported", 7)));
+        assert!(driver.reported_observation().is_none());
+        driver.current = Some(Observation {
+            request_id: "reported".into(),
+            generation: 7,
+            phase: Phase::Ready {
+                observed_ms: Some(1234),
+                buckets: vec![Bucket {
+                    id: "codex".into(),
+                    name: None,
+                    plan: None,
+                    windows: vec![],
+                    credits: Some(Credits {
+                        has: Some(true),
+                        unlimited: Some(false),
+                        balance: Some("3".into()),
+                    }),
+                    notes: vec![],
+                }],
+            },
+        });
+        assert!(driver.reported_observation().is_none());
+        if let Phase::Ready { buckets, .. } = &mut driver.current.as_mut().unwrap().phase {
+            buckets[0].windows.push(WindowReport {
+                position: "primary".into(),
+                used: Some(25.),
+                remaining: None,
+                minutes: None,
+                resets: None,
+            });
+        }
+        assert_eq!(
+            driver.reported_observation().unwrap().request_id,
+            "reported"
+        );
+        assert!(matches!(
+            driver.poll(|_, _| Err(())),
+            Some(Phase::Failed(_))
+        ));
+        assert!(driver.reported_observation().is_none());
+        driver.close();
+        assert!(driver.reported_observation().is_none());
     }
     #[::core::prelude::v1::test]
     fn closing_discards_observation_and_forbids_status_or_refresh_dispatch() {
