@@ -3119,11 +3119,15 @@ impl Coincide {
             .or_else(|| item["model"].as_str())
             .unwrap_or_default()
             .to_owned();
+        let work_header = presentation::work_header(item);
+        let work_status = work_header.as_ref().and_then(|header| header.status);
         let label = match kind.as_str() {
             "user" => "You".to_owned(),
             "assistant" => presentation::provider_name(&provider).to_owned(),
-            "reasoning" => format!("{} · Thinking", presentation::provider_name(&provider)),
-            "tool" => "Tool activity".to_owned(),
+            "reasoning" | "tool" => work_header
+                .as_ref()
+                .map(|header| header.title.clone())
+                .unwrap_or_default(),
             "error" => "Error".to_owned(),
             "system" => "Conversation update".to_owned(),
             _ => kind.clone(),
@@ -3182,6 +3186,44 @@ impl Coincide {
         } else {
             (Some(copy_action), None)
         };
+        let disclosure = collapsible.then(|| {
+            let source = source_id.clone();
+            let item = item_id.clone();
+            Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                .accessibility_id(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                .label(if expanded { "Collapse" } else { "Expand" })
+                .ghost()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source) else {
+                        return;
+                    };
+                    let Some(index) = thread["items"]
+                        .as_array()
+                        .and_then(|items| items.iter().position(|v| v["id"] == item))
+                    else {
+                        return;
+                    };
+                    if this
+                        .find_revealed
+                        .as_ref()
+                        .is_some_and(|(thread, id, _)| thread == &source && id == &item)
+                    {
+                        this.find_revealed = None;
+                        this.find_pending = None;
+                        this.expanded.remove(&index);
+                    } else if !this.expanded.remove(&index) {
+                        this.expanded.insert(index);
+                    }
+                    this.transcript_list.splice(index..index + 1, 1);
+                    cx.notify();
+                }))
+        });
+        let (work_disclosure, other_disclosure) = if work_header.is_some() {
+            (disclosure, None)
+        } else {
+            (None, disclosure)
+        };
         // Swift's assistant row reads body first; provider/model and existing
         // actions form a quiet signature below the reply and its media. Native
         // text/find/selection state and every action controller stay unchanged.
@@ -3208,6 +3250,16 @@ impl Coincide {
                     .items_center()
                     .gap_2()
                     .child(label)
+                    .when_some(work_status, |label, status| {
+                        label.child(
+                            div()
+                                .text_xs()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(self.color(0xe4e9f2).opacity(0.06))
+                                .child(status),
+                        )
+                    })
                     .when(kind == "assistant" && !model.is_empty(), |label| {
                         label.child(
                             div()
@@ -3261,7 +3313,8 @@ impl Coincide {
                         this.branch_from_item(&source, &item, false, window, cx)
                     })),
                 )
-            });
+            })
+            .when_some(work_disclosure, |header, control| header.child(control));
         let (header, footer) = if kind == "assistant" {
             (None, Some(metadata.into_any_element()))
         } else if kind == "user" {
@@ -3295,44 +3348,7 @@ impl Coincide {
             })
             .when_some(header, |view, header| view.child(header))
             .when_some(context_pane, |view, context| view.child(context))
-            .when(collapsible, |view| {
-                let source = source_id.clone();
-                let item = item_id.clone();
-                view.child(
-                    Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                        .accessibility_id(SharedString::from(format!(
-                            "expand-{source_id}-{item_id}"
-                        )))
-                        .label(if expanded { "Collapse" } else { "Expand" })
-                        .ghost()
-                        .compact()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source)
-                            else {
-                                return;
-                            };
-                            let Some(index) = thread["items"]
-                                .as_array()
-                                .and_then(|items| items.iter().position(|v| v["id"] == item))
-                            else {
-                                return;
-                            };
-                            if this
-                                .find_revealed
-                                .as_ref()
-                                .is_some_and(|(thread, id, _)| thread == &source && id == &item)
-                            {
-                                this.find_revealed = None;
-                                this.find_pending = None;
-                                this.expanded.remove(&index);
-                            } else if !this.expanded.remove(&index) {
-                                this.expanded.insert(index);
-                            }
-                            this.transcript_list.splice(index..index + 1, 1);
-                            cx.notify();
-                        })),
-                )
-            })
+            .when_some(other_disclosure, |view, control| view.child(control))
             .child(transcript::preserve_selected_copy(
                 &source_id,
                 &item_id,
