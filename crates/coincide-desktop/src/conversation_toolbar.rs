@@ -107,16 +107,20 @@ impl Coincide {
                                 cx.listener(|this, _, window, cx| this.open_find(window, cx)),
                             ),
                     )
-                    .child(
-                        Button::new("terminal")
-                            .icon(IconName::SquareTerminal)
-                            .accessibility_label("Terminal")
-                            .tooltip("Toggle terminal")
-                            .ghost()
-                            .compact()
-                            .selected(self.terminal_visible_thread.is_some())
-                            .on_click(cx.listener(|this, _, window, cx| this.terminal(window, cx))),
-                    )
+                    .when(self.terminal_on_right(), |toolbar| {
+                        toolbar.child(
+                            Button::new("terminal")
+                                .icon(IconName::SquareTerminal)
+                                .accessibility_label("Terminal")
+                                .tooltip("Toggle terminal")
+                                .ghost()
+                                .compact()
+                                .selected(self.terminal_visible_thread.is_some())
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.terminal(window, cx)),
+                                ),
+                        )
+                    })
                     .child(
                         Button::new("browser")
                             .icon(IconName::Globe)
@@ -141,6 +145,9 @@ impl Coincide {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.session_import_open = false;
                                 this.workspace_open = !this.workspace_open;
+                                if this.workspace_open && this.terminal_on_right() {
+                                    this.terminal_open = false;
+                                }
                                 this.settings_open = false;
                                 this.schedules_open = false;
                                 this.sync_transcription_binding(cx);

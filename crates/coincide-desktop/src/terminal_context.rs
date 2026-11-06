@@ -29,6 +29,7 @@ impl SelectionRequest {
 }
 #[derive(Clone)]
 pub(crate) enum TerminalContextEvent {
+    LastClosed,
     Requested(SelectionRequest),
     Completed {
         request: SelectionRequest,

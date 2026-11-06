@@ -15,6 +15,23 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         match event {
+            TerminalContextEvent::LastClosed => {
+                let id = workspace.read(cx).thread_id().to_owned();
+                if self.terminal_visible_thread.as_deref() == Some(id.as_str())
+                    && self
+                        .terminal_workspaces
+                        .get(&id)
+                        .is_some_and(|current| current.entity_id() == workspace.entity_id())
+                {
+                    self.terminal_open = false;
+                    self.sync_terminal_workspace(window, cx);
+                    if window.is_window_active() {
+                        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                    }
+                    cx.notify();
+                }
+            }
+
             TerminalContextEvent::Requested(request) => {
                 let id = workspace.read(cx).thread_id().to_owned();
                 let current = self.selected.as_ref().filter(|thread| thread["id"] == id);
