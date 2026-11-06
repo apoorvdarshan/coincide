@@ -229,6 +229,13 @@ fn settle(e: &mut Engine) {
     }
 }
 fn finish(e: &mut Engine, expected_provider_returns: u64) -> u64 {
+    finish_with_catalog(e, expected_provider_returns, None)
+}
+fn finish_with_catalog(
+    e: &mut Engine,
+    expected_provider_returns: u64,
+    expected_catalog_returns: Option<u64>,
+) -> u64 {
     e.freeze_admissions();
     e.request_model_catalog_shutdown().unwrap();
     let d = Instant::now() + Duration::from_secs(10);
@@ -237,7 +244,14 @@ fn finish(e: &mut Engine, expected_provider_returns: u64) -> u64 {
         if s.running == 0 {
             assert_eq!(s.panicked, 0);
             assert_eq!(s.unclassified, 0);
-            assert!(s.returned > 0);
+            if let Some(expected) = expected_catalog_returns {
+                assert_eq!(
+                    s.returned, expected,
+                    "Each Engine retains its exact catalog join receipts"
+                );
+            } else {
+                assert!(s.returned > 0);
+            }
             break;
         }
         assert!(Instant::now() < d);
@@ -763,7 +777,7 @@ fn astra_fixture_child() {
     fs::write(home.join("fixture-mode"), "allow").unwrap();
     refresh(&mut e, &id);
     let before = raw(&root);
-    assert_eq!(finish(&mut e, returns), returns);
+    assert_eq!(finish_with_catalog(&mut e, returns, Some(5)), returns);
     drop(e);
     let mut e = Engine::new(Store::open(&db).unwrap());
     e.set_active_thread(Some(id.clone())).unwrap();
@@ -774,7 +788,7 @@ fn astra_fixture_child() {
         json!({"threadId":id,"text":"No restart authority"}),
     );
     assert_eq!(raw(&root), before);
-    assert_eq!(finish(&mut e, 0), 0);
+    assert_eq!(finish_with_catalog(&mut e, 0, Some(0)), 0);
     let turns: Vec<_> = records(&root)
         .into_iter()
         .filter(|r| r["method"] == "turn/start")
