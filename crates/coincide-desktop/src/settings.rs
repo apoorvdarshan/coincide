@@ -5,6 +5,7 @@ pub(super) enum SettingsSection {
     #[default]
     All,
     Appearance,
+    Keyboard,
     Conversation,
     Automation,
     Accounts,
@@ -18,6 +19,7 @@ impl SettingsSection {
         match self {
             Self::All => "all",
             Self::Appearance => "appearance",
+            Self::Keyboard => "keyboard",
             Self::Conversation => "conversation",
             Self::Automation => "automation",
             Self::Accounts => "accounts",
@@ -31,6 +33,7 @@ impl SettingsSection {
         match self {
             Self::All => "All settings",
             Self::Appearance => "Appearance",
+            Self::Keyboard => "Keyboard",
             Self::Conversation => "Conversation",
             Self::Automation => "Automation and alerts",
             Self::Accounts => "Providers and passwords",
@@ -406,7 +409,12 @@ impl Coincide {
         }
     }
 
-    fn accept_settings(&mut self, settings: Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn accept_settings(
+        &mut self,
+        settings: Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.settings = settings;
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
@@ -544,6 +552,7 @@ impl Coincide {
         for section in [
             S::All,
             S::Appearance,
+            S::Keyboard,
             S::Conversation,
             S::Automation,
             S::Accounts,
@@ -715,12 +724,16 @@ impl Coincide {
                 ));
             }
         }
+        if matches(S::Conversation, "send return composer keys") {
+            count += 1;
+            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Find uses Command / Control + F; Settings uses Command / Control + comma. Customize app commands in Keyboard."));
+        }
         if matches(
-            S::Conversation,
-            "keyboard shortcuts send return new search command palette",
+            S::Keyboard,
+            "keyboard shortcuts record reset disable command palette terminal font",
         ) {
             count += 1;
-            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Command / Control + N: new conversation; + F: find in conversation; + K: command palette; + comma: settings."));
+            content = content.child(self.keyboard_settings(cx));
         }
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
@@ -857,12 +870,37 @@ impl Coincide {
             .into_any_element()
     }
 
+    pub(super) fn keyboard_panel_visible(&self, cx: &Context<Self>) -> bool {
+        self.settings_open
+            && !self.session_import_open
+            && !self.bots_open
+            && !self.transcription_open
+            && !self.notifications_open
+            && !self.computer_use_open
+            && !self.media_settings_visible()
+            && !self.browser_settings_open
+            && !self.credentials_open
+            && !self.provider_settings.open
+            && !self.historical_image_is_open()
+            && !self.command_palette.read(cx).is_open()
+            && !self.media.close_requested
+            && !self.media.shutdown_requested
+            && settings_match(
+                self.settings_section,
+                SettingsSection::Keyboard,
+                self.settings_search.read(cx).value().as_ref(),
+                "keyboard shortcuts record reset disable command palette terminal font",
+            )
+    }
     pub(super) fn app_shortcut(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.record_shortcut_event(event, window, cx) {
+            return;
+        }
         let key = &event.keystroke;
         let terminal_owns = self
             .terminal_visible_thread
@@ -890,24 +928,77 @@ impl Coincide {
             cx.stop_propagation();
             return;
         }
+        if event.is_held || !window.is_window_active() {
+            return;
+        }
         #[cfg(target_os = "macos")]
         let command = key.modifiers.platform;
         #[cfg(not(target_os = "macos"))]
         let command = key.modifiers.control;
-        if !command || key.modifiers.alt || key.modifiers.shift || event.is_held {
-            return;
-        }
-        if key.key == "k" {
+        let custom = self.keyboard_command(
+            key,
+            terminal_owns,
+            browser_visible,
+            self.command_palette.read(cx).is_open(),
+        );
+        if custom == Some(keyboard_settings::Command::Palette) {
             self.toggle_palette(window, cx);
             cx.stop_propagation();
             return;
         }
         if self.command_palette.read(cx).is_open() {
+            if command && !key.modifiers.alt && !key.modifiers.shift {
+                cx.stop_propagation();
+            }
+            return;
+        }
+        // Focused terminals retain control sequences and their local bindings.
+        if terminal_owns {
+            return;
+        }
+        if let Some(command) = custom {
+            use keyboard_settings::Command as K;
+            match command {
+                K::NewThread => self.new_thread(window, cx),
+                K::Palette => unreachable!(),
+                K::Sidebar => {
+                    self.thread_list_open = !self.thread_list_open;
+                    if !self.thread_list_open && self.thread_list_focus.contains_focused(window, cx)
+                    {
+                        self.navigation_focus.focus(window, cx);
+                    }
+                    cx.notify();
+                }
+                K::Terminal => {
+                    if self.settings_open || self.schedules_open || self.selected.is_none() {
+                        return;
+                    }
+                    self.terminal(window, cx);
+                }
+                K::Schedules => {
+                    self.settings_open = false;
+                    self.workspace_open = false;
+                    self.session_import_open = false;
+                    self.schedules_open = !self.schedules_open;
+                    if self.schedules_open {
+                        self.refresh_schedules(cx);
+                    }
+                    self.sync_transcription_binding(cx);
+                    cx.notify();
+                }
+                K::Larger | K::Smaller | K::FontReset => {
+                    let size = match command {
+                        K::Larger => (self.conversation_font_size() + 1.).min(24.),
+                        K::Smaller => (self.conversation_font_size() - 1.).max(10.),
+                        _ => 13.,
+                    };
+                    self.change_setting("fontSize", json!(size), window, cx);
+                }
+            }
             cx.stop_propagation();
             return;
         }
-        // Keep terminal control sequences (Ctrl+N/F etc.) in the PTY.
-        if terminal_owns {
+        if !command || key.modifiers.alt || key.modifiers.shift {
             return;
         }
         match key.key.as_str() {
@@ -918,10 +1009,7 @@ impl Coincide {
                 self.sync_transcription_binding(cx);
                 cx.notify();
             }
-            "n" => self.new_thread(window, cx),
             "f" => {
-                // Native WebKit first-responder ownership is not represented by
-                // a GPUI focus handle. Leave browser-visible Cmd/Ctrl-F native.
                 if !transcript_find_shortcut_routes(self.selected.as_ref(), &self.browser_panels) {
                     return;
                 }

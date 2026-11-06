@@ -30,6 +30,7 @@ mod github_review;
 mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
+mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
@@ -344,6 +345,7 @@ struct Coincide {
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
+    keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
     steering: composer_steering::SteeringController,
@@ -976,6 +978,7 @@ impl Coincide {
             }
         });
         let sidebar_resize = navigation_resize::State::load(&engine);
+        let keyboard = keyboard_settings::State::new(cx);
         let mut this = Self {
             engine,
             quit_requested,
@@ -1012,6 +1015,7 @@ impl Coincide {
             thread_actions_open: false,
             settings_search,
             settings_section: Default::default(),
+            keyboard,
             usage_history,
             codex_limits,
             steering,
@@ -3746,6 +3750,7 @@ impl Render for Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         self.sync_sidebar_resize(window);
+        self.sync_keyboard_recording(window, cx);
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self
             .thread_list_open
