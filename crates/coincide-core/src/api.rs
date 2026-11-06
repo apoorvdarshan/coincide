@@ -31,6 +31,8 @@ mod background_workers;
 mod bot_engine;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
+#[path = "codex_tool_metadata.rs"]
+mod codex_tool_metadata;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
@@ -1700,8 +1702,18 @@ impl Engine {
                                         .find(|it| it["externalID"] == external)
                                     {
                                         existing["text"] = json!(item.to_string());
+                                        codex_tool_metadata::apply(
+                                            existing,
+                                            &self.runs[&id].provider,
+                                            item,
+                                        );
                                     } else {
                                         append(&mut v, "tool", &item.to_string(), Some(&external));
+                                        codex_tool_metadata::apply(
+                                            v["items"].as_array_mut().unwrap().last_mut().unwrap(),
+                                            &self.runs[&id].provider,
+                                            item,
+                                        );
                                     }
                                 }
                             }
