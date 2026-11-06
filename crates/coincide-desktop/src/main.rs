@@ -4146,6 +4146,7 @@ impl Render for Coincide {
                                                 .min_h_0()
                                                 .max_h(px(160.))
                                                 .flex_shrink_1()
+                                                .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                 .flex()
                                                 .flex_col()
                                                 .overflow_hidden()
@@ -4157,7 +4158,10 @@ impl Render for Coincide {
                                                         .min_h_0()
                                                         .max_h(px(160.))
                                                         .flex_shrink_1()
+                                                        .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                         .overflow_y_scroll()
+                                                        .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
+                                                        .when(!self.composer_files.opened, |view| view
                                                         .when(self.composer_selection_expanded(), |view| view.child(self.composer_selection_pane(cx)))
                                                         .when_some(
                                                             self.composer_steering_pane(cx),
@@ -4172,7 +4176,7 @@ impl Render for Coincide {
                                                         })
                                                         .when_some(draft_images, |view, images| {
                                                             view.child(images)
-                                                        })
+                                                        }))
                                                 )
                                                 .child(
                                                     gpui_kit::component::scroll::Scrollbar::vertical(
@@ -4193,7 +4197,7 @@ impl Render for Coincide {
                                                 ))
                                                 .child(
                                                     Textarea::new(&self.composer)
-                                                        .h(px(110.))
+                                                        .h(px(if self.composer_files.opened {56.} else {110.}))
                                                         .on_paste(move |item, _, cx| {
                                                             target
                                                                 .update(cx, |this, cx| {
@@ -4213,7 +4217,7 @@ impl Render for Coincide {
                                                 .min_w_0()
                                                 .gap_1()
                                                 .mt_2()
-                                                .child(self.composer_selection_footer(cx))
+                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
                                                 .child(
                                                     Button::new("attach-images")
@@ -4264,7 +4268,7 @@ impl Render for Coincide {
                                                     }),
                                                 )),
                                         )
-                                        .child(
+                                        .when(!self.composer_files.opened, |view| view.child(
                                             div()
                                                 .id("composer-status")
                                                 .mt_2()
@@ -4274,7 +4278,7 @@ impl Render for Coincide {
                                                 .text_sm()
                                                 .text_color(self.color(0xe4e9f2).opacity(0.7))
                                                 .child(self.status.clone()),
-                                        ),
+                                        )),
                                 ),
                         )
                     }),

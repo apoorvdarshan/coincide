@@ -89,6 +89,15 @@ native results do not close a full feature row.
   Close/Search reachable and adds file-specific accessibility labels; its final
   full desktop check passed. Fresh native acceptance is in progress. Automatic caret
   suggestions and broader named-profile options remain open.
+- The first ordinary 58609d3 file-picker native run found clipped controls when
+  existing reference cards occupied the composer accessory. One real scroll
+  confirmed the layout defect; an offscreen Search action did not establish an
+  imported-thread refusal. The run stopped with normal exit zero after 128.81s,
+  all four raw rows/imported sources/cache/FTS and frozen guards exact, one denied
+  Git probe and no file listing, attachment or restart. That failure remains
+  preserved. The follow-up gives the open picker the primary accessory viewport,
+  temporarily compacts the draft and hides competing footer/status content;
+  stored draft/context/selection are retained. Fresh native verification is pending.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
