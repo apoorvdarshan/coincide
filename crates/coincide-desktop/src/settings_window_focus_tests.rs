@@ -21,6 +21,9 @@ impl Render for FocusProbe {
 fn headless_settings_close_returns_focus_and_global_quit(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let quit = cx.update(crate::app_menu::install);
+    // This existing regression checks ordinary immediate Quit with the opt-out;
+    // the default-on hold/double-press paths have their own all-window fixture.
+    cx.update(|cx| crate::quit_shortcut::configure(&serde_json::json!({"holdToQuit":false}), cx));
     let (main, main_view) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| FocusProbe {

@@ -127,10 +127,52 @@ def main():
             return image
         return wait_for(f"presented native content for {stage}", presented_frame)
 
-    def quit_normally():
+    def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
+        """Target one observed sidebar word; never infer coordinates from layout."""
+        attempt = 0
+        def observed_target():
+            nonlocal attempt
+            name = f"{stage}-target-{attempt:03}"
+            attempt += 1
+            frame = capture(window, name)
+            # The native failure frame showed General correctly, while full-
+            # window OCR joined its icon and initial G into 'ceneral'. Read
+            # only the actual label strip at higher resolution; exact matching
+            # remains mandatory, and the original pixels remain in evidence.
+            left = 15 if word == "Search" else 44
+            assert left < max_x < frame.width, "Sidebar label crop must fit the observed native window"
+            crop = frame.crop((left, 0, max_x, frame.height))
+            crop_path = artifacts / f"{name}-labels.png"
+            crop.resize((crop.width * 3, crop.height * 3), Image.Resampling.LANCZOS).save(crop_path)
+            tsv = command("tesseract", str(crop_path), "stdout", "--psm", "6", "tsv", env=env)
+            (artifacts / f"{name}-locator.tsv").write_text(tsv)
+            matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
+                       if row["text"].strip().casefold() == word.casefold()
+                       and int(row["top"]) / 3 >= min_y]
+            if len(matches) != 1:
+                return None
+            row = matches[0]
+            return (left + (int(row["left"]) + int(row["width"]) / 2) / 3,
+                    (int(row["top"]) + int(row["height"]) / 2) / 3)
+        x, y = wait_for(f"one exact rendered sidebar target {word!r}", observed_target)
+        command("xdotool", "mousemove", "--window", window, str(round(x)), str(round(y)), "click", "1", env=env)
+
+    def quit_normally(*, guarded=False):
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
+        first = time.monotonic()
         command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
+        if guarded:
+            time.sleep(0.2)
+            assert process.poll() is None, "Hold-to-Quit must refuse the first brief native Ctrl+Q"
+            # Normal Quit freezes all Engine JSON admissions. A successful
+            # owner-bound request proves this is not merely a slow drain.
+            assert rpc("app.status")["running"] == [], "First Quit press must leave ordinary admissions live"
+            elapsed = time.monotonic() - first
+            assert elapsed < 1.5, "Second native Quit press must remain inside the product double-press interval"
+            command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
+            report["guardedQuitFirstPressAlive"] = True
+            report["guardedQuitSecondPressSeconds"] = elapsed
         assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
         process = None
         log.close()
@@ -141,6 +183,7 @@ def main():
         (artifacts / "software-vulkan.txt").write_text(vulkan)
         assert "llvmpipe" in vulkan.lower() or "lavapipe" in vulkan.lower(), "Software Vulkan was not selected"
         window = start("initial")
+        rpc("settings.patch", patch={"holdToQuit": False})
         created_project = rpc("projects.create", path=str(project), name="Native Linux smoke")
         thread = rpc("threads.create", projectId=created_project["id"])
         thread_id = thread["id"]
@@ -188,6 +231,15 @@ def main():
             "--name", "^General$", env=env).splitlines()[0])
         assert settings_window != window, "Settings must leave the conversation in its own window"
         capture(settings_window, "settings", "General")
+        # Exercise the real filtered navigation and provider panel, without
+        # clicking Check/Install/Login or executing any provider.
+        click_rendered_word(settings_window, "settings-search-target", "Search")
+        command("xdotool", "type", "--clearmodifiers", "Codex", env=env)
+        click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80)
+        capture(settings_window, "settings-provider-codex", "Executable")
+        click_rendered_word(settings_window, "settings-return-general", "General")
+        capture(settings_window, "settings-general-returned", "General")
+        report["checks"].append("native Settings search opened Codex provider page and returned to General without provider actions")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
@@ -213,12 +265,14 @@ def main():
         capture(window, "older-selected-before-quit", "keyboard draft")
         quit_normally()
         window = start("restart")
+        rpc("settings.patch", patch={"holdToQuit": True})
         wait_for("last selected older conversation restored automatically", lambda: rpc("app.status")["activeThread"] == thread_id)
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         capture(window, "reopened-draft", "keyboard draft")
         report["persistedDraftVerified"] = rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("normal Quit/reopen automatically restored older selected conversation and rendered its unsent native draft")
-        quit_normally()
+        quit_normally(guarded=True)
+        report["checks"].append("native Hold-to-Quit refused first brief Ctrl+Q and accepted the second within 1.5 seconds, with ordinary zero-exit drain")
         report["passed"] = True
     except BaseException as error:
         report["passed"] = False

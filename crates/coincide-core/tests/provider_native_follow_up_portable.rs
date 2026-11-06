@@ -92,7 +92,20 @@ fn fixture(root: &Path) {
         "threads.patch",
         json!({"threadId":id,"patch":{"draft":"synthetic interrupt message"}}),
     );
-    let source = engine.store.thread(&id).unwrap();
+    let payload_path = root.join("synthetic-follow-up-image.png");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([21, 43, 65]))
+        .save(&payload_path)
+        .unwrap();
+    let payload_image = coincide_core::attachments::ingest_image(
+        &engine.store.data_directory().unwrap(),
+        &payload_path,
+    )
+    .unwrap();
+    let payload_context = json!([{"id":uuid::Uuid::new_v4(),"kind":"quote","text":"Synthetic interrupt reference 👩🏽‍💻","future":{"keep":true}}]);
+    let mut source = engine.store.thread(&id).unwrap();
+    source["draftContext"] = payload_context.clone();
+    source["rustDraftImages"] = json!([payload_image]);
+    engine.store.save(&source).unwrap();
     let source = engine
         .choose_native_follow_up(&source, Behavior::Interrupt)
         .unwrap();
@@ -162,6 +175,22 @@ fn fixture(root: &Path) {
         "synthetic first turn"
     );
     let replacement = turns[1]["params"]["input"][0]["text"].as_str().unwrap();
+    assert!(replacement.contains("Synthetic interrupt reference 👩🏽‍💻"));
+    assert_eq!(turns[1]["params"]["input"][1]["type"], "localImage");
+    assert_eq!(
+        turns[1]["params"]["input"][1]["path"],
+        source["rustDraftImages"][0]["path"]
+    );
+    let interrupted_saved = engine.store.thread(&id).unwrap();
+    let delivered = interrupted_saved["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "user" && item["text"] == "synthetic interrupt message")
+        .unwrap();
+    assert_eq!(delivered["context"], payload_context);
+    assert_eq!(delivered["rustImages"], source["rustDraftImages"]);
+
     assert_eq!(replacement.matches("synthetic first turn").count(), 1);
     assert_eq!(
         replacement.matches("synthetic interrupt message").count(),
@@ -397,6 +426,79 @@ fn fixture(root: &Path) {
     assert_eq!(resumes.len(), 2);
     assert_eq!(resumes[1]["params"]["threadId"], first_native);
     assert_eq!(engine.provider_workers_status().returned, 3);
+    // Explicit native Send now also admits a paused named queue through the
+    // real account/catalog/native-session path, preserving its separate draft.
+    call(&mut engine, "agent.queue.pause", json!({"threadId":id}));
+    let mut source = engine.store.thread(&id).unwrap();
+    let mut queue_source = source.clone();
+    queue_source["rustDraftImages"] = json!([]);
+    let immediate =
+        coincide_core::message_queue::add(&mut queue_source, "synthetic named Send now delta")
+            .unwrap();
+    source["rustMessageQueue"] = queue_source["rustMessageQueue"].clone();
+    let row = source["rustMessageQueue"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    row["context"] = payload_context.clone();
+    row["rustImages"] = json!([payload_image]);
+    let immediate_id = immediate.id.clone();
+    engine.store.save(&source).unwrap();
+    let immediate = serde_json::to_value(
+        coincide_core::message_queue::read(&source)
+            .unwrap()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
+    let ticket = engine.native_send_queued_now(&source, &immediate).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Send,
+            draft_cleared: false
+        }
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    wait(
+        &mut engine,
+        "native paused named Send now and actual worker join",
+        |engine| {
+            engine.provider_workers_status().running == 0
+                && engine.store.thread(&id).unwrap()["rustMessageQueue"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == immediate_id && row["state"] == "completed")
+        },
+    );
+    let after_now = engine.store.thread(&id).unwrap();
+    for field in ["draft", "draftContext", "rustDraftImages", "future"] {
+        assert_eq!(after_now[field], source[field]);
+    }
+    let wire: Vec<Value> = fs::read_to_string(root.join("wire.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let turns: Vec<_> = wire
+        .iter()
+        .filter(|frame| frame["method"] == "turn/start")
+        .collect();
+    assert_eq!(turns.len(), 7);
+    let now_text = turns[6]["params"]["input"][0]["text"].as_str().unwrap();
+    assert!(
+        now_text.contains("synthetic named Send now delta")
+            && now_text.contains("Synthetic interrupt reference 👩🏽‍💻")
+    );
+    assert!(!now_text.contains("Earlier conversation context"));
+    assert_eq!(turns[6]["params"]["input"][1]["type"], "localImage");
+    assert_eq!(
+        turns[6]["params"]["input"][1]["path"],
+        serde_json::to_value(&payload_image).unwrap()["path"]
+    );
+    assert_eq!(engine.provider_workers_status().returned, 4);
     // A frozen selection is never silently redirected into another account.
     let second_account = call(
         &mut engine,
@@ -482,7 +584,7 @@ fn fixture(root: &Path) {
     });
     engine.close_store_after_core_shutdown().unwrap();
     println!(
-        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; named queued delta/account boundary/unrelated composer preserved; restart queue claim never replayed; six saved/joined provider returns PASS"
+        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; named queued delta/account boundary/unrelated composer preserved; restart queue claim never replayed; paused named native Send now preserved separate draft; seven saved/joined provider returns PASS"
     );
 }
 fn provider() {

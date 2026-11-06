@@ -395,6 +395,7 @@ impl Session {
     pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
         self.steer_exact(text, &self.steering_identity()?)
     }
+    #[cfg(test)]
     pub(crate) fn steer_exact(
         &self,
         text: &str,
@@ -404,6 +405,18 @@ impl Session {
             .as_ref()
             .context("Active-turn steering is supported only for Codex")?
             .submit_exact(text, identity)
+    }
+    pub(crate) fn steer_input_exact(
+        &self,
+        text: &str,
+        images: &[ImageAttachment],
+        identity: &(String, String),
+    ) -> Result<codex_steering::Ticket> {
+        validate_images(&Provider::from_name("codex")?, images)?;
+        self.steering
+            .as_ref()
+            .context("Active-turn steering is supported only for Codex")?
+            .submit_input_exact(text, images, identity)
     }
     pub(crate) fn take_usage(&self) -> Option<usage_capture::Snapshot> {
         self.usage.lock().ok()?.take()

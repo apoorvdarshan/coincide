@@ -810,6 +810,34 @@ fn run_worker(
     }
 }
 
+#[derive(Default)]
+struct Activation {
+    listed: Option<bool>,
+    requested: bool,
+}
+#[derive(Debug, PartialEq, Eq)]
+enum Activate {
+    None,
+    Focus,
+    Create,
+}
+impl Activation {
+    fn take(&mut self, visible: bool, panes: bool, stopping: bool) -> Activate {
+        if !visible || stopping || self.listed == Some(false) {
+            self.requested = false;
+            return Activate::None;
+        }
+        if self.listed != Some(true) || !self.requested {
+            return Activate::None;
+        }
+        self.requested = false;
+        if panes {
+            Activate::Focus
+        } else {
+            Activate::Create
+        }
+    }
+}
 pub struct TerminalWorkspace {
     thread: String,
     tabs: Vec<Tab>,
@@ -824,6 +852,7 @@ pub struct TerminalWorkspace {
     context_shutdown_receipts: Vec<std::result::Result<Value, String>>,
     visible: bool,
     watch_dirty: bool,
+    activation: Activation,
     stopping: Arc<AtomicBool>,
     completion: coincide_core::agent::WorkerCompletion,
     _poll: Task<()>,
@@ -870,9 +899,27 @@ impl TerminalWorkspace {
             context_shutdown_receipts: vec![],
             visible: true,
             watch_dirty: false,
+            activation: Activation::default(),
             stopping,
             completion,
             _poll: poll,
+        }
+    }
+    /// Explicit panel-open action only. Existing PTYs are discovered before a
+    /// first shell can be created, so reopening cannot duplicate a running tab.
+    pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.activation.requested = true;
+        self.activate_pending(window, cx);
+    }
+    fn activate_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.activation.take(
+            self.visible,
+            !self.panes.is_empty(),
+            self.stopping.load(Ordering::Acquire),
+        ) {
+            Activate::None => (),
+            Activate::Focus => self.focus_active(window, cx),
+            Activate::Create => self.create(None, window, cx),
         }
     }
     /// Stops only this UI transport. Engine owns the actual PTY children and IO.
@@ -925,6 +972,7 @@ impl TerminalWorkspace {
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         let visible = visible && !self.stopping.load(Ordering::Acquire);
         if !visible {
+            self.activation.requested = false;
             self.invalidate_context();
             self.revoke_inputs(cx);
         }
@@ -1103,6 +1151,7 @@ impl TerminalWorkspace {
                     }
                 }
                 Update::Listed(Ok(tabs)) => {
+                    let mut adoption_ready = true;
                     for tab in tabs.iter().take(MAX_PANES) {
                         if let Some(id) = tab["terminalId"].as_str() {
                             if self
@@ -1119,12 +1168,19 @@ impl TerminalWorkspace {
                             } else {
                                 self.panes.remove(&key);
                                 self.notice = "Could not attach existing terminal".into();
+                                adoption_ready = false;
                             }
+                        } else {
+                            adoption_ready = false;
                         }
                     }
+                    self.activation.listed = Some(adoption_ready);
                     self.watch();
                 }
-                Update::Listed(Err(error)) => self.notice = error.to_string(),
+                Update::Listed(Err(error)) => {
+                    self.activation.listed = Some(false);
+                    self.notice = error.to_string();
+                }
                 Update::Bound(key, result) => match result {
                     Ok(id) => {
                         if let Some(p) = self.panes.get_mut(&key) {
@@ -1170,6 +1226,9 @@ impl TerminalWorkspace {
                     match result {
                         Ok(()) => {
                             self.remove(key);
+                            if self.panes.is_empty() {
+                                cx.emit(TerminalContextEvent::LastClosed);
+                            }
                             self.focus_active(window, cx);
                         }
                         Err(error) => {
@@ -1208,6 +1267,7 @@ impl TerminalWorkspace {
                 }
             }
         }
+        self.activate_pending(window, cx);
         if self.watch_dirty {
             self.watch();
         }
@@ -2114,6 +2174,46 @@ mod tests {
     use coincide_core::terminal::selected_text;
     use std::sync::{Arc, Mutex};
 
+    #[::core::prelude::v1::test]
+    fn explicit_open_waits_for_listing_and_never_duplicates_adopted_or_failed_shells() {
+        let mut state = Activation {
+            requested: true,
+            ..Activation::default()
+        };
+        assert_eq!(state.take(true, false, false), Activate::None);
+        state.listed = Some(true);
+        assert_eq!(state.take(true, true, false), Activate::Focus);
+        assert_eq!(state.take(true, false, false), Activate::None);
+        state.requested = true;
+        assert_eq!(state.take(true, false, false), Activate::Create);
+        assert_eq!(
+            state.take(true, false, false),
+            Activate::None,
+            "only one create per explicit open"
+        );
+        state.requested = true;
+        state.listed = Some(false);
+        assert_eq!(state.take(true, false, false), Activate::None);
+        state.listed = Some(true);
+        assert_eq!(
+            state.take(true, false, false),
+            Activate::None,
+            "failed discovery cannot authorize a later create"
+        );
+        state.requested = true;
+        assert_eq!(state.take(false, false, false), Activate::None);
+        assert_eq!(
+            state.take(true, false, false),
+            Activate::None,
+            "hiding cancels first-open activation"
+        );
+        state.requested = true;
+        assert_eq!(
+            state.take(true, false, true),
+            Activate::None,
+            "shutdown never starts a shell"
+        );
+    }
     #[::core::prelude::v1::test]
     fn stopping_ui_worker_releases_bounded_publisher_and_discards_queued_create() {
         let stop = Arc::new(AtomicBool::new(false));

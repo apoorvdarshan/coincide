@@ -39,6 +39,8 @@ impl Coincide {
             app_menu::EditContext::Unverified
         };
         app_menu::set_context(cx, context);
+        let selection_available = self.selection_to_composer_available(window, cx);
+        app_menu::set_selection_available(cx, selection_available);
         for request in app_menu::take_requests(cx) {
             match request {
                 app_menu::MenuRequest::Settings => {

@@ -450,6 +450,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        quit_shortcut::configure(&self.settings, cx);
         self.sync_provider_configuration_settings(window, cx);
         self.appshots.sync(&self.settings);
         if provider_preferences_changed {
@@ -459,6 +460,10 @@ impl Coincide {
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
         self.apply_appearance(window, cx);
+        if self.terminal_open {
+            self.ensure_terminal_space(window);
+        }
+        self.sync_terminal_resize(window);
         // Virtualized rows cache their measured height and presentation.
         self.transcript_list
             .splice(0..self.transcript_count, self.transcript_count);
@@ -847,7 +852,25 @@ impl Coincide {
                     ),
             );
         }
+        if matches(
+            S::Appearance,
+            "open project folders editor terminal file manager application automatic",
+        ) {
+            count += 1;
+            content = content.child(self.open_target_settings(cx));
+        }
         for (section, terms, label, key, fallback, choices) in [
+            (
+                S::Appearance,
+                "terminal placement bottom right panel drawer inspector",
+                "Terminal",
+                "terminalPlacement",
+                json!("bottom"),
+                vec![
+                    ("Bottom panel", json!("bottom")),
+                    ("Right panel", json!("right")),
+                ],
+            ),
             (
                 S::Appearance,
                 "reply font serif system typeface",
@@ -882,6 +905,66 @@ impl Coincide {
                     ("Return", json!(true)),
                     ("Command / Control + Return", json!(false)),
                 ],
+            ),
+            (
+                S::Conversation,
+                "follow up behavior steer queue interrupt running agent new threads",
+                "Follow-up behavior for new threads",
+                "followUpBehavior",
+                json!("steer"),
+                vec![
+                    ("Steer", json!("steer")),
+                    ("Queue", json!("queue")),
+                    ("Interrupt", json!("interrupt")),
+                ],
+            ),
+            (
+                S::Conversation,
+                "new threads default access approval full commands edit files",
+                "Access for new threads",
+                "defaultAccessMode",
+                // Match the actual new-thread/Project Defaults fallback when
+                // no preference was saved; rendering never grants more access.
+                json!("approval"),
+                vec![
+                    ("Ask before changes", json!("approval")),
+                    ("Full access", json!("fullAccess")),
+                ],
+            ),
+            (
+                S::Conversation,
+                "new thread starts chat project command n",
+                "New Thread starts a chat",
+                "newThreadStartsChat",
+                json!(false),
+                vec![("On", json!(true)), ("Off", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "hold quit keyboard command control q double press exit",
+                "Hold Command / Control + Q to quit",
+                "holdToQuit",
+                json!(true),
+                vec![("On", json!(true)), ("Off", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "confirm deleting delete threads history",
+                "Confirm before deleting threads",
+                "confirmBeforeDeletingThreads",
+                json!(true),
+                vec![
+                    ("Ask", json!(true)),
+                    ("Skip for idle threads", json!(false)),
+                ],
+            ),
+            (
+                S::Conversation,
+                "confirm archiving archive threads",
+                "Confirm before archiving threads",
+                "confirmBeforeArchivingThreads",
+                json!(true),
+                vec![("Ask", json!(true)), ("Archive immediately", json!(false))],
             ),
         ] {
             if matches(section, terms) {

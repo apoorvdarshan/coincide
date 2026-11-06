@@ -1,4 +1,4 @@
-//! One in-flight, source-bound Codex text steering request. No fallback send.
+//! One in-flight, source-bound Codex steering request with prepared images. No fallback send.
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -21,7 +21,7 @@ pub(crate) struct Client {
 }
 struct Command {
     identity: (String, String),
-    text: String,
+    input: Vec<Value>,
     reply: SyncSender<Outcome>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,21 +84,44 @@ impl Client {
     pub(crate) fn submit(&self, text: &str) -> Result<Ticket> {
         self.submit_exact(text, &self.identity()?)
     }
+    #[cfg(test)]
     pub(crate) fn submit_exact(&self, text: &str, expected: &(String, String)) -> Result<Ticket> {
         ensure!(
             !text.trim().is_empty() && text.len() <= 1024 * 1024,
             "Steering text must be nonempty and fit within 1 MiB"
+        );
+        self.submit_input_exact(text, &[], expected)
+    }
+    pub(crate) fn submit_input_exact(
+        &self,
+        text: &str,
+        images: &[super::ImageAttachment],
+        expected: &(String, String),
+    ) -> Result<Ticket> {
+        super::validate_images(&super::Provider::from_name("codex")?, images)?;
+        ensure!(
+            (!text.trim().is_empty() || !images.is_empty()) && text.len() <= 2 * 1024 * 1024,
+            "Prepared steering input exceeds safe limits"
         );
         let identity = self.identity()?;
         ensure!(
             &identity == expected,
             "Acknowledged steering turn changed before delivery"
         );
+        let mut input = Vec::new();
+        if !text.is_empty() {
+            input.push(json!({"type":"text","text":text}));
+        }
+        input.extend(
+            images
+                .iter()
+                .map(|image| json!({"type":"localImage","path":image.path()})),
+        );
         let (reply, receiver) = mpsc::sync_channel(1);
         self.commands
             .try_send(Command {
                 identity,
-                text: text.into(),
+                input,
                 reply,
             })
             .map_err(|_| anyhow::anyhow!("Codex steering is busy or unavailable"))?;
@@ -159,7 +182,7 @@ impl Server {
             return None;
         }
         let id = Uuid::new_v4().to_string();
-        let request = json!({"id":id,"method":"turn/steer","params":{"threadId":command.identity.0,"expectedTurnId":command.identity.1,"input":[{"type":"text","text":command.text}]}});
+        let request = json!({"id":id,"method":"turn/steer","params":{"threadId":command.identity.0,"expectedTurnId":command.identity.1,"input":command.input}});
         self.pending = Some(Pending {
             id,
             identity: command.identity,

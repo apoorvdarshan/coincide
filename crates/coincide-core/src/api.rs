@@ -1,4 +1,6 @@
 //! One command dispatcher for the desktop and the local CLI/API.
+#[path = "reply_selection_api.rs"]
+mod reply_selection_api;
 use crate::{
     agent::{self, Event, Launch, Provider, Session},
     store::{Store, swift_timestamp, text},
@@ -168,7 +170,7 @@ pub struct ProviderWorkersStatus {
 enum SendOrigin {
     Ordinary,
     Scheduled,
-    Queued(queue_dispatch::QueueClaim),
+    Queued(Box<queue_dispatch::QueueClaim>),
 }
 impl SendOrigin {
     fn consumes_composer(&self) -> bool {
@@ -945,7 +947,7 @@ impl Engine {
         self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
         if let SendOrigin::Queued(claim) = origin {
             ensure!(
-                expected_scope.is_none() && !force_fresh,
+                expected_scope.is_none() && (!force_fresh || claim.permits_fresh_replacement()),
                 "Queued dispatch cannot borrow replacement authority"
             );
             claim.validate(self.thread_bulk_owner, &id, prompt, &v)?;
@@ -966,10 +968,10 @@ impl Engine {
             "Attach references through composer.context.edit before sending"
         );
         // Scheduled/queued turns never consume the user's unrelated composer.
-        let context = if !origin.consumes_composer() {
-            Value::Null
-        } else {
-            v["draftContext"].clone()
+        let context = match origin {
+            SendOrigin::Queued(claim) => claim.context().clone(),
+            SendOrigin::Scheduled => Value::Null,
+            SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
@@ -1021,7 +1023,9 @@ impl Engine {
             None
         };
         let draft_images: Vec<crate::attachments::StoredImage> =
-            if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
+            if let SendOrigin::Queued(claim) = origin {
+                claim.images().to_vec()
+            } else if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
                 Vec::new()
             } else {
                 ensure!(
@@ -1514,7 +1518,7 @@ impl Engine {
                     return Ok(false);
                 };
                 let prompt = claim.text().to_owned();
-                let origin = SendOrigin::Queued(claim);
+                let origin = SendOrigin::Queued(Box::new(claim));
                 match self.send_turn_if_unchanged(
                     &json!({"threadId":id,"text":prompt}),
                     &origin,

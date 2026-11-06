@@ -7,9 +7,13 @@ pub struct PreparedThreadDeletion {
     source: (PathBuf, crate::private_fs::Identity),
     version: DeleteVersion,
     rows: Vec<DeleteRow>,
+    unconfirmed_sidebar: bool,
 }
 
 impl PreparedThreadDeletion {
+    pub fn requires_confirmation(&self) -> bool {
+        !self.unconfirmed_sidebar
+    }
     pub fn count(&self) -> usize {
         self.rows.len()
     }
@@ -186,6 +190,7 @@ impl Engine {
             source,
             version,
             rows,
+            unconfirmed_sidebar: false,
         })
     }
     /// Explicit sidebar review for ordinary conversations, including unarchived
@@ -213,7 +218,23 @@ impl Engine {
             source,
             version,
             rows,
+            unconfirmed_sidebar: false,
         })
+    }
+    /// Only the initial idle sidebar action uses this entry point. A previous
+    /// wait/Stop/recovery and Archive's Delete All use reviewed preparation.
+    /// The opaque plan still binds exact rows, Store identity and DB version.
+    pub fn prepare_native_sidebar_conversation_deletion(
+        &mut self,
+        ids: &[String],
+    ) -> Result<PreparedThreadDeletion> {
+        let suppress = self
+            .store
+            .document("settings.json")?
+            .is_some_and(|settings| settings["confirmBeforeDeletingThreads"] == false);
+        let mut plan = self.prepare_native_conversation_deletion(ids)?;
+        plan.unconfirmed_sidebar = suppress;
+        Ok(plan)
     }
     /// Call only from the native Delete confirmation callback. Consumes the
     /// reviewed plan; any stale/failing confirmation requires a new review.
@@ -232,6 +253,15 @@ impl Engine {
             .map(|row| row.id.clone())
             .collect::<Vec<_>>();
         self.archive_delete_admitted(&ids, true)?;
+        if prepared.unconfirmed_sidebar {
+            ensure!(
+                self.store
+                    .document("settings.json")?
+                    .is_some_and(|settings| settings["confirmBeforeDeletingThreads"] == false),
+                "Delete confirmation preference changed; review again"
+            );
+        }
+
         self.store
             .validate_delete_rows(prepared.version, &prepared.rows)?;
         // Revocations are intentionally before SQL. A later SQL rollback may
@@ -566,6 +596,141 @@ mod tests {
             engine
                 .unrevoked_provider_session(&selected, "codex")
                 .is_err()
+        );
+    }
+    #[test]
+    fn only_explicit_false_allows_initial_sidebar_confirmation_opt_out() {
+        for preference in [
+            Value::Null,
+            json!(true),
+            json!("false"),
+            json!(0),
+            json!(false),
+        ] {
+            let (_dir, mut engine, id) = fixture();
+            engine
+                .store
+                .save_document(
+                    "settings.json",
+                    &json!({"confirmBeforeDeletingThreads":preference,"future":{"keep":9}}),
+                )
+                .unwrap();
+            let source = engine.store.thread(&id).unwrap();
+            let plan = engine
+                .prepare_native_sidebar_conversation_deletion(std::slice::from_ref(&id))
+                .unwrap();
+            assert_eq!(plan.requires_confirmation(), preference != false);
+            assert_eq!(
+                engine.store.thread(&id).unwrap(),
+                source,
+                "preparing never deletes"
+            );
+            // Archive Delete All and every wait/recovery path retain reviewed preparation.
+            assert!(
+                engine
+                    .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                    .unwrap()
+                    .requires_confirmation()
+            );
+            assert!(
+                engine
+                    .prepare_native_conversation_deletion(std::slice::from_ref(&id))
+                    .unwrap()
+                    .requires_confirmation()
+            );
+        }
+    }
+    #[test]
+    fn unconfirmed_delete_rechecks_preference_and_rows_and_keeps_undo_unknowns() {
+        for change in ["preference", "row", "none"] {
+            let (_dir, mut engine, id) = fixture();
+            engine
+                .store
+                .save_document(
+                    "settings.json",
+                    &json!({"confirmBeforeDeletingThreads":false}),
+                )
+                .unwrap();
+            let original = engine.store.thread(&id).unwrap();
+            let plan = engine
+                .prepare_native_sidebar_conversation_deletion(std::slice::from_ref(&id))
+                .unwrap();
+            assert!(!plan.requires_confirmation());
+            match change {
+                "preference" => engine
+                    .store
+                    .save_document(
+                        "settings.json",
+                        &json!({"confirmBeforeDeletingThreads":true}),
+                    )
+                    .unwrap(),
+                "row" => {
+                    engine
+                        .store
+                        .patch_thread(
+                            &id,
+                            &json!({"draft":"new draft after initial delete action"}),
+                        )
+                        .unwrap();
+                }
+                _ => (),
+            }
+            let latest = engine.store.thread(&id).unwrap();
+            let result = engine.apply_native_thread_deletion(plan);
+            if change == "none" {
+                let undo = result.unwrap();
+                assert!(engine.store.thread(&id).is_err());
+                engine.undo_native_thread_deletion(&undo).unwrap();
+                assert_eq!(engine.store.thread(&id).unwrap(), original);
+            } else {
+                assert!(result.is_err(), "{change}");
+                assert_eq!(engine.store.thread(&id).unwrap(), latest);
+            }
+        }
+    }
+    #[test]
+    fn initial_delete_opt_out_never_bypasses_actual_worker_return() {
+        let (_dir, mut engine, id) = fixture();
+        engine
+            .store
+            .save_document(
+                "settings.json",
+                &json!({"confirmBeforeDeletingThreads":false}),
+            )
+            .unwrap();
+        let source = engine.store.thread(&id).unwrap();
+        let (release, held) = std::sync::mpsc::channel();
+        let session = Session::fixture_worker(move |_, events| {
+            events.send(Event::Finished).unwrap();
+            held.recv().unwrap();
+        });
+        assert!(matches!(
+            session
+                .events
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap(),
+            Event::Finished
+        ));
+        let worker = session.worker_completion();
+        engine.provider_workers.push(worker.clone());
+        assert!(
+            engine
+                .prepare_native_sidebar_conversation_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        assert_eq!(engine.store.thread(&id).unwrap(), source);
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == agent::WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        // The UI's waiting path deliberately uses this reviewed entry point.
+        assert!(
+            engine
+                .prepare_native_conversation_deletion(std::slice::from_ref(&id))
+                .unwrap()
+                .requires_confirmation()
         );
     }
 }

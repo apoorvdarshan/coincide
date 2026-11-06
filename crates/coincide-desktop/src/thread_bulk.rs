@@ -147,9 +147,13 @@ impl State {
                 // transaction starts. A committed result is always published.
                 allowed(&admission, &epoch, generation)?;
                 match request {
-                    Request::Prepare(ids, action) => Ok(Effect::Prepared(Arc::new(
-                        engine.prepare_thread_flags(&ids, action)?,
-                    ))),
+                    Request::Prepare(ids, action) => {
+                        Ok(Effect::Prepared(Arc::new(if action == Action::Archive {
+                            engine.prepare_native_archive_flags(&ids)?
+                        } else {
+                            engine.prepare_thread_flags(&ids, action)?
+                        })))
+                    }
                     Request::Apply(proof) => Ok(Effect::Applied(Arc::new(
                         engine.apply_thread_flags(&proof)?,
                     ))),
@@ -292,6 +296,17 @@ impl Coincide {
             self.status = self.thread_bulk.status.clone();
             self.refresh(cx);
         }
+        // Only a current native plan prepared under an explicit opt-out can
+        // auto-apply. Its previous worker has actually joined before this starts.
+        if !self.thread_bulk.busy()
+            && self
+                .thread_bulk
+                .review
+                .as_ref()
+                .is_some_and(|proof| !proof.requires_confirmation() && proof.count() > 0)
+        {
+            self.apply_bulk(cx);
+        }
         if previous != self.thread_bulk.status || was_busy != self.thread_bulk.busy() {
             self.status = self.thread_bulk.status.clone();
             cx.notify();
@@ -410,8 +425,16 @@ impl Coincide {
         }
         if let Some(proof) = self.thread_bulk.review.clone() {
             if proof.count() > 0 {
-                self.thread_bulk
-                    .spawn(self.engine.clone(), Request::Apply(proof));
+                let unconfirmed = !proof.requires_confirmation();
+                if self
+                    .thread_bulk
+                    .spawn(self.engine.clone(), Request::Apply(proof))
+                    && unconfirmed
+                {
+                    // A failed opt-out transaction needs a fresh explicit action;
+                    // never retry its stale proof automatically on later polls.
+                    self.thread_bulk.review = None;
+                }
             }
         }
         cx.notify();

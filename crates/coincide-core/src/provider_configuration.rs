@@ -529,6 +529,7 @@ fn legacy_provider<'a>(settings: &'a Value, provider: &str) -> Option<&'a Value>
             .map(|pair| &pair[1])
     }
 }
+#[cfg(test)]
 fn legacy_environment(settings: &Value, provider: &str) -> Option<Value> {
     legacy_provider(settings, provider)?
         .get("environment")

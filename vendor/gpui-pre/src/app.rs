@@ -3591,6 +3591,11 @@ pub enum InputPreference {
 /// A keystroke event, and potentially the associated action
 #[derive(Debug)]
 pub struct KeystrokeEvent {
+    /// Actual platform KeyDownEvent repeat state for pre-dispatch interceptors.
+    /// None for synthesized modifier strokes and post-dispatch observers, where
+    /// no original key-down event is retained. Never infer repeats from timing.
+    pub is_held: Option<bool>,
+
     /// The keystroke that occurred
     pub keystroke: Keystroke,
 

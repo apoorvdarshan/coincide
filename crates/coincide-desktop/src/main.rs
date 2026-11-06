@@ -29,6 +29,8 @@ mod composer_steering_mount;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
+mod context_details;
+mod context_details_mount;
 mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
@@ -65,6 +67,8 @@ mod provider_settings;
 mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
+mod quit_shortcut;
+mod reply_selection_mount;
 mod scheduling;
 mod session_import;
 mod settings;
@@ -77,6 +81,7 @@ mod sidebar_lifecycle;
 mod sidebar_preferences;
 mod sidebar_search;
 mod terminal_context_mount;
+mod terminal_layout;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
@@ -391,6 +396,7 @@ struct Coincide {
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
     appshots: appshots::State,
+    context_details: context_details_mount::State,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -439,6 +445,7 @@ struct Coincide {
     schedule_status: String,
     _poll: Task<()>,
     terminal_open: bool,
+    terminal_layout: terminal_layout::State,
     terminal_workspaces:
         std::collections::HashMap<String, Entity<terminal_workspace::TerminalWorkspace>>,
     terminal_visible_thread: Option<String>,
@@ -781,6 +788,7 @@ impl Coincide {
             .unwrap_or(false)
         });
         let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
+        quit_shortcut::configure(&settings, cx);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("Write a message…")
@@ -1143,6 +1151,7 @@ impl Coincide {
             .collect();
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
+        let terminal_layout = terminal_layout::State::load(&engine);
         let mut this = Self {
             engine,
             quit_requested,
@@ -1200,6 +1209,7 @@ impl Coincide {
             main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
             appshots: appshots::State::new(cx),
+            context_details: Default::default(),
             keyboard,
             usage_history,
             codex_limits,
@@ -1248,6 +1258,7 @@ impl Coincide {
             schedule_status: String::new(),
             _poll: poll,
             terminal_open: false,
+            terminal_layout,
             terminal_workspaces: Default::default(),
             terminal_visible_thread: None,
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
@@ -1493,6 +1504,8 @@ impl Coincide {
             .map(|mut engine| engine.browser_requests.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
         let image_viewer_open = self.historical_image_is_open();
+        let terminal_right = self.terminal_on_right();
+        let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
         let Some(browser) = &mut self.browser else {
             return;
         };
@@ -1500,6 +1513,10 @@ impl Coincide {
         for request in requests {
             match &request.action {
                 BrowserAction::Show => {
+                    if terminal_right && selected_id.as_deref() == Some(request.thread_id.as_str())
+                    {
+                        self.terminal_open = false;
+                    }
                     self.browser_panels.insert(request.thread_id.clone());
                 }
                 BrowserAction::Hide => {
@@ -1794,6 +1811,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.context_details.invalidate();
                     self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
@@ -2745,6 +2763,7 @@ impl Coincide {
             .as_ref()
             .is_some_and(|guard| guard.take_requested());
         if native_quit {
+            quit_shortcut::cancel(cx);
             self.native_quit_observed = true;
         }
         if (menu_quit || native_quit) && !self.block_provider_configuration_close(window, cx) {
@@ -2761,12 +2780,13 @@ impl Coincide {
         self.poll_thread_bulk(window, cx);
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
-        self.poll_sidebar_lifecycle(cx);
+        self.poll_sidebar_lifecycle(window, cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
         if self.media.shutdown_requested {
+            quit_shortcut::cancel(cx);
             if self.poll_global_quit(window, cx) {
                 self.finish_normal_quit(cx);
             }
@@ -3519,13 +3539,6 @@ impl Coincide {
                 cx.notify();
                 return;
             }
-            if self.running.contains(&text(thread, "id"))
-                && coincide_core::composer_context::has_context(context)
-            {
-                self.status = "Follow-up messages currently support text only. Keep the attached references for a direct send after the current turn.".into();
-                cx.notify();
-                return;
-            }
         }
         if self.selection_send_blocked() {
             self.retry_selected_account_readiness();
@@ -3660,7 +3673,7 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
-        let context_pane = self.transcript_context_pane(&item["context"]);
+        let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         let previews = images
             .iter()
             .take(20)
@@ -3980,7 +3993,29 @@ impl Coincide {
             return;
         }
         self.terminal_open = !self.terminal_open;
+        if self.terminal_open && self.terminal_on_right() {
+            self.ensure_terminal_space(window);
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))
+            {
+                self.browser_action(BrowserAction::Hide, None, cx);
+                if let Some(thread) = &self.selected {
+                    self.browser_panels.remove(&text(thread, "id"));
+                }
+                if let Some(browser) = &mut self.browser {
+                    browser.set_thread_visible(None, cx);
+                }
+            }
+        }
         self.sync_terminal_workspace(window, cx);
+        if self.terminal_open
+            && let Some(id) = &self.terminal_visible_thread
+            && let Some(workspace) = self.terminal_workspaces.get(id).cloned()
+        {
+            workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
+        }
         cx.notify();
     }
     fn sync_terminal_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4087,6 +4122,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_context_details();
         // Revoke image-modal input immediately on either close path, before its
         // ordinary conversation surface is replaced by cleanup-only controls.
         if self.media.close_requested || self.media.shutdown_requested {
@@ -4181,6 +4217,7 @@ impl Render for Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         self.sync_sidebar_resize(window);
+        self.sync_terminal_resize(window);
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
         self.sync_automatic_file_mentions(window, cx);
@@ -4323,16 +4360,21 @@ impl Render for Coincide {
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         let historical_image = self.historical_image_overlay(cx);
+        let terminal_bottom = self.terminal_surface(false, window, cx);
+        let terminal_right = self.terminal_surface(true, window, cx);
         div()
             .relative()
             .capture_key_down(
                 cx.listener(|this, event, window, cx| {
-                    if !this.project_defaults_key(event, window, cx)
-                        && !this.historical_image_shortcut(event, window, cx) {
+                    if !this.context_details_shortcut(event, window, cx)
+                        && !this.project_defaults_key(event, window, cx)
+                        && !this.historical_image_shortcut(event, window, cx)
+                        && !this.reply_selection_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
                 }),
             )
+            .on_action(cx.listener(|this,_:&app_menu::AddSelectionToComposer,window,cx|this.add_selection_to_composer(window,cx)))
             .flex()
             .size_full()
             .bg(self.color(0x10141c))
@@ -4392,20 +4434,7 @@ impl Render for Coincide {
                     )
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
-                    .when(self.terminal_visible_thread.is_some(), |view| {
-                        view.child(
-                            div()
-                                .id("terminal-workspace-surface")
-                                .h(px(320.))
-                                .min_h(px(140.))
-                                .flex_shrink_1()
-                                .child(
-                                    self.terminal_workspaces
-                                        [self.terminal_visible_thread.as_ref().unwrap()]
-                                    .clone(),
-                                ),
-                        )
-                    })
+                    .when_some(terminal_bottom,|view,pane|view.child(pane))
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -4581,9 +4610,11 @@ impl Render for Coincide {
                         )
                     }),
             )
+            .when_some(terminal_right,|view,pane|view.child(pane))
             .when_some(browser_pane, |view, pane| view.child(pane))
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| view.child(form))
+            .when_some(self.context_details_overlay(cx), |view, details| view.child(details))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()

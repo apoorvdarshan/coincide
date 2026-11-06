@@ -244,3 +244,119 @@ fn invalid_selection_bounds_duplicate_identity_malformed_flags_and_closed_store_
     assert!(engine.apply_thread_flags(&preview).is_err());
     assert_eq!(raw(&root, &ids[1]), before);
 }
+
+#[test]
+fn native_bulk_archive_confirmation_opt_out_is_explicit_and_transactionally_rechecked() {
+    for preference in [
+        Value::Null,
+        json!(true),
+        json!("false"),
+        json!(0),
+        json!(false),
+    ] {
+        let (_root, mut engine, ids) = fixture();
+        engine
+            .store
+            .save_document(
+                "settings.json",
+                &json!({"confirmBeforeArchivingThreads":preference,"future":7}),
+            )
+            .unwrap();
+        let plan = engine.prepare_native_archive_flags(&ids[..2]).unwrap();
+        assert_eq!(plan.requires_confirmation(), preference != false);
+    }
+    for change in ["preference", "row", "none"] {
+        let (root, mut engine, ids) = fixture();
+        engine
+            .store
+            .save_document(
+                "settings.json",
+                &json!({"confirmBeforeArchivingThreads":false}),
+            )
+            .unwrap();
+        let before: Vec<_> = ids.iter().map(|id| raw(&root, id)).collect();
+        let plan = engine.prepare_native_archive_flags(&ids[..2]).unwrap();
+        assert!(!plan.requires_confirmation());
+        match change {
+            "preference" => engine
+                .store
+                .save_document(
+                    "settings.json",
+                    &json!({"confirmBeforeArchivingThreads":true}),
+                )
+                .unwrap(),
+            "row" => {
+                engine
+                    .store
+                    .patch_thread(
+                        &ids[1],
+                        &json!({"draft":"changed after initial Archive action"}),
+                    )
+                    .unwrap();
+            }
+            _ => (),
+        }
+        let latest: Vec<_> = ids.iter().map(|id| raw(&root, id)).collect();
+        let result = engine.apply_thread_flags(&plan);
+        if change == "none" {
+            let undo = result.unwrap();
+            for id in &ids[..2] {
+                assert_eq!(engine.store.thread(id).unwrap()["isArchived"], true);
+            }
+            assert_eq!(raw(&root, &ids[2]), before[2]);
+            engine.undo_thread_flags(&undo).unwrap();
+            for (id, original) in ids.iter().zip(before) {
+                assert_eq!(raw(&root, id), original);
+            }
+        } else {
+            assert!(result.is_err(), "{change}");
+            for (id, original) in ids.iter().zip(latest) {
+                assert_eq!(raw(&root, id), original);
+            }
+        }
+    }
+}
+
+#[test]
+fn archive_opt_out_cannot_bypass_owned_provider_cleanup_after_semantic_finished() {
+    let (_root, mut engine, ids) = fixture();
+    engine
+        .store
+        .save_document(
+            "settings.json",
+            &json!({"confirmBeforeArchivingThreads":false}),
+        )
+        .unwrap();
+    let plan = engine.prepare_native_archive_flags(&ids[..2]).unwrap();
+    let before: Vec<_> = ids
+        .iter()
+        .map(|id| engine.store.thread(id).unwrap())
+        .collect();
+    let (release, held) = std::sync::mpsc::channel();
+    let session = Session::fixture_worker(move |_, events| {
+        events.send(Event::Finished).unwrap();
+        held.recv().unwrap();
+    });
+    assert!(matches!(
+        session.events.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Event::Finished
+    ));
+    let worker = session.worker_completion();
+    engine.provider_workers.push(worker.clone());
+    assert!(engine.apply_thread_flags(&plan).is_err());
+    assert!(
+        engine
+            .prepare_native_archive_flags(&ids[..2])
+            .unwrap()
+            .requires_confirmation()
+    );
+    for (id, original) in ids.iter().zip(before) {
+        assert_eq!(engine.store.thread(id).unwrap(), original);
+    }
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while worker.status() == agent::WorkerThreadStatus::Running {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+}
