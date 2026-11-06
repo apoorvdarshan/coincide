@@ -447,6 +447,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        self.sync_provider_configuration_settings(window, cx);
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }

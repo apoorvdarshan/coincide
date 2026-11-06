@@ -462,6 +462,19 @@ impl Coincide {
         }
     }
 
+    pub(super) fn sync_provider_configuration_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Section::Provider(provider) = self.settings_section {
+            let enabled = provider_enabled(&self.settings, provider);
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.select(provider_key(provider), enabled, window, cx)
+            });
+        }
+    }
+
     pub(super) fn block_provider_configuration_close(
         &mut self,
         window: &mut Window,

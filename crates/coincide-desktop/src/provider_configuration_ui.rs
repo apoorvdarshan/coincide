@@ -35,6 +35,7 @@ struct Editor {
     load_requested: bool,
     notice: String,
     report: Option<ProbeReport>,
+    catalog: Option<Value>,
     checked: Option<Instant>,
     lease: NativeUiEditLease,
     _subscriptions: Vec<Subscription>,
@@ -73,7 +74,7 @@ enum Request {
 enum Outcome {
     Loaded(Snapshot),
     Saved(Snapshot),
-    Checked(ProbeReport),
+    Checked(ProbeReport, Option<Value>),
     ManagedChecked(usize),
 }
 struct Reply {
@@ -168,6 +169,7 @@ impl Panel {
                     load_requested: true,
                     notice: String::new(),
                     report: None,
+                    catalog: None,
                     checked: None,
                     lease: self.native_editors.editor(),
                     _subscriptions: vec![subscription],
@@ -315,6 +317,7 @@ impl Panel {
             editor.saved_environment = snapshot.environment;
             editor.loaded = true;
             editor.report = None;
+            editor.catalog = None;
             editor.checked = None;
             if replace {
                 editor
@@ -346,6 +349,11 @@ impl Panel {
         };
         let generation = editor.generation;
         let loading = matches!(&request, Request::Load);
+        if matches!(&request, Request::Check) {
+            editor.report = None;
+            editor.catalog = None;
+            editor.checked = None;
+        }
         editor.notice = match &request {
             Request::Load => "Loading saved settings…",
             Request::Save { .. } => "Saving settings…",
@@ -390,7 +398,9 @@ impl Panel {
                     }
                     Request::Check => {
                         let plan = try_state(&engine)?.prepare_native_provider_check(&provider)?;
-                        Ok(Outcome::Checked(plan.run(&|| admission.allowed())?))
+                        let report = plan.run(&|| admission.allowed())?;
+                        let catalog = checked_catalog(&engine, &provider, &|| admission.allowed());
+                        Ok(Outcome::Checked(report, catalog))
                     }
                 }
             })();
@@ -462,9 +472,10 @@ impl Panel {
                         );
                     }
                 }
-                Ok(Outcome::Checked(report)) => {
+                Ok(Outcome::Checked(report, catalog)) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.report = Some(report);
+                        editor.catalog = catalog;
                         editor.checked = Some(Instant::now());
                         editor.notice = "Check finished.".into();
                     }
@@ -574,9 +585,11 @@ impl Panel {
         self.editors
             .iter()
             .filter_map(|(provider, editor)| {
-                editor.report.as_ref().map(
+                editor.catalog.clone().or_else(|| {
+                    editor.report.as_ref().map(
                     |report| json!({"provider":provider,"state":"ready","models":report.models}),
                 )
+                })
             })
             .collect()
     }
@@ -631,6 +644,7 @@ impl Panel {
                             ),
                     )
                     .when_some(editor.report.as_ref(), |pane, report| {
+                        let location = report.executable.clone();
                         pane.child(div().text_sm().child(format!(
                             "Version: {}",
                             report.version.as_deref().unwrap_or("Not reported")
@@ -639,6 +653,11 @@ impl Panel {
                             div()
                                 .text_sm()
                                 .child(format!("Location: {}", report.executable.display())),
+                        )
+                        .child(
+                            Button::new("provider-reveal-executable")
+                                .label("Show in File Manager")
+                                .on_click(move |_, _, cx| cx.reveal_path(&location)),
                         )
                         .when_some(report.account.as_ref(), |pane, account| {
                             pane.child(format!("Account: {account}"))
@@ -848,6 +867,30 @@ impl Panel {
         self.workers.status()
     }
 }
+// Existing Core owns each model worker and its proof lifecycle. The UI waits only
+// on its bounded request ID, and never synthesizes readiness from version text.
+fn checked_catalog(
+    engine: &SharedEngine,
+    provider: &str,
+    allowed: &impl Fn() -> bool,
+) -> Option<Value> {
+    if !matches!(provider, "codex" | "claude") || !allowed() {
+        return None;
+    }
+    let mut catalog = call(engine, "agent.models.refresh", json!({"provider":provider})).ok()?;
+    let id = catalog["requestId"].as_str()?.to_owned();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while catalog["state"] == "loading" && allowed() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        match call(engine, "agent.models.status", json!({"requestId":id})) {
+            Ok(current) => catalog = current,
+            Err(error) if engine_busy(&error) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(catalog)
+}
+
 fn expand_path(path: &str) -> Result<Option<PathBuf>> {
     if path.is_empty() {
         return Ok(None);
