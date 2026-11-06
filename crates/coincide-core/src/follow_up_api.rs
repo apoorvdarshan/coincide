@@ -412,7 +412,7 @@ impl Engine {
                         );
                         self.send_turn_if_unchanged(
                             &json!({"threadId":op.thread,"text":op.text}),
-                            false,
+                            &SendOrigin::Ordinary,
                             Some(&op.source),
                             op.dispatch == Dispatch::Interrupt,
                         )?;

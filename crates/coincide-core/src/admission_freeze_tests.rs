@@ -136,7 +136,10 @@ fn frozen_queue_schedule_and_direct_launch_paths_create_no_new_work() {
     }
     for error in [
         engine
-            .send_turn(&json!({"threadId":id,"text":"never submit"}), false)
+            .send_turn(
+                &json!({"threadId":id,"text":"never submit"}),
+                SendOrigin::Ordinary,
+            )
             .unwrap_err(),
         engine
             .queue_command("agent.queue.resume", &json!({"threadId":id}))

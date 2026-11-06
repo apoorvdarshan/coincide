@@ -82,18 +82,33 @@ pub fn add(thread: &mut Value, text: &str) -> Result<Message> {
     Ok(message)
 }
 pub fn finish(thread: &mut Value, id: &str, state: State, error: Option<&str>) -> Result<()> {
-    let mut messages = read(thread)?;
-    let message = messages
-        .iter_mut()
-        .find(|m| m.id == id)
-        .context("Message queue claim is missing")?;
+    let messages = read(thread)?;
+    let matches = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message.id == id)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "Message queue claim is missing or ambiguous"
+    );
+    let (index, message) = matches[0];
     ensure!(
         message.state == State::Dispatching,
         "Message queue claim is not active"
     );
-    message.state = state;
-    message.error = error.map(|s| s.chars().take(1024).collect());
-    write(thread, &messages)
+    let row = thread["rustMessageQueue"]
+        .as_array_mut()
+        .context("Invalid saved message queue")?
+        .get_mut(index)
+        .context("Message queue claim is missing")?;
+    row["state"] = serde_json::to_value(state)?;
+    if let Some(error) = error {
+        row["error"] = Value::String(error.chars().take(1024).collect());
+    } else if let Some(row) = row.as_object_mut() {
+        row.remove("error");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -133,5 +148,24 @@ mod tests {
         assert_eq!(entries.len(), 32);
         assert_eq!(entries[0].text, "message 1");
         assert_eq!(entries.last().unwrap().text, "new");
+    }
+}
+
+#[cfg(test)]
+mod raw_finish_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn finishing_a_claim_changes_only_its_known_state_and_error_fields() {
+        let mut thread = json!({"selection":{"provider":"codex"},"future":9});
+        let first = add(&mut thread, "first").unwrap();
+        add(&mut thread, "second").unwrap();
+        thread["rustMessageQueue"][0]["state"] = json!("dispatching");
+        thread["rustMessageQueue"][0]["future"] = json!({"keep":7});
+        thread["rustMessageQueue"][1]["future"] = json!({"keep":8});
+        let mut expected = thread.clone();
+        expected["rustMessageQueue"][0]["state"] = json!("completed");
+        finish(&mut thread, &first.id, State::Completed, None).unwrap();
+        assert_eq!(thread, expected);
     }
 }
