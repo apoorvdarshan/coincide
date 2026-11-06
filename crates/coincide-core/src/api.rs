@@ -46,6 +46,8 @@ mod codex_profile_models_api;
 mod codex_tool_metadata;
 #[path = "project_management_api.rs"]
 mod project_management_api;
+#[path = "provider_switch_api.rs"]
+mod provider_switch_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
@@ -707,6 +709,7 @@ impl Engine {
                 }
                 Ok(result)
             }
+            "agent.provider.select" => self.select_provider_from_history(p),
             "agent.select" => {
                 let id = required(p, "threadId")?;
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
@@ -1993,7 +1996,9 @@ fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
 }
 fn append(v: &mut Value, kind: &str, text: &str, external: Option<&str>) {
     let provider = v["selection"]["provider"].clone();
-    v["items"].as_array_mut().expect("validated thread").push(json!({"id":Uuid::new_v4().to_string().to_uppercase(),"kind":kind,"text":text,"provider":provider,"createdAt":swift_timestamp(),"externalID":external}));
+    let model = v["selection"]["modelID"].clone();
+    let account = v["selection"]["accountID"].clone();
+    v["items"].as_array_mut().expect("validated thread").push(json!({"id":Uuid::new_v4().to_string().to_uppercase(),"kind":kind,"text":text,"provider":provider,"modelID":model,"accountID":account,"createdAt":swift_timestamp(),"externalID":external}));
 }
 pub fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
     let response = engine

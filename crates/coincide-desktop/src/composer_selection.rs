@@ -611,7 +611,29 @@ fn command_transaction(
             "Reported limit windows are no longer current; command draft retained"
         );
     }
-    let ack = if let Some(params) = params {
+    let mut acknowledged_model = None;
+    let ack = if let Some(provider) = command.provider() {
+        let response = invoke(
+            "agent.provider.select",
+            json!({"threadId":id,"provider":provider,"expected":submission.thread}),
+        )?;
+        let model = response["model"]
+            .as_str()
+            .context("Provider selection omitted its model acknowledgement; draft retained")?;
+        anyhow::ensure!(
+            response["authenticationChecked"] == false
+                && response["accountRestored"] == false
+                && ((response["restored"] == true
+                    && response["provenance"] == "latest_default_catalog"
+                    && model != "default")
+                    || (response["restored"] == false
+                        && response["provenance"] == "provider_default"
+                        && model == "default")),
+            "Provider selection omitted its scoped catalog acknowledgement; draft retained"
+        );
+        acknowledged_model = Some(model.to_owned());
+        response["thread"].clone()
+    } else if let Some(params) = params {
         invoke("agent.select", params)?
     } else {
         current
@@ -629,11 +651,11 @@ fn command_transaction(
     if let Some(provider) = command.provider() {
         anyhow::ensure!(
             ack["selection"]["provider"] == provider
-                && ack["selection"]["modelID"] == "default"
+                && ack["selection"]["modelID"].as_str() == acknowledged_model.as_deref()
                 && default_account_id(&ack["selection"]["accountID"]) == Some("default")
                 && ack["accessMode"] == submission.thread["accessMode"]
                 && ack["interactionMode"] == submission.thread["interactionMode"],
-            "Selection did not acknowledge the requested provider/default and preserved modes; draft retained"
+            "Selection did not acknowledge the requested provider/model and preserved modes; draft retained"
         );
     }
     let before_clear = invoke("threads.read", json!({"threadId":id,"itemLimit":0}))?;
@@ -970,6 +992,14 @@ impl Coincide {
         })();
         match result {
             Ok(thread) => {
+                let provider_message = if thread["selection"]["modelID"] == "default" {
+                    "Provider selection saved with Provider default. Authentication was not checked. No message was sent.".to_owned()
+                } else {
+                    format!(
+                        "Provider selection saved with previously used catalog model {}. Authentication was not checked. No message was sent.",
+                        text(&thread["selection"], "modelID")
+                    )
+                };
                 let current = self.composer.read(cx).value().to_string();
                 if self
                     .selected
@@ -1013,7 +1043,7 @@ impl Coincide {
                             "Build mode saved. No message was sent."
                         }
                         crate::composer_commands::Command::Provider(_) => {
-                            "Provider selection saved with Provider default. Authentication/model access was not checked. No message was sent."
+                            &provider_message
                         }
                     }
                     .into();
