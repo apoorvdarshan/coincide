@@ -969,10 +969,10 @@ impl Engine {
             "Attach references through composer.context.edit before sending"
         );
         // Scheduled/queued turns never consume the user's unrelated composer.
-        let context = if !origin.consumes_composer() {
-            Value::Null
-        } else {
-            v["draftContext"].clone()
+        let context = match origin {
+            SendOrigin::Queued(claim) => claim.context().clone(),
+            SendOrigin::Scheduled => Value::Null,
+            SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
         let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
@@ -1024,7 +1024,9 @@ impl Engine {
             None
         };
         let draft_images: Vec<crate::attachments::StoredImage> =
-            if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
+            if let SendOrigin::Queued(claim) = origin {
+                claim.images().to_vec()
+            } else if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
                 Vec::new()
             } else {
                 ensure!(
