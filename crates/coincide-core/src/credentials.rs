@@ -158,7 +158,38 @@ impl CliCommand {
                     bytes.extend_from_slice(&chunk[..n]);
                     continue;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // A small pipe can drain before its writer runs again. A fixed
+                    // sleep here throttles large responses by pipe capacity and
+                    // can spend the deadline waiting even while the writer is ready.
+                    // Wait on actual readiness, then read normally; readiness alone
+                    // never proves EOF, output validity, or child completion.
+                    let remaining = timeout.saturating_sub(start.elapsed());
+                    if remaining.is_zero() {
+                        return Err(Failure::Unavailable);
+                    }
+                    // Round a positive wait up by at most one millisecond to
+                    // avoid a sub-millisecond busy spin. The outer absolute
+                    // deadline check still rejects output after expiry.
+                    let wait_ms = remaining.as_millis().saturating_add(1).min(10) as libc::c_int;
+                    let mut poll = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // stdout owns fd throughout this call; poll borrows one
+                    // initialized stack entry and retains no pointer afterward.
+                    let result = unsafe { libc::poll(&mut poll, 1, wait_ms) };
+                    if result < 0
+                        && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+                    {
+                        return Err(Failure::Unavailable);
+                    }
+                    if poll.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                        return Err(Failure::Unavailable);
+                    }
+                    continue;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => return Err(Failure::Unavailable),
             }
@@ -619,6 +650,39 @@ mod tests {
         assert_eq!(
             cli.capture(&["-c", "yes synthetic"], Duration::from_secs(3)),
             Err(Failure::InvalidResponse)
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn finite_oversized_output_is_invalid_and_the_actual_leader_is_reaped() {
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("capture-leader.pid");
+        let cli = CliCommand::new(PathBuf::from("/bin/sh")).unwrap();
+        assert_eq!(
+            cli.capture(
+                &[
+                    "-c",
+                    "echo $$ > \"$1\"; /usr/bin/head -c 8388609 /dev/zero; exit 2",
+                    "finite-overflow-fixture",
+                    pid_file.to_str().unwrap(),
+                ],
+                Duration::from_secs(3),
+            ),
+            Err(Failure::InvalidResponse)
+        );
+        let pid: i32 = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
         );
     }
     #[cfg(not(unix))]
