@@ -4,8 +4,10 @@ mod usage_history_mount;
 mod usage_history_view;
 mod worker_owner;
 use anyhow::{Context as _, Result};
+mod about_settings;
 mod app_menu;
 mod app_menu_mount;
+mod archive_settings;
 mod assets;
 mod bot_settings;
 mod browser;
@@ -31,12 +33,16 @@ mod github_review;
 mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
+mod instructions;
+mod instructions_config;
+mod instructions_scope;
 mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
 mod microphone;
 mod microphone_settings;
+mod models_settings;
 mod native_quit;
 mod navigation;
 mod navigation_rail;
@@ -53,6 +59,7 @@ mod quit_mount;
 mod scheduling;
 mod session_import;
 mod settings;
+mod settings_window;
 mod shutdown_runtime;
 mod terminal_context_mount;
 mod terminal_selection;
@@ -349,7 +356,16 @@ struct Coincide {
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
+    instructions_panel: Entity<instructions::InstructionsPanel>,
+    models_settings: models_settings::ModelsSettings,
+    archive_settings: archive_settings::ArchiveSettings,
+    instruction_quit_prompt_pending: bool,
+    instruction_quit_task: Option<Task<()>>,
     settings_section: settings::SettingsSection,
+    settings_window: Option<gpui_kit::AnyWindowHandle>,
+    settings_window_pending: bool,
+    main_window: gpui_kit::AnyWindowHandle,
+    settings_focus: FocusHandle,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -417,9 +433,12 @@ struct Coincide {
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
+    pending_native_selection: Option<Option<String>>,
+    startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
+    model_picker_search: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
@@ -460,7 +479,7 @@ impl Coincide {
             .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
         let threads_context = if self.workspace_open
             && self.github_threads_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.session_import_open
             && !self.command_palette.read(cx).is_open()
@@ -643,6 +662,27 @@ impl Coincide {
             self.status = format!("Draft remains in this window; not yet saved: {error}");
         }
     }
+    fn flush_native_selection(&mut self) -> bool {
+        let Some(selected) = self.pending_native_selection.as_ref() else {
+            return true;
+        };
+        let Ok(mut engine) = self.engine.try_lock() else {
+            return false;
+        };
+        match engine
+            .store
+            .remember_native_selected_thread(selected.as_deref())
+        {
+            Ok(_) => {
+                self.pending_native_selection = None;
+                true
+            }
+            Err(error) => {
+                self.status = format!("Unable to remember conversation selection: {error}");
+                false
+            }
+        }
+    }
     fn flush_pending_drafts(&mut self) -> bool {
         for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
             self.save_pending_draft(&id);
@@ -656,6 +696,7 @@ impl Coincide {
     }
     fn new(
         engine: SharedEngine,
+        native_editors: coincide_core::native_ui_edits::NativeUiEditors,
         quit_requested: Arc<std::sync::atomic::AtomicBool>,
         control_owner: Arc<Mutex<control::Server>>,
         profile_dir: std::path::PathBuf,
@@ -678,6 +719,10 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
+                    this.prompt_instruction_close(false, window, cx);
+                    return false;
+                }
                 // Keep the global drain owner and its recovery controls alive.
                 // Closing this window cannot bypass the broader quit fence.
                 if this.media.shutdown_requested {
@@ -720,6 +765,18 @@ impl Coincide {
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let instructions_panel = cx.new(|cx| {
+            instructions::InstructionsPanel::new(
+                engine.clone(),
+                native_editors.editor(),
+                window,
+                cx,
+            )
+        });
+        let models_settings = models_settings::ModelsSettings::new(window, cx);
+        let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
+        let model_picker_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -969,6 +1026,13 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.push(cx.subscribe(&model_picker_search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
+        subscriptions.extend(models_settings.subscriptions(cx));
+        subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let threads = call(&engine, "threads.list", json!({}))
@@ -1035,6 +1099,15 @@ impl Coincide {
             thread_actions_open: false,
             settings_search,
             settings_section: Default::default(),
+            instructions_panel,
+            models_settings,
+            archive_settings,
+            instruction_quit_prompt_pending: false,
+            instruction_quit_task: None,
+            settings_window: None,
+            settings_window_pending: false,
+            main_window: window.window_handle(),
+            settings_focus: cx.focus_handle(),
             keyboard,
             usage_history,
             codex_limits,
@@ -1101,9 +1174,12 @@ impl Coincide {
             project_picker_open: false,
             project_path,
             selected: None,
+            pending_native_selection: None,
+            startup_selection_pending: true,
             pending_drafts: Default::default(),
             composer,
             model_input,
+            model_picker_search,
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
@@ -1129,11 +1205,53 @@ impl Coincide {
             _subscriptions: subscriptions,
         };
         this.apply_appearance(window, cx);
-        if let Some(id) = this.threads.first().map(|t| t.id.clone()) {
-            this.select(&id, window, cx);
-        }
+        this.restore_startup_selection(window, cx);
         this.poll_computer_use(cx);
         this
+    }
+    fn restore_startup_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.startup_selection_pending {
+            return;
+        }
+        let snapshot = (|| -> Result<(Vec<ThreadSummary>, Option<String>)> {
+            let mut engine = try_state(&self.engine)?;
+            let requested = engine.requested_open.clone();
+            let remembered = engine.store.native_last_selected_thread()?;
+            let response = engine.dispatch(json!({"method":"threads.list","params":{}}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!(
+                    "{}",
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("Unable to load conversations")
+                );
+            }
+            Ok((
+                serde_json::from_value(response["result"].clone())?,
+                requested.or(remembered),
+            ))
+        })();
+        match snapshot {
+            Ok((threads, remembered)) => {
+                let target = remembered
+                    .filter(|id| threads.iter().any(|thread| &thread.id == id))
+                    .or_else(|| threads.first().map(|thread| thread.id.clone()));
+                self.threads = threads;
+                if let Some(id) = target {
+                    self.select(&id, window, cx);
+                    self.startup_selection_pending = self
+                        .selected
+                        .as_ref()
+                        .is_none_or(|thread| thread["id"] != id);
+                } else {
+                    self.startup_selection_pending = false;
+                }
+            }
+            Err(error) if engine_busy(&error) => {}
+            Err(error) => {
+                self.status = format!("Saved conversation selection unavailable: {error}")
+            }
+        }
     }
     fn poll_computer_use(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -1515,6 +1633,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
         self.dismiss_palette(window, cx);
@@ -1545,6 +1664,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
                     self.image_assets
@@ -1558,12 +1678,12 @@ impl Coincide {
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
-                if self.schedule_editor.thread_id != id {
+                if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
                     self.schedule_editor.open = false;
                 }
                 self.selected = Some(v);
                 self.sync_workspace_context(cx);
-                self.settings_open = false;
+                self.hide_inline_settings();
                 self.rename_target = None;
                 self.archive_confirmation = None;
                 self.pending_requests.clear();
@@ -1583,6 +1703,7 @@ impl Coincide {
                     self.browser_address
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
+                self.pending_native_selection = Some(Some(id.to_owned()));
                 let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
                     if engine.active_thread() != Some(id)
                         && let Err(error) = engine.set_active_thread(Some(id.into()))
@@ -1590,6 +1711,13 @@ impl Coincide {
                         let _ = engine.set_active_thread(None);
                         self.status =
                             format!("Selected conversation authority unavailable: {error}");
+                    }
+                    match engine.store.remember_native_selected_thread(Some(id)) {
+                        Ok(_) => self.pending_native_selection = None,
+                        Err(error) => {
+                            self.status =
+                                format!("Unable to remember conversation selection: {error}")
+                        }
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
@@ -1617,7 +1745,7 @@ impl Coincide {
     }
     fn find_context_available(&self) -> bool {
         self.selected.is_some()
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open
@@ -2009,11 +2137,10 @@ impl Coincide {
             ),
             C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
-                self.settings_open = false;
+                self.hide_inline_settings();
                 self.workspace_open = false;
                 self.session_import_open = false;
-                self.schedules_open = true;
-                self.refresh_schedules(cx);
+                self.open_global_schedules(cx);
             }
         }
         self.sync_transcription_binding(cx);
@@ -2033,6 +2160,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.startup_selection_pending = false;
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
             // bot. The user chooses a saved bot in its existing native editor.
@@ -2395,7 +2523,7 @@ impl Coincide {
         }
     }
     fn sync_notification_activity(&self, window: &Window, cx: &App) {
-        let visible_thread = (!self.settings_open
+        let visible_thread = (!self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open)
@@ -2421,21 +2549,24 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self
+        let menu_quit = self
             .quit_requested
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-        {
-            self.media.shutdown_requested = true;
-        }
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
         self.image_validation_tasks.retain(|task| !task.is_ready());
         self.navigation_tasks.retain(|task| !task.is_ready());
-        if self
+        let native_quit = self
             .native_quit
             .as_ref()
-            .is_some_and(|guard| guard.take_requested())
-        {
+            .is_some_and(|guard| guard.take_requested());
+        if native_quit {
             self.native_quit_observed = true;
-            self.media.shutdown_requested = true;
+        }
+        if menu_quit || native_quit {
+            if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
+                self.prompt_instruction_close(true, window, cx);
+            } else {
+                self.media.shutdown_requested = true;
+            }
         }
         // Persistence must precede either close path, including API app.quit.
         let drafts_saved = self.flush_pending_drafts();
@@ -2532,7 +2663,7 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|thread| thread["id"] == id)
             })
-            && !self.settings_open
+            && !self.settings_in_main_window()
         {
             self.created_bot_thread_to_focus = None;
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
@@ -2542,9 +2673,25 @@ impl Coincide {
                 self.media.shutdown_requested = true;
                 return;
             }
+            if let Some(selected) = &self.pending_native_selection {
+                match engine
+                    .store
+                    .remember_native_selected_thread(selected.as_deref())
+                {
+                    Ok(_) => self.pending_native_selection = None,
+                    Err(error) => {
+                        self.status = format!("Unable to remember conversation selection: {error}");
+                    }
+                }
+            }
             engine.ui_available = self.browser.is_some();
             let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
-            if engine.active_thread() != selected.as_deref()
+            let pending_open_compatible = engine
+                .requested_open
+                .as_ref()
+                .is_none_or(|requested| Some(requested.as_str()) == selected.as_deref());
+            if pending_open_compatible
+                && engine.active_thread() != selected.as_deref()
                 && let Err(error) = engine.set_active_thread(selected)
             {
                 let _ = engine.set_active_thread(None);
@@ -2554,6 +2701,7 @@ impl Coincide {
                 self.attachment_root = engine.store.data_directory().ok();
             }
         }
+        self.restore_startup_selection(window, cx);
         self.refresh_awake_status(cx);
         self.apply_appearance(window, cx);
         if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {
@@ -3166,6 +3314,7 @@ impl Coincide {
             }
         }
         if self.selection_send_blocked() {
+            self.retry_selected_account_readiness();
             self.status = self.selected_account_wait_status().into();
             cx.notify();
             return;
@@ -3205,7 +3354,10 @@ impl Coincide {
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }
-                Err(e) => self.status = e.to_string(),
+                Err(e) => {
+                    self.retry_selected_account_readiness();
+                    self.status = e.to_string();
+                }
             }
         }
         cx.notify();
@@ -3615,7 +3767,7 @@ impl Coincide {
     fn sync_terminal_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
         let visible = self.terminal_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.schedules_open
             && !self.workspace_open
             && !self.session_import_open
@@ -3802,7 +3954,9 @@ impl Render for Coincide {
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
         self.sync_automatic_file_mentions(window, cx);
-        self.sync_keyboard_recording(window, cx);
+        if self.settings_window.is_none() {
+            self.sync_keyboard_recording(window, cx);
+        }
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self
             .thread_list_open
@@ -3833,123 +3987,8 @@ impl Render for Coincide {
                 .overflow_hidden()
                 .child(self.session_import_panel.clone())
                 .into_any_element()
-        } else if self.settings_open {
-            if (self.bots_open || self.transcription_open || self.notifications_open)
-                && !self.provider_settings.open
-            {
-                div()
-                    .id("extra-settings-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Button::new("extra-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.bots_open = false;
-                                this.transcription_open = false;
-                                this.notifications_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(if self.bots_open {
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.bot_panel.clone())
-                            .into_any_element()
-                    } else if self.notifications_open {
-                        div()
-                            .id("notification-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.notification_panel.clone())
-                            .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .id("transcription-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.transcription_panel.clone())
-                            .child(self.microphone_panel.clone())
-                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
-                            .child(div().p_3().text_sm().child(self.status.clone()))
-                            .into_any_element()
-                    })
-                    .into_any_element()
-            } else if self.computer_use_settings_visible() {
-                self.computer_use_settings_pane(cx)
-            } else if self.media_settings_visible() {
-                self.media_settings_pane(cx)
-            } else if self.browser_settings_visible() {
-                let scroll = self.browser_settings_panel.read(cx).form_scroll();
-                div()
-                    .id("browser-settings-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Button::new("browser-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.browser_settings_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div().relative().flex_1().min_h_0().flex().flex_col().overflow_hidden()
-                            .child(div()
-                                .id("browser-settings-scroll")
-                                .track_scroll(&scroll).pr_4()
-                                .flex_1().min_h_0().overflow_y_scroll()
-                                .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
-                                .child(self.browser_settings_panel.clone())
-                                .child(div().p_3().text_lg().child("Passwords"))
-                                .child(self.credential_panel.clone()))
-                            .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
-                                .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
-                    )
-                    .into_any_element()
-            } else if self.credentials_open {
-                div()
-                    .id("password-settings-surface")
-                    .flex_1()
-                    .flex_basis(px(0.))
-                    .min_h_0()
-                    .min_w_0()
-                    .overflow_y_scroll()
-                    .child(
-                        Button::new("password-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.credentials_open = false;
-                                this.focus_settings_route(window, cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(self.credential_panel.clone())
-                    .into_any_element()
-            } else if self.provider_settings.open {
-                self.antigravity_settings(cx)
-            } else {
-                self.settings_pane(cx)
-            }
+        } else if self.settings_in_main_window() {
+            self.settings_surface(cx)
         } else if self.schedules_open {
             self.schedules_pane(cx)
         } else if self.workspace_open {
@@ -4035,7 +4074,7 @@ impl Render for Coincide {
             self.pending_pane(cx)
         };
         let draft_images = if self.schedules_open
-            || self.settings_open
+            || self.settings_in_main_window()
             || self.workspace_open
             || self.session_import_open
         {
@@ -4044,7 +4083,7 @@ impl Render for Coincide {
             self.draft_images(window, cx)
         };
         let show_composer = !self.schedules_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.workspace_open
             && !self.session_import_open;
         let importing_images = self.attachment_import_threads.contains(&selected_id);
@@ -4221,6 +4260,8 @@ impl Render for Coincide {
                                                 ))
                                                 .child(
                                                     Textarea::new(&self.composer)
+                                                        .appearance(false)
+                                                        .bordered(false)
                                                         .h(px(if self.composer_files.opened {56.} else {110.}))
                                                         .on_paste(move |item, _, cx| {
                                                             target
@@ -4245,7 +4286,7 @@ impl Render for Coincide {
                                                 .child(self.composer_file_button(cx))
                                                 .child(
                                                     Button::new("attach-images")
-                                                        .icon(gpui_kit::assets::IconName::Plus)
+                                                        .icon(gpui_kit::assets::IconName::Paperclip)
                                                         .accessibility_label(if importing_images {
                                                             "Importing images…"
                                                         } else {
@@ -4292,7 +4333,7 @@ impl Render for Coincide {
                                                     }),
                                                 )),
                                         )
-                                        .when(!self.composer_files.opened, |view| view.child(
+                                        .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
                                             div()
                                                 .id("composer-status")
                                                 .mt_2()
@@ -4364,7 +4405,9 @@ fn main() -> Result<()> {
         database_path: media_data.join("coincide.sqlite"),
         expected_data_directory: media_data,
     };
-    let engine = Arc::new(Mutex::new(Engine::new(store)));
+    let engine = Engine::new(store);
+    let native_editors = engine.native_ui_editors();
+    let engine = Arc::new(Mutex::new(engine));
     let control_owner = Arc::new(Mutex::new(control::serve(
         data.join("control.sock"),
         engine.clone(),
@@ -4397,6 +4440,7 @@ fn main() -> Result<()> {
                     cx.new(|cx| {
                         Coincide::new(
                             engine,
+                            native_editors,
                             quit_requested,
                             control_owner,
                             data.join("browser-profile"),

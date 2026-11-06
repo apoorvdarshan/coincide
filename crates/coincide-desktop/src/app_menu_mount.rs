@@ -4,6 +4,10 @@ use gpui_kit::{Context, Window};
 
 impl Coincide {
     pub(super) fn open_settings_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_open && (self.settings_window.is_some() || self.settings_window_pending) {
+            self.show_settings_window(cx);
+            return;
+        }
         self.computer_use_open = false;
         self.media.opened = false;
         self.browser_settings_open = false;
@@ -13,9 +17,6 @@ impl Coincide {
         self.credentials_open = false;
         self.provider_settings.open = false;
         self.settings_open = true;
-        self.schedules_open = false;
-        self.workspace_open = false;
-        self.session_import_open = false;
         self.focus_settings_route(window, cx);
         self.refresh_settings(window, cx);
     }

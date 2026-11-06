@@ -198,6 +198,8 @@ pub(crate) struct Registry {
     ready: HashMap<String, Receipt>,
     parked: HashMap<String, Parked>,
     journal: Option<journal::Journal>,
+    storage_failure: Option<&'static str>,
+    last_mint_error: Option<&'static str>,
 }
 impl Default for Registry {
     fn default() -> Self {
@@ -207,14 +209,22 @@ impl Default for Registry {
             ready: HashMap::new(),
             parked: HashMap::new(),
             journal: None,
+            storage_failure: None,
+            last_mint_error: None,
         }
     }
 }
 impl Registry {
     pub(crate) fn for_store(store: &crate::store::Store) -> Self {
-        let mut registry = Self {
-            journal: journal::Journal::open(store).ok(),
-            ..Self::default()
+        let mut registry = match journal::Journal::open(store) {
+            Ok(journal) => Self {
+                journal: Some(journal),
+                ..Self::default()
+            },
+            Err(_) => Self {
+                storage_failure: Some("private_storage_unavailable"),
+                ..Self::default()
+            },
         };
         // Consume authenticated legacy tickets before rewriting their canonical
         // private binding slot. A crash during migration only loses an option.
@@ -256,6 +266,7 @@ impl Registry {
             })();
             if migration.is_err() {
                 registry.journal = None;
+                registry.storage_failure = Some("private_storage_migration_failed");
             }
         }
         registry
@@ -301,6 +312,7 @@ impl Registry {
         });
         if self.journal.is_none() {
             self.journal = Some(journal::Journal::open(store)?);
+            self.storage_failure = None;
         }
         let journal = self.journal.as_mut().unwrap();
         for key in journal.keys()? {
@@ -346,6 +358,19 @@ impl Registry {
         ensure!(denied.len() <= 256, "Too many private native IDs to revoke");
         Ok(denied)
     }
+    /// Static support and actual metadata readiness are distinct from minted
+    /// authority. Status never writes or exposes private paths/raw errors.
+    pub(crate) fn durable_status(&self) -> Value {
+        let ready = self
+            .journal
+            .as_ref()
+            .is_some_and(|journal| journal.readiness().is_ok());
+        serde_json::json!({"crossRestartResumeSupported":cfg!(any(unix,windows)),
+            "storageReady":ready,"storageError":if ready{None}else{self.storage_failure.or(Some("private_storage_validation_failed"))},
+            "lastMintError":self.last_mint_error,
+            "authority":"saved_turn_actual_join_authenticated_one_attempt",
+            "requiresFreshAccountRead":true,"requiresFreshPrivateCatalogForExplicitModel":true,"requiresFreshPrivateCatalogForDefaultModel":true})
+    }
     pub(crate) fn poll(&mut self) {
         let completed: Vec<_> = self
             .pending
@@ -366,6 +391,8 @@ impl Registry {
                     // independent same-Engine receipt can remain usable.
                     let record = pending.receipt.durable();
                     if record.and_then(|record| journal.put(&id, &record)).is_err() {
+                        self.last_mint_error = Some("receipt_persistence_failed");
+                        self.storage_failure = Some("private_storage_disabled_after_mint_failure");
                         self.journal = None;
                     }
                 }
@@ -966,6 +993,89 @@ mod tests {
                 "Descriptive old sessionID cannot regain {changed} authority"
             );
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn durable_status_validates_metadata_without_minting_or_rewriting() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let store = crate::store::Store::open(&dir.path().join("data/state.sqlite")).unwrap();
+        let registry = Registry::for_store(&store);
+        let key = store
+            .data_directory()
+            .unwrap()
+            .join(".state.sqlite.native-resume-v1/authority.key");
+        let before = fs::read(&key).unwrap();
+        let status = registry.durable_status();
+        assert_eq!(status["crossRestartResumeSupported"], true);
+        assert_eq!(status["storageReady"], true);
+        assert!(status["lastMintError"].is_null());
+        assert!(registry.ready.is_empty() && registry.pending.is_empty());
+        assert_eq!(fs::read(&key).unwrap(), before);
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
+        let unavailable = registry.durable_status();
+        assert_eq!(unavailable["storageReady"], false);
+        assert_eq!(
+            unavailable["storageError"],
+            "private_storage_validation_failed"
+        );
+        assert_eq!(fs::read(&key).unwrap(), before);
+        assert!(registry.ready.is_empty() && registry.pending.is_empty());
+        assert!(
+            !unavailable
+                .to_string()
+                .contains(&dir.path().display().to_string())
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_deletion_revokes_saved_joined_receipt_even_after_restart() {
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            time::{Duration, Instant},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let store = crate::store::Store::open(&dir.path().join("data/state.sqlite")).unwrap();
+        let root = store.data_directory().unwrap();
+        let account = Uuid::new_v4().to_string();
+        let id = Uuid::new_v4().to_string();
+        crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+        let profile =
+            LaunchContext::capture(&root, &account, &std::env::current_exe().unwrap()).unwrap();
+        let thread = json!({"id":id,"selection":{"provider":"codex","accountID":account,"modelID":"default"},"accessMode":"approval","interactionMode":"build","items":[],"sessions":{"codex":{"accountID":account,"sessionID":"synthetic-deleted-native"}}});
+        let policy =
+            Policy::parse_named(&thread, crate::composer_policy::Origin::Ordinary, None).unwrap();
+        let mut registry = Registry::for_store(&store);
+        let authority = registry
+            .prepare(&thread, profile.clone(), &root, policy.clone())
+            .unwrap();
+        let ack = authority
+            .acknowledge(
+                &json!({"thread":{"id":"synthetic-deleted-native"},"model":"synthetic-actual"}),
+            )
+            .unwrap();
+        let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        registry.persisted(ack, &thread, worker);
+        registry.poll();
+        assert_eq!(registry.ready.len(), 1);
+        registry.invalidate_threads(&[id], &store).unwrap();
+        assert!(registry.ready.is_empty() && registry.pending.is_empty());
+        drop(registry);
+        assert!(
+            Registry::for_store(&store)
+                .prepare(&thread, profile, &root, policy)
+                .unwrap()
+                .session()
+                .is_none()
+        );
     }
     #[cfg(unix)]
     #[test]

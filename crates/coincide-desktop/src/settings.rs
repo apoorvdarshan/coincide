@@ -3,11 +3,17 @@ use super::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
     #[default]
+    General,
+    Instructions,
+    Archive,
+    Models,
+    About,
     All,
     Appearance,
     Keyboard,
     Conversation,
     Automation,
+    Voice,
     Accounts,
     Browser,
     Media,
@@ -17,11 +23,17 @@ pub(super) enum SettingsSection {
 impl SettingsSection {
     fn id(self) -> &'static str {
         match self {
+            Self::General => "general",
+            Self::Instructions => "instructions",
+            Self::Archive => "archive",
+            Self::Models => "models",
+            Self::About => "about",
             Self::All => "all",
             Self::Appearance => "appearance",
             Self::Keyboard => "keyboard",
             Self::Conversation => "conversation",
             Self::Automation => "automation",
+            Self::Voice => "voice",
             Self::Accounts => "accounts",
             Self::Browser => "browser",
             Self::Media => "media",
@@ -29,14 +41,20 @@ impl SettingsSection {
             Self::Usage => "usage",
         }
     }
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
-            Self::All => "All settings",
+            Self::General => "General",
+            Self::Instructions => "Instructions",
+            Self::Archive => "Archive",
+            Self::Models => "Models",
+            Self::About => "About",
+            Self::All => "Search results",
             Self::Appearance => "Appearance",
             Self::Keyboard => "Keyboard",
             Self::Conversation => "Conversation",
             Self::Automation => "Automation and alerts",
-            Self::Accounts => "Providers and passwords",
+            Self::Voice => "Voice",
+            Self::Accounts => "Providers",
             Self::Browser => "Browser",
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
@@ -50,7 +68,14 @@ fn settings_match(
     query: &str,
     terms: &str,
 ) -> bool {
-    if selected != SettingsSection::All && selected != section {
+    let general = selected == SettingsSection::General
+        && matches!(
+            section,
+            SettingsSection::Appearance
+                | SettingsSection::Conversation
+                | SettingsSection::Automation
+        );
+    if selected != SettingsSection::All && selected != section && !general {
         return false;
     }
     let text = format!("{} {terms}", section.label()).to_lowercase();
@@ -541,25 +566,152 @@ impl Coincide {
             .into_any_element()
     }
 
+    pub(super) fn settings_surface(&self, cx: &mut Context<Self>) -> AnyElement {
+        if (self.bots_open || self.transcription_open || self.notifications_open)
+            && !self.provider_settings.open
+        {
+            div()
+                    .id("extra-settings-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Button::new("extra-settings-back")
+                            .label("Back to Settings")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.bots_open = false;
+                                this.transcription_open = false;
+                                this.notifications_open = false;
+                                this.focus_settings_route(window,cx);
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(if self.bots_open {
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.bot_panel.clone())
+                            .into_any_element()
+                    } else if self.notifications_open {
+                        div()
+                            .id("notification-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(self.notification_panel.clone())
+                            .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id("transcription-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(self.transcription_panel.clone())
+                            .child(self.microphone_panel.clone())
+                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
+                            .child(div().p_3().text_sm().child(self.status.clone()))
+                            .into_any_element()
+                    })
+                    .into_any_element()
+        } else if self.computer_use_settings_visible() {
+            self.computer_use_settings_pane(cx)
+        } else if self.media_settings_visible() {
+            self.media_settings_pane(cx)
+        } else if self.browser_settings_visible() {
+            let scroll = self.browser_settings_panel.read(cx).form_scroll();
+            div()
+                    .id("browser-settings-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Button::new("browser-settings-back")
+                            .label("Back to Settings")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.browser_settings_open = false;
+                                this.focus_settings_route(window,cx);
+                                this.credential_panel
+                                    .update(cx, |panel, cx| panel.cancel(cx));
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div().relative().flex_1().min_h_0().flex().flex_col().overflow_hidden()
+                            .child(div()
+                                .id("browser-settings-scroll")
+                                .track_scroll(&scroll).pr_4()
+                                .flex_1().min_h_0().overflow_y_scroll()
+                                .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
+                                .child(self.browser_settings_panel.clone())
+                                .child(div().p_3().text_lg().child("Passwords"))
+                                .child(self.credential_panel.clone()))
+                            .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
+                                .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
+                    )
+                    .into_any_element()
+        } else if self.credentials_open {
+            div()
+                .id("password-settings-surface")
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_h_0()
+                .min_w_0()
+                .overflow_y_scroll()
+                .child(
+                    Button::new("password-settings-back")
+                        .label("Back to Settings")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.credentials_open = false;
+                            this.focus_settings_route(window, cx);
+                            this.credential_panel
+                                .update(cx, |panel, cx| panel.cancel(cx));
+                            this.sync_transcription_binding(cx);
+                            cx.notify();
+                        })),
+                )
+                .child(self.credential_panel.clone())
+                .into_any_element()
+        } else if self.provider_settings.open {
+            self.antigravity_settings(cx)
+        } else {
+            self.settings_pane(cx)
+        }
+    }
+
     pub(super) fn settings_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         use SettingsSection as S;
         let query = self.settings_search.read(cx).value().to_string();
-        let matches =
-            |section, terms| settings_match(self.settings_section, section, &query, terms);
+        let filtering = if query.trim().is_empty() {
+            self.settings_section
+        } else {
+            S::All
+        };
+        let matches = |section, terms| settings_match(filtering, section, &query, terms);
         let setting =
             |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
-        let mut nav = div().flex().flex_wrap().gap_2();
+        // Match the Swift Settings sidebar: destinations remain fixed while
+        // the selected pane scrolls independently on every desktop platform.
+        let mut nav = div().flex().flex_col().gap_1();
         for section in [
-            S::All,
-            S::Appearance,
-            S::Keyboard,
-            S::Conversation,
-            S::Automation,
-            S::Accounts,
-            S::Browser,
-            S::Media,
-            S::ComputerUse,
+            S::General,
+            S::Models,
             S::Usage,
+            S::Instructions,
+            S::Archive,
+            S::Keyboard,
+            S::Voice,
+            S::Browser,
+            S::ComputerUse,
+            S::Media,
+            S::Accounts,
+            S::About,
         ] {
             nav = nav.child(
                 Button::new(SharedString::from(format!(
@@ -567,15 +719,52 @@ impl Coincide {
                     section.id()
                 )))
                 .label(section.label())
+                .w_full()
+                .ghost()
                 .when(self.settings_section == section, |button| button.primary())
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    this.archive_settings.close_review();
                     this.settings_section = section;
+                    if section == S::Archive {
+                        this.refresh_archive_settings(cx);
+                    }
                     cx.notify();
                 })),
             );
         }
-        let mut content = div().flex().flex_col().gap_2();
+        let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
+        if matches(
+            S::Archive,
+            "archive archived conversations restore delete undo",
+        ) {
+            count += 1;
+            content = content.child(self.archive_settings_panel(cx));
+        }
+        if matches(S::Models, "models favorite hidden custom providers catalog") {
+            count += 1;
+            content =
+                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
+        }
+        if matches(
+            S::About,
+            "about version help community website github discord contact privacy terms license acknowledgements",
+        ) {
+            count += 1;
+            content = content.child(self.about_settings(cx));
+        }
+        if matches(
+            S::Instructions,
+            "global instructions master agents rules shared",
+        ) {
+            count += 1;
+            content = content.child(
+                div()
+                    .h(px(480.))
+                    .min_h(px(300.))
+                    .child(self.instructions_panel.clone()),
+            );
+        }
         if matches(
             S::Usage,
             "saved local usage history tokens provider reports cost counters live codex limits quota credits",
@@ -747,7 +936,7 @@ impl Coincide {
                 "bots bot instructions automation",
             ),
             (
-                S::Automation,
+                S::Voice,
                 "transcription",
                 "Local transcription",
                 "local transcription microphone recording speech audio",
@@ -789,7 +978,7 @@ impl Coincide {
                 "browser profiles imports cookies privacy passwords passkeys",
             ),
             (
-                S::Accounts,
+                S::Browser,
                 "passwords",
                 "Password managers",
                 "password managers bitwarden 1password credentials vault",
@@ -834,41 +1023,67 @@ impl Coincide {
         div()
             .id("settings-pane")
             .flex_1()
+            .flex_basis(px(0.))
+            .min_w_0()
             .min_h_0()
+            .overflow_hidden()
             .flex()
-            .flex_col()
-            .p_4()
-            .gap_3()
             .child(
                 div()
+                    .id("settings-sidebar")
+                    .w(px(220.))
+                    .min_w(px(200.))
+                    .flex_shrink_0()
                     .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(div().text_xl().child("Settings"))
+                    .flex_col()
+                    .gap_3()
+                    .p_3()
+                    .bg(self.color(0x151922))
+                    .border_r_1()
+                    .border_color(self.color(0x29303d))
+                    .child(Input::new(&self.settings_search))
                     .child(
-                        Button::new("settings-done")
-                            .label("Done")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.settings_open = false;
-                                this.focus_settings_route(window, cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
+                        div()
+                            .id("settings-destinations")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(nav),
                     ),
             )
-            .child(Input::new(&self.settings_search))
-            .child(nav)
             .child(
                 div()
-                    .id("settings-results")
                     .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(content),
+                    .flex_basis(px(0.))
+                    .min_w_0()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .p_4()
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().text_xl().child(filtering.label()))
+                            .child(Button::new("settings-done").label("Done").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.close_settings_panel(window, cx);
+                                }),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("settings-results")
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(content),
+                    )
+                    .child(div().text_sm().child(self.settings_status.clone())),
             )
-            .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
     }
 
@@ -894,6 +1109,47 @@ impl Coincide {
                 "keyboard shortcuts record reset disable command palette terminal font",
             )
     }
+    pub(super) fn run_keyboard_command(
+        &mut self,
+        command: keyboard_settings::Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use keyboard_settings::Command as K;
+        match command {
+            K::NewThread => self.new_thread(window, cx),
+            K::Palette => self.toggle_palette(window, cx),
+            K::Sidebar => self.toggle_sidebar(window, cx),
+            K::Terminal => {
+                if self.settings_in_main_window() || self.schedules_open || self.selected.is_none()
+                {
+                    return;
+                }
+                self.terminal(window, cx);
+            }
+            K::Schedules => {
+                self.hide_inline_settings();
+                self.workspace_open = false;
+                self.session_import_open = false;
+                if self.schedules_open {
+                    self.schedules_open = false;
+                } else {
+                    self.open_global_schedules(cx);
+                }
+                self.sync_transcription_binding(cx);
+                cx.notify();
+            }
+            K::Larger | K::Smaller | K::FontReset => {
+                let size = match command {
+                    K::Larger => (self.conversation_font_size() + 1.).min(24.),
+                    K::Smaller => (self.conversation_font_size() - 1.).max(10.),
+                    _ => 13.,
+                };
+                self.change_setting("fontSize", json!(size), window, cx);
+            }
+        }
+    }
+
     pub(super) fn app_shortcut(
         &mut self,
         event: &KeyDownEvent,
@@ -959,37 +1215,7 @@ impl Coincide {
             return;
         }
         if let Some(command) = custom {
-            use keyboard_settings::Command as K;
-            match command {
-                K::NewThread => self.new_thread(window, cx),
-                K::Palette => unreachable!(),
-                K::Sidebar => self.toggle_sidebar(window, cx),
-                K::Terminal => {
-                    if self.settings_open || self.schedules_open || self.selected.is_none() {
-                        return;
-                    }
-                    self.terminal(window, cx);
-                }
-                K::Schedules => {
-                    self.settings_open = false;
-                    self.workspace_open = false;
-                    self.session_import_open = false;
-                    self.schedules_open = !self.schedules_open;
-                    if self.schedules_open {
-                        self.refresh_schedules(cx);
-                    }
-                    self.sync_transcription_binding(cx);
-                    cx.notify();
-                }
-                K::Larger | K::Smaller | K::FontReset => {
-                    let size = match command {
-                        K::Larger => (self.conversation_font_size() + 1.).min(24.),
-                        K::Smaller => (self.conversation_font_size() - 1.).max(10.),
-                        _ => 13.,
-                    };
-                    self.change_setting("fontSize", json!(size), window, cx);
-                }
-            }
+            self.run_keyboard_command(command, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -1000,8 +1226,7 @@ impl Coincide {
             "," => {
                 self.credential_panel
                     .update(cx, |panel, cx| panel.cancel(cx));
-                self.settings_open = !self.settings_open;
-                self.focus_settings_route(window, cx);
+                self.open_settings_panel(window, cx);
                 self.sync_transcription_binding(cx);
                 cx.notify();
             }
@@ -1012,7 +1237,7 @@ impl Coincide {
                 self.open_find(window, cx);
             }
             "enter"
-                if !self.settings_open
+                if !self.settings_in_main_window()
                     && !self.schedules_open
                     && self.composer.read(cx).focus_handle(cx).is_focused(window) =>
             {

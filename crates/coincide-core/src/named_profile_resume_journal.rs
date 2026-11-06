@@ -53,6 +53,14 @@ pub(super) struct Journal {
     tickets: HashMap<String, String>,
 }
 impl Journal {
+    pub(super) fn readiness(&self) -> Result<()> {
+        self.validate()?;
+        ensure!(
+            (34..=MAX_RECORD as u64).contains(&self.lease.file.metadata()?.len()),
+            "Invalid continuation authority state bound"
+        );
+        Ok(())
+    }
     #[cfg(any(unix, windows))]
     pub(super) fn open(store: &crate::store::Store) -> Result<Self> {
         let source_path = store.resume_source_path()?;

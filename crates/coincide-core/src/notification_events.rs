@@ -164,6 +164,16 @@ impl Outbox {
                 || matches!(entry.state, State::InFlight(_))
         });
     }
+    pub(super) fn discard_deleted_threads(&mut self, threads: &[String]) {
+        let deleted = threads
+            .iter()
+            .filter_map(|thread| Uuid::parse_str(thread).ok())
+            .collect::<BTreeSet<_>>();
+        self.entries.retain(|key, entry| {
+            !deleted.contains(&key.thread) || matches!(entry.state, State::InFlight(_))
+        });
+        // Retain seen identities: restoring content must not replay old alerts.
+    }
 }
 
 impl Engine {

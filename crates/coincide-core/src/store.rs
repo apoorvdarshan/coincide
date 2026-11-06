@@ -23,6 +23,13 @@ mod terminal_context_store;
 #[path = "thread_bulk_store.rs"]
 mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;
+#[path = "store_native_ui_selection.rs"]
+mod native_ui_selection;
+#[path = "store_thread_delete.rs"]
+mod store_thread_delete;
+use store_thread_delete::ensure_not_deleted;
+pub use store_thread_delete::{ArchivedConversation, ArchivedConversations};
+pub(crate) use store_thread_delete::{DeleteRow, DeleteVersion};
 
 /// A new database is always independent of the Swift app. Unknown JSON fields and
 /// original file bytes are retained, including provider/account session identity.
@@ -300,6 +307,7 @@ impl Store {
                 let value: Value = serde_json::from_slice(&bytes)
                     .with_context(|| format!("Invalid thread {relative}"))?;
                 let id = validate_thread(&value)?;
+                ensure_not_deleted(&tx, id)?;
                 // Duplicate identities are a migration error, never last-file-wins.
                 tx.execute(
                     "INSERT INTO threads(id, document) VALUES (?1, ?2)",
@@ -352,6 +360,7 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure_not_deleted(&tx, id)?;
         let duplicate_id: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE) OR EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)",
             [id], |row| row.get(0),
@@ -501,6 +510,7 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure_not_deleted(&tx, id)?;
         if let Some(record) = record {
             ensure!(
                 record["threadID"]
@@ -596,6 +606,7 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure_not_deleted(&tx, id)?;
         let local: Option<String> = tx
             .query_row(
                 "SELECT document FROM documents WHERE name='bots.json'",

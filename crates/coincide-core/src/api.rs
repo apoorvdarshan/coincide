@@ -112,6 +112,9 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "thread_delete_api.rs"]
+mod thread_delete_api;
+pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]
@@ -151,6 +154,7 @@ pub struct Engine {
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
+    pub(crate) native_ui_editors: crate::native_ui_edits::NativeUiEditors,
     catalog_shutdown_requested: bool,
     named_resume: crate::named_profile_resume::Registry,
     provider_restore: Option<provider_switch_api::RestoreIntent>,
@@ -201,7 +205,7 @@ impl Engine {
         Self::initialize(store, true)
     }
     #[cfg(test)]
-    fn fixture(store: Store) -> Self {
+    pub(crate) fn fixture(store: Store) -> Self {
         Self::initialize(store, false)
     }
     fn initialize(store: Store, discover: bool) -> Self {
@@ -228,6 +232,7 @@ impl Engine {
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),
             catalog_shutdown_requested: false,
+            native_ui_editors: Default::default(),
             named_resume: crate::named_profile_resume::Registry::for_store(&store),
             provider_restore: None,
             github_threads: github_threads_engine::State::default(),
@@ -274,6 +279,9 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
         }
+    }
+    pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
+        self.native_ui_editors.clone()
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
@@ -470,7 +478,7 @@ impl Engine {
                 }
                 Ok(json!({"ready":false}))
             }
-            "app.quit"=>{ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.quit"=>{ensure!(self.native_ui_editors.pending() == 0,"Unsaved native editor changes require Save or Discard before quitting");ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
@@ -986,6 +994,14 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
+        let saved_session = agent::provider_session(&v, &provider);
+        let allowed_session = self.unrevoked_provider_session(&v, &provider)?;
+        if codex_profile.is_some() && saved_session.is_some() && allowed_session.is_none() {
+            // Undo restores exact content, while deletion permanently consumes
+            // every old continuation opportunity, including private receipts.
+            self.named_resume
+                .invalidate_threads(std::slice::from_ref(&id), &self.store)?;
+        }
         // Session JSON cannot authorize named resume. The private registry
         // and authenticated restart journal require a saved owned worker join.
         let named_resume = if let Some(profile) = &codex_profile {
@@ -1016,7 +1032,7 @@ impl Engine {
         let session = if let Some(authority) = &named_resume {
             authority.session().map(str::to_owned)
         } else {
-            agent::provider_session(&v, &provider)
+            allowed_session
         };
         let seen = if let Some(authority) = &named_resume {
             authority.seen()

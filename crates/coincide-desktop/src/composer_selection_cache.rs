@@ -1,11 +1,14 @@
 //! Publish capabilities only after the host's selected-thread handoff is acknowledged.
 use super::*;
 use std::sync::TryLockError;
+#[path = "composer_selection_named_cache.rs"]
+mod named;
 
 pub(super) type Scope = (String, Value, bool);
 #[derive(Default)]
 pub(super) struct CapabilityCache {
     authoritative: Option<Scope>,
+    named: named::Reader,
 }
 pub(super) enum Read {
     Cached,
@@ -15,11 +18,27 @@ pub(super) enum Read {
 impl CapabilityCache {
     pub(super) fn invalidate(&mut self) {
         self.authoritative = None;
+        self.named.invalidate();
     }
     pub(super) fn is_current(&self, scope: &Scope) -> bool {
         self.authoritative.as_ref() == Some(scope)
+            && (!named_scope(scope) || !self.named.refresh_due())
     }
     pub(super) fn read(&mut self, shared: &SharedEngine, scope: &Scope) -> Read {
+        if named_scope(scope) {
+            let cached = self.authoritative.as_ref() == Some(scope);
+            let result = self.named.read_with(shared, scope, cached, |engine, id| {
+                selection_response(
+                    engine,
+                    "agent.selection.capabilities",
+                    json!({"threadId":id}),
+                )
+            });
+            if matches!(result, Read::Ready(_)) {
+                self.authoritative = Some(scope.clone());
+            }
+            return result;
+        }
         self.read_with(shared, scope, |engine, id| {
             selection_response(
                 engine,
@@ -27,6 +46,12 @@ impl CapabilityCache {
                 json!({"threadId":id}),
             )
         })
+    }
+    pub(super) fn request_shutdown(&mut self) {
+        self.named.request_shutdown();
+    }
+    pub(super) fn shutdown_status(&mut self) -> crate::worker_owner::ShutdownStatus {
+        self.named.shutdown_status()
     }
     fn read_with(
         &mut self,
@@ -85,6 +110,10 @@ impl CapabilityCache {
         self.authoritative = Some(scope.clone());
         Read::Ready(result)
     }
+}
+fn named_scope(scope: &Scope) -> bool {
+    scope.1["selection"]["provider"] == "codex"
+        && !coincide_core::composer_selection::default_account(&scope.1["selection"]["accountID"])
 }
 pub(super) fn selection_envelope(thread: &Value) -> Value {
     json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]})

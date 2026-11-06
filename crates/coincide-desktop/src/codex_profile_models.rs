@@ -182,7 +182,7 @@ impl Coincide {
         let default_interaction = thread.get("interactionMode").cloned();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
-            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. A matching successful saved turn can resume within this app process; restart replays history in a fresh session. Bots remain unavailable."))
+            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. Completed conversations can resume after reopening when their saved session and account are still available. Bots remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("named-profile-model-default").label(default_label).disabled(disabled)
                     .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || planning || clear_effort || clear_speed {Some(NamedModelOptions{interaction:if planning {Some("build")}else{None},access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:default_access.as_ref(),expected_interaction:default_interaction.as_ref()})}else{None},cx))))
@@ -204,7 +204,7 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap_1();
-                for row in catalog["models"].as_array().into_iter().flatten().take(200) {
+                for row in self.visible_picker_models(catalog, thread, cx) {
                     let model = text(row, "id");
                     let unsupported = astra_row_reason(&model, row, &selection);
                     let row_id = id.clone();
@@ -245,6 +245,14 @@ impl Coincide {
             } else if let Some(error) = catalog["error"].as_str() {
                 pane = pane.child(div().text_xs().child(error.to_owned()));
             }
+        }
+        if self.selection_ui.facet != super::PickerFacet::Model {
+            pane = div()
+                .id("named-profile-options")
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3();
         }
         let model = text(&thread["selection"], "modelID");
         let request = text(catalog, "requestId");
@@ -301,7 +309,9 @@ impl Coincide {
             );
         }
         mode_controls = mode_controls.child(modes).child(div().text_xs().child("Plan uses this profile’s exact model, effort and speed. Build clears only Plan; it keeps permissions and options. Unproved saved models remain locked until Refresh. No message is sent."));
-        pane = pane.child(mode_controls);
+        if self.selection_ui.facet == super::PickerFacet::Mode {
+            pane = pane.child(mode_controls);
+        }
         let mut access_controls = div().flex().flex_wrap().gap_2();
         for (access, label) in [
             ("approval", "Approval required"),
@@ -446,7 +456,9 @@ impl Coincide {
         if let Some(reason) = effort_caps.and_then(|value| value["reason"].as_str()) {
             effort_controls = effort_controls.child(div().text_xs().child(reason.to_owned()));
         }
-        pane = pane.child(effort_controls);
+        if self.selection_ui.facet == super::PickerFacet::Effort {
+            pane = pane.child(effort_controls);
+        }
         let speed_caps = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == "codex"))
@@ -544,9 +556,13 @@ impl Coincide {
         if let Some(reason) = speed_caps.and_then(|value| value["reason"].as_str()) {
             speed_controls = speed_controls.child(div().text_xs().child(reason.to_owned()));
         }
-        pane = pane.child(speed_controls);
-        pane = pane.child(access_controls);
-        if elevated {
+        if self.selection_ui.facet == super::PickerFacet::Speed {
+            pane = pane.child(speed_controls);
+        }
+        if self.selection_ui.facet == super::PickerFacet::Access {
+            pane = pane.child(access_controls);
+        }
+        if elevated && self.selection_ui.facet == super::PickerFacet::Access {
             pane = pane.child(div().text_xs().child("Full access lets Codex run without app approval prompts. The saved model must retain this profile’s current catalog proof; authentication is checked before every turn. Changing this setting sends no message."));
         }
         pane.into_any_element()

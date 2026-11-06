@@ -4,6 +4,7 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 
 #[path = "navigation_sections.rs"]
 mod sections;
+use gpui_kit::assets::IconName;
 use sections::NO_PROJECT;
 
 // Button's root alignment does not reach its independently centered label slot.
@@ -13,8 +14,8 @@ fn sidebar_button_label(label: String) -> Div {
 }
 
 impl Coincide {
-    fn sidebar_sections(&self, now: f64) -> Vec<sections::Section<'_>> {
-        sections::project(
+    fn sidebar_sections(&self, now: f64, searching: bool) -> Vec<sections::Section<'_>> {
+        sections::display(
             &self.threads,
             self.projects
                 .iter()
@@ -23,13 +24,43 @@ impl Coincide {
             self.selected_project.as_deref(),
             self.show_snoozed,
             now,
+            searching,
         )
+    }
+    fn sidebar_projects_heading(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .h(px(36.))
+            .px_2()
+            .gap_1()
+            .child(
+                div()
+                    .id("sidebar-section-projects")
+                    .role(Role::Heading)
+                    .text_xs()
+                    .text_color(self.color(0xe4e9f2).opacity(0.55))
+                    .flex_1()
+                    .child("Projects"),
+            )
+            .child(
+                Button::new("sidebar-add-project")
+                    .icon(IconName::FolderPlus)
+                    .accessibility_label("Add project folders")
+                    .tooltip("Add folders…")
+                    .ghost()
+                    .compact()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_project_form(project_management::Mode::Add, None, window, cx)
+                    })),
+            )
+            .into_any_element()
     }
     pub(super) fn bulk_sidebar_binding(&self, cx: &Context<Self>) -> thread_bulk::Binding {
         let query = self.search.read(cx).value().to_string();
         let searching = !query.trim().is_empty();
         let rows = self
-            .sidebar_sections(coincide_core::store::swift_timestamp())
+            .sidebar_sections(coincide_core::store::swift_timestamp(), searching)
             .into_iter()
             .filter(|section| {
                 searching
@@ -53,7 +84,7 @@ impl Coincide {
             snoozed: self.show_snoozed,
             available: self.thread_list_open
                 && self.microphone_window_active
-                && !self.settings_open
+                && !self.settings_in_main_window()
                 && !self.schedules_open
                 && !self.session_import_open
                 && !self.workspace_open
@@ -107,7 +138,8 @@ impl Coincide {
         };
         let searching = !self.search.read(cx).value().trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
-        let sections = self.sidebar_sections(now);
+        let sections = self.sidebar_sections(now, searching);
+        let mut projects_heading = false;
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
         if sections.is_empty() {
             conversations = conversations.child(
@@ -118,6 +150,15 @@ impl Coincide {
             );
         }
         for (section_index, section) in sections.into_iter().enumerate() {
+            if !projects_heading
+                && section
+                    .project_id
+                    .as_ref()
+                    .is_some_and(|id| !id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+            {
+                conversations = conversations.child(self.sidebar_projects_heading(cx));
+                projects_heading = true;
+            }
             let pinned = section.project_id.is_none();
             let name = section.name;
             let threads = section.threads;
@@ -150,11 +191,24 @@ impl Coincide {
                             if chats { "section" } else { "project" },
                             threads.len()
                         )))
-                        .child(sidebar_button_label(format!(
-                            "{} {name} ({})",
-                            if collapsed { "▸" } else { "▾" },
-                            threads.len()
-                        )))
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(if collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .when(
+                                    !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
+                                    |row| row.child(IconName::Folder),
+                                )
+                                .child(sidebar_button_label(name)),
+                        )
                         .disabled(searching)
                         .when(searching, |button| {
                             button.tooltip("Clear search to collapse project groups")
@@ -242,6 +296,9 @@ impl Coincide {
             }
             conversations = conversations.child(group);
         }
+        if !projects_heading && !searching {
+            conversations = conversations.child(self.sidebar_projects_heading(cx));
+        }
         div()
             .id("conversation-list")
             .relative()
@@ -278,19 +335,67 @@ impl Coincide {
                 cx.listener(|this, _, _, cx| this.finish_sidebar_resize(cx)),
             )
             .child(
-                Button::new("projects-toggle")
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("sidebar-new-thread")
+                            .icon(IconName::SquarePen)
+                            .ghost()
+                            .compact()
+                            .h(px(32.))
+                            .flex_1()
+                            .justify_start()
+                            .accessibility_label("New Thread")
+                            .child(sidebar_button_label("New Thread".into()))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.new_thread(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("projects-toggle")
+                            .icon(IconName::Ellipsis)
+                            .ghost()
+                            .compact()
+                            .h(px(32.))
+                            .accessibility_label(format!("Project: {project_label}"))
+                            .tooltip("Conversation filters and project actions")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.thread_bulk.invalidate();
+                                this.project_picker_open = !this.project_picker_open;
+                                if !this.project_picker_open {
+                                    this.close_project_form(window, cx);
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                Input::new(&self.search)
+                    .appearance(false)
+                    .bordered(false)
+                    .prefix(IconName::Search)
+                    .h(px(32.)),
+            )
+            .child(
+                Button::new("sidebar-scheduled")
+                    .icon(IconName::Clock)
                     .ghost()
                     .compact()
-                    .justify_start()
                     .h(px(32.))
-                    .accessibility_label(format!("Project: {project_label}"))
-                    .child(sidebar_button_label(format!("Project: {project_label}")))
-                    .on_click(cx.listener(|this, _, window, cx| {
+                    .w_full()
+                    .justify_start()
+                    .accessibility_label("Scheduled")
+                    .selected(self.schedules_open)
+                    .child(sidebar_button_label("Scheduled".into()))
+                    .on_click(cx.listener(|this, _, _, cx| {
                         this.thread_bulk.invalidate();
-                        this.project_picker_open = !this.project_picker_open;
-                        if !this.project_picker_open {
-                            this.close_project_form(window, cx);
-                        }
+                        this.hide_inline_settings();
+                        this.workspace_open = false;
+                        this.session_import_open = false;
+                        this.open_global_schedules(cx);
+                        this.sync_transcription_binding(cx);
                         cx.notify();
                     })),
             )
@@ -417,49 +522,76 @@ impl Coincide {
                                     )
                                 })),
                         )
+                        .when(
+                            !self.thread_bulk.mode && self.thread_bulk.status.is_empty(),
+                            |view| {
+                                view.child(
+                                    Button::new("sidebar-select-conversations-menu")
+                                        .ghost()
+                                        .compact()
+                                        .label("Select conversations…")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.project_picker_open = false;
+                                            this.sync_thread_bulk(cx);
+                                            if this.bulk_sidebar_binding(cx).available {
+                                                this.thread_bulk.mode = true;
+                                                this.thread_bulk.invalidate();
+                                            }
+                                            cx.notify();
+                                        })),
+                                )
+                            },
+                        )
                         .when_some(self.project_management_form(cx), |view, form| {
                             view.child(form)
                         }),
                 )
             })
-            .child(Input::new(&self.search))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(
-                        Button::new("archived")
-                            .ghost()
-                            .compact()
-                            .label(if self.show_archived {
-                                "Hide archived"
-                            } else {
-                                "Show archived"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.thread_bulk.invalidate();
-                                this.show_archived = !this.show_archived;
-                                this.refresh(cx);
-                            })),
+            .when(
+                self.project_picker_open || self.show_archived || self.show_snoozed,
+                |view| {
+                    view.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("archived")
+                                    .ghost()
+                                    .compact()
+                                    .label(if self.show_archived {
+                                        "Hide archived"
+                                    } else {
+                                        "Show archived"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.thread_bulk.invalidate();
+                                        this.show_archived = !this.show_archived;
+                                        this.refresh(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("snoozed")
+                                    .ghost()
+                                    .compact()
+                                    .label(if self.show_snoozed {
+                                        "Hide snoozed"
+                                    } else {
+                                        "Show snoozed"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.thread_bulk.invalidate();
+                                        this.show_snoozed = !this.show_snoozed;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
-                    .child(
-                        Button::new("snoozed")
-                            .ghost()
-                            .compact()
-                            .label(if self.show_snoozed {
-                                "Hide snoozed"
-                            } else {
-                                "Show snoozed"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.thread_bulk.invalidate();
-                                this.show_snoozed = !this.show_snoozed;
-                                cx.notify();
-                            })),
-                    ),
+                },
             )
-            .child(self.bulk_controls(cx))
+            .when(
+                self.thread_bulk.mode || !self.thread_bulk.status.is_empty(),
+                |view| view.child(self.bulk_controls(cx)),
+            )
             .child(conversations)
             .when_some(self.sidebar_resize.error(), |view, error| {
                 view.child(div().text_xs().child(error))

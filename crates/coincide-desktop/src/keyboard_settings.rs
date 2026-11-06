@@ -413,15 +413,28 @@ impl State {
     }
 }
 impl Coincide {
-    pub(super) fn focus_settings_route(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // A hidden Settings handle stays alive but is no longer in GPUI's
-        // dispatch tree. Do not restore recording focus into the old subtree.
+    pub(super) fn cancel_settings_shortcut(&mut self) {
         self.keyboard.recording = None;
         self.keyboard.restore = None;
         self.keyboard.reset_confirm = false;
+    }
+    pub(super) fn focus_settings_route(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A hidden Settings handle stays alive but is no longer in GPUI's
+        // dispatch tree. Do not restore recording focus into the old subtree.
+        self.cancel_settings_shortcut();
         // The rail is mounted on both sides of the route, so its focus keeps
         // the existing app capture handler reachable without focusing an editor.
-        self.navigation_focus.focus(window, cx);
+        if self.settings_open {
+            self.show_settings_window(cx);
+            if self
+                .settings_window
+                .is_some_and(|handle| handle == window.window_handle())
+            {
+                self.settings_focus.focus(window, cx);
+            }
+        } else {
+            self.navigation_focus.focus(window, cx);
+        }
     }
     fn save_shortcut(&mut self, change: Change<'_>, window: &mut Window, cx: &mut Context<Self>) {
         match save(&self.engine, change) {

@@ -309,6 +309,7 @@ impl Store {
                     "A project already uses the restored folder"
                 );
                 for (thread, document) in &expected.threads {
+                    ensure_not_deleted(&tx, thread)?;
                     let exists: bool = tx.query_row(
                         "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 COLLATE NOCASE)",
                         [thread],
