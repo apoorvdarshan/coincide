@@ -941,7 +941,10 @@ mod tests {
         let mut fixture = Fixture::new();
         let metadata=Metadata::from_document(Some(json!({"projects":{(fixture.root.to_str().unwrap()):{"masterPath":"/synthetic/untrusted/master","isEnabled":true}},"opaque":4}))).unwrap();
         let scope = fixture.scope();
-        assert_eq!(scope.master_path(), fixture.root.join("AGENTS.md"));
+        assert_eq!(
+            scope.master_path(),
+            fixture.root.canonicalize().unwrap().join("AGENTS.md")
+        );
         fixture
             .store
             .save_document("instructions.json", &metadata.document)

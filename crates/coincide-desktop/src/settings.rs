@@ -1131,9 +1131,10 @@ impl Coincide {
                 self.hide_inline_settings();
                 self.workspace_open = false;
                 self.session_import_open = false;
-                self.schedules_open = !self.schedules_open;
                 if self.schedules_open {
-                    self.refresh_schedules(cx);
+                    self.schedules_open = false;
+                } else {
+                    self.open_global_schedules(cx);
                 }
                 self.sync_transcription_binding(cx);
                 cx.notify();

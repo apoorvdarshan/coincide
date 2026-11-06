@@ -1594,7 +1594,7 @@ impl Coincide {
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
-                if self.schedule_editor.thread_id != id {
+                if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
                     self.schedule_editor.open = false;
                 }
                 self.selected = Some(v);
@@ -2048,8 +2048,7 @@ impl Coincide {
                 self.hide_inline_settings();
                 self.workspace_open = false;
                 self.session_import_open = false;
-                self.schedules_open = true;
-                self.refresh_schedules(cx);
+                self.open_global_schedules(cx);
             }
         }
         self.sync_transcription_binding(cx);
@@ -4142,6 +4141,8 @@ impl Render for Coincide {
                                                 ))
                                                 .child(
                                                     Textarea::new(&self.composer)
+                                                        .appearance(false)
+                                                        .bordered(false)
                                                         .h(px(if self.composer_files.opened {56.} else {110.}))
                                                         .on_paste(move |item, _, cx| {
                                                             target
@@ -4166,7 +4167,7 @@ impl Render for Coincide {
                                                 .child(self.composer_file_button(cx))
                                                 .child(
                                                     Button::new("attach-images")
-                                                        .icon(gpui_kit::assets::IconName::Plus)
+                                                        .icon(gpui_kit::assets::IconName::Paperclip)
                                                         .accessibility_label(if importing_images {
                                                             "Importing images…"
                                                         } else {
@@ -4213,7 +4214,7 @@ impl Render for Coincide {
                                                     }),
                                                 )),
                                         )
-                                        .when(!self.composer_files.opened, |view| view.child(
+                                        .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
                                             div()
                                                 .id("composer-status")
                                                 .mt_2()

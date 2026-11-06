@@ -1779,7 +1779,23 @@ impl Coincide {
                 Button::new(id)
                     .label(label)
                     .tooltip(help)
-                    .icon(gpui_kit::assets::IconName::ChevronDown)
+                    .when(facet != PickerFacet::Mode, |button| {
+                        button.dropdown_caret(true)
+                    })
+                    .when(facet != PickerFacet::Model, |button| {
+                        button.icon(match facet {
+                            PickerFacet::Effort => gpui_kit::assets::IconName::Brain,
+                            PickerFacet::Speed => gpui_kit::assets::IconName::Zap,
+                            PickerFacet::Access => {
+                                if access == "Full access" {
+                                    gpui_kit::assets::IconName::LockOpen
+                                } else {
+                                    gpui_kit::assets::IconName::Lock
+                                }
+                            }
+                            _ => gpui_kit::assets::IconName::Hammer,
+                        })
+                    })
                     .ghost()
                     .compact()
                     .when(

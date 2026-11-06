@@ -394,8 +394,7 @@ impl Coincide {
                         this.hide_inline_settings();
                         this.workspace_open = false;
                         this.session_import_open = false;
-                        this.schedules_open = true;
-                        this.refresh_schedules(cx);
+                        this.open_global_schedules(cx);
                         this.sync_transcription_binding(cx);
                         cx.notify();
                     })),

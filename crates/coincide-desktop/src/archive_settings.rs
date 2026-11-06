@@ -458,7 +458,7 @@ mod tests {
     fn typed_native_delete_requires_review_and_undo_preserves_full_content() {
         let root =
             std::env::temp_dir().join(format!("coincide-archive-pane-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
+        coincide_core::native_file::private_directory(&root).unwrap();
         let mut store = coincide_core::store::Store::open(&root.join("state.sqlite")).unwrap();
         let mut thread = store.new_thread("").unwrap();
         thread["isArchived"] = json!(true);

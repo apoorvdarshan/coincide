@@ -5,6 +5,10 @@ use coincide_core::scheduling::{
     Recurrence, format_local_datetime, parse_date, parse_local_datetime,
 };
 
+#[path = "scheduling_list.rs"]
+mod list;
+use list::{same_schedule_target, schedule_guard_snapshot, schedule_visible};
+
 const KINDS: &[(&str, &str)] = &[
     ("once", "Once"),
     ("daily", "Daily"),
@@ -27,6 +31,12 @@ const DAYS: &[(u32, &str)] = &[
 pub(super) struct ScheduleEditor {
     pub open: bool,
     pub thread_id: String,
+    pub(super) all_conversations: bool,
+    scope_epoch: u64,
+    filter: Entity<InputState>,
+    editing_global: bool,
+    baseline_target: Value,
+    target_label: String,
     project_id: Value,
     editing_id: Option<String>,
     baseline_revision: Value,
@@ -72,12 +82,24 @@ impl ScheduleEditor {
                 cx.notify();
             }
         }));
+        subscriptions.push(cx.subscribe(&self.filter, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.schedule_editor.scope_epoch = this.schedule_editor.scope_epoch.wrapping_add(1);
+                cx.notify();
+            }
+        }));
         subscriptions
     }
     pub fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
         Self {
             open: false,
             thread_id: String::new(),
+            all_conversations: false,
+            scope_epoch: 0,
+            filter: cx.new(|cx| InputState::new(window, cx).placeholder("Filter schedules")),
+            editing_global: false,
+            baseline_target: Value::Null,
+            target_label: String::new(),
             project_id: Value::Null,
             editing_id: None,
             baseline_revision: Value::Null,
@@ -212,11 +234,15 @@ impl ScheduleEditor {
 
 impl Coincide {
     pub(super) fn refresh_schedules(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+        let params = if self.schedule_editor.all_conversations {
+            json!({})
+        } else if let Some(thread) = self.selected.as_ref() {
+            json!({"threadId":thread["id"]})
+        } else {
             self.schedules.clear();
             return;
         };
-        match call(&self.engine, "schedules.list", json!({"threadId":thread})) {
+        match call(&self.engine, "schedules.list", params) {
             Ok(result) => {
                 self.schedules = result["tasks"].as_array().cloned().unwrap_or_default();
                 if let Some(error) = result["error"].as_str() {
@@ -231,36 +257,70 @@ impl Coincide {
         }
         cx.notify();
     }
+    pub(super) fn open_global_schedules(&mut self, cx: &mut Context<Self>) {
+        self.schedule_editor.all_conversations = true;
+        self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+        self.schedule_editor.open = false;
+        self.schedules_open = true;
+        self.refresh_schedules(cx);
+    }
+    pub(super) fn open_conversation_schedules(&mut self, cx: &mut Context<Self>) {
+        self.schedule_editor.all_conversations = false;
+        self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+        self.schedule_editor.open = false;
+        self.schedules_open = true;
+        self.refresh_schedules(cx);
+    }
     fn schedule_action(
         &mut self,
         id: &str,
         action: &str,
-        expected_revision: &Value,
+        expected: &Value,
+        scope_epoch: u64,
         cx: &mut Context<Self>,
     ) {
-        // A cached accessibility/click handler must not act on a card from a
-        // conversation that is no longer selected, including after read errors.
-        if !self.schedules.iter().any(|task| {
-            task["id"] == id
-                && self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|thread| task["threadID"] == thread["id"])
-        }) {
+        let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let query = self.schedule_editor.filter.read(cx).value().to_string();
+        if scope_epoch != self.schedule_editor.scope_epoch
+            || !self.schedules.iter().any(|task| {
+                task["id"] == id
+                    && same_schedule_target(task, expected)
+                    && schedule_visible(
+                        task,
+                        self.schedule_editor.all_conversations,
+                        selected.as_deref(),
+                        &query,
+                    )
+            })
+        {
             self.schedule_status =
-                "Conversation changed. Reopen the schedule before acting.".into();
+                "Schedule view changed. Reopen the schedule before acting.".into();
             cx.notify();
             return;
         }
-        let result = if action == "approve" {
-            match try_state(&self.engine) {
-                Ok(mut engine) => check_schedule_revision(&mut engine, id, expected_revision)
-                    .and_then(|_| engine.approve_schedule(id)),
-                Err(error) => Err(error),
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            check_schedule_revision(
+                &mut engine,
+                id,
+                &expected["rustRevision"],
+                &expected["threadID"],
+                &expected["projectID"],
+            )?;
+            if action == "approve" {
+                return engine.approve_schedule(id);
             }
-        } else {
-            call(&self.engine, action, json!({"scheduleId":id}))
-        };
+            let response = engine.dispatch(json!({"method":action,"params":{"scheduleId":id}}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!(
+                    "{}",
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("Schedule action failed")
+                );
+            }
+            Ok(response["result"].clone())
+        })();
         let succeeded = result.is_ok();
         self.schedule_status=match result {
             Ok(_)=>match action {
@@ -287,13 +347,21 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.selected.as_ref() else {
-            self.schedule_status = "Choose a conversation first.".into();
+        if self.selected.is_none() && (id.is_none() || !self.schedule_editor.all_conversations) {
+            self.schedule_status = "Choose a conversation before creating a schedule.".into();
             cx.notify();
             return;
-        };
+        }
         let existing = match id {
-            Some(id) => match self.schedules.iter().find(|task| task["id"] == id) {
+            Some(id) => match self.schedules.iter().find(|task| {
+                task["id"] == id
+                    && schedule_visible(
+                        task,
+                        self.schedule_editor.all_conversations,
+                        self.selected.as_ref().and_then(|t| t["id"].as_str()),
+                        &self.schedule_editor.filter.read(cx).value(),
+                    )
+            }) {
                 Some(task) => Some(task.clone()),
                 None => {
                     self.schedule_status =
@@ -334,8 +402,30 @@ impl Coincide {
             );
         }
         let editor = &mut self.schedule_editor;
-        editor.thread_id = text(thread, "id");
-        editor.project_id = thread["projectID"].clone();
+        editor.editing_global = editor.all_conversations;
+        editor.baseline_target = existing
+            .as_ref()
+            .map(|task| task["threadID"].clone())
+            .unwrap_or_else(|| self.selected.as_ref().unwrap()["id"].clone());
+        editor.thread_id = editor
+            .baseline_target
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        editor.project_id = existing
+            .as_ref()
+            .map(|task| task["projectID"].clone())
+            .unwrap_or_else(|| self.selected.as_ref().unwrap()["projectID"].clone());
+        editor.target_label = if editor.thread_id.is_empty() {
+            "New conversation per run".into()
+        } else {
+            self.threads
+                .iter()
+                .find(|t| t.id == editor.thread_id)
+                .map(|t| t.title.clone())
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| "Saved conversation".into())
+        };
         editor.editing_id = id.map(str::to_owned);
         editor.baseline_revision = existing
             .as_ref()
@@ -406,9 +496,13 @@ impl Coincide {
         let editor = &self.schedule_editor;
         let outcome = (|| -> Result<Value> {
             anyhow::ensure!(
-                self.selected
-                    .as_ref()
-                    .is_some_and(|v| v["id"] == editor.thread_id),
+                editor.open
+                    && editor.editing_global == editor.all_conversations
+                    && (editor.editing_global
+                        || self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|v| v["id"] == editor.thread_id)),
                 "Conversation changed. Reopen the schedule editor."
             );
             let name = editor.name.read(cx).value().trim().to_owned();
@@ -424,7 +518,13 @@ impl Coincide {
             let recurrence = editor.recurrence(cx)?;
             if let Some(id) = &editor.editing_id {
                 let mut engine = try_state(&self.engine)?;
-                check_schedule_revision(&mut engine, id, &editor.baseline_revision)?;
+                check_schedule_revision(
+                    &mut engine,
+                    id,
+                    &editor.baseline_revision,
+                    &editor.baseline_target,
+                    &editor.project_id,
+                )?;
                 let response = engine.dispatch(json!({"method":"schedules.patch", "params":{
                     "scheduleId":id,"patch":{"name":name,"prompt":prompt,"recurrence":recurrence}
                 }}));
@@ -470,6 +570,11 @@ impl Coincide {
             } else {
                 "Create schedule for review"
             }))
+            .child(
+                div()
+                    .text_sm()
+                    .child(format!("Conversation: {}", editor.target_label)),
+            )
             .child(div().text_sm().child("Name"))
             .child(Input::new(&editor.name))
             .child(div().text_sm().child("Message"))
@@ -559,18 +664,38 @@ impl Coincide {
             self.schedule_editor.update_preview(cx);
         }
         let mut content=div().id("schedule-panel").flex().flex_col().flex_1().min_h_0().min_w_0().gap_3().p_4().overflow_y_scroll()
-            .child(div().text_lg().child("Schedules for this conversation"))
+            .child(div().text_lg().child(if self.schedule_editor.all_conversations {"Scheduled"} else {"Schedules for this conversation"}))
+            .child(Input::new(&self.schedule_editor.filter))
             .child(div().text_sm().child("Imported schedules remain dormant until approved separately in Coincide Rust. The app must stay open; missed occurrences are skipped."))
-            .child(Button::new("schedule-new").label("New schedule").disabled(self.selected.is_none() || self.schedule_editor.open)
+            .child(Button::new("schedule-new").label(if self.schedule_editor.all_conversations {"New for selected conversation"} else {"New schedule"}).disabled(self.selected.is_none() || self.schedule_editor.open)
                 .on_click(cx.listener(|this,_,window,cx|this.open_schedule_editor(None,window,cx))))
             .child(div().text_sm().child(self.schedule_status.clone()));
         if self.schedule_editor.open {
             content = content.child(self.schedule_editor_pane(cx));
         }
-        if self.schedules.is_empty() {
-            content = content.child(div().child("No schedules in this conversation."));
+        let query = self.schedule_editor.filter.read(cx).value().to_string();
+        let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let rows = self
+            .schedules
+            .iter()
+            .filter(|task| {
+                schedule_visible(
+                    task,
+                    self.schedule_editor.all_conversations,
+                    selected.as_deref(),
+                    &query,
+                )
+            })
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            content = content.child(div().child(if query.trim().is_empty() {
+                "No schedules in this view."
+            } else {
+                "No schedules match this filter."
+            }));
         }
-        for schedule in &self.schedules {
+        let scope_epoch = self.schedule_editor.scope_epoch;
+        for schedule in rows {
             let id = text(schedule, "id");
             let state = text(schedule, "approvalState");
             let approved = state == "approved";
@@ -611,6 +736,23 @@ impl Coincide {
                         "Enabled"
                     }
                 )));
+            if self.schedule_editor.all_conversations {
+                let project = self
+                    .projects
+                    .iter()
+                    .find(|p| p["id"] == schedule["projectID"])
+                    .map(|p| text(p, "name"))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "Other project".into());
+                card = card.child(div().text_sm().child(format!(
+                    "{project} · {}",
+                    if schedule["threadID"].is_string() {
+                        "Saved conversation"
+                    } else {
+                        "New conversation per run"
+                    }
+                )));
+            }
             if !schedule["proposal"].is_null() {
                 card = card.child(
                     div()
@@ -640,23 +782,34 @@ impl Coincide {
             let editing = self.schedule_editor.open
                 && self.schedule_editor.editing_id.as_deref() == Some(id.as_str());
             let edit_id = id.clone();
+            let edit_expected = schedule_guard_snapshot(schedule);
             let mut actions = div().flex().flex_wrap().gap_2().child(
                 Button::new(SharedString::from(format!("schedule-edit-{id}")))
                     .label("Edit")
                     .disabled(self.schedule_editor.open)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_schedule_editor(Some(&edit_id), window, cx)
+                        if this.schedule_editor.scope_epoch == scope_epoch
+                            && this.schedules.iter().any(|task| {
+                                task["id"] == edit_id && same_schedule_target(task, &edit_expected)
+                            })
+                        {
+                            this.open_schedule_editor(Some(&edit_id), window, cx);
+                        } else {
+                            this.schedule_status =
+                                "Schedule view changed. Reopen the schedule before editing.".into();
+                            cx.notify();
+                        }
                     })),
             );
             if !approved {
                 let id = id.clone();
-                let revision = schedule["rustRevision"].clone();
+                let expected = schedule_guard_snapshot(schedule);
                 actions = actions.child(
                     Button::new(SharedString::from(format!("schedule-approve-{id}")))
                         .label("Approve in Rust")
                         .disabled(editing)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, "approve", &revision, cx)
+                            this.schedule_action(&id, "approve", &expected, scope_epoch, cx)
                         })),
                 );
             }
@@ -680,6 +833,7 @@ impl Coincide {
                     continue;
                 }
                 let id = id.clone();
+                let expected = schedule_guard_snapshot(schedule);
                 actions = actions.child(
                     Button::new(SharedString::from(format!("schedule-{action}-{id}")))
                         .label(label)
@@ -688,7 +842,7 @@ impl Coincide {
                                 && (editing || schedule["isPaused"] == true),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, action, &Value::Null, cx)
+                            this.schedule_action(&id, action, &expected, scope_epoch, cx)
                         })),
                 );
             }
@@ -699,14 +853,22 @@ impl Coincide {
 }
 // The engine lock stays held from this comparison through approval or edit,
 // so an API writer cannot substitute unseen content between review and action.
-fn check_schedule_revision(engine: &mut Engine, id: &str, revision: &Value) -> Result<()> {
+fn check_schedule_revision(
+    engine: &mut Engine,
+    id: &str,
+    revision: &Value,
+    target: &Value,
+    project: &Value,
+) -> Result<()> {
     let tasks = coincide_core::schedule_service::ScheduleService::new(&mut engine.store).list()?;
     let task = tasks
         .iter()
         .find(|task| task["id"] == id)
         .ok_or_else(|| anyhow::anyhow!("Schedule was deleted. Refresh and reopen it."))?;
     anyhow::ensure!(
-        task["rustRevision"] == *revision,
+        task["rustRevision"] == *revision
+            && task["threadID"] == *target
+            && task["projectID"] == *project,
         "Schedule changed. Refresh and reopen it to review the latest values."
     );
     Ok(())
@@ -758,5 +920,127 @@ fn schedule_timing(recurrence: &Value) -> String {
         ),
         "cron" => format!("Cron {} ({zone})", text(recurrence, "cron")),
         _ => "Unsupported timing".into(),
+    }
+}
+
+#[cfg(test)]
+mod global_schedule_tests {
+    use super::*;
+    #[test]
+    fn global_api_read_keeps_targets_and_native_cas_rejects_revision_or_target_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "coincide-global-schedules-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let mut engine = Engine::new(Store::open(&root.join("state.sqlite")).unwrap());
+        let request = |engine: &mut Engine, method: &str, params: Value| {
+            let response = engine.dispatch(json!({"method":method,"params":params}));
+            assert!(response.get("error").is_none(), "{method}: {response}");
+            response["result"].clone()
+        };
+        let mut tasks = Vec::new();
+        for name in ["first", "second"] {
+            let path = root.join(name);
+            std::fs::create_dir(&path).unwrap();
+            let project = request(
+                &mut engine,
+                "projects.create",
+                json!({"path":path,"name":name}),
+            );
+            let thread = request(
+                &mut engine,
+                "threads.create",
+                json!({"projectId":project["id"]}),
+            );
+            let result = request(
+                &mut engine,
+                "schedules.create",
+                json!({"task":{"name":name,"prompt":"Synthetic dormant task; never execute","projectID":project["id"],"threadID":thread["id"],"recurrence":{"kind":"once","timeZoneID":"UTC","date":coincide_core::store::swift_timestamp()+3600.,"hour":9,"minute":0,"weekday":2,"weekdays":null,"intervalMinutes":30,"cron":"0 9 * * 1-5"}}}),
+            );
+            tasks.push(result["task"].clone());
+        }
+        let global = request(&mut engine, "schedules.list", json!({}));
+        assert_eq!(global["tasks"].as_array().unwrap().len(), 2);
+        let scoped = request(
+            &mut engine,
+            "schedules.list",
+            json!({"threadId":tasks[0]["threadID"]}),
+        );
+        assert_eq!(scoped["tasks"].as_array().unwrap().len(), 1);
+        let task = &tasks[1];
+        let id = task["id"].as_str().unwrap();
+        check_schedule_revision(
+            &mut engine,
+            id,
+            &task["rustRevision"],
+            &task["threadID"],
+            &task["projectID"],
+        )
+        .unwrap();
+        assert!(
+            check_schedule_revision(
+                &mut engine,
+                id,
+                &task["rustRevision"],
+                &tasks[0]["threadID"],
+                &task["projectID"]
+            )
+            .is_err()
+        );
+        assert!(
+            check_schedule_revision(
+                &mut engine,
+                id,
+                &task["rustRevision"],
+                &task["threadID"],
+                &tasks[0]["projectID"]
+            )
+            .is_err()
+        );
+        request(
+            &mut engine,
+            "schedules.patch",
+            json!({"scheduleId":id,"patch":{"name":"Changed while editor open"}}),
+        );
+        assert!(
+            check_schedule_revision(
+                &mut engine,
+                id,
+                &task["rustRevision"],
+                &task["threadID"],
+                &task["projectID"]
+            )
+            .is_err()
+        );
+        let latest = request(&mut engine, "schedules.list", json!({}));
+        assert_eq!(latest["tasks"][0]["threadID"], tasks[0]["threadID"]);
+        assert_eq!(latest["tasks"][1]["threadID"], tasks[1]["threadID"]);
+        assert!(
+            latest["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t["approvalState"] != "approved")
+        );
+        engine.freeze_admissions();
+        engine.request_core_owner_shutdown().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !engine
+            .poll_core_owner_shutdown()
+            .unwrap()
+            .rust_owners_drained()
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        engine.close_store_after_core_shutdown().unwrap();
+        drop(engine);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
