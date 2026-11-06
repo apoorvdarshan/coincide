@@ -32,8 +32,12 @@ pub struct PreparedThreadFlags {
     owner: Uuid,
     action: ThreadFlagAction,
     rows: Vec<FlagRow>,
+    unconfirmed_archive: bool,
 }
 impl PreparedThreadFlags {
+    pub fn requires_confirmation(&self) -> bool {
+        !self.unconfirmed_archive
+    }
     pub fn action(&self) -> ThreadFlagAction {
         self.action
     }
@@ -115,7 +119,21 @@ impl Engine {
             owner: self.thread_bulk_owner,
             action,
             rows,
+            unconfirmed_archive: false,
         })
+    }
+    /// An owned initial Archive action may follow an explicit saved opt-out.
+    /// The Store rechecks the same boolean within the atomic row transaction.
+    pub fn prepare_native_archive_flags(&mut self, ids: &[String]) -> Result<PreparedThreadFlags> {
+        let mut plan = self.prepare_thread_flags(ids, ThreadFlagAction::Archive)?;
+        plan.unconfirmed_archive = self
+            .store
+            .document("settings.json")?
+            .is_some_and(|settings| settings["confirmBeforeArchivingThreads"] == false);
+        let workers = self.provider_workers_status();
+        plan.unconfirmed_archive &=
+            workers.running == 0 && workers.panicked == 0 && workers.unclassified == 0;
+        Ok(plan)
     }
     pub fn apply_thread_flags(&mut self, prepared: &PreparedThreadFlags) -> Result<ThreadFlagUndo> {
         self.require_admissions()?;
@@ -128,7 +146,17 @@ impl Engine {
             self.runs.keys().map(String::as_str),
             self.unsaved_threads.keys().map(String::as_str),
         )?;
-        self.store.apply_flag_rows(&prepared.rows)?;
+        if prepared.unconfirmed_archive {
+            let workers = self.provider_workers_status();
+            ensure!(
+                workers.running == 0 && workers.panicked == 0 && workers.unclassified == 0,
+                "Wait for actual provider cleanup before archiving without confirmation"
+            );
+        }
+        self.store.apply_flag_rows_with_archive_preference(
+            &prepared.rows,
+            prepared.unconfirmed_archive,
+        )?;
         let rows = prepared
             .rows
             .iter()
