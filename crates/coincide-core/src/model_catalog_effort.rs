@@ -34,14 +34,14 @@ impl EffortExecutable {
     }
 }
 /// Exact explicit family only. A provider-resolved default never triggers this.
+pub(crate) fn astra_model(model: &str) -> bool {
+    matches!(model, "gpt-6-astra" | "openai.gpt-6-astra")
+}
 pub(crate) fn astra_default_needed(selection: &Value) -> bool {
     selection["provider"] == "codex"
         && crate::composer_selection::default_account(&selection["accountID"])
         && selection["effort"].is_null()
-        && matches!(
-            selection["modelID"].as_str(),
-            Some("gpt-6-astra" | "openai.gpt-6-astra")
-        )
+        && selection["modelID"].as_str().is_some_and(astra_model)
 }
 /// Private admitted model options. The historical name is retained internally;
 /// both effort and speed are bound, never caller-supplied proof metadata.

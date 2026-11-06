@@ -98,6 +98,7 @@ pub(super) fn same_scope(a: Option<&NamedBinding>, b: Option<&NamedBinding>) -> 
 pub(crate) struct NamedModelProof {
     model: String,
     effort: Option<String>,
+    effective_effort: Option<String>,
     speed: Option<String>,
     binding: NamedBinding,
     revoked: Arc<AtomicBool>,
@@ -106,6 +107,7 @@ impl PartialEq for NamedModelProof {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
             && self.effort == other.effort
+            && self.effective_effort == other.effective_effort
             && self.speed == other.speed
             && self.binding == other.binding
             && Arc::ptr_eq(&self.revoked, &other.revoked)
@@ -113,6 +115,9 @@ impl PartialEq for NamedModelProof {
 }
 impl Eq for NamedModelProof {}
 impl NamedModelProof {
+    pub(crate) fn effective_effort(&self) -> Option<&str> {
+        self.effective_effort.as_deref()
+    }
     pub(crate) fn validate_thread(&self, thread: &Value) -> Result<()> {
         self.validate_selection(thread, &self.binding)
     }
@@ -128,7 +133,7 @@ impl NamedModelProof {
         );
         ensure!(
             model == Some(self.model.as_str())
-                && effort == self.effort.as_deref()
+                && effort == self.effective_effort.as_deref()
                 && speed == self.speed.as_deref(),
             "Named model options do not match the captured policy"
         );
@@ -141,7 +146,7 @@ impl NamedModelProof {
         );
         self.validate_policy(
             Some(&self.model),
-            self.effort.as_deref(),
+            self.effective_effort.as_deref(),
             self.speed.as_deref(),
         )
     }
@@ -160,7 +165,7 @@ impl NamedModelProof {
             &binding.profile,
             &binding.cwd,
             Some(&self.model),
-            self.effort.as_deref(),
+            self.effective_effort.as_deref(),
             self.speed.as_deref(),
         )
     }
@@ -268,16 +273,38 @@ impl ModelCatalog {
                 let choices = row["reportedEfforts"]
                     .as_array()
                     .filter(|choices| !choices.is_empty());
+                let astra = thread["selection"]["modelID"]
+                    .as_str()
+                    .is_some_and(super::astra_model);
+                let medium = astra
+                    && choices
+                        .is_some_and(|choices| choices.iter().any(|effort| effort == "medium"));
                 json!({"supported":choices.is_some(),"choices":choices.cloned().unwrap_or_default(),"reportedDefault":row["reportedDefaultEffort"],
-                    "provenance":"named_profile_model_list","requiresExplicitModel":true,"effectiveDefault":null,
+                    "provenance":"named_profile_model_list","requiresExplicitModel":true,
+                    "effectiveDefault":if medium {json!("medium")}else{Value::Null},
+                    "effectiveDefaultProvenance":if medium {json!("app_policy+named_profile_model_list")}else{Value::Null},
+                    "appDefaultRequired":astra,"appDefaultAvailable":!astra||medium,
+                    "appDefaultReason":if astra&&!medium {json!("This profile's exact Astra model must report medium before using its app default")}else{Value::Null},
                     "reason":if choices.is_some() {Value::Null} else {json!("This profile's model did not advertise reasoning efforts")}})
             }
-            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+            Err(error) => {
+                json!({"supported":false,"choices":[],"effectiveDefault":null,"effectiveDefaultProvenance":null,"appDefaultAvailable":false,"reason":error.to_string()})
+            }
         }
     }
     pub(crate) fn named_speed_capability(&self, thread: &Value, binding: &NamedBinding) -> Value {
         match self.named_model_row(thread, binding, None) {
             Ok((_, row)) => {
+                if thread["selection"]["effort"].is_null()
+                    && thread["selection"]["modelID"]
+                        .as_str()
+                        .is_some_and(super::astra_model)
+                    && !row["reportedEfforts"]
+                        .as_array()
+                        .is_some_and(|choices| choices.iter().any(|choice| choice == "medium"))
+                {
+                    return json!({"supported":false,"choices":[],"reason":"This profile's Astra app default requires reported medium before choosing speed"});
+                }
                 let choices = row["reportedSpeeds"]
                     .as_array()
                     .filter(|choices| !choices.is_empty());
@@ -316,6 +343,17 @@ impl ModelCatalog {
                 "Effort was not advertised for this exact profile model"
             );
         }
+        let effective_effort = if effort.is_none() && super::astra_model(model) {
+            ensure!(
+                reported["reportedEfforts"]
+                    .as_array()
+                    .is_some_and(|choices| choices.iter().any(|choice| choice == "medium")),
+                "Refresh this exact profile's Astra catalog advertising medium before using its app default"
+            );
+            Some("medium")
+        } else {
+            effort
+        };
         if let Some(speed) = speed {
             ensure!(
                 speed != "default"
@@ -330,6 +368,7 @@ impl ModelCatalog {
         let proof = NamedModelProof {
             model: model.into(),
             effort: effort.map(str::to_owned),
+            effective_effort: effective_effort.map(str::to_owned),
             speed: speed.map(str::to_owned),
             binding: binding.clone(),
             revoked: job.cancelled.clone(),
@@ -475,6 +514,98 @@ mod tests {
         );
         catalog.request_shutdown();
         assert!(catalog.refresh_named(binding).is_err());
+    }
+    #[test]
+    fn named_astra_default_is_private_effective_medium_without_saved_mutation() {
+        use crate::composer_policy::{CollaborationHistory, Origin, Policy};
+        let (_dir, binding, mut document) = fixture();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "astra");
+        catalog.jobs.get_mut("astra").unwrap().response["models"] = json!([
+            {"id":"gpt-6-astra","reportedEfforts":["low","medium","high"],"reportedDefaultEffort":"low","reportedSpeeds":[{"id":"priority"}]},
+            {"id":"openai.gpt-6-astra","reportedEfforts":["medium","high"],"reportedDefaultEffort":"high","reportedSpeeds":[{"id":"priority"}]}
+        ]);
+        for model in ["gpt-6-astra", "openai.gpt-6-astra"] {
+            document["selection"]["modelID"] = json!(model);
+            document["selection"]["effort"] = Value::Null;
+            document["selection"]["speed"] = json!("priority");
+            document["accessMode"] = json!("fullAccess");
+            document["interactionMode"] = json!("plan");
+            let original = document.clone();
+            let proof = catalog
+                .named_model_proof(&document, &binding, Some("astra"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(proof.effort, None);
+            assert_eq!(proof.effective_effort(), Some("medium"));
+            let policy = Policy::parse_named(&document, Origin::Ordinary, Some(&proof)).unwrap();
+            policy.preflight().unwrap();
+            let fields = policy
+                .codex_turn_fields("owned-astra", None, CollaborationHistory::NeverApplied)
+                .unwrap();
+            assert_eq!(fields["effort"], "medium");
+            assert_eq!(fields["collaborationMode"]["mode"], "plan");
+            assert_eq!(
+                fields["collaborationMode"]["settings"]["reasoning_effort"],
+                "medium"
+            );
+            assert_eq!(fields["approvalPolicy"], "never");
+            assert_eq!(policy.codex_speed(), Some("priority"));
+            assert!(
+                proof
+                    .validate_policy(Some(model), None, Some("priority"))
+                    .is_err()
+            );
+            let caps = catalog.named_effort_capability(&document, &binding);
+            assert_eq!(caps["effectiveDefault"], "medium");
+            assert_eq!(
+                caps["effectiveDefaultProvenance"],
+                "app_policy+named_profile_model_list"
+            );
+            assert_eq!(document, original);
+            let mut explicit = document.clone();
+            explicit["selection"]["effort"] = json!("medium");
+            assert!(
+                proof.validate_thread(&explicit).is_err(),
+                "Same effective effort is not the same saved selection"
+            );
+            explicit["selection"]["effort"] = json!("high");
+            let high = catalog
+                .named_model_proof(&explicit, &binding, Some("astra"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(high.effective_effort(), Some("high"));
+            assert!(
+                high.validate_policy(Some(model), Some("medium"), Some("priority"))
+                    .is_err()
+            );
+            let mut wrong = document.clone();
+            wrong["selection"]["accountID"] = json!(uuid::Uuid::new_v4());
+            assert!(proof.validate_thread(&wrong).is_err());
+        }
+        catalog.jobs.get_mut("astra").unwrap().response["models"][1]["reportedEfforts"] =
+            json!(["high"]);
+        assert!(
+            catalog
+                .named_model_proof(&document, &binding, Some("astra"))
+                .is_err()
+        );
+        let caps = catalog.named_effort_capability(&document, &binding);
+        assert_eq!(caps["appDefaultAvailable"], false);
+        assert!(caps["effectiveDefault"].is_null());
+        assert_eq!(
+            catalog.named_speed_capability(&document, &binding)["supported"],
+            false
+        );
+        document["selection"]["effort"] = json!("high");
+        let proof = catalog
+            .named_model_proof(&document, &binding, Some("astra"))
+            .unwrap()
+            .unwrap();
+        catalog.jobs["astra"]
+            .cancelled
+            .store(true, Ordering::Release);
+        assert!(proof.validate_thread(&document).is_err());
     }
     #[test]
     fn named_plan_and_build_use_captured_options_and_revocable_profile_policy() {
@@ -762,17 +893,27 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"gpt-6-astra","reportedEfforts":["high"]}));
-        for effort in [Value::Null, json!("high")] {
+        for effort in [Value::Null, json!("medium"), json!("high")] {
             changed["selection"]["modelID"] = json!("gpt-6-astra");
-            changed["selection"]["effort"] = effort;
+            changed["selection"]["effort"] = effort.clone();
             let capability = catalog.named_effort_capability(&changed, &binding);
-            assert_eq!(capability["supported"], false);
-            assert_eq!(capability["choices"], json!([]));
-            assert!(
-                catalog
-                    .named_model_proof(&changed, &binding, Some("a"))
-                    .is_err()
-            );
+            assert_eq!(capability["supported"], true);
+            assert_eq!(capability["choices"], json!(["high"]));
+            assert_eq!(capability["appDefaultAvailable"], false);
+            assert!(capability["effectiveDefault"].is_null());
+            let proof = catalog.named_model_proof(&changed, &binding, Some("a"));
+            if effort == "high" {
+                let proof = proof.unwrap().unwrap();
+                assert_eq!(proof.effective_effort(), Some("high"));
+                proof
+                    .validate_policy(Some("gpt-6-astra"), Some("high"), None)
+                    .unwrap();
+            } else {
+                assert!(
+                    proof.is_err(),
+                    "Neither null's required medium nor explicit medium was advertised"
+                );
+            }
         }
         catalog.jobs["a"].cancelled.store(true, Ordering::Release);
         assert!(policy.preflight().is_err());

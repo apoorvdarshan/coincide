@@ -19,7 +19,7 @@ mod effort;
 #[path = "model_catalog_restore.rs"]
 mod restore;
 use effort::EffortExecutable;
-pub(crate) use effort::{CodexEffortProof, astra_default_needed};
+pub(crate) use effort::{CodexEffortProof, astra_default_needed, astra_model};
 
 #[path = "model_catalog_limits.rs"]
 pub(crate) mod limits;

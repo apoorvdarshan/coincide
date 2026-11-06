@@ -237,7 +237,14 @@ impl Engine {
             for option in ["effort", "speed"] {
                 selection.remove(option);
             }
-            crate::composer_selection::validate_thread_with_proof(&syntax, None)?;
+            if crate::model_catalog::astra_model(model) {
+                // An Astra alias needs private medium proof to execute, but
+                // clearing options/Plan is metadata repair only. Validate its
+                // syntax without manufacturing or borrowing runtime authority.
+                crate::composer_selection::validate_thread_base(&syntax)?;
+            } else {
+                crate::composer_selection::validate_thread_with_proof(&syntax, None)?;
+            }
         } else {
             let request = if model == "default" {
                 None
