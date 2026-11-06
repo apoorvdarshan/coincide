@@ -4131,7 +4131,7 @@ impl Render for Coincide {
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
                                 .child(
-                                    div()
+                                    self.composer_file_key_scope(div(), cx)
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()

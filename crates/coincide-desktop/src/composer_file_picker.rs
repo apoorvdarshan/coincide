@@ -1,6 +1,8 @@
-//! Project-file path references with proven native @query completion; no key interception.
+//! Project-file references with proven native completion and scoped suggestion keys.
 use super::*;
 use gpui_kit::component::tooltip::Tooltip;
+#[path = "composer_file_keys.rs"]
+mod keys;
 #[path = "composer_file_mentions.rs"]
 mod mentions;
 use coincide_core::{
@@ -35,6 +37,9 @@ pub(super) struct Picker {
     pub query: Entity<InputState>,
     pub opened: bool,
     focus: FocusHandle,
+    results_scroll: ScrollHandle,
+    listed_generation: Option<u64>,
+    keys: keys::Keys,
     binding: Option<Binding>,
     epoch: Arc<AtomicU64>,
     files: Vec<FileReference>,
@@ -71,6 +76,9 @@ impl Picker {
                 .new(|cx| InputState::new(window, cx).placeholder("Search project file paths")),
             opened: false,
             focus: cx.focus_handle(),
+            results_scroll: ScrollHandle::new(),
+            listed_generation: None,
+            keys: Default::default(),
             binding: None,
             epoch: Arc::new(AtomicU64::new(0)),
             files: Vec::new(),
@@ -114,10 +122,20 @@ impl Picker {
                 "Draft, context or search changed. Search again for current files.".into();
         }
         self.files.clear();
+        self.listed_generation = None;
+        self.keys.invalidate();
         self.directory.clear();
         self.total = 0;
         self.truncated = false;
         self.skipped = 0;
+    }
+    fn scroll_selected(&self) {
+        if let Some(index) = self.keys.selected.filter(|&index| index < self.files.len()) {
+            // The summary is exactly one actual child when directory is present.
+            // ScrollHandle uses measured child/viewport bounds in prepaint.
+            self.results_scroll
+                .scroll_to_item(index + usize::from(!self.directory.is_empty()));
+        }
     }
     fn busy(&self) -> bool {
         self.pending || self.unjoined || self.ambiguous || self.workers.closed()
@@ -208,10 +226,13 @@ impl Picker {
             Ok(Effect::Listed(result)) => {
                 if self.opened && reply.generation == self.epoch.load(Ordering::Acquire) {
                     self.files = result.files;
+                    self.listed_generation = Some(reply.generation);
+                    self.keys.listed(self.files.len());
                     self.directory = result.directory;
                     self.total = result.total;
                     self.truncated = result.truncated;
                     self.skipped = result.skipped;
+                    self.scroll_selected();
                     self.status = if self.files.is_empty() {
                         "No eligible project files in this result. Refine the search.".into()
                     } else {
@@ -256,7 +277,7 @@ fn query_at_caret(text: &str, selection: std::ops::Range<usize>) -> Option<Strin
     (query.len() <= 256 && !query.chars().any(char::is_control)).then(|| query.to_owned())
 }
 impl Coincide {
-    fn file_reference_binding(&self, cx: &Context<Self>) -> Option<Binding> {
+    fn file_reference_route(&self, cx: &Context<Self>) -> bool {
         if !self.microphone_window_active
             || self.settings_open
             || self.schedules_open
@@ -267,6 +288,12 @@ impl Coincide {
             || self.media.close_requested
             || self.media.shutdown_requested
         {
+            return false;
+        }
+        true
+    }
+    fn file_reference_binding(&self, cx: &Context<Self>) -> Option<Binding> {
+        if !self.file_reference_route(cx) {
             return None;
         }
         let thread = self.selected.as_ref()?;
@@ -572,6 +599,130 @@ impl Coincide {
             Job::Search(ticket.binding.clone(), ticket.query.clone()),
         );
     }
+    pub(super) fn composer_file_key_scope(&self, scope: Div, cx: &mut Context<Self>) -> Div {
+        use gpui_kit::component::input::{Enter, Escape, IndentInline, MoveDown, MoveUp};
+        // Bound input actions dispatch before raw key listeners. Capture their
+        // public actions before Textarea can emit PressEnter or insert a tab.
+        scope
+            .capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                if !action.secondary && !action.shift {
+                    this.composer_file_bound_key(keys::Key::Enter, window, cx);
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                this.composer_file_bound_key(keys::Key::Up, window, cx)
+            }))
+            .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                this.composer_file_bound_key(keys::Key::Down, window, cx)
+            }))
+            .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                this.composer_file_bound_key(keys::Key::Tab, window, cx)
+            }))
+            .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                this.composer_file_bound_key(keys::Key::Escape, window, cx)
+            }))
+            .capture_key_down(cx.listener(|this, event, window, cx| {
+                if !event.prefer_character_input
+                    && let Some(key) = keys::Key::named(&event.keystroke.key)
+                {
+                    this.composer_file_key(key, event.keystroke.modifiers.modified(), window, cx);
+                }
+            }))
+            .capture_key_up(cx.listener(|this, event, _, _| {
+                if let Some(key) = keys::Key::named(&event.keystroke.key) {
+                    this.composer_files.keys.release(key);
+                }
+            }))
+    }
+    fn composer_file_bound_key(
+        &mut self,
+        key: keys::Key,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = window.modifiers();
+        // These are already resolved plain Input bindings. macOS reports its
+        // hardware Function flag for arrows; the public key parser removes it
+        // from arrow keystrokes. Do not mistake that platform flag for Fn+Enter.
+        let modified = modifiers.control
+            || modifiers.alt
+            || modifiers.shift
+            || modifiers.platform
+            || (modifiers.function && !matches!(key, keys::Key::Up | keys::Key::Down));
+        self.composer_file_key(key, modified, window, cx);
+    }
+    fn composer_file_key(
+        &mut self,
+        key: keys::Key,
+        modified: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread = self
+            .selected
+            .as_ref()
+            .map(|thread| text(thread, "id"))
+            .unwrap_or_default();
+        let focused = self.composer.read(cx).focus_handle(cx).is_focused(window)
+            || self.composer_files.focus.contains_focused(window, cx);
+        let route = window.is_window_active() && self.file_reference_route(cx);
+        let (editable, ime) = self.composer.update(cx, |input, cx| {
+            (
+                input.is_editable(),
+                gpui_kit::EntityInputHandler::marked_text_range(input, window, cx).is_some(),
+            )
+        });
+        let browser = self.browser_panels.contains(&thread);
+        let terminal = self
+            .terminal_workspaces
+            .values()
+            .any(|workspace| workspace.read(cx).is_focused(window));
+        let mut scope = keys::Scope {
+            thread: &thread,
+            route,
+            focused,
+            editable,
+            ime,
+            modified,
+            browser,
+            terminal,
+            automatic: false,
+            opened: false,
+            same_trigger: false,
+            fresh_results: false,
+            busy: false,
+            count: 0,
+        };
+        if scope.owns_keys() {
+            self.sync_composer_file_picker(window, cx);
+            let live = self.live_file_mention(window, cx, false);
+            scope.automatic = self.composer_files.automatic;
+            scope.opened = self.composer_files.opened;
+            scope.same_trigger = live.is_some() && live == self.composer_files.trigger;
+            scope.fresh_results = self.composer_files.listed_generation
+                == Some(self.composer_files.epoch.load(Ordering::Acquire));
+            scope.busy = self.composer_files.busy();
+            scope.count = self.composer_files.files.len();
+        }
+        let decision = self.composer_files.keys.decide(key, &scope);
+        match decision {
+            keys::Decision::Pass => return,
+            keys::Decision::Consume => {}
+            keys::Decision::Dismiss => self.close_composer_file_picker(window, cx),
+            keys::Decision::Select(_) => {
+                self.composer_files.scroll_selected();
+                cx.notify();
+            }
+            keys::Decision::Activate(index) => {
+                if let Some(file) = self.composer_files.files.get(index).cloned() {
+                    let generation = self.composer_files.epoch.load(Ordering::Acquire);
+                    self.attach_composer_file(file, generation, window, cx);
+                }
+            }
+        }
+        window.prevent_default();
+        cx.stop_propagation();
+    }
     pub(super) fn composer_file_button(&self, cx: &mut Context<Self>) -> AnyElement {
         Button::new("composer-project-files")
             .label("@ Files")
@@ -593,6 +744,7 @@ impl Coincide {
         let busy = state.busy();
         let mut results = div()
             .id("composer-file-results")
+            .track_scroll(&state.results_scroll)
             .role(Role::List)
             .aria_label("Matching project file references")
             .flex_1()
@@ -701,11 +853,14 @@ impl Coincide {
             );
         for (index, file) in state.files.iter().enumerate() {
             let candidate = file.clone();
+            let selected = state.automatic && state.keys.selected == Some(index);
             results = results.child(
                 div()
                     .id(("composer-file-row", index))
                     .role(Role::ListItem)
-                    .aria_label(format!("Project file {}", file.path()))
+                    .aria_selected(selected)
+                    .when(selected,|row|row.bg(self.color(0x263d5e)))
+                    .aria_label(format!("Project file {}{}", file.path(),if selected {", selected"} else {""}))
                     .h(px(32.))
                     .flex_shrink_0()
                     .flex()
