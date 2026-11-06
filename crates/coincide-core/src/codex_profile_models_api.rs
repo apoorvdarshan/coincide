@@ -29,12 +29,14 @@ impl Engine {
         // an unsupported stored model or clear any other selection field.
         let mut shape = thread.clone();
         shape["selection"]["modelID"] = json!("default");
-        // Read/repair binding grants no option authority. Retained effort must
+        // Read/repair binding grants no option authority. Retained options must
         // not trap Refresh after restart or after its catalog was revoked.
-        shape["selection"]
+        let selection = shape["selection"]
             .as_object_mut()
-            .context("Invalid profile selection")?
-            .remove("effort");
+            .context("Invalid profile selection")?;
+        for option in ["effort", "speed"] {
+            selection.remove(option);
+        }
         // Binding capture grants no model/access authority. Keep refresh and
         // explicit approval repair available for a saved, now-unproved mode.
         if shape["accessMode"] == "fullAccess" {
@@ -82,11 +84,17 @@ impl Engine {
                 |error| json!({"supported":false,"choices":[],"reason":error.to_string()}),
             );
         let reason = base_reason.clone().or(proof_reason);
+        let speed = binding
+            .as_ref()
+            .map(|binding| self.model_catalog.named_speed_capability(thread, binding))
+            .unwrap_or_else(
+                |error| json!({"supported":false,"choices":[],"reason":error.to_string()}),
+            );
         result["locked"] = json!(reason.is_some());
         result["lockReason"] = json!(reason);
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
             "refreshAllowed":base_reason.is_none(),"reason":base_reason,"authenticationChecked":false,
-            "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":false,"nativeResumeSupported":false,"fullAccessSupported":full_access});
+            "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":false,"fullAccessSupported":full_access});
         if let Some(codex) = result["providers"]
             .as_array_mut()
             .and_then(|rows| rows.iter_mut().find(|row| row["provider"] == "codex"))
@@ -100,8 +108,7 @@ impl Engine {
             };
             codex["interactionModes"] = json!(["build"]);
             codex["effort"] = effort;
-            codex["speed"] =
-                json!({"supported":false,"reason":"Named-profile speed is not connected"});
+            codex["speed"] = speed;
         }
         result
     }
@@ -123,6 +130,7 @@ impl Engine {
                 "model",
                 "accessMode",
                 "effort",
+                "speed",
                 "expectedAccessMode",
                 "expectedInteractionMode",
             ][..],
@@ -158,11 +166,17 @@ impl Engine {
         }
         let model = required(p, "model")?;
         crate::composer_selection::validate_model(model)?;
-        let clear_only = p.get("effort").is_some_and(Value::is_null)
-            && !thread["selection"]["effort"].is_null()
+        let clear_only = ["effort", "speed"].iter().any(|option| {
+            p.get(*option).is_some_and(Value::is_null) && !thread["selection"][*option].is_null()
+        }) && ["effort", "speed"]
+            .iter()
+            .all(|option| p.get(*option).is_none_or(Value::is_null))
             && thread["selection"]["modelID"] == model
             && !fields.contains_key("accessMode");
-        if fields.contains_key("accessMode") || fields.contains_key("effort") {
+        if fields.contains_key("accessMode")
+            || fields.contains_key("effort")
+            || fields.contains_key("speed")
+        {
             ensure!(
                 fields.contains_key("expectedAccessMode")
                     && fields.contains_key("expectedInteractionMode")
@@ -174,29 +188,33 @@ impl Engine {
             ensure!(
                 !fields.contains_key("expectedAccessMode")
                     && !fields.contains_key("expectedInteractionMode"),
-                "Expected modes require an explicit access mode or effort"
+                "Expected modes require an explicit access mode, effort or speed"
             );
         }
         if let Some(access) = p.get("accessMode") {
             ensure!(access.is_string(), "Access mode must be text");
             thread["accessMode"] = access.clone();
         }
-        if let Some(effort) = p.get("effort") {
-            thread["selection"]["effort"] = effort.clone();
+        for option in ["effort", "speed"] {
+            if let Some(value) = p.get(option) {
+                thread["selection"][option] = value.clone();
+            }
         }
         thread["selection"]["modelID"] = json!(model);
         profiles::validate_model_thread(&thread)?;
         if clear_only {
             ensure!(
                 !fields.contains_key("requestId"),
-                "Effort repair does not accept catalog authority"
+                "Option repair does not accept catalog authority"
             );
             // Only removes this exact stored option. An unproved model or mode
             // remains locked by the ordinary named turn preflight after save.
-            crate::composer_selection::validate_thread_with_proof(
-                &profiles::validation_view(&thread),
-                None,
-            )?;
+            let mut syntax = profiles::validation_view(&thread);
+            let selection = syntax["selection"].as_object_mut().unwrap();
+            for option in ["effort", "speed"] {
+                selection.remove(option);
+            }
+            crate::composer_selection::validate_thread_with_proof(&syntax, None)?;
         } else {
             let request = if model == "default" {
                 None

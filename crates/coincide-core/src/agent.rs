@@ -504,6 +504,7 @@ fn run(
                 &launch.cwd,
                 launch.model.as_deref(),
                 policy.as_ref().and_then(|policy| policy.codex_effort()),
+                policy.as_ref().and_then(|policy| policy.codex_speed()),
             )?;
         }
         transport::Transport::spawn_codex_profile(&launch, profile)?
@@ -573,6 +574,7 @@ fn run(
                         &launch.cwd,
                         launch.model.as_deref(),
                         policy.as_ref().and_then(|policy| policy.codex_effort()),
+                        policy.as_ref().and_then(|policy| policy.codex_speed()),
                     )?;
                 }
                 account_pending = false;
@@ -640,6 +642,7 @@ fn run(
                                     &launch.cwd,
                                     launch.model.as_deref(),
                                     policy.as_ref().and_then(|policy| policy.codex_effort()),
+                                    policy.as_ref().and_then(|policy| policy.codex_speed()),
                                 )?;
                                 proof.validate_resolved(&frame["result"])?;
                             }
