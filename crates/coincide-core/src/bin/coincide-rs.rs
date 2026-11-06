@@ -71,6 +71,7 @@ fn main() -> Result<()> {
             | "stop"
             | "provider"
             | "pending"
+            | "questions"
             | "answer"
             | "browser"
             | "draft"
@@ -143,6 +144,23 @@ fn main() -> Result<()> {
             &socket,
             &json!({"id":1,"method":"threads.read","params":params}),
         )?);
+    }
+    if cmd == "questions" {
+        let response = control::request(
+            &socket,
+            &json!({"id":1,"method":"agent.pending","params":{"threadId":args[1]}}),
+        )?;
+        if response.get("error").is_some() {
+            return output(response);
+        }
+        let questions = response["result"]
+            .as_array()
+            .context("Invalid pending request list")?
+            .iter()
+            .filter(|request| request["method"] == "item/tool/requestUserInput")
+            .cloned()
+            .collect::<Vec<_>>();
+        return emit_result(json!(questions));
     }
     if cmd == "wait" {
         return wait_for_thread(&socket, &args[1], invocation.timeout);
@@ -316,7 +334,7 @@ fn main() -> Result<()> {
 }
 fn help() -> Result<()> {
     println!(
-        "Coincide Rust preview CLI (JSON output; --json accepted)\nGlobal: --json | --socket PATH | --socket=PATH (Rust protocol only)\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID MESSAGE... | send ID - (UTF-8 stdin) | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance; default remains its control.sock.\nAn explicit --socket is used for all requests; COINCIDE_CONTROL_SOCKET is not inherited.\nUse -- before message words that start with options. Busy/alternate follow-up delivery is not connected."
+        "Coincide Rust preview CLI (JSON output; --json accepted)\nGlobal: --json | --socket PATH | --socket=PATH (Rust protocol only); help aliases -h/--help\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID MESSAGE... | send ID - (UTF-8 stdin) | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID (alias unarchive) | approve ID REQUEST_ID | decline ID REQUEST_ID (alias deny)\nquestions ID  List authoritative pending user questions; opaque request IDs and fields are preserved\ndeny ID REQUEST_ID | deny ID --item REQUEST_ID (explicit Core request ID required)\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000 | --count=N] [--offset N | --offset=N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance; default remains its control.sock.\nAn explicit --socket is used for all requests; COINCIDE_CONTROL_SOCKET is not inherited.\nUse -- before message words that start with options. Busy/alternate follow-up delivery is not connected."
     );
     Ok(())
 }
@@ -391,13 +409,18 @@ struct Invocation {
 impl Invocation {
     fn parse(raw: Vec<String>) -> Result<Self> {
         let (raw, socket) = global_options(raw)?;
-        let command = raw.first().map(String::as_str).unwrap_or("help");
+        let command = match raw.first().map(String::as_str).unwrap_or("help") {
+            "-h" | "--help" => "help",
+            "unarchive" => "restore",
+            "deny" => "decline",
+            command => command,
+        };
         let (minimum, maximum) = match command {
             "help" | "serve" | "quit" | "capabilities" | "projects" | "agents" | "providers"
             | "api" => (0, 0),
             "status" | "threads" => (0, 1),
-            "read" | "open" | "new" | "fork" | "stop" | "pending" | "archive" | "restore"
-            | "wait" | "git-status" => (1, 1),
+            "read" | "open" | "new" | "fork" | "stop" | "pending" | "questions" | "archive"
+            | "restore" | "wait" | "git-status" => (1, 1),
             "git-diff" | "files" => (1, 2),
             "send" => (2, usize::MAX),
             "attach" | "detach" | "draft" | "approve" | "decline" | "browser" => (2, 2),
@@ -424,21 +447,35 @@ impl Invocation {
         let mut args = raw.iter().skip(1);
         let mut literal = false;
         let mut seen = std::collections::HashSet::new();
+        let mut request_id = None;
         while let Some(arg) = args.next() {
             if !literal && arg == "--" {
                 literal = true;
                 continue;
             }
             if !literal && arg.starts_with('-') && !(command == "send" && arg == "-") {
-                anyhow::ensure!(seen.insert(arg.clone()), "Duplicate option {arg}");
+                let (option, inline) = arg
+                    .split_once('=')
+                    .filter(|(name, _)| {
+                        matches!(
+                            (command, *name),
+                            ("read", "--count" | "--offset") | ("decline", "--item")
+                        )
+                    })
+                    .map_or((arg.as_str(), None), |(name, value)| (name, Some(value)));
+                anyhow::ensure!(seen.insert(option.to_owned()), "Duplicate option {option}");
                 let value =
                     |args: &mut std::iter::Skip<std::slice::Iter<'_, String>>| -> Result<String> {
+                        if let Some(value) = inline {
+                            anyhow::ensure!(!value.is_empty(), "Missing value for {option}");
+                            return Ok(value.to_owned());
+                        }
                         args.next()
                             .filter(|v| !v.starts_with("--"))
                             .cloned()
-                            .with_context(|| format!("Missing value for {arg}"))
+                            .with_context(|| format!("Missing value for {option}"))
                     };
-                match (command, arg.as_str()) {
+                match (command, option) {
                     ("threads", "--project") => parsed.project = Some(value(&mut args)?),
                     ("threads", "--chats") => parsed.chats = true,
                     ("threads", "--running") => parsed.running = true,
@@ -457,6 +494,7 @@ impl Invocation {
                                 .context("Offset must be an integer")?,
                         )
                     }
+                    ("decline", "--item") => request_id = Some(value(&mut args)?),
                     ("send", "--wait") => parsed.wait = true,
                     ("send" | "wait", "--timeout") => {
                         let seconds: f64 = value(&mut args)?
@@ -473,6 +511,13 @@ impl Invocation {
             } else {
                 parsed.args.push(arg.clone());
             }
+        }
+        if let Some(request_id) = request_id {
+            anyhow::ensure!(
+                parsed.args.len() == 2,
+                "Use a positional request ID or --item, not both"
+            );
+            parsed.args.push(request_id);
         }
         let count = parsed.args.len() - 1;
         anyhow::ensure!(
