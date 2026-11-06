@@ -19,8 +19,6 @@ mod chat_layout;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
-mod context_details;
-mod context_details_mount;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
@@ -31,6 +29,8 @@ mod composer_steering_mount;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
+mod context_details;
+mod context_details_mount;
 mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
@@ -67,6 +67,7 @@ mod provider_settings;
 mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
+mod reply_selection_mount;
 mod scheduling;
 mod session_import;
 mod settings;
@@ -4335,11 +4336,13 @@ impl Render for Coincide {
                 cx.listener(|this, event, window, cx| {
                     if !this.context_details_shortcut(event, window, cx)
                         && !this.project_defaults_key(event, window, cx)
-                        && !this.historical_image_shortcut(event, window, cx) {
+                        && !this.historical_image_shortcut(event, window, cx)
+                        && !this.reply_selection_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
                 }),
             )
+            .on_action(cx.listener(|this,_:&app_menu::AddSelectionToComposer,window,cx|this.add_selection_to_composer(window,cx)))
             .flex()
             .size_full()
             .bg(self.color(0x10141c))
