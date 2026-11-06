@@ -346,7 +346,7 @@ impl Coincide {
                 list = list.child(
                     div()
                         .text_lg()
-                        .child(presentation::provider_name(&row.provider)),
+                        .child(presentation::provider_name(&row.provider).to_owned()),
                 );
                 last = row.provider.clone();
             }
