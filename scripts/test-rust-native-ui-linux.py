@@ -127,6 +127,21 @@ def main():
             return image
         return wait_for(f"presented native content for {stage}", presented_frame)
 
+    def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
+        """Target one observed sidebar word; never infer coordinates from layout."""
+        capture(window, stage, word)
+        tsv = command("tesseract", str(artifacts / f"{stage}.png"), "stdout",
+                      "--psm", "11", "tsv", env=env)
+        (artifacts / f"{stage}-locator.tsv").write_text(tsv)
+        matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
+                   if row["text"].strip().casefold() == word.casefold()
+                   and int(row["left"]) < max_x and int(row["top"]) >= min_y]
+        assert len(matches) == 1, f"Expected one rendered sidebar target {word!r}, found {len(matches)}"
+        row = matches[0]
+        x = int(row["left"]) + int(row["width"]) // 2
+        y = int(row["top"]) + int(row["height"]) // 2
+        command("xdotool", "mousemove", "--window", window, str(x), str(y), "click", "1", env=env)
+
     def quit_normally():
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
@@ -188,6 +203,15 @@ def main():
             "--name", "^General$", env=env).splitlines()[0])
         assert settings_window != window, "Settings must leave the conversation in its own window"
         capture(settings_window, "settings", "General")
+        # Exercise the real filtered navigation and provider panel, without
+        # clicking Check/Install/Login or executing any provider.
+        click_rendered_word(settings_window, "settings-search-target", "Search")
+        command("xdotool", "type", "--clearmodifiers", "Codex", env=env)
+        click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80)
+        capture(settings_window, "settings-provider-codex", "Executable")
+        click_rendered_word(settings_window, "settings-return-general", "General")
+        capture(settings_window, "settings-general-returned", "General")
+        report["checks"].append("native Settings search opened Codex provider page and returned to General without provider actions")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
