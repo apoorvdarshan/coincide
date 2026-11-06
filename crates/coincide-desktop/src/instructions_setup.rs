@@ -34,6 +34,14 @@ pub(super) struct Setup {
     status: String,
 }
 impl Setup {
+    pub(super) fn visible_status(&self) -> String {
+        let git = self.git.visible_status();
+        if git.is_empty() {
+            self.status.clone()
+        } else {
+            format!("{}\n{}", self.status, git)
+        }
+    }
     pub(super) fn git_busy(&self) -> bool {
         self.git.busy() || self.git.reviewing()
     }
@@ -621,9 +629,6 @@ impl InstructionsPanel {
             );
         }
         let mut pane = div()
-            .id("instruction-setup-controls")
-            .max_h(px(180.))
-            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_2()
@@ -720,10 +725,18 @@ impl InstructionsPanel {
                     })),
             );
         }
-        pane.child(files)
-            .child(self.copy_controls(cx))
-            .child(self.git_copy_controls(cx))
-            .child(self.setup.status.clone())
+        div()
+            .id("instruction-setup-controls")
+            .h(px(180.))
+            .min_h(px(180.))
+            .flex_shrink_0()
+            .overflow_y_scroll()
+            .child(
+                pane.child(files)
+                    .child(self.copy_controls(cx))
+                    .child(self.git_copy_controls(cx))
+                    .child(self.setup.status.clone()),
+            )
             .into_any_element()
     }
     pub(super) fn setup_review(&self, cx: &mut Context<Self>) -> AnyElement {

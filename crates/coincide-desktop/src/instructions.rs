@@ -205,61 +205,72 @@ impl Render for InstructionsPanel {
                     cx.stop_propagation();
                 }
             }))
-            .child(self.setup_controls(cx))
-            .child(div().text_lg().child("Instructions"))
-            .child("Changes are written only when you choose Save.")
-            .when_some(
-                self.source
-                    .as_ref()
-                    .map(|source| source.path().display().to_string()),
-                |view, path| view.child(div().text_sm().child(path)),
-            )
             .child(
                 div()
                     .flex()
-                    .gap_2()
+                    .flex_col()
+                    .gap_3()
+                    .flex_shrink_0()
+                    .child(self.setup_controls(cx))
+                    .child(div().text_sm().child(self.setup.visible_status()))
+                    .child(div().text_lg().child("Instructions"))
+                    .child("Changes are written only when you choose Save.")
+                    .when_some(
+                        self.source
+                            .as_ref()
+                            .map(|source| source.path().display().to_string()),
+                        |view, path| view.child(div().text_sm().child(path)),
+                    )
                     .child(
-                        Button::new("global-instructions-save")
-                            .label("Save")
-                            .primary()
-                            .disabled(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("global-instructions-save")
+                                    .label("Save")
+                                    .primary()
+                                    .disabled(
+                                        !readable
+                                            || !dirty
+                                            || self.blocked
+                                            || (self.setup.review.is_some()
+                                                || self.setup.has_copy_review()
+                                                || self.setup.git_busy())
+                                            || self.setup.picker_pending,
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.human_save(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("global-instructions-reload")
+                                    .label(if dirty {
+                                        "Discard edits and reload"
+                                    } else {
+                                        "Reload"
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.reload(window, cx)),
+                                    ),
+                            ),
+                    )
+                    .child(if dirty { "Unsaved edits" } else { "Saved text" })
+                    .child(div().text_sm().child(self.status.clone()))
+                    .child(
+                        div()
+                            .h(px(180.))
+                            .min_h(px(180.))
+                            .flex_shrink_0()
+                            .font_family("monospace")
+                            .child(Textarea::new(&self.editor).h_full().disabled(
                                 !readable
-                                    || !dirty
-                                    || self.blocked
                                     || (self.setup.review.is_some()
                                         || self.setup.has_copy_review()
                                         || self.setup.git_busy())
                                     || self.setup.picker_pending,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.human_save(cx);
-                            })),
+                            )),
                     )
-                    .child(
-                        Button::new("global-instructions-reload")
-                            .label(if dirty {
-                                "Discard edits and reload"
-                            } else {
-                                "Reload"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
-                    ),
+                    .child(self.setup_review(cx)),
             )
-            .child(if dirty { "Unsaved edits" } else { "Saved text" })
-            .child(div().text_sm().child(self.status.clone()))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h(px(180.))
-                    .font_family("monospace")
-                    .child(Textarea::new(&self.editor).h_full().disabled(
-                        !readable
-                            || (self.setup.review.is_some()
-                                || self.setup.has_copy_review()
-                                || self.setup.git_busy())
-                            || self.setup.picker_pending,
-                    )),
-            )
-            .child(self.setup_review(cx))
     }
 }

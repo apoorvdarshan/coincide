@@ -50,6 +50,9 @@ impl State {
             status: String::new(),
         }
     }
+    pub(super) fn visible_status(&self) -> &str {
+        &self.status
+    }
     pub(super) fn busy(&self) -> bool {
         self.pending || self.picker || self.failed || self.workers.closed()
     }
