@@ -59,6 +59,20 @@ impl Engine {
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
     pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {
+        let provider = text(&thread["selection"], "provider");
+        let configuration =
+            if let Some(run) = thread["id"].as_str().and_then(|id| self.runs.get(id)) {
+                ensure!(
+                    run.provider == provider,
+                    "Stored provider differs from the running turn"
+                );
+                // Steering targets this already-admitted worker. Later Settings
+                // edits apply only to future workers and cannot rebind its proofs.
+                run.configuration.clone()
+            } else {
+                self.provider_launch_configuration(&provider)?
+            };
+        let _configuration_scope = provider_configuration::enter(configuration);
         self.require_provider_enabled(&text(&thread["selection"], "provider"))?;
         if let Some(profile) = self.codex_login_context(thread)? {
             let binding = crate::model_catalog::NamedBinding::capture(

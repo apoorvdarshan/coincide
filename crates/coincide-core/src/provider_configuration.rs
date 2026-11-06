@@ -854,6 +854,9 @@ impl Engine {
     }
 }
 impl LaunchConfiguration {
+    pub(crate) fn stamp(&self) -> &Stamp {
+        &self.stamp
+    }
     pub(crate) fn validate_named_profile(&self, named: bool) -> Result<()> {
         ensure!(
             !named
@@ -1028,9 +1031,9 @@ pub use setup::{
 };
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    pub(super) fn fixture() -> (tempfile::TempDir, Engine, PathBuf) {
+    pub(crate) fn fixture() -> (tempfile::TempDir, Engine, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join(if cfg!(windows) {
             "synthetic-provider.exe"
@@ -1053,7 +1056,7 @@ mod tests {
             Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
     }
-    pub(super) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
+    pub(crate) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
         let baseline = engine
             .native_provider_configuration(provider)
             .unwrap()

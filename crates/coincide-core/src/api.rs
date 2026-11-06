@@ -179,7 +179,7 @@ impl SendOrigin {
     }
 }
 struct Running {
-    configuration: Option<provider_configuration::Stamp>,
+    configuration: Option<provider_configuration::LaunchConfiguration>,
     usage_context: Option<agent::usage_capture::TurnContext>,
     session: Session,
     resume_safe: Arc<std::sync::atomic::AtomicBool>,
@@ -1283,7 +1283,7 @@ impl Engine {
         self.insert_running(
             id,
             Running {
-                configuration: provider_configuration::current_stamp(),
+                configuration: provider_configuration::current(),
                 resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
                 session: Session::start_with_mode_policy_and_profile(
@@ -1852,7 +1852,10 @@ impl Engine {
                                 &self.runs[&id].provider,
                                 &id,
                                 &session,
-                                self.runs[&id].configuration.as_ref(),
+                                self.runs[&id]
+                                    .configuration
+                                    .as_ref()
+                                    .map(|configuration| configuration.stamp()),
                             )
                             .is_err()
                         {

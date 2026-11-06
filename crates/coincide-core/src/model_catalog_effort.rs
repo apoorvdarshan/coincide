@@ -225,6 +225,17 @@ impl ModelCatalog {
 }
 
 #[cfg(test)]
+impl ModelCatalog {
+    pub(crate) fn fixture_reported_configuration_effort(&mut self, path: &Path) -> Result<()> {
+        let model = parse_model(&json!({"model":"fixture-configured-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}],"defaultReasoningEffort":"high"}))?.context("Synthetic model is invalid")?;
+        let id = "fixture-configured-catalog".to_owned();
+        self.jobs.insert(id.clone(), Job {named:None,binding:Some(EffortExecutable::read(path)?),response:json!({"provider":"codex","accountID":"default","state":"ready","models":[model]}),cancelled:Arc::new(AtomicBool::new(false))});
+        self.order.push_back(id);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn fixture() -> (tempfile::TempDir, ModelCatalog, PathBuf, Value) {
