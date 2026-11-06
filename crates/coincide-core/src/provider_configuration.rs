@@ -432,6 +432,16 @@ impl Private {
             file.write_all(&bytes)?;
             file.sync_all()?;
             private(&temporary, false)?;
+            let identity = crate::private_fs::identity(&temporary)?;
+            // The Windows private-file opener deliberately denies delete sharing.
+            // Close only this new payload handle before rename; the authority-key
+            // lease stays locked and nonreplaceable for the entire transaction.
+            drop(file);
+            private(&temporary, false)?;
+            ensure!(
+                crate::private_fs::identity(&temporary)? == identity,
+                "Provider configuration payload changed before commit"
+            );
             fs::rename(&temporary, self.directory.join("configuration.json"))?;
             Ok(())
         })();

@@ -18,6 +18,7 @@ impl Engine {
     pub fn prepare_native_provider_check(&self, provider: &str) -> Result<Probe> {
         self.require_admissions()?;
         provider_id(provider)?;
+        self.require_provider_enabled(provider)?;
         ensure!(
             provider != "antigravity",
             "Check Antigravity through its managed account and runtime setup"
@@ -55,20 +56,22 @@ impl Probe {
         };
         match self.provider.as_str() {
             "claude" => {
-                if let Ok((true, out, _)) = capture(&["auth", "status", "--json"]) {
-                    if let Ok(value) = serde_json::from_slice::<Value>(&out) {
-                        report.authenticated = value["loggedIn"].as_bool();
-                        if report.authenticated == Some(true) {
-                            report.account = bounded_text(&value["email"])
-                                .or_else(|| bounded_text(&value["authMethod"]));
-                        }
+                if let Ok((true, out, _)) = capture(&["auth", "status", "--json"])
+                    && let Ok(value) = serde_json::from_slice::<Value>(&out)
+                {
+                    report.authenticated = value["loggedIn"].as_bool();
+                    if report.authenticated == Some(true) {
+                        report.account = bounded_text(&value["email"])
+                            .or_else(|| bounded_text(&value["authMethod"]));
                     }
                 }
             }
             "cursor" => {
-                if let Ok((true, out, _)) = capture(&["status", "--format", "json"]) {
-                    if let Ok(value) = serde_json::from_slice::<Value>(&out) {
-                        report.authenticated = value["isAuthenticated"].as_bool().or_else(|| {
+                if let Ok((true, out, _)) = capture(&["status", "--format", "json"])
+                    && let Ok(value) = serde_json::from_slice::<Value>(&out)
+                {
+                    report.authenticated =
+                        value["isAuthenticated"].as_bool().or_else(|| {
                             match value["status"].as_str() {
                                 Some("authenticated") => Some(true),
                                 Some("unauthenticated" | "not_authenticated" | "not_logged_in") => {
@@ -77,9 +80,8 @@ impl Probe {
                                 _ => None,
                             }
                         });
-                        if report.authenticated == Some(true) {
-                            report.account = bounded_text(&value["userInfo"]["email"]);
-                        }
+                    if report.authenticated == Some(true) {
+                        report.account = bounded_text(&value["userInfo"]["email"]);
                     }
                 }
             }
@@ -103,18 +105,14 @@ impl Probe {
                         let line = line.trim();
                         if let Some(rest) =
                             line.strip_prefix("* ").or_else(|| line.strip_prefix("- "))
-                        {
-                            if let Some(id) = rest
+                            && let Some(id) = rest
                                 .split_whitespace()
                                 .next()
                                 .filter(|id| crate::composer_selection::validate_model(id).is_ok())
-                            {
-                                if report.models.len() < 1000
-                                    && !report.models.iter().any(|model| model["id"] == id)
-                                {
-                                    report.models.push(json!({"id":id,"name":id}));
-                                }
-                            }
+                            && report.models.len() < 1000
+                            && !report.models.iter().any(|model| model["id"] == id)
+                        {
+                            report.models.push(json!({"id":id,"name":id}));
                         }
                     }
                 }
