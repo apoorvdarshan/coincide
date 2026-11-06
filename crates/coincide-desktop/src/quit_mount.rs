@@ -87,6 +87,8 @@ impl Coincide {
         let drafts_saved = self.flush_pending_drafts() && self.flush_native_selection();
         self.selection_ui.close_capability_reads();
         self.thread_bulk.close();
+        self.instructions_panel
+            .update(cx, |panel, _| panel.request_instruction_git_shutdown());
         self.composer_files.close();
         self.usage_history.request_shutdown();
         self.codex_limits.request_shutdown();
@@ -128,6 +130,8 @@ impl Coincide {
         let statuses = [
             self.selection_ui.capability_read_shutdown_status(),
             self.thread_bulk.shutdown_status(),
+            self.instructions_panel
+                .update(cx, |panel, _| panel.instruction_git_shutdown_status()),
             self.composer_files.shutdown_status(),
             self.usage_history.shutdown_status(),
             self.steering.shutdown_status(),
