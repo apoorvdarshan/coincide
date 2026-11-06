@@ -3,8 +3,80 @@
 use super::*;
 use gpui_kit::assets::IconName;
 
+// Read only the selected conversation's persisted metadata. The independent
+// sidebar project filter is not the conversation's project or live Git HEAD.
+fn conversation_subtitle(selected: Option<&Value>, projects: &[Value]) -> Option<String> {
+    let selected = selected?;
+    let project = selected["projectID"].as_str().and_then(|id| {
+        projects.iter().find(|project| {
+            project["id"]
+                .as_str()
+                .is_some_and(|known| known.eq_ignore_ascii_case(id))
+        })
+    });
+    let chats = project.is_some_and(|project| project["isChats"] == true);
+    let name = if chats {
+        Some("Chat")
+    } else {
+        project.and_then(|project| project["name"].as_str())
+    };
+    // Swift Thread/ThreadFile persist this exact optional "branch" key.
+    let branch = if chats {
+        None
+    } else {
+        selected["branch"].as_str()
+    };
+    let parts = [name, branch]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 impl Coincide {
     pub(super) fn conversation_toolbar(&self, title: String, cx: &mut Context<Self>) -> AnyElement {
+        let subtitle = conversation_subtitle(self.selected.as_ref(), &self.projects);
+        let accessible = subtitle
+            .as_ref()
+            .map(|subtitle| format!("{title}, {subtitle}"))
+            .unwrap_or_else(|| title.clone());
+        let tooltip = subtitle
+            .as_ref()
+            .map(|subtitle| format!("{title}\n{subtitle}"))
+            .unwrap_or_else(|| title.clone());
+        let heading = div()
+            .id("conversation-header-context")
+            .role(Role::Label)
+            .aria_label(accessible)
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .flex_1()
+            .min_w_0()
+            .h(px(32.))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .line_height(px(16.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .when_some(subtitle, |heading, subtitle| {
+                heading.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(11.))
+                        .line_height(px(14.))
+                        .text_color(self.color(0xe4e9f2).opacity(0.65))
+                        .child(subtitle),
+                )
+            });
         div()
             .id("conversation-toolbar")
             .flex()
@@ -22,7 +94,7 @@ impl Coincide {
                     .h(px(44.))
                     .px_3()
                     .gap_1()
-                    .child(div().flex_1().min_w_0().truncate().text_sm().child(title))
+                    .child(heading)
                     .child(
                         Button::new("transcript-find-open")
                             .icon(IconName::Search)
@@ -218,5 +290,57 @@ impl Coincide {
                 )
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn header_context_uses_selected_thread_project_not_another_filtered_project() {
+        let projects = vec![
+            json!({"id":"filter-project","name":"Filtered project"}),
+            json!({"id":"selected-project","name":"Selected project"}),
+        ];
+        let selected = json!({"projectID":"SELECTED-PROJECT","branch":"feature/selected","branchName":"wrong-key"});
+        assert_eq!(
+            conversation_subtitle(Some(&selected), &projects).as_deref(),
+            Some("Selected project · feature/selected")
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn header_context_omits_unknown_empty_and_malformed_values_without_inference() {
+        assert!(conversation_subtitle(None, &[]).is_none());
+        for selected in [
+            json!({"projectID":"unknown"}),
+            json!({"projectID":"unknown","branch":"  ","branchName":"main"}),
+            json!({"projectID":42,"branch":false}),
+            json!({"projectID":"blank","branch":null}),
+        ] {
+            assert!(
+                conversation_subtitle(Some(&selected), &[json!({"id":"blank","name":"  "})])
+                    .is_none()
+            );
+        }
+        let selected = json!({"projectID":"unknown","branch":" saved/branch "});
+        assert_eq!(
+            conversation_subtitle(Some(&selected), &[]).as_deref(),
+            Some("saved/branch")
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn header_context_chat_project_omits_branch_like_swift() {
+        let selected = json!({"projectID":"chats","branch":"irrelevant"});
+        assert_eq!(
+            conversation_subtitle(
+                Some(&selected),
+                &[json!({"id":"chats","isChats":true,"name":"Chats container"})]
+            )
+            .as_deref(),
+            Some("Chat")
+        );
     }
 }
