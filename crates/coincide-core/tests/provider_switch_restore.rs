@@ -288,6 +288,10 @@ fn restore_fixture_child() {
     imported_engine
         .set_active_thread(Some(imported_id.clone()))
         .unwrap();
+    // Dispatch normally polls before executing a request. Establish this new
+    // Engine's initial runtime-context revision before measuring the refusal;
+    // the rejected selection itself must still leave revision/raw data exact.
+    imported_engine.poll();
     assert!(imported_engine.store.is_imported(&imported_id).unwrap());
     let imported_before = imported_engine.store.thread(&imported_id).unwrap();
     refused(
