@@ -53,6 +53,7 @@ mod quit_mount;
 mod scheduling;
 mod session_import;
 mod settings;
+mod settings_window;
 mod shutdown_runtime;
 mod terminal_context_mount;
 mod terminal_selection;
@@ -350,6 +351,9 @@ struct Coincide {
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
+    settings_window: Option<gpui_kit::WindowHandle<settings_window::SettingsWindow>>,
+    settings_window_pending: bool,
+    settings_focus: FocusHandle,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -1035,6 +1039,9 @@ impl Coincide {
             thread_actions_open: false,
             settings_search,
             settings_section: Default::default(),
+            settings_window: None,
+            settings_window_pending: false,
+            settings_focus: cx.focus_handle(),
             keyboard,
             usage_history,
             codex_limits,
@@ -3797,7 +3804,9 @@ impl Render for Coincide {
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
         self.sync_automatic_file_mentions(window, cx);
-        self.sync_keyboard_recording(window, cx);
+        if self.settings_window.is_none() {
+            self.sync_keyboard_recording(window, cx);
+        }
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self
             .thread_list_open
@@ -3828,123 +3837,8 @@ impl Render for Coincide {
                 .overflow_hidden()
                 .child(self.session_import_panel.clone())
                 .into_any_element()
-        } else if self.settings_open {
-            if (self.bots_open || self.transcription_open || self.notifications_open)
-                && !self.provider_settings.open
-            {
-                div()
-                    .id("extra-settings-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Button::new("extra-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.bots_open = false;
-                                this.transcription_open = false;
-                                this.notifications_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(if self.bots_open {
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.bot_panel.clone())
-                            .into_any_element()
-                    } else if self.notifications_open {
-                        div()
-                            .id("notification-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.notification_panel.clone())
-                            .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .id("transcription-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.transcription_panel.clone())
-                            .child(self.microphone_panel.clone())
-                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
-                            .child(div().p_3().text_sm().child(self.status.clone()))
-                            .into_any_element()
-                    })
-                    .into_any_element()
-            } else if self.computer_use_settings_visible() {
-                self.computer_use_settings_pane(cx)
-            } else if self.media_settings_visible() {
-                self.media_settings_pane(cx)
-            } else if self.browser_settings_visible() {
-                let scroll = self.browser_settings_panel.read(cx).form_scroll();
-                div()
-                    .id("browser-settings-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Button::new("browser-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.browser_settings_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div().relative().flex_1().min_h_0().flex().flex_col().overflow_hidden()
-                            .child(div()
-                                .id("browser-settings-scroll")
-                                .track_scroll(&scroll).pr_4()
-                                .flex_1().min_h_0().overflow_y_scroll()
-                                .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
-                                .child(self.browser_settings_panel.clone())
-                                .child(div().p_3().text_lg().child("Passwords"))
-                                .child(self.credential_panel.clone()))
-                            .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
-                                .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
-                    )
-                    .into_any_element()
-            } else if self.credentials_open {
-                div()
-                    .id("password-settings-surface")
-                    .flex_1()
-                    .flex_basis(px(0.))
-                    .min_h_0()
-                    .min_w_0()
-                    .overflow_y_scroll()
-                    .child(
-                        Button::new("password-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.credentials_open = false;
-                                this.focus_settings_route(window, cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(self.credential_panel.clone())
-                    .into_any_element()
-            } else if self.provider_settings.open {
-                self.antigravity_settings(cx)
-            } else {
-                self.settings_pane(cx)
-            }
+        } else if self.settings_in_main_window() {
+            self.settings_surface(cx)
         } else if self.schedules_open {
             self.schedules_pane(cx)
         } else if self.workspace_open {
@@ -4030,7 +3924,7 @@ impl Render for Coincide {
             self.pending_pane(cx)
         };
         let draft_images = if self.schedules_open
-            || self.settings_open
+            || self.settings_in_main_window()
             || self.workspace_open
             || self.session_import_open
         {
@@ -4039,7 +3933,7 @@ impl Render for Coincide {
             self.draft_images(window, cx)
         };
         let show_composer = !self.schedules_open
-            && !self.settings_open
+            && !self.settings_in_main_window()
             && !self.workspace_open
             && !self.session_import_open;
         let importing_images = self.attachment_import_threads.contains(&selected_id);

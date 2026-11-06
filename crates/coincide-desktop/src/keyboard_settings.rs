@@ -421,7 +421,16 @@ impl Coincide {
         self.keyboard.reset_confirm = false;
         // The rail is mounted on both sides of the route, so its focus keeps
         // the existing app capture handler reachable without focusing an editor.
-        self.navigation_focus.focus(window, cx);
+        if self.settings_open {
+            self.show_settings_window(cx);
+            if self.settings_window.is_some_and(|handle| {
+                gpui_kit::AnyWindowHandle::from(handle) == window.window_handle()
+            }) {
+                self.settings_focus.focus(window, cx);
+            }
+        } else {
+            self.navigation_focus.focus(window, cx);
+        }
     }
     fn save_shortcut(&mut self, change: Change<'_>, window: &mut Window, cx: &mut Context<Self>) {
         match save(&self.engine, change) {
