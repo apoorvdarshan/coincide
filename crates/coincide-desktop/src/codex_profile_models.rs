@@ -150,7 +150,7 @@ impl Coincide {
         let default_interaction = thread.get("interactionMode").cloned();
         let mut pane = div().id("named-profile-model-controls").flex().flex_col().gap_2().p_3()
             .child(div().text_sm().child("Codex profile models"))
-            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. Bots and native resume remain unavailable."))
+            .child(div().text_xs().child("Models are read from this selected profile. Display names do not verify account identity. Plan, full access, reasoning effort and faster speeds require this profile’s refreshed explicit model. A matching successful saved turn can resume within this app process; restart replays history in a fresh session. Bots remain unavailable."))
             .child(div().flex().flex_wrap().gap_2()
                 .child(Button::new("named-profile-model-default").label(default_label).disabled(disabled)
                     .on_click(cx.listener(move |this,_,_,cx|this.select_named_profile_model(&default_id,&default_selection,"default",None,if elevated || planning || clear_effort || clear_speed {Some(NamedModelOptions{interaction:if planning {Some("build")}else{None},access:if elevated {Some("approval")}else{None},effort:if clear_effort {Some(&Value::Null)}else{None},speed:if clear_speed {Some(&Value::Null)}else{None},expected_access:default_access.as_ref(),expected_interaction:default_interaction.as_ref()})}else{None},cx))))

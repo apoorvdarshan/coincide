@@ -19,7 +19,7 @@ impl Engine {
                     Ok(json!({"id":id,"name":account["name"],"auth":"login","authenticationChecked":false,"accountIdentityVerified":false}))
                 }).collect::<Result<Vec<_>>>()?;
                 Ok(
-                    json!({"accounts":accounts,"namedResumeSupported":false,"enrollmentConnected":true,"uiMounted":self.ui_available}),
+                    json!({"accounts":accounts,"namedResumeSupported":true,"namedResumeScope":"same_engine_successful_saved_turn_and_owned_worker_join","crossRestartResumeSupported":false,"enrollmentConnected":true,"uiMounted":self.ui_available}),
                 )
             }
             "providers.codex.profiles.create" => {

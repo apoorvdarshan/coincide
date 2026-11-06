@@ -77,7 +77,7 @@ impl NamedBinding {
     pub(crate) fn thread(&self) -> &str {
         &self.thread
     }
-    pub(super) fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.profile.validate()?;
         ensure!(
             Self::capture(self.profile.clone(), &self.thread, &self.cwd)? == *self,

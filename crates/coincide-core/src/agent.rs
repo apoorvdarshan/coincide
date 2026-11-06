@@ -188,6 +188,7 @@ pub struct Session {
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
     steering: Option<codex_steering::Client>,
     codex_profile_account: Option<String>,
+    named_completion: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -207,6 +208,11 @@ mod completion_owner_tests {
         // Even when the body is allowed to return, no join ACK was observed.
         assert_eq!(observation.status(), WorkerThreadStatus::Unclassified);
     }
+}
+pub(crate) struct NamedProfileLaunch {
+    pub profile: crate::codex_login_profiles::LaunchContext,
+    pub model: Option<crate::model_catalog::NamedModelProof>,
+    pub resume: crate::named_profile_resume::Authority,
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
@@ -251,7 +257,6 @@ impl Session {
             instructions,
             policy,
             None,
-            None,
         )
     }
     pub(crate) fn start_with_mode_policy_and_profile(
@@ -260,14 +265,19 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
         policy: Option<crate::composer_policy::Policy>,
-        profile: Option<crate::codex_login_profiles::LaunchContext>,
-        named_model: Option<crate::model_catalog::NamedModelProof>,
+        named: Option<NamedProfileLaunch>,
     ) -> Self {
+        let (profile, named_model, named_resume) = match named {
+            Some(named) => (Some(named.profile), named.model, Some(named.resume)),
+            None => (None, None, None),
+        };
         let profile_account = profile.as_ref().map(|profile| profile.account().to_owned());
         let codex = matches!(&provider, Provider::Codex);
         let (steer_client, steer_server) = codex_steering::pair();
         let usage = Arc::new(Mutex::new(None));
         let output = usage.clone();
+        let named_completion = Arc::new(Mutex::new(None));
+        let completed_output = named_completion.clone();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| {
@@ -302,6 +312,8 @@ impl Session {
                             policy,
                             profile,
                             named_model,
+                            named_resume,
+                            completed_output,
                         },
                     ),
                     Provider::Claude => {
@@ -335,6 +347,7 @@ impl Session {
         });
         session.usage = usage;
         session.codex_profile_account = profile_account;
+        session.named_completion = named_completion;
         if codex {
             session.steering = Some(steer_client);
         }
@@ -342,6 +355,11 @@ impl Session {
     }
     pub(crate) fn codex_profile_account(&self) -> Option<&str> {
         self.codex_profile_account.as_deref()
+    }
+    pub(crate) fn take_named_completion(
+        &self,
+    ) -> Option<crate::named_profile_resume::Acknowledged> {
+        self.named_completion.lock().ok()?.take()
     }
     pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
         self.steering
@@ -365,6 +383,7 @@ impl Session {
             usage: Arc::new(Mutex::new(None)),
             steering: None,
             codex_profile_account: None,
+            named_completion: Arc::new(Mutex::new(None)),
         }
     }
     #[cfg(test)]
@@ -460,6 +479,8 @@ struct CodexOptions {
     policy: Option<crate::composer_policy::Policy>,
     profile: Option<crate::codex_login_profiles::LaunchContext>,
     named_model: Option<crate::model_catalog::NamedModelProof>,
+    named_resume: Option<crate::named_profile_resume::Authority>,
+    completed_output: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
 }
 fn run(
     launch: Launch,
@@ -475,6 +496,8 @@ fn run(
         policy,
         profile,
         named_model,
+        named_resume,
+        completed_output,
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
@@ -488,16 +511,23 @@ fn run(
         .collect::<Vec<_>>();
     drop(images);
     ensure!(
-        profile.is_some() || named_model.is_none(),
+        profile.is_some() || (named_model.is_none() && named_resume.is_none()),
         "Named model proof requires its captured Codex profile"
     );
     let mut transport = if let Some(profile) = &profile {
         ensure!(
-            launch.session.is_none()
-                && instructions.is_none()
-                && (launch.model.is_none() == named_model.is_none()),
-            "Named Codex profiles require a fresh session and matching captured model proof"
+            instructions.is_none() && (launch.model.is_none() == named_model.is_none()),
+            "Named Codex profiles require matching captured model and session authority"
         );
+        named_resume
+            .as_ref()
+            .context("Missing captured named-session authority")?
+            .validate_launch(
+                profile,
+                &launch.cwd,
+                policy.as_ref().context("Missing named policy")?,
+                launch.session.as_deref(),
+            )?;
         if let Some(proof) = &named_model {
             proof.validate_launch(
                 profile,
@@ -521,6 +551,8 @@ fn run(
     let mut account_pending = false;
     const ACCOUNT_REQUEST: u64 = 4_000_000_001;
     let mut completed = false;
+    let mut successful = false;
+    let mut acknowledged = None;
     let mut early_completions = std::collections::VecDeque::new();
     let mut provisional_turn = false;
     let mut early_steering_frames = Vec::new();
@@ -539,6 +571,12 @@ fn run(
         if completed {
             steering.close();
             if transport.is_flushed()? {
+                if successful && let Some(ack) = acknowledged.take() {
+                    crate::named_profile_resume::Acknowledged::validate(&ack)?;
+                    *completed_output.lock().map_err(|_| {
+                        anyhow::anyhow!("Named completion receipt is unavailable")
+                    })? = Some(ack);
+                }
                 events.send(Event::Finished)?;
                 return Ok(());
             }
@@ -568,6 +606,14 @@ fn run(
                     "Codex profile authentication check failed"
                 );
                 profile.admit_account(&frame["result"])?;
+                if let Some(authority) = &named_resume {
+                    authority.validate_launch(
+                        profile,
+                        &launch.cwd,
+                        policy.as_ref().context("Missing named policy")?,
+                        launch.session.as_deref(),
+                    )?;
+                }
                 if let Some(proof) = &named_model {
                     proof.validate_launch(
                         profile,
@@ -636,6 +682,22 @@ fn run(
                     2 => {
                         if let Some(profile) = &profile {
                             profile.validate()?;
+                            if let Some(authority) = &named_resume {
+                                authority.validate_launch(
+                                    profile,
+                                    &launch.cwd,
+                                    policy.as_ref().context("Missing named policy")?,
+                                    launch.session.as_deref(),
+                                )?;
+                                // Fresh default turns historically permit an absent resolved model.
+                                // Such an ACK grants no continuation receipt. A real resume must
+                                // acknowledge the exact previously resolved model before any turn.
+                                acknowledged = if authority.session().is_some() {
+                                    Some(authority.acknowledge(&frame["result"])?)
+                                } else {
+                                    authority.acknowledge(&frame["result"]).ok()
+                                };
+                            }
                             if let Some(proof) = &named_model {
                                 proof.validate_launch(
                                     profile,
@@ -751,6 +813,7 @@ fn run(
                     ),
                     "Codex returned an invalid turn completion status"
                 );
+                successful = frame["params"]["turn"]["status"] == "completed";
                 completed = true;
             } else {
                 if frame["method"] == "thread/tokenUsage/updated" {
