@@ -377,11 +377,9 @@ impl Engine {
                             &json!({"threadId":op.thread,"operationId":operation}),
                         )?;
                         match result["status"].as_str() {
-                            Some("pending" | "accepted_pending_persistence") => return Ok(None),
+                            Some("pending" | "accepted_pending_persistence") => Ok(None),
                             Some("accepted") => {
-                                return Ok(Some(
-                                    self.store.clear_native_follow_up_draft(&op.source)?,
-                                ));
+                                Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
                             }
                             _ => bail!(
                                 "Steering was rejected or delivery is unknown; draft retained"
