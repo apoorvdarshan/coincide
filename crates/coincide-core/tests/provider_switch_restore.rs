@@ -77,6 +77,23 @@ fn call(engine: &mut Engine, method: &str, params: Value) -> Value {
     assert!(response.get("error").is_none(), "{response}");
     response["result"].clone()
 }
+fn settle_startup_discovery(engine: &mut Engine, stage: &str) {
+    // Engine::new discovers filesystem metadata on an owned background worker.
+    // A single poll is not a receipt: wait for its actual published report so
+    // dispatch's initial polling cannot contaminate an exact refusal revision.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let report = call(engine, "providers.list", json!({}));
+        if report["discovery"].is_object() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{stage}: startup provider discovery did not publish its report"
+        );
+        std::thread::yield_now();
+    }
+}
 fn params(thread: &Value, provider: &str) -> Value {
     let expected = [
         "id",
@@ -105,8 +122,15 @@ fn refused(engine: &mut Engine, root: &Path, id: &str, params: Value) {
     let revision = engine.revision;
     let result = engine.dispatch(json!({"method":"agent.provider.select","params":params}));
     assert!(result.get("error").is_some(), "{result}");
-    assert_eq!(raw(root, id), before);
-    assert_eq!(engine.revision, revision);
+    assert_eq!(
+        raw(root, id),
+        before,
+        "Refused provider switch changed stored data: {result}"
+    );
+    assert_eq!(
+        engine.revision, revision,
+        "Refused provider switch changed revision after startup readiness: {result}"
+    );
 }
 fn refresh(engine: &mut Engine, expected_state: &str) {
     let request = call(engine, "agent.models.refresh", json!({"provider":"codex"}));
@@ -164,6 +188,7 @@ fn selected(engine: &mut Engine, original: &Value, model: &str) {
 fn restore_fixture_child() {
     let root = std::path::PathBuf::from(std::env::var_os("COINCIDE_RESTORE_FIXTURE").unwrap());
     let mut engine = Engine::new(Store::open(&root.join("state.sqlite")).unwrap());
+    settle_startup_discovery(&mut engine, "primary");
     let project = call(
         &mut engine,
         "projects.create",
@@ -288,10 +313,9 @@ fn restore_fixture_child() {
     imported_engine
         .set_active_thread(Some(imported_id.clone()))
         .unwrap();
-    // Dispatch normally polls before executing a request. Establish this new
-    // Engine's initial runtime-context revision before measuring the refusal;
-    // the rejected selection itself must still leave revision/raw data exact.
-    imported_engine.poll();
+    // Capture an actual discovery completion, not just a scheduling-dependent
+    // poll, before the imported-source refusal's exact revision baseline.
+    settle_startup_discovery(&mut imported_engine, "imported");
     assert!(imported_engine.store.is_imported(&imported_id).unwrap());
     let imported_before = imported_engine.store.thread(&imported_id).unwrap();
     refused(
@@ -374,6 +398,7 @@ fn restore_fixture_child() {
     drop(engine);
     let mut restarted = Engine::new(Store::open(&root.join("state.sqlite")).unwrap());
     restarted.set_active_thread(Some(id.clone())).unwrap();
+    settle_startup_discovery(&mut restarted, "restarted");
     selected(&mut restarted, &original, "default");
     restarted.freeze_admissions();
     let status = restarted.model_catalog_shutdown_status().unwrap();
