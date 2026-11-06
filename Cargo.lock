@@ -1149,6 +1149,7 @@ dependencies = [
  "objc2-user-notifications",
  "objc2-web-kit",
  "serde_json",
+ "sha2 0.11.1",
  "uuid",
 ]
 

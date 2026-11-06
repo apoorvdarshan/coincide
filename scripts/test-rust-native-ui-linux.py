@@ -93,9 +93,9 @@ def main():
 
     def capture(window, stage, expected=None):
         path = artifacts / f"{stage}.png"
-        # A mapped window and a live Core do not acknowledge the first Vulkan
-        # presentation. Wait for actual pixels using the existing bounded
-        # readiness deadline; retain every blank frame as failure provenance.
+        # Core persistence and a mapped window do not acknowledge presentation
+        # of the new widget contents. Observe actual pixels/text under the
+        # existing readiness deadline, retaining every stale frame and OCR.
         frame = 0
         def presented_frame():
             nonlocal frame
@@ -105,27 +105,25 @@ def main():
             with Image.open(observed) as source:
                 image = source.convert("RGB")
             assert image.width >= 800 and image.height >= 500, "Native window is too small"
-            if max(ImageStat.Stat(image).stddev) <= 8:
-                return None
+            assert max(ImageStat.Stat(image).stddev) > 8, "Window has no meaningful rendered content"
+            ocr_path, segmentation = observed, "11"
+            if stage == "command-palette":
+                # Preserve the full frame and read its actual centered popup.
+                left, right = max(0, image.width // 2 - 360), min(image.width, image.width // 2 + 360)
+                crop = image.crop((left, 48, right, min(image.height, 250)))
+                ocr_path = observed.with_name(observed.stem + "-ocr-region.png")
+                crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS).save(ocr_path)
+                segmentation = "6"
+            text = command("tesseract", str(ocr_path), "stdout", "--psm", segmentation, env=env)
+            observed.with_suffix(".txt").write_text(text)
+            if expected:
+                assert expected.lower() in text.lower(), f"Expected rendered text {expected!r} in {stage}"
             observed.replace(path)
+            (artifacts / f"{stage}.txt").write_text(text)
+            if ocr_path != observed:
+                ocr_path.replace(artifacts / f"{stage}-ocr-region.png")
             return image
-        image = wait_for(f"presented native frame for {stage}", presented_frame)
-        ocr_path, segmentation = path, "11"
-        if stage == "command-palette":
-            # The captured palette is visibly correct, but sparse whole-window
-            # segmentation split its small text into unrelated character blobs.
-            # Keep the full native image; OCR only its actual centered popup at
-            # a readable scale and retain that derived diagnostic separately.
-            left, right = max(0, image.width // 2 - 360), min(image.width, image.width // 2 + 360)
-            crop = image.crop((left, 48, right, min(image.height, 250)))
-            ocr_path = artifacts / f"{stage}-ocr-region.png"
-            crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS).save(ocr_path)
-            segmentation = "6"
-        text = command("tesseract", str(ocr_path), "stdout", "--psm", segmentation, env=env)
-        (artifacts / f"{stage}.txt").write_text(text)
-        if expected:
-            assert expected.lower() in text.lower(), f"Expected rendered text {expected!r} in {stage}"
-        return image
+        return wait_for(f"presented native content for {stage}", presented_frame)
 
     def quit_normally():
         nonlocal process, log

@@ -1471,7 +1471,7 @@ impl Coincide {
         {
             return;
         }
-        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"projectID":thread["projectID"],"worktreePath":thread["worktreePath"],"selectionGeneration":named["selectionGeneration"]});
+        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"projectID":thread["projectID"],"worktreePath":thread["worktreePath"],"selectionGeneration":named["selectionGeneration"],"readinessGeneration":named["readinessGeneration"]});
         if self.selection_ui.automatic_profile_context.as_ref() == Some(&context) {
             return;
         }

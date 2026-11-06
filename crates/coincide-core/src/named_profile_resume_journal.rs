@@ -56,7 +56,7 @@ impl Journal {
     pub(super) fn readiness(&self) -> Result<()> {
         self.validate()?;
         ensure!(
-            (34..=MAX_RECORD as u64).contains(&self.lease.metadata()?.len()),
+            (34..=MAX_RECORD as u64).contains(&self.lease.file.metadata()?.len()),
             "Invalid continuation authority state bound"
         );
         Ok(())
