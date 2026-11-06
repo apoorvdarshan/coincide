@@ -286,13 +286,12 @@ impl Engine {
         provider: &str,
     ) -> Result<Option<String>> {
         let session = agent::provider_session(thread, provider);
-        if let Some(native) = &session {
-            if self
+        if let Some(native) = &session
+            && self
                 .store
                 .is_native_session_revoked(required(thread, "id")?, native)?
-            {
-                return Ok(None);
-            }
+        {
+            return Ok(None);
         }
         Ok(session)
     }
