@@ -464,7 +464,7 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
+    #[::core::prelude::v1::test]
     fn favorites_and_hidden_are_exclusive_and_preserve_foreign_rows() {
         let settings = json!({"favoriteModels":[{"provider":"codex","modelID":"x","opaque":7},{"provider":"future","modelID":"z"}],"hiddenModels":[{"provider":"codex","modelID":"x"}],"defaultSelection":{"provider":"codex","modelID":"fixed","accountID":"named"}});
         let patch = preference_patch(&settings, Change::Favorite("codex", "x", true)).unwrap();
@@ -480,7 +480,7 @@ mod tests {
             json!([{"provider":"future","modelID":"z"}])
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn custom_models_preserve_provider_metadata_and_reject_malformed_storage() {
         let settings = json!({"providers":{"codex":{"customModels":["first"],"executablePath":"kept","opaque":{"a":1}},"claude":{"isEnabled":false}}});
         let patch = preference_patch(&settings, Change::Custom("codex", "second", true)).unwrap();
@@ -493,19 +493,23 @@ mod tests {
             patch["providers"]["claude"],
             settings["providers"]["claude"]
         );
-        assert!(preference_patch(
-            &json!({"providers":["odd"]}),
-            Change::Custom("codex", "x", true)
-        )
-        .is_err());
+        assert!(
+            preference_patch(
+                &json!({"providers":["odd"]}),
+                Change::Custom("codex", "x", true)
+            )
+            .is_err()
+        );
         assert!(preference_patch(&settings, Change::Custom("codex", "--bad", true)).is_err());
-        assert!(preference_patch(
-            &json!({"hiddenModels":{}}),
-            Change::Favorite("codex", "x", true)
-        )
-        .is_err());
+        assert!(
+            preference_patch(
+                &json!({"hiddenModels":{}}),
+                Change::Favorite("codex", "x", true)
+            )
+            .is_err()
+        );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn swift_alternating_provider_map_roundtrips_unknown_entries() {
         let settings = json!({"providers":["future",{"opaque":7},"codex",{"customModels":["old"],"executablePath":"kept"}]});
         let patch = preference_patch(&settings, Change::Custom("codex", "new", true)).unwrap();
@@ -513,11 +517,13 @@ mod tests {
             patch["providers"],
             json!(["future",{"opaque":7},"codex",{"customModels":["old","new"],"executablePath":"kept"}])
         );
-        assert!(model_rows(&settings, &[], Some("codex"), "old")
-            .iter()
-            .any(|r| r.custom));
+        assert!(
+            model_rows(&settings, &[], Some("codex"), "old")
+                .iter()
+                .any(|r| r.custom)
+        );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn rows_filter_group_deduplicate_and_do_not_treat_loading_or_preferences_as_proof() {
         let settings = json!({"providers":{"codex":{"customModels":["Exact-ID"]},"claude":{"isEnabled":false}},"favoriteModels":[{"provider":"codex","modelID":"Exact-ID"}],"hiddenModels":[{"provider":"codex","modelID":"old"}]});
         let catalogs = [
@@ -528,9 +534,10 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].favorite && rows[0].custom);
         let all = model_rows(&settings, &catalogs, None, "");
-        assert!(!all
-            .iter()
-            .any(|r| r.provider == "claude" || r.model == "not-observed"));
+        assert!(
+            !all.iter()
+                .any(|r| r.provider == "claude" || r.model == "not-observed")
+        );
         assert!(all.iter().any(|r| r.model == "old" && r.hidden));
         assert_eq!(all.iter().filter(|r| r.model == "Exact-ID").count(), 1);
     }
