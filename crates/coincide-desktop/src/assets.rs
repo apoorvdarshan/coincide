@@ -12,6 +12,7 @@ icon_assets!(
     pub(crate) CoincideAssets,
     [
         ALargeSmall,
+        Archive,
         ArrowDown,
         ArrowLeft,
         ArrowRight,
