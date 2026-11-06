@@ -79,7 +79,11 @@ impl NamedBinding {
         let mut digest = Sha256::new();
         digest.update(b"coincide/named-readiness/v1\0");
         digest.update(serde_json::to_vec(self)?);
-        Ok(format!("{:x}", digest.finalize()))
+        Ok(digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
     }
     pub(crate) fn validate(&self) -> Result<()> {
         self.profile.validate()?;
