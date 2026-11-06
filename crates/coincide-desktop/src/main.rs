@@ -825,6 +825,12 @@ impl Coincide {
             }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
             cx.observe(&composer, |this, _, cx| {
+                let composer = this.composer.read(cx);
+                this.composer_files.observe_composer(
+                    composer.value().to_string(),
+                    composer.selected_range(),
+                    composer.is_selection_reversed(),
+                );
                 // Selection has no dedicated InputEvent in gpui-base 0.9.0.
                 // Invalidate on every notification, including a coalesced
                 // caret-away/back sequence; hidden unfocused composer is stable.
@@ -940,7 +946,7 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.invalidate();}
+                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
                 {
@@ -3778,6 +3784,7 @@ impl Render for Coincide {
         self.sync_sidebar_resize(window);
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
+        self.sync_automatic_file_mentions(window, cx);
         self.sync_keyboard_recording(window, cx);
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self

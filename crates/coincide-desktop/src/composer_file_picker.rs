@@ -1,5 +1,7 @@
-//! Explicit project-file path references. No composer rewrite or key interception.
+//! Project-file path references with proven native @query completion; no key interception.
 use super::*;
+#[path = "composer_file_mentions.rs"]
+mod mentions;
 use coincide_core::{
     api::{AttachedFileReference, FileReference, FileReferenceList},
     composer_context::ExpectedContext,
@@ -9,7 +11,7 @@ use std::sync::{
     mpsc,
 };
 #[derive(Clone, PartialEq)]
-struct Binding {
+pub(super) struct Binding {
     thread: String,
     draft: String,
     context: ExpectedContext,
@@ -31,6 +33,7 @@ struct Reply {
 pub(super) struct Picker {
     pub query: Entity<InputState>,
     pub opened: bool,
+    focus: FocusHandle,
     binding: Option<Binding>,
     epoch: Arc<AtomicU64>,
     files: Vec<FileReference>,
@@ -45,6 +48,12 @@ pub(super) struct Picker {
     unjoined: bool,
     ambiguous: bool,
     status: String,
+    automatic: bool,
+    trigger: Option<mentions::Ticket>,
+    scheduled: Option<mentions::Ticket>,
+    dismissed: Option<mentions::Ticket>,
+    pending_mention: Option<mentions::Ticket>,
+    composer_revision: mentions::Revision,
 }
 fn allowed(admission: &worker_owner::Admission, epoch: &AtomicU64, generation: u64) -> Result<()> {
     anyhow::ensure!(
@@ -60,6 +69,7 @@ impl Picker {
             query: cx
                 .new(|cx| InputState::new(window, cx).placeholder("Search project file paths")),
             opened: false,
+            focus: cx.focus_handle(),
             binding: None,
             epoch: Arc::new(AtomicU64::new(0)),
             files: Vec::new(),
@@ -74,6 +84,26 @@ impl Picker {
             unjoined: false,
             ambiguous: false,
             status: String::new(),
+            automatic: false,
+            trigger: None,
+            scheduled: None,
+            dismissed: None,
+            pending_mention: None,
+            composer_revision: Default::default(),
+        }
+    }
+    pub fn text_changed(&mut self) {
+        self.composer_revision.text_changed();
+        self.invalidate();
+    }
+    pub fn observe_composer(
+        &mut self,
+        text: String,
+        selection: std::ops::Range<usize>,
+        reversed: bool,
+    ) {
+        if self.composer_revision.observe(text, selection, reversed) && self.automatic {
+            self.invalidate();
         }
     }
     pub fn invalidate(&mut self) {
@@ -163,7 +193,7 @@ impl Picker {
         }
         started
     }
-    fn poll(&mut self) -> Option<(AttachedFileReference, bool)> {
+    fn poll(&mut self) -> Option<(AttachedFileReference, bool, Option<mentions::Ticket>)> {
         let status = self.workers.status();
         self.unjoined = status.unjoined != 0;
         if status.panicked != 0 || status.unclassified != 0 {
@@ -197,9 +227,10 @@ impl Picker {
                 } else {
                     "That project path reference was already attached.".into()
                 };
-                Some((result, fresh))
+                Some((result, fresh, self.pending_mention.take()))
             }
             Err(error) => {
+                self.pending_mention = None;
                 self.status = error;
                 None
             }
@@ -262,16 +293,19 @@ impl Coincide {
             self.composer_files.invalidate();
             if binding.is_none() || changed_thread {
                 if self.composer_files.opened
-                    && self
-                        .composer_files
-                        .query
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window)
+                    && (self.composer_files.focus.contains_focused(window, cx)
+                        || self
+                            .composer_files
+                            .query
+                            .read(cx)
+                            .focus_handle(cx)
+                            .is_focused(window))
                 {
                     self.navigation_focus.focus(window, cx);
                 }
                 self.composer_files.opened = false;
+                self.composer_files.automatic = false;
+                self.composer_files.trigger = None;
             }
             self.composer_files.binding = binding;
         }
@@ -287,13 +321,56 @@ impl Coincide {
         self.sync_composer_file_picker(window, cx);
         let was_busy = self.composer_files.busy();
         let previous = self.composer_files.status.clone();
-        if let Some((result, fresh)) = self.composer_files.poll() {
+        if let Some((result, fresh, mention)) = self.composer_files.poll() {
+            let live_before_projection = if mention.is_some() {
+                self.live_file_mention(window, cx, false)
+            } else {
+                None
+            };
             if let Some(thread) = self
                 .selected
                 .as_mut()
                 .filter(|thread| fresh && thread["id"] == result.thread)
             {
                 thread["draftContext"] = result.context;
+            }
+            if let Some(ticket) = mention {
+                if fresh && live_before_projection.as_ref() == Some(&ticket) {
+                    if let Some((expected, range_utf16)) =
+                        mentions::removal(&ticket.binding.draft, ticket.range.clone())
+                    {
+                        self.composer.update(cx, |input, cx| {
+                            if input.value().as_ref() != ticket.binding.draft
+                                || input.selected_range() != ticket.selection
+                                || !input.is_editable()
+                                || gpui_kit::EntityInputHandler::marked_text_range(
+                                    input, window, cx,
+                                )
+                                .is_some()
+                            {
+                                return;
+                            }
+                            gpui_kit::EntityInputHandler::replace_text_in_range(
+                                input,
+                                Some(range_utf16),
+                                "",
+                                window,
+                                cx,
+                            )
+                        });
+                        if self.composer.read(cx).value().as_ref() == expected {
+                            self.composer_files.status="Project path reference attached and its @query completed. Other message text is unchanged.".into();
+                            self.composer_files.opened = false;
+                            self.composer_files.automatic = false;
+                            self.composer_files.trigger = None;
+                            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                        } else {
+                            self.composer_files.status="Reference attached. Native text editing did not match the proven range; inspect the preserved draft before sending.".into();
+                        }
+                    }
+                } else {
+                    self.composer_files.status="Reference attached. The composer changed or is composing; newer text was kept and the @query was not removed.".into();
+                }
             }
             self.status = self.composer_files.status.clone();
         }
@@ -316,6 +393,8 @@ impl Coincide {
         }
         self.composer_files.invalidate();
         self.composer_files.opened = true;
+        self.composer_files.automatic = false;
+        self.composer_files.trigger = None;
         let composer = self.composer.read(cx);
         let query = query_at_caret(composer.value().as_ref(), composer.selected_range())
             .unwrap_or_default();
@@ -333,6 +412,14 @@ impl Coincide {
     }
     fn close_composer_file_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.composer_files.opened = false;
+        let dismissed = self
+            .composer_files
+            .trigger
+            .clone()
+            .or_else(|| self.live_file_mention(window, cx, false));
+        self.composer_files.dismissed = dismissed;
+        self.composer_files.automatic = false;
+        self.composer_files.trigger = None;
         self.composer_files.invalidate();
         if self.file_reference_binding(cx).is_some() {
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
@@ -342,6 +429,12 @@ impl Coincide {
         cx.notify();
     }
     fn search_composer_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer_files.automatic {
+            self.composer_files.scheduled = None;
+            self.sync_automatic_file_mentions(window, cx);
+            cx.notify();
+            return;
+        }
         self.sync_composer_file_picker(window, cx);
         let Some(binding) = self
             .composer_files
@@ -374,9 +467,109 @@ impl Coincide {
             cx.notify();
             return;
         }
-        self.composer_files
-            .spawn(self.engine.clone(), Job::Attach(file));
+        let mention = if self.composer_files.automatic {
+            let current = self.live_file_mention(window, cx, false);
+            if current != self.composer_files.trigger {
+                self.composer_files.status =
+                    "Caret, draft or IME composition changed; choose the file again.".into();
+                self.composer_files.invalidate();
+                cx.notify();
+                return;
+            }
+            current
+        } else {
+            None
+        };
+        if self
+            .composer_files
+            .spawn(self.engine.clone(), Job::Attach(file))
+        {
+            self.composer_files.pending_mention = mention;
+        }
+
         cx.notify();
+    }
+    fn live_file_mention(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        require_focus: bool,
+    ) -> Option<mentions::Ticket> {
+        let binding = self.file_reference_binding(cx)?;
+        // A native WebKit responder is not represented by GPUI focus handles.
+        // Explicit @ Files remains available; automatic caret ownership waits.
+        if self.browser_panels.contains(&binding.thread) {
+            return None;
+        }
+        if require_focus && !self.composer.read(cx).focus_handle(cx).is_focused(window) {
+            return None;
+        }
+        let (selection, reversed, marked, editable, tokens) =
+            self.composer.update(cx, |input, cx| {
+                (
+                    input.selected_range(),
+                    input.is_selection_reversed(),
+                    gpui_kit::EntityInputHandler::marked_text_range(input, window, cx).is_some(),
+                    input.is_editable(),
+                    input
+                        .tokens()
+                        .iter()
+                        .map(|token| token.range())
+                        .collect::<Vec<_>>(),
+                )
+            });
+        if !editable || reversed {
+            return None;
+        }
+        let (range, query) = mentions::detect(&binding.draft, selection.clone(), marked, &tokens)?;
+        Some(mentions::Ticket {
+            binding,
+            selection,
+            range,
+            query,
+            revision: self.composer_files.composer_revision.get(),
+        })
+    }
+    pub(super) fn sync_automatic_file_mentions(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer_files.opened && !self.composer_files.automatic {
+            return;
+        }
+        let owns_focus = self.composer.read(cx).focus_handle(cx).is_focused(window)
+            || self.composer_files.focus.contains_focused(window, cx);
+        let ticket = owns_focus
+            .then(|| self.live_file_mention(window, cx, !self.composer_files.opened))
+            .flatten();
+        let Some(ticket) = ticket else {
+            if self.composer_files.automatic && !self.composer_files.pending {
+                if self.composer_files.focus.contains_focused(window, cx) {
+                    self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                }
+                self.composer_files.opened = false;
+                self.composer_files.automatic = false;
+                self.composer_files.trigger = None;
+                self.composer_files.invalidate();
+            }
+            return;
+        };
+        if self.composer_files.dismissed.as_ref() == Some(&ticket) {
+            return;
+        }
+        self.composer_files.opened = true;
+        self.composer_files.automatic = true;
+        self.composer_files.trigger = Some(ticket.clone());
+        if self.composer_files.scheduled.as_ref() == Some(&ticket) || self.composer_files.busy() {
+            return;
+        }
+        self.composer_files.invalidate();
+        self.composer_files.scheduled = Some(ticket.clone());
+        self.composer_files.spawn(
+            self.engine.clone(),
+            Job::Search(ticket.binding.clone(), ticket.query.clone()),
+        );
     }
     pub(super) fn composer_file_button(&self, cx: &mut Context<Self>) -> AnyElement {
         Button::new("composer-project-files")
@@ -407,7 +600,7 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_2()
-            .child("Choose a path reference. Message text and file contents stay unchanged.")
+            .child(if state.automatic {"Attach a path reference and remove only this @query. Surrounding text stays unchanged; file contents are not read."} else {"Choose a path reference. Message text and file contents stay unchanged."})
             .child(div().text_xs().child(state.status.clone()));
         if !state.directory.is_empty() {
             results = results.child(
@@ -422,6 +615,7 @@ impl Coincide {
         }
         let pane = div()
             .id("composer-file-picker")
+            .track_focus(&state.focus)
             .role(Role::Group)
             .aria_label("Project file reference picker")
             .h(px(150.))
@@ -452,7 +646,19 @@ impl Coincide {
                     .flex_shrink_0()
                     .flex()
                     .gap_2()
-                    .child(Input::new(&state.query))
+                    .when(!state.automatic, |view| {
+                        view.child(Input::new(&state.query))
+                    })
+                    .when(state.automatic, |view| {
+                        view.child(div().flex_1().truncate().child(format!(
+                                "@{}",
+                                state
+                                    .trigger
+                                    .as_ref()
+                                    .map(|ticket| ticket.query.as_str())
+                                    .unwrap_or("")
+                            )))
+                    })
                     .child(
                         Button::new("composer-file-search")
                             .label("Search")
@@ -481,11 +687,12 @@ impl Coincide {
                     )
                     .child(
                         Button::new(("composer-file-attach", index))
-                            .label("Attach")
-                            .accessibility_label(format!(
-                                "Attach project file reference {}",
-                                file.path()
-                            ))
+                            .label(if state.automatic {
+                                "Attach and complete"
+                            } else {
+                                "Attach"
+                            })
+                            .accessibility_label(if state.automatic {format!("Attach project file reference {} and complete the current @query",file.path())} else {format!("Attach project file reference {}",file.path())})
                             .compact()
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
