@@ -6,27 +6,24 @@ use super::*;
 const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     (
         "codex",
-        include_bytes!("../../../website/public/img/logo-codex.png"),
+        include_bytes!("../assets/providers/logo-codex.png"),
     ),
     (
         "claude",
-        include_bytes!("../../../website/public/img/logo-claude.png"),
+        include_bytes!("../assets/providers/logo-claude.png"),
     ),
     (
         "cursor",
-        include_bytes!("../../../website/public/img/logo-cursor.png"),
+        include_bytes!("../assets/providers/logo-cursor.png"),
     ),
-    (
-        "grok",
-        include_bytes!("../../../website/public/img/logo-grok.png"),
-    ),
+    ("grok", include_bytes!("../assets/providers/logo-grok.png")),
     (
         "opencode",
-        include_bytes!("../../../website/public/img/logo-opencode.png"),
+        include_bytes!("../assets/providers/logo-opencode.png"),
     ),
     (
         "antigravity",
-        include_bytes!("../../../website/public/img/logo-antigravity.png"),
+        include_bytes!("../assets/providers/logo-antigravity.png"),
     ),
 ];
 
