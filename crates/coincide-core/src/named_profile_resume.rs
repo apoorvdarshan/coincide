@@ -470,6 +470,24 @@ impl Registry {
             policy,
         };
         context.validate()?;
+        // A cold slot can carry completed authority, including Provider default
+        // selections that have no explicit model proof. Wait for current private
+        // admission before consuming it; presence itself never reads/grants an
+        // ID. Same-owner eviction still fails Receipt::restore after consumption.
+        if !self.ready.contains_key(&key)
+            && !self.parked.contains_key(&key)
+            && self
+                .journal
+                .as_ref()
+                .map(|journal| journal.has_ticket(&key))
+                .transpose()?
+                .unwrap_or(false)
+        {
+            admission
+                .as_ref()
+                .context("Refresh this selected account's private catalog before resuming")?
+                .validate(&context.binding, &context.selection, None)?;
+        }
         // A parked opportunity must wait for an ordinary fresh authenticated
         // catalog; missing readiness neither launches nor consumes its ticket.
         if let Some(parked) = self.parked.get(&key) {
@@ -620,20 +638,30 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn independent_account_slots_require_explicit_park_and_fresh_catalog_actor() {
         use std::{
             fs,
-            os::unix::fs::PermissionsExt,
             time::{Duration, Instant},
         };
         let dir = tempfile::tempdir().unwrap();
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let private_root = dir.path().join("private-data");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&private_root)
+                .unwrap();
+        }
+        #[cfg(windows)]
+        crate::private_fs::windows::create_directory(&private_root).unwrap();
+        let root = private_root.canonicalize().unwrap();
+        let mut store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
         let id = Uuid::new_v4().to_string();
         let accounts = [Uuid::new_v4().to_string(), Uuid::new_v4().to_string()];
-        let mut registry = Registry::default();
+        let mut registry = Registry::for_store(&store);
         let mut threads = Vec::new();
         let mut profiles = Vec::new();
         for (index, account) in accounts.iter().enumerate() {
@@ -657,6 +685,7 @@ mod tests {
                 assert!(Instant::now() < deadline);
                 std::thread::yield_now();
             }
+            store.save(&thread).unwrap();
             registry.persisted(ack, &thread, worker);
             registry.poll();
             threads.push(thread);
@@ -716,12 +745,61 @@ mod tests {
         );
         let p = Policy::parse_named(&threads[1], crate::composer_policy::Origin::Ordinary, None)
             .unwrap();
-        assert_eq!(
-            registry
-                .prepare(&threads[1], profiles[1].clone(), &root, p)
+        let resumed_b = registry
+            .prepare(&threads[1], profiles[1].clone(), &root, p)
+            .unwrap();
+        assert_eq!(resumed_b.session(), Some("private-1"));
+        let ack = resumed_b
+            .acknowledge(&json!({"thread":{"id":"private-1"},"model":"actual-model"}))
+            .unwrap();
+        let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        store.save(&threads[1]).unwrap();
+        registry.persisted(ack, &threads[1], worker);
+        registry.poll();
+        registry.ready.clear(); // actual resident eviction, durable ticket remains
+        assert_eq!(registry.journal.as_ref().unwrap().keys().unwrap().len(), 1);
+        let p = || {
+            Policy::parse_named(&threads[1], crate::composer_policy::Origin::Ordinary, None)
                 .unwrap()
-                .session(),
-            Some("private-1")
+        };
+        assert!(
+            registry
+                .prepare(&threads[1], profiles[1].clone(), &root, p())
+                .is_err(),
+            "A disk ticket cannot be consumed before current admission"
+        );
+        let binding = NamedBinding::capture(profiles[1].clone(), &id, &root).unwrap();
+        catalog.fixture_resume_job(binding.clone(), "fresh-b");
+        let admission = catalog
+            .named_resume_admission(&threads[1], &binding)
+            .unwrap();
+        let fresh = registry
+            .prepare_admitted(
+                &threads[1],
+                profiles[1].clone(),
+                &root,
+                p(),
+                Some(admission),
+            )
+            .unwrap();
+        assert!(
+            fresh.session().is_none(),
+            "Current-owner eviction cannot regain authority from its own disk receipt"
+        );
+        assert_eq!(fresh.seen(), 0);
+        assert!(
+            registry
+                .journal
+                .as_ref()
+                .unwrap()
+                .keys()
+                .unwrap()
+                .is_empty()
         );
     }
     #[cfg(any(unix, windows))]

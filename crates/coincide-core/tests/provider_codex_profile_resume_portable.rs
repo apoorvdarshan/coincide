@@ -267,6 +267,22 @@ fn slots_phase(root: &Path, phase: &str) {
         .unwrap();
     } else {
         let saved: Value = serde_json::from_slice(&fs::read(&saved_path).unwrap()).unwrap();
+        let before = engine.store.thread(&id).unwrap();
+        let refused=engine.dispatch(json!({"method":"agent.send","params":{"threadId":id,"text":"must wait without consuming default-model receipt"}}));
+        assert!(
+            refused.get("error").is_some(),
+            "A cold Provider-default receipt requires current private admission"
+        );
+        assert_eq!(
+            engine.store.thread(&id).unwrap(),
+            before,
+            "Waiting cannot append draft/history or change selection/session metadata"
+        );
+        assert_eq!(
+            engine.provider_workers_status().running,
+            0,
+            "Missing admission cannot launch a provider"
+        );
         refresh_account_catalog(&mut engine, &id, false);
         turn(
             &mut engine,

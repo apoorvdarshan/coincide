@@ -225,6 +225,12 @@ impl Journal {
         }
         Ok(value.get("receipt").cloned())
     }
+    /// Deny-only readiness hint. Presence is never a receipt/native-ID read,
+    /// and cannot authorize a launch or consume the independent ticket.
+    pub(super) fn has_ticket(&self, id: &str) -> Result<bool> {
+        self.validate()?;
+        Ok(self.tickets.contains_key(id))
+    }
     pub(super) fn keys(&self) -> Result<Vec<String>> {
         self.validate()?;
         let mut statement = self.db.prepare("SELECT id FROM receipts LIMIT 129")?;
