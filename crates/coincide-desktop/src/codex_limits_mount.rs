@@ -1,23 +1,81 @@
 //! No desktop worker or provider process: the core owns explicit reads, their
 //! cancellation and actual join receipts through its ordinary shutdown owner.
-use crate::codex_limits_view::{LimitsView, Observation, Phase, decode};
+use crate::codex_limits_view::{LimitsView, Observation, Phase, decode_scoped};
 use coincide_core::api::SharedEngine;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+#[derive(Clone, Debug, Default, PartialEq)]
+enum Target {
+    #[default]
+    Default,
+    Named(Value),
+}
+impl Target {
+    fn selected(thread: Option<&Value>) -> Self {
+        let Some(thread) = thread else {
+            return Self::Default;
+        };
+        if thread["selection"]["provider"] == "codex"
+            && !coincide_core::composer_selection::default_account(
+                &thread["selection"]["accountID"],
+            )
+        {
+            Self::Named(
+                json!({"threadId":thread["id"],"accountId":thread["selection"]["accountID"],"expectedSelection":thread["selection"]}),
+            )
+        } else {
+            Self::Default
+        }
+    }
+    fn params(&self) -> Value {
+        match self {
+            Self::Default => json!({}),
+            Self::Named(value) => value.clone(),
+        }
+    }
+    fn method(&self, refresh: bool) -> &'static str {
+        match (self, refresh) {
+            (Self::Default, true) => "usage.codexLimits.refresh",
+            (Self::Default, false) => "usage.codexLimits.status",
+            (Self::Named(_), true) => "providers.codex.profiles.limits.refresh",
+            (Self::Named(_), false) => "providers.codex.profiles.limits.status",
+        }
+    }
+    fn decode(&self, value: &Value) -> Result<Observation, ()> {
+        decode_scoped(
+            value,
+            match self {
+                Self::Default => None,
+                Self::Named(value) => Some(value),
+            },
+        )
+    }
+}
 #[derive(Default)]
 struct Driver {
+    target: Target,
     current: Option<Observation>,
     closed: bool,
 }
 impl Driver {
+    fn context(&mut self, target: Target) -> bool {
+        if self.target == target {
+            return false;
+        }
+        self.target = target;
+        self.current = None;
+        true
+    }
     fn refresh(&mut self, mut call: impl FnMut(&str, Value) -> Result<Value, ()>) -> Phase {
         if self.closed {
             return Phase::Closing;
         }
         // Supersession clears the previous success even if dispatch is refused.
         self.current = None;
-        match call("usage.codexLimits.refresh", json!({})).and_then(|value| decode(&value)) {
+        match call(self.target.method(true), self.target.params())
+            .and_then(|value| self.target.decode(&value))
+        {
             Ok(observation) => {
                 let phase = observation.phase.clone();
                 self.current = Some(observation);
@@ -34,10 +92,9 @@ impl Driver {
             return None;
         }
         let current = self.current.as_ref()?;
-        let result = call(
-            "usage.codexLimits.status",
-            json!({"requestId":current.request_id}),
-        );
+        let mut params = self.target.params();
+        params["requestId"] = json!(current.request_id);
+        let result = call(self.target.method(false), params);
         let value = match result {
             Ok(None) => return None, // Busy Engine: no dispatch occurred.
             Ok(Some(value)) => value,
@@ -48,7 +105,7 @@ impl Driver {
                 ));
             }
         };
-        match decode(&value) {
+        match self.target.decode(&value) {
             Ok(next)
                 if next.request_id == current.request_id
                     && next.generation == current.generation =>
@@ -69,7 +126,9 @@ impl Driver {
         }
     }
     fn reported_observation(&self) -> Option<Observation> {
-        if self.closed {
+        // The slash-command report currently describes only the default runtime.
+        // Named observations remain available in this explicitly scoped panel.
+        if self.closed || !matches!(self.target, Target::Default) {
             return None;
         }
         self.current
@@ -96,6 +155,17 @@ impl Mount {
             panel: cx.new(|_| LimitsView::default()),
             engine,
             driver: Driver::default(),
+        }
+    }
+    pub fn set_context(&mut self, thread: Option<&Value>, cx: &mut App) {
+        let target = Target::selected(thread);
+        if self.driver.context(target) {
+            let account = match &self.driver.target {
+                Target::Default => None,
+                Target::Named(value) => value["accountId"].as_str().map(str::to_owned),
+            };
+            self.panel
+                .update(cx, |panel, cx| panel.context(account, cx));
         }
     }
     pub fn refresh(&mut self, cx: &mut App) {
@@ -162,6 +232,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn new_failed_refresh_clears_the_previous_success_without_fallback() {
         let mut driver = Driver {
+            target: Target::Default,
             current: Some(Observation {
                 request_id: "old".into(),
                 generation: 1,
@@ -262,5 +333,50 @@ mod tests {
             Phase::Closing
         );
         assert!(driver.poll(|_, _| panic!("closed poll")).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn named_target_switch_clears_observation_without_reading_or_borrowing_default() {
+        let a = json!({"id":"thread-a","selection":{"provider":"codex","accountID":"profile-a","modelID":"default"}});
+        let mut b = a.clone();
+        b["selection"]["accountID"] = json!("profile-b");
+        let mut driver = Driver::default();
+        assert!(driver.context(Target::selected(Some(&a))));
+        assert!(
+            driver
+                .poll(|_, _| panic!("context must not refresh"))
+                .is_none()
+        );
+        assert_eq!(driver.refresh(|method, params| {
+            assert_eq!(method, "providers.codex.profiles.limits.refresh");
+            assert_eq!(params, json!({"threadId":"thread-a","accountId":"profile-a","expectedSelection":a["selection"]}));
+            let mut value = loading("a-read", 1);
+            value["accountScope"] = json!("named_codex_profile");
+            value["threadId"] = params["threadId"].clone();
+            value["accountId"] = params["accountId"].clone();
+            value["expectedSelection"] = params["expectedSelection"].clone();
+            value["authenticationChecked"] = json!(false);
+            Ok(value)
+        }), Phase::Loading);
+        assert!(driver.context(Target::selected(Some(&b))));
+        assert!(driver.current.is_none());
+        assert!(driver.reported_observation().is_none());
+        assert!(
+            driver
+                .poll(|_, _| panic!("old A must not poll under B"))
+                .is_none()
+        );
+        // A late/default response never becomes a named-profile observation.
+        assert!(matches!(
+            driver.refresh(|_, _| Ok(loading("default", 1))),
+            Phase::Failed(_)
+        ));
+        assert!(driver.current.is_none());
+        let mut restarted = Driver::default();
+        restarted.context(Target::selected(Some(&a)));
+        assert!(
+            restarted
+                .poll(|_, _| panic!("restart must not read automatically"))
+                .is_none()
+        );
     }
 }
