@@ -642,3 +642,27 @@ fn foreign_rebase_appearing_after_precheck_is_not_aborted_on_refused_start() {
         original.as_bytes()
     );
 }
+
+#[::core::prelude::v1::test]
+fn comparison_count_protocol_accepts_git_tabs_without_relaxing_identity_fields() {
+    assert_eq!(comparison_counts(b"0\t1\n".to_vec()).unwrap(), [0, 1]);
+    assert_eq!(comparison_counts(b"12\t0\r\n".to_vec()).unwrap(), [12, 0]);
+    assert_eq!(comparison_counts(b"2 3\n".to_vec()).unwrap(), [2, 3]);
+    for malformed in [
+        "",
+        "0",
+        "0\t1\t2",
+        "-1\t0",
+        "0\t1oops",
+        "0\x001",
+        "0\x1b1",
+        "18446744073709551616\t0",
+    ] {
+        assert!(
+            comparison_counts(malformed.as_bytes().to_vec()).is_err(),
+            "{malformed:?}"
+        );
+    }
+    assert!(line(b"identity\tother\n".to_vec()).is_err());
+    assert!(line(b"identity\nother\n".to_vec()).is_err());
+}

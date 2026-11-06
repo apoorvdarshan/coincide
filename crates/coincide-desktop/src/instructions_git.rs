@@ -35,6 +35,21 @@ fn line(bytes: Vec<u8>) -> Result<String> {
     );
     Ok(value.to_owned())
 }
+// rev-list --left-right --count emits a TAB-separated pair, unlike the
+// single-field identities handled by line(). Keep that parser strict.
+fn comparison_counts(bytes: Vec<u8>) -> Result<[u64; 2]> {
+    ensure!(
+        bytes.len() <= 64
+            && bytes
+                .iter()
+                .all(|b| b.is_ascii_digit() || matches!(*b, b' ' | b'\t' | b'\r' | b'\n')),
+        "Git comparison is malformed"
+    );
+    let text = std::str::from_utf8(&bytes)?;
+    let parts = text.split_ascii_whitespace().collect::<Vec<_>>();
+    ensure!(parts.len() == 2, "Git comparison must contain two counts");
+    Ok([parts[0].parse()?, parts[1].parse()?])
+}
 fn head(runner: &Runner, root: &Path, cancel: &AtomicBool) -> Result<Option<String>> {
     let value = runner.capture(root, &Op::Head, cancel)?;
     if value.code == 1 {
@@ -608,7 +623,7 @@ impl Review {
                 .find(|(name, _)| name == &upstream)
                 .map(|(_, id)| id.clone());
             if let (Some(local), Some(incoming)) = (self.state.head.clone(), incoming) {
-                let counts = line(output(
+                let parts = comparison_counts(output(
                     &self.runner,
                     &self.root.path,
                     &Op::AheadBehind {
@@ -617,11 +632,6 @@ impl Review {
                     },
                     cancel,
                 )?)?;
-                let parts = counts
-                    .split_whitespace()
-                    .map(str::parse::<u64>)
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                ensure!(parts.len() == 2, "Git comparison is invalid");
                 if parts[1] > 0 {
                     ensure!(
                         !dirty_other(
@@ -721,7 +731,7 @@ impl Review {
                 let push_needed = destination.is_none_or(|(_, id)| id != &current);
                 if push_needed {
                     if let Some((_, destination)) = destination {
-                        let counts = line(output(
+                        let parts = comparison_counts(output(
                             &self.runner,
                             &self.root.path,
                             &Op::AheadBehind {
@@ -730,9 +740,8 @@ impl Review {
                             },
                             cancel,
                         )?)?;
-                        let parts = counts.split_whitespace().collect::<Vec<_>>();
                         ensure!(
-                            parts.len() == 2 && parts[1] == "0",
+                            parts[1] == 0,
                             "Destination branch is not an ancestor; nonforce push was refused"
                         );
                     }
