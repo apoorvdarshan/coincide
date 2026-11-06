@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -119,7 +119,7 @@ jobs:
   desktop-windows:
     name: Windows GPUI check
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,6 +128,7 @@ jobs:
             crates
             vendor
             .cargo
+            scripts
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -143,6 +144,18 @@ jobs:
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
+      - name: Build actual Windows native application and owner-aware control CLI
+        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --locked
+      - name: Attempt actual Windows native render input and private Store restart
+        shell: pwsh
+        run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
+      - name: Retain actual Windows native UI attempt evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-native-ui
+          path: ${{ runner.temp }}/windows-native-ui
+          if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
     runs-on: ubuntu-latest

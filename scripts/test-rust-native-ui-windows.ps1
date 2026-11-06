@@ -1,0 +1,224 @@
+param(
+    [Parameter(Mandatory=$true)][string]$Binary,
+    [Parameter(Mandatory=$true)][string]$Client,
+    [Parameter(Mandatory=$true)][string]$Artifacts
+)
+# Actual interactive Windows desktop attempt. Missing window/GPU/render/input
+# fails this smoke; compilation alone never counts as native UI evidence.
+$ErrorActionPreference = 'Stop'
+$Binary = (Resolve-Path $Binary).Path
+$Client = (Resolve-Path $Client).Path
+$Artifacts = [IO.Path]::GetFullPath($Artifacts)
+New-Item -ItemType Directory -Force $Artifacts | Out-Null
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class NativeUiSmoke {
+    public delegate bool EnumWindow(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindow callback, IntPtr data);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int state);
+    [DllImport("user32.dll")] static extern bool MoveWindow(IntPtr window,int x,int y,int width,int height,bool repaint);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window,out Rect rect);
+    [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window,ref Point point);
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+    [DllImport("user32.dll",SetLastError=true)] static extern uint SendInput(uint count, Input[] input, int size);
+    [StructLayout(LayoutKind.Sequential)] struct Rect { public int left,top,right,bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct Keyboard {public ushort vk,scan;public uint flags,time;public UIntPtr extra;}
+    [StructLayout(LayoutKind.Sequential)] struct Mouse {public int x,y;public uint data,flags,time;public UIntPtr extra;}
+    [StructLayout(LayoutKind.Explicit)] struct Union {[FieldOffset(0)] public Keyboard keyboard;[FieldOffset(0)] public Mouse mouse;}
+    [StructLayout(LayoutKind.Sequential)] struct Input {public uint type;public Union data;}
+    static Input Key(ushort key,bool up) {return new Input {type=1,data=new Union{keyboard=new Keyboard{vk=key,flags=up?2u:0u}}};}
+    public static IntPtr Find(uint process,string title) {
+        IntPtr found=IntPtr.Zero;
+        EnumWindows((window,data)=>{uint owner;GetWindowThreadProcessId(window,out owner);var text=new StringBuilder(1024);GetWindowText(window,text,text.Capacity);if(owner==process && IsWindowVisible(window) && text.ToString()==title){found=window;return false;}return true;},IntPtr.Zero);
+        return found;
+    }
+    static void Owned(IntPtr window,uint process) {
+        uint owner;GetWindowThreadProcessId(window,out owner);
+        if(window==IntPtr.Zero || owner!=process || !IsWindowVisible(window))throw new Exception("Input/capture target is not the retained process's visible window");
+    }
+    public static bool Focus(IntPtr window,uint process) {Owned(window,process);ShowWindow(window,9);SetForegroundWindow(window);return GetForegroundWindow()==window;}
+    public static void Fit(IntPtr window,uint process,int width,int height) {Owned(window,process);if(!MoveWindow(window,15,15,width,height,true))throw new Exception("Cannot size owned native window");}
+    static void Send(IntPtr window,uint process,Input[] input) {
+        Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Owned window lost foreground; refusing input");
+        if(SendInput((uint)input.Length,input,Marshal.SizeOf(typeof(Input)))!=input.Length)throw new Exception("SendInput did not deliver the complete owned-window input batch");
+    }
+    public static void Chord(IntPtr window,uint process,ushort key) {Send(window,process,new[]{Key(0x11,false),Key(key,false),Key(key,true),Key(0x11,true)});}
+    public static void Enter(IntPtr window,uint process) {Send(window,process,new[]{Key(0x0D,false),Key(0x0D,true)});}
+    public static void Type(IntPtr window,uint process,string text) {
+        var inputs=new List<Input>();foreach(char c in text){inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=4}}});inputs.Add(new Input{type=1,data=new Union{keyboard=new Keyboard{scan=c,flags=6}}});}Send(window,process,inputs.ToArray());
+    }
+    public static void ComposerClick(IntPtr window,uint process) {
+        Owned(window,process);Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Missing client bounds");var point=new Point((rect.right-rect.left)/2,rect.bottom-115);if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target native composer");Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
+    }
+    public static void Capture(IntPtr window,uint process,string path) {
+        Owned(window,process);if(GetForegroundWindow()!=window)throw new Exception("Capture target is not the active owned native window");
+        Rect rect;if(!GetClientRect(window,out rect))throw new Exception("Cannot inspect client area");int width=rect.right-rect.left,height=rect.bottom-rect.top;if(width<600 || height<400)throw new Exception("Native client area is too small");
+        var origin=new Point(0,0);if(!ClientToScreen(window,ref origin))throw new Exception("Cannot locate native client area");
+        using(var image=new Bitmap(width,height)){using(var graphics=Graphics.FromImage(image)){graphics.CopyFromScreen(origin,Point.Empty,new Size(width,height));}
+            image.Save(path,ImageFormat.Png);var colors=new HashSet<int>();double sum=0,squares=0;int count=0;
+            for(int y=0;y<height;y+=3)for(int x=0;x<width;x+=3){var color=image.GetPixel(x,y);colors.Add(color.ToArgb());double light=(color.R+color.G+color.B)/3.0;sum+=light;squares+=light*light;count++;}
+            double variance=squares/count-(sum/count)*(sum/count);if(colors.Count<24 || variance<64)throw new Exception("Native client has no meaningful rendered content (blank/locked/unavailable GPU desktop)");
+        }
+    }
+}
+'@ -ReferencedAssemblies @([System.Drawing.Bitmap].Assembly.Location,[System.Drawing.Point].Assembly.Location)
+
+$Fixture = Join-Path ([IO.Path]::GetTempPath()) ('coincide-native-ui-' + [Guid]::NewGuid().ToString('N'))
+$HomeDir = Join-Path $Fixture 'home'
+$Data = Join-Path $Fixture 'data'
+$Project = Join-Path $Fixture 'project'
+New-Item -ItemType Directory -Force $Fixture | Out-Null
+# Isolate this task-owned synthetic fixture before constructing any Store. No
+# account/profile/authority data is ever uploaded with the screenshots.
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = [Security.AccessControl.DirectorySecurity]::new()
+$acl.SetOwner($sid)
+$acl.SetAccessRuleProtection($true,$false)
+$inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,$inheritance,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))
+Set-Acl -LiteralPath $Fixture -AclObject $acl
+foreach ($directory in @($HomeDir,$Data,$Project)) { New-Item -ItemType Directory -Force $directory | Out-Null }
+$Environment = @{}
+foreach ($name in @('PATH','SystemRoot','WINDIR','TEMP','TMP')) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ($null -ne $value) { $Environment[$name] = $value }
+}
+$Environment['HOME']=$HomeDir
+$Environment['USERPROFILE']=$HomeDir
+$Environment['APPDATA']=(Join-Path $HomeDir 'AppData/Roaming')
+$Environment['LOCALAPPDATA']=(Join-Path $HomeDir 'AppData/Local')
+$Environment['COINCIDE_RUST_DATA_DIR']=$Data
+$Environment['COINCIDE_RUST_GH']=(Join-Path $Fixture 'never-execute/gh.exe')
+foreach ($provider in @('CODEX','CLAUDE','CURSOR','GROK','OPENCODE','ANTIGRAVITY')) {
+    $Environment["COINCIDE_${provider}_EXECUTABLE"]=(Join-Path $Fixture "never-execute/$provider.exe")
+}
+$Report = @{scope='Actual Windows native window/input/render/private Store restart attempt';binarySha256=(Get-FileHash $Binary -Algorithm SHA256).Hash;checks=@();passed=$false}
+$script:OwnedProcess=$null
+$script:PendingClients=[Collections.Generic.List[Diagnostics.Process]]::new()
+
+function Wait-Condition([string]$Description,[scriptblock]$Condition,[int]$Seconds=30) {
+    $deadline=[DateTime]::UtcNow.AddSeconds($Seconds)
+    $lastError=''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $value=& $Condition; if ($value) { return $value } } catch {$lastError=$_.Exception.Message}
+        Start-Sleep -Milliseconds 150
+    }
+    throw "Timed out: $Description; $lastError"
+}
+function Invoke-Rpc([string]$Method,[hashtable]$Params=@{}) {
+    $info=[Diagnostics.ProcessStartInfo]::new($Client)
+    $info.ArgumentList.Add('api');$info.UseShellExecute=$false
+    $info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    $info.Environment.Clear();foreach($key in $Environment.Keys){$info.Environment[$key]=$Environment[$key]}
+    $clientProcess=[Diagnostics.Process]::Start($info)
+    $script:PendingClients.Add($clientProcess)
+    $clientProcess.StandardInput.WriteLine((@{id=1;method=$Method;params=$Params}|ConvertTo-Json -Depth 30 -Compress));$clientProcess.StandardInput.Close()
+    # Local transport already bounds request and owner handshake. Retain any
+    # stuck client, report it, and preserve its fixture instead of killing it.
+    if(-not $clientProcess.WaitForExit(15000)){throw "Owned local-control client still running: PID $($clientProcess.Id)"}
+    $script:PendingClients.Remove($clientProcess) | Out-Null
+    $output=$clientProcess.StandardOutput.ReadToEnd();$errors=$clientProcess.StandardError.ReadToEnd()
+    if($clientProcess.ExitCode -ne 0){throw "Local-control request failed: $Method; $errors"}
+    $reply=$output|ConvertFrom-Json -AsHashtable
+    if($reply.ContainsKey('error')){throw "Local-control API error: $Method"}
+    return $reply.result
+}
+function Start-Owned([string]$Stage) {
+    # Start-Process inherits this deliberately restricted temporary environment.
+    # Restore the parent without printing any saved environment values.
+    $saved=@{};foreach($entry in Get-ChildItem Env:){$saved[$entry.Name]=$entry.Value}
+    try {
+        foreach($entry in Get-ChildItem Env:){[Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')}
+        foreach($key in $Environment.Keys){[Environment]::SetEnvironmentVariable($key,$Environment[$key],'Process')}
+        $script:OwnedProcess=Start-Process -FilePath $Binary -WorkingDirectory $Fixture -PassThru -RedirectStandardOutput (Join-Path $Artifacts "$Stage-stdout.log") -RedirectStandardError (Join-Path $Artifacts "$Stage-stderr.log")
+    } finally {
+        foreach($entry in Get-ChildItem Env:){[Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')}
+        foreach($key in $saved.Keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')}
+    }
+    Wait-Condition 'native app and owner-aware control ready' {if($script:OwnedProcess.HasExited){throw 'Owned app exited before ready'};Invoke-Rpc 'app.status'} | Out-Null
+    $window=Wait-Condition 'actual visible Windows GPUI window' {$handle=[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'Coincide Rust Preview');if($handle -ne [IntPtr]::Zero){$handle}}
+    $area=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    [NativeUiSmoke]::Fit($window,[uint32]$script:OwnedProcess.Id,[Math]::Min(1280,$area.Width-30),[Math]::Min(820,$area.Height-30))
+    Wait-Condition 'owned app foreground' {[NativeUiSmoke]::Focus($window,[uint32]$script:OwnedProcess.Id)} | Out-Null
+    return $window
+}
+function Capture-Owned([IntPtr]$Window,[string]$Name) {
+    Wait-Condition 'owned capture foreground' {[NativeUiSmoke]::Focus($Window,[uint32]$script:OwnedProcess.Id)} | Out-Null
+    Start-Sleep -Milliseconds 500
+    [NativeUiSmoke]::Capture($Window,[uint32]$script:OwnedProcess.Id,(Join-Path $Artifacts "$Name.png"))
+}
+function Quit-Owned([IntPtr]$Window) {
+    if((Invoke-Rpc 'app.status').running.Count -ne 0){throw 'Provider work unexpectedly started'}
+    Wait-Condition 'owned Quit foreground' {[NativeUiSmoke]::Focus($Window,[uint32]$script:OwnedProcess.Id)} | Out-Null
+    [NativeUiSmoke]::Chord($Window,[uint32]$script:OwnedProcess.Id,0x51)
+    if(-not $script:OwnedProcess.WaitForExit(30000)){throw "Normal Ctrl+Q did not drain owned PID $($script:OwnedProcess.Id)"}
+    if($script:OwnedProcess.ExitCode -ne 0){throw 'Normal Quit returned nonzero'}
+    $script:OwnedProcess=$null
+}
+try {
+    $main=Start-Owned 'initial'
+    $project=Invoke-Rpc 'projects.create' @{path=$Project;name='Windows native smoke'}
+    $thread=Invoke-Rpc 'threads.create' @{projectId=$project.id}
+    $threadId=$thread.id
+    Invoke-Rpc 'threads.patch' @{threadId=$threadId;patch=@{title='Windows native smoke'}} | Out-Null
+    Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null
+    Wait-Condition 'native thread became active' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
+    Capture-Owned $main 'conversation'
+    [NativeUiSmoke]::ComposerClick($main,[uint32]$script:OwnedProcess.Id)
+    $draft='Windows native input draft survives restart'
+    [NativeUiSmoke]::Type($main,[uint32]$script:OwnedProcess.Id,$draft)
+    Wait-Condition 'actual SendInput draft persisted' {(Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -eq $draft} | Out-Null
+    Capture-Owned $main 'typed-draft'
+    $Report.checks+='Actual Windows visible native window, nonblank client pixels, SendInput draft verified by private RPC'
+    [NativeUiSmoke]::Chord($main,[uint32]$script:OwnedProcess.Id,0x4B)
+    [NativeUiSmoke]::Type($main,[uint32]$script:OwnedProcess.Id,'Open settings')
+    Start-Sleep -Milliseconds 400
+    [NativeUiSmoke]::Enter($main,[uint32]$script:OwnedProcess.Id)
+    $settings=Wait-Condition 'separate General Settings window' {$handle=[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'General');if($handle -ne [IntPtr]::Zero){$handle}}
+    Capture-Owned $settings 'settings-general'
+    [NativeUiSmoke]::Chord($settings,[uint32]$script:OwnedProcess.Id,0x57)
+    Wait-Condition 'Settings window closed independently' {[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'General') -eq [IntPtr]::Zero} | Out-Null
+    if($script:OwnedProcess.HasExited){throw 'Closing Settings unexpectedly closed the app'}
+    if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Settings lost native draft'}
+    $Report.checks+='Owned Settings window opened/rendered/closed; main native draft preserved'
+    Quit-Owned $main
+    $main=Start-Owned 'restart'
+    if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Normal Quit/reopen lost native draft'}
+    Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null
+    Capture-Owned $main 'reopened-draft'
+    $Report.persistedDraftVerified=((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -eq $draft)
+    $Report.checks+='Normal Ctrl+Q exited zero and reopening preserved private Store draft with rendered native client'
+    Quit-Owned $main
+    $Report.passed=$true
+} catch {
+    $Report.error=$_.Exception.Message
+    throw
+} finally {
+    if($null -ne $script:OwnedProcess -and -not $script:OwnedProcess.HasExited){
+        try {Invoke-Rpc 'app.quit' | Out-Null;$null=$script:OwnedProcess.WaitForExit(20000)} catch {}
+    }
+    $pending=@($script:PendingClients | Where-Object {-not $_.HasExited})
+    if($null -ne $script:OwnedProcess -and -not $script:OwnedProcess.HasExited){$pending+= $script:OwnedProcess}
+    if($pending.Count -gt 0){
+        $Report.pendingOwnedPids=@($pending | ForEach-Object {$_.Id})
+        $Report.retainedFixture=$Fixture
+        $Report.passed=$false
+        # No terminate/kill, key/data upload, or deletion while an owner remains.
+    } else {
+        Remove-Item -LiteralPath $Fixture -Recurse -Force
+    }
+    $Report | ConvertTo-Json -Depth 30 | Set-Content -Encoding utf8 (Join-Path $Artifacts 'report.json')
+}
+$Report | ConvertTo-Json -Depth 30
