@@ -48,6 +48,7 @@ mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
+mod main_window_poll;
 mod microphone;
 mod microphone_settings;
 mod models_settings;
@@ -1131,15 +1132,20 @@ impl Coincide {
             .try_lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
+        let poll_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
-                if this
-                    .update_in(cx, |this, window, cx| this.tick(window, cx))
-                    .is_err()
+                if let Err(error) =
+                    main_window_poll::update(poll_window, &this, cx, |this, window, cx| {
+                        this.tick(window, cx)
+                    })
                 {
+                    // A removed main window or released owner ends this task;
+                    // never silently keep polling through an unexpected error.
+                    eprintln!("Main window polling stopped: {error}");
                     break;
                 }
             }
