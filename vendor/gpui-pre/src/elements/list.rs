@@ -1843,8 +1843,8 @@ mod test {
 
     use crate::{
         self as gpui, AnyElement, AppContext, Bounds, Context, Element, FollowMode,
-        InteractiveElement, IntoElement, ListOffset, ListState, Pixels, Render, Styled,
-        TestAppContext, VisualTestContext, Window, canvas, div, list, point, px, size,
+        InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, Pixels, Render,
+        Styled, TestAppContext, VisualTestContext, Window, canvas, div, list, point, px, size,
     };
 
     #[gpui::test]
