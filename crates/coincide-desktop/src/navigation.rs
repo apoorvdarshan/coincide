@@ -2,17 +2,9 @@ use super::*;
 
 use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 
-const NO_PROJECT: &str = "00000000-0000-0000-0000-000000000000";
-
-fn project_key(id: &str) -> &str {
-    if id.is_empty() || id == NO_PROJECT {
-        NO_PROJECT
-    } else if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) {
-        BOTS_PROJECT_ID
-    } else {
-        id
-    }
-}
+#[path = "navigation_sections.rs"]
+mod sections;
+use sections::NO_PROJECT;
 
 impl Coincide {
     pub(super) fn navigation_sidebar(&self, selected: &str, cx: &mut Context<Self>) -> AnyElement {
@@ -29,37 +21,18 @@ impl Coincide {
         };
         let searching = !self.search.read(cx).value().trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
-        let visible: Vec<_> = self
-            .threads
-            .iter()
-            .filter(|thread| {
-                self.selected_project
-                    .as_deref()
-                    .is_none_or(|id| project_key(&thread.project_id) == id)
-                    && (self.show_snoozed || thread.snoozed_until.is_none_or(|date| date <= now))
-            })
-            .collect();
-        // Keep the project's declared ordering, then projectless/orphaned groups
-        // so an unavailable project never hides its existing conversations.
-        let mut groups = self
-            .projects
-            .iter()
-            .map(|p| (text(p, "id"), text(p, "name")))
-            .collect::<Vec<_>>();
-        groups.retain(|(id, _)| {
-            id != NO_PROJECT && !id.is_empty() && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
-        });
-        // Reserved virtual grouping: no fabricated filesystem project or cwd.
-        groups.push((BOTS_PROJECT_ID.into(), "Bots".into()));
-        groups.push((NO_PROJECT.into(), "No project".into()));
-        for thread in &visible {
-            let key = project_key(&thread.project_id);
-            if !groups.iter().any(|(id, _)| id == key) {
-                groups.push((key.into(), "Unavailable project".into()));
-            }
-        }
+        let sections = sections::project(
+            &self.threads,
+            self.projects
+                .iter()
+                .map(|p| (text(p, "id"), text(p, "name")))
+                .collect(),
+            self.selected_project.as_deref(),
+            self.show_snoozed,
+            now,
+        );
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
-        if visible.is_empty() {
+        if sections.is_empty() {
             conversations = conversations.child(
                 div()
                     .p_3()
@@ -67,53 +40,81 @@ impl Coincide {
                     .child("No conversations match these filters."),
             );
         }
-        for (group_id, name) in groups {
-            let threads = visible
-                .iter()
-                .filter(|t| project_key(&t.project_id) == group_id)
-                .collect::<Vec<_>>();
-            if threads.is_empty() {
-                continue;
+        for (section_index, section) in sections.into_iter().enumerate() {
+            let pinned = section.project_id.is_none();
+            let name = section.name;
+            let threads = section.threads;
+            // Keep existing raw project collapse keys and the bot-open reveal
+            // contract. Pinned is a section, never a fabricated project key.
+            let collapsed = !searching
+                && section
+                    .project_id
+                    .as_ref()
+                    .is_some_and(|id| self.collapsed_projects.contains(id));
+            let mut group = div().flex().flex_col().mb_2();
+            if let Some(group_id) = section.project_id {
+                let chats = group_id == NO_PROJECT;
+                let target = group_id.clone();
+                group = group.child(
+                    Button::new(SharedString::from(format!("project-group-{group_id}")))
+                        .ghost()
+                        .compact()
+                        .justify_start()
+                        .w_full()
+                        .h(px(if chats {
+                            if section_index == 0 { 30. } else { 36. }
+                        } else {
+                            28.
+                        }))
+                        .accessibility_id(SharedString::from(format!("project-group-{group_id}")))
+                        .accessibility_label(SharedString::from(format!(
+                            "{} {} {name}, {} conversations",
+                            if collapsed { "Expand" } else { "Collapse" },
+                            if chats { "section" } else { "project" },
+                            threads.len()
+                        )))
+                        .label(format!(
+                            "{} {name} ({})",
+                            if collapsed { "▸" } else { "▾" },
+                            threads.len()
+                        ))
+                        .disabled(searching)
+                        .when(searching, |button| {
+                            button.tooltip("Clear search to collapse project groups")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.collapsed_projects.remove(&target) {
+                                this.collapsed_projects.insert(target.clone());
+                            }
+                            cx.notify();
+                        })),
+                );
+            } else {
+                group = group.child(
+                    div()
+                        .id("sidebar-section-pinned")
+                        .role(Role::Heading)
+                        .aria_label(SharedString::from(format!(
+                            "Pinned section, {} conversations",
+                            threads.len()
+                        )))
+                        .h(px(if section_index == 0 { 30. } else { 36. }))
+                        .flex()
+                        .items_center()
+                        .px_2()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(self.color(0xe4e9f2).opacity(0.65))
+                        .child("Pinned"),
+                );
             }
-            // Searching always reveals matching rows without overwriting which
-            // groups the user chose to collapse outside the search.
-            let collapsed = !searching && self.collapsed_projects.contains(&group_id);
-            let target = group_id.clone();
-            let mut group = div().flex().flex_col().mb_2().child(
-                Button::new(SharedString::from(format!("project-group-{group_id}")))
-                    .ghost()
-                    .compact()
-                    .justify_start()
-                    .w_full()
-                    .accessibility_id(SharedString::from(format!("project-group-{group_id}")))
-                    .accessibility_label(SharedString::from(format!(
-                        "{} project {name}, {} conversations",
-                        if collapsed { "Expand" } else { "Collapse" },
-                        threads.len()
-                    )))
-                    .label(format!(
-                        "{} {name} ({})",
-                        if collapsed { "▸" } else { "▾" },
-                        threads.len()
-                    ))
-                    .disabled(searching)
-                    .when(searching, |button| {
-                        button.tooltip("Clear search to collapse project groups")
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.collapsed_projects.remove(&target) {
-                            this.collapsed_projects.insert(target.clone());
-                        }
-                        cx.notify();
-                    })),
-            );
             if !collapsed {
                 for thread in threads {
                     let id = thread.id.clone();
                     let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
                     let label = format!(
                         "{}{}{}{}",
-                        if thread.pinned { "★ " } else { "" },
+                        if thread.pinned && !pinned { "★ " } else { "" },
                         if thread.archived { "Archived · " } else { "" },
                         if snoozed { "Snoozed · " } else { "" },
                         thread.title
@@ -124,7 +125,7 @@ impl Coincide {
                                 .ghost()
                                 .compact()
                                 .justify_start()
-                                .h(px(32.))
+                                .h(px(28.))
                                 .min_w_0()
                                 .accessibility_id(SharedString::from(format!("thread-{id}")))
                                 .accessibility_label(SharedString::from(format!(
