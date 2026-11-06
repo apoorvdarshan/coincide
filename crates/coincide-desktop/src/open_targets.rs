@@ -1,6 +1,7 @@
 //! Native app handoff. Arguments never pass through a shell; discovery and
 //! rendering never launch an app. A user click captures the current folder.
 use super::*;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub(super) struct Target {
