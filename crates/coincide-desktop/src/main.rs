@@ -67,6 +67,7 @@ mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
 mod sidebar_controls;
+mod sidebar_lifecycle;
 mod sidebar_preferences;
 mod sidebar_search;
 mod terminal_context_mount;
@@ -357,6 +358,7 @@ struct Coincide {
     queue_error: String,
     thread_list_open: bool,
     thread_bulk: thread_bulk::State,
+    sidebar_lifecycle: sidebar_lifecycle::State,
     thread_bulk_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
     sidebar_list_height: f32,
@@ -1143,6 +1145,7 @@ impl Coincide {
             queue_error: String::new(),
             thread_list_open: true,
             thread_bulk: Default::default(),
+            sidebar_lifecycle: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
             sidebar_resize,
             sidebar_list_height: 560.,
@@ -2717,6 +2720,7 @@ impl Coincide {
         self.poll_thread_bulk(window, cx);
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
+        self.poll_sidebar_lifecycle(cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;

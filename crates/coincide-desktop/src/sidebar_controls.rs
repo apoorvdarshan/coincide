@@ -243,7 +243,8 @@ impl Coincide {
                 cx.new(|_| drag.clone())
             })
             .on_drop(cx.listener(move |this, drag: &SectionDrag, _, cx| {
-                if searching
+                if drag.0 == section
+                    || searching
                     || !this.search.read(cx).value().trim().is_empty()
                     || this.media.close_requested
                     || this.media.shutdown_requested

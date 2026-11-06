@@ -115,8 +115,15 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "bot_lifecycle_api.rs"]
+mod bot_lifecycle_api;
+pub use bot_lifecycle_api::{BotConversationDisposition, BotDeletionUndo, PreparedBotDeletion};
+#[path = "sidebar_lifecycle_api.rs"]
+mod sidebar_lifecycle_api;
 #[path = "thread_delete_api.rs"]
 mod thread_delete_api;
+pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
+
 pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
@@ -153,6 +160,7 @@ struct Running {
 }
 pub struct Engine {
     thread_bulk_owner: Uuid,
+    native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
@@ -230,6 +238,7 @@ impl Engine {
         let notification_events = notification_events::Outbox::new(&store);
         Self {
             thread_bulk_owner: Uuid::new_v4(),
+            native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
