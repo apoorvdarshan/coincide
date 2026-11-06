@@ -1,3 +1,5 @@
+#[path = "thread_navigation_cache.rs"]
+mod navigation_cache;
 #[path = "store_project_defaults.rs"]
 mod project_defaults;
 #[path = "project_management.rs"]
@@ -203,6 +205,7 @@ impl Store {
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(thread_id UNINDEXED, body, tokenize='trigram case_sensitive 1');
                 CREATE TABLE IF NOT EXISTS documents(name TEXT PRIMARY KEY, document TEXT NOT NULL CHECK(json_valid(document)));
                 CREATE TABLE IF NOT EXISTS imported_threads(id TEXT PRIMARY KEY COLLATE NOCASE);")?;
+            navigation_cache::create(&tx)?;
             let duplicates: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM threads GROUP BY lower(id) HAVING count(*)>1)",
                 [],
@@ -254,6 +257,7 @@ impl Store {
             tx.execute("UPDATE metadata SET value='3' WHERE key='schema'", [])?;
             tx.commit()?;
         }
+        navigation_cache::install(&mut db)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -431,7 +435,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT id,title,project_id,archived,pinned,snoozed_until,
-             (SELECT json_object('botID',json_extract(document,'$.botID'),'branch',json_extract(document,'$.branch'),'createdAt',json_extract(document,'$.createdAt'),'updatedAt',json_extract(document,'$.updatedAt'),'itemCount',json_array_length(document,'$.items'),'hasDraft',(coalesce(length(json_extract(document,'$.draft')),0)>0 OR coalesce(json_array_length(document,'$.draftContext'),0)>0 OR coalesce(json_array_length(document,'$.rustDraftImages'),0)>0),'preview',CASE WHEN json_type(document,'$.botID')='text' THEN (SELECT substr(json_extract(value,'$.text'),1,560) FROM json_each(document,'$.items') WHERE json_extract(value,'$.kind') IN ('user','assistant') AND length(trim(json_extract(value,'$.text'),char(9)||char(10)||char(13)||char(32)))>0 ORDER BY cast(key AS INTEGER) DESC LIMIT 1) ELSE NULL END) FROM threads WHERE threads.id=thread_summaries.id COLLATE NOCASE)
+             (SELECT metadata FROM thread_navigation WHERE thread_navigation.id=thread_summaries.id COLLATE NOCASE)
              FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
         let mut stmt = self.connection()?.prepare(&sql)?;
@@ -445,36 +449,7 @@ impl Store {
                 snoozed_until: r.get(5)?,
                 navigation: r
                     .get::<_, Option<String>>(6)?
-                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                    .and_then(|value| {
-                        let metadata = ThreadNavigation {
-                            bot_id: value["botID"]
-                                .as_str()
-                                .filter(|id| Uuid::parse_str(id).is_ok())
-                                .map(str::to_owned),
-                            branch: value["branch"]
-                                .as_str()
-                                .filter(|branch| !branch.is_empty())
-                                .map(str::to_owned),
-                            created_at: snooze_timestamp(&value["createdAt"]),
-                            updated_at: snooze_timestamp(&value["updatedAt"]),
-                            preview: value["preview"].as_str().map(|text| {
-                                let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                                if line.chars().count() > 140 {
-                                    line.chars().take(139).collect::<String>() + "…"
-                                } else {
-                                    line
-                                }
-                            }),
-                            item_count: value["itemCount"].as_u64().map(|count| count as usize),
-                            has_draft: value["hasDraft"].as_u64().map(|value| value != 0),
-                        };
-                        (metadata.bot_id.is_some()
-                            || metadata.branch.is_some()
-                            || metadata.created_at.is_some()
-                            || metadata.updated_at.is_some())
-                        .then_some(metadata)
-                    }),
+                    .and_then(|raw| serde_json::from_str::<ThreadNavigation>(&raw).ok()),
             })
         };
         let result = if query.is_empty() {
@@ -1625,6 +1600,7 @@ fn cache_thread(db: &Connection, v: &Value, reindex: bool) -> Result<()> {
     } else {
         db.execute("UPDATE thread_summaries SET title=?2,project_id=?3,archived=?4,pinned=?5,updated_at=?6,snoozed_until=?7 WHERE id=?1",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated,snooze_timestamp(&v["snoozedUntil"])])?;
     }
+    navigation_cache::write(db, v)?;
     Ok(())
 }
 
