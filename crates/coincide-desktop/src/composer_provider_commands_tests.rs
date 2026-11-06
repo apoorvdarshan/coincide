@@ -159,7 +159,6 @@ fn provider_commands_engine_child() {
     let actual = engine_command_transaction(&mut f.engine, &pending, command, false, None).unwrap();
     let mut expected = before.clone();
     expected["rustProviderSelections"] = json!({"claude": before["selection"]});
-    expected["rustAccountSelections"]["claude/default"] = before["selection"].clone();
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!("default");
     expected["draft"] = json!("");
@@ -184,7 +183,6 @@ fn provider_commands_engine_child() {
     .unwrap();
     let mut expected = t.clone();
     expected["rustProviderSelections"] = json!({"claude": t["selection"]});
-    expected["rustAccountSelections"]["claude/default"] = t["selection"].clone();
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!("default");
     expected["draft"] = json!("");
