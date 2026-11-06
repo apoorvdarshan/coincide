@@ -3,17 +3,27 @@ use coincide_core::{api::Engine, control, store::Store};
 use serde_json::{Value, json};
 use std::{
     io::Read,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 fn main() -> Result<()> {
-    let invocation =
+    let mut invocation =
         Invocation::parse(std::env::args().skip(1).collect()).unwrap_or_else(|error| {
             eprintln!("{error}");
             std::process::exit(2);
         });
+    if invocation.send_stdin {
+        invocation.args[2] = read_send_message(&mut std::io::stdin()).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(2);
+        });
+    }
     let mut args = invocation.args.clone();
     let cmd = args[0].clone();
     let cmd = cmd.as_str();
+    if cmd == "help" {
+        return help();
+    }
     let raw_request = if cmd == "api" {
         Some(
             read_api_request(&mut std::io::stdin()).unwrap_or_else(|error| {
@@ -24,12 +34,16 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let data = control::data_directory()?;
     if cmd == "serve" {
+        let data = control::data_directory()?;
+        let socket = invocation
+            .socket
+            .clone()
+            .unwrap_or_else(|| data.join("control.sock"));
         let engine = Arc::new(Mutex::new(Engine::new(Store::open(
             &data.join("coincide.sqlite"),
         )?)));
-        let _server = control::serve(data.join("control.sock"), engine.clone())?;
+        let _server = control::serve(socket, engine.clone())?;
         loop {
             if engine
                 .lock()
@@ -42,7 +56,12 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let socket = data.join("control.sock");
+    // Client overrides are explicit Rust-protocol endpoints. Never consult
+    // the Swift socket environment or resolve unrelated default data here.
+    let socket = match &invocation.socket {
+        Some(path) => path.clone(),
+        None => control::data_directory()?.join("control.sock"),
+    };
     if matches!(
         cmd,
         "open"
@@ -166,7 +185,7 @@ fn main() -> Result<()> {
         "agents" | "providers" => ("providers.list", json!({})),
         "attach" => {
             return operation(
-                &data.join("control.sock"),
+                &socket,
                 "attachments.add",
                 json!({"threadId":argument(1)?,"path":argument(2)?}),
                 "workspace.result",
@@ -194,12 +213,7 @@ fn main() -> Result<()> {
                     "files.read"
                 }
             };
-            return operation(
-                &data.join("control.sock"),
-                method,
-                params,
-                "workspace.result",
-            );
+            return operation(&socket, method, params, "workspace.result");
         }
         "threads" => (
             "threads.list",
@@ -236,7 +250,6 @@ fn main() -> Result<()> {
                 .clone()
                 .context("Missing prepared browser action")?;
             params["threadId"] = json!(thread);
-            let socket = data.join("control.sock");
             let response = control::request(
                 &socket,
                 &json!({"id":1,"method":"browser.request","params":params}),
@@ -288,25 +301,26 @@ fn main() -> Result<()> {
         ),
         "api" => {
             return output(control::request(
-                &data.join("control.sock"),
+                &socket,
                 raw_request
                     .as_ref()
                     .context("Missing prepared API request")?,
             )?);
         }
-        "help" => {
-            println!(
-                "Coincide Rust preview CLI (JSON output)\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID TEXT | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance."
-            );
-            return Ok(());
-        }
         _ => bail!("Unknown command; use coincide-rs help"),
     };
     output(control::request(
-        &data.join("control.sock"),
+        &socket,
         &json!({"id":1,"method":method,"params":params}),
     )?)
 }
+fn help() -> Result<()> {
+    println!(
+        "Coincide Rust preview CLI (JSON output; --json accepted)\nGlobal: --json | --socket PATH | --socket=PATH (Rust protocol only)\nstatus | capabilities | projects | agents | providers | threads [search] | read ID | open ID | quit\nagents (providers alias): catalog/discovery metadata; account authentication is not checked.\nnew DIRECTORY | fork ID | send ID MESSAGE... | send ID - (UTF-8 stdin) | stop ID | draft ID TEXT\nattach ID ABSOLUTE_IMAGE_PATH | detach ID ATTACHMENT_ID\nprovider ID codex|claude [MODEL] | pending ID | answer ID REQUEST_ID ANSWERS_JSON\nbrowser ID ACTION_JSON (for example: '{{\"action\":\"read\"}}')\ngit-status ID | git-diff ID [PATH] | files ID [QUERY] | file ID PATH [LINE_OFFSET]\narchive ID | restore ID | approve ID REQUEST_ID | decline ID REQUEST_ID\napi  Read a JSON request from stdin\nserve  Run the engine without a GUI\nThread references: exact ID, unique ID prefix (4+ characters), exact title, or this (COINCIDE_THREAD_ID).\nthreads [search] [--project ID|NAME|PATH | --chats] [--running] [--active | --archived]\nread THREAD [--count 0..1000] [--offset N] | status [THREAD]\nwait THREAD [--timeout SECONDS] | send THREAD TEXT --wait [--timeout SECONDS]\nExit codes: 0 success/settled, 1 error, 2 usage, 3 needs input, 4 wait timed out.\nWait done means the turn settled; inspect the transcript for provider errors.\nCOINCIDE_RUST_DATA_DIR selects an isolated instance; default remains its control.sock.\nAn explicit --socket is used for all requests; COINCIDE_CONTROL_SOCKET is not inherited.\nUse -- before message words that start with options. Busy/alternate follow-up delivery is not connected."
+    );
+    Ok(())
+}
+
 fn operation(
     socket: &std::path::Path,
     method: &str,
@@ -371,9 +385,12 @@ struct Invocation {
     timeout: std::time::Duration,
     payload: Option<Value>,
     file_offset: Option<u64>,
+    socket: Option<PathBuf>,
+    send_stdin: bool,
 }
 impl Invocation {
     fn parse(raw: Vec<String>) -> Result<Self> {
+        let (raw, socket) = global_options(raw)?;
         let command = raw.first().map(String::as_str).unwrap_or("help");
         let (minimum, maximum) = match command {
             "help" | "serve" | "quit" | "capabilities" | "projects" | "agents" | "providers"
@@ -382,7 +399,8 @@ impl Invocation {
             "read" | "open" | "new" | "fork" | "stop" | "pending" | "archive" | "restore"
             | "wait" | "git-status" => (1, 1),
             "git-diff" | "files" => (1, 2),
-            "attach" | "detach" | "send" | "draft" | "approve" | "decline" | "browser" => (2, 2),
+            "send" => (2, usize::MAX),
+            "attach" | "detach" | "draft" | "approve" | "decline" | "browser" => (2, 2),
             "provider" => (2, 3),
             "answer" => (3, 3),
             "file" => (2, 3),
@@ -400,6 +418,8 @@ impl Invocation {
             timeout: std::time::Duration::from_secs(1800),
             payload: None,
             file_offset: None,
+            socket,
+            send_stdin: false,
         };
         let mut args = raw.iter().skip(1);
         let mut literal = false;
@@ -409,7 +429,7 @@ impl Invocation {
                 literal = true;
                 continue;
             }
-            if !literal && arg.starts_with('-') {
+            if !literal && arg.starts_with('-') && !(command == "send" && arg == "-") {
                 anyhow::ensure!(seen.insert(arg.clone()), "Duplicate option {arg}");
                 let value =
                     |args: &mut std::iter::Skip<std::slice::Iter<'_, String>>| -> Result<String> {
@@ -471,6 +491,21 @@ impl Invocation {
             !(command == "send" && seen.contains("--timeout") && !parsed.wait),
             "--timeout needs --wait on send"
         );
+        if command == "send" {
+            let words = &parsed.args[2..];
+            parsed.send_stdin = words.len() == 1 && words[0] == "-";
+            if !parsed.send_stdin {
+                let length = words
+                    .iter()
+                    .try_fold(words.len() - 1, |total, word| total.checked_add(word.len()))
+                    .context("Send message is too large")?;
+                anyhow::ensure!(length <= MAX_SEND_MESSAGE, "Send message exceeds 1 MiB");
+                let message = words.join(" ");
+                validate_send_message(&message)?;
+                parsed.args.truncate(2);
+                parsed.args.push(message);
+            }
+        }
         if command == "file" {
             parsed.file_offset = parsed
                 .args
@@ -493,6 +528,61 @@ impl Invocation {
         }
         Ok(parsed)
     }
+}
+
+/// Global flags are recognized anywhere before the literal delimiter. Socket
+/// selection is explicit; ambient COINCIDE_CONTROL_SOCKET is never consulted.
+fn global_options(raw: Vec<String>) -> Result<(Vec<String>, Option<PathBuf>)> {
+    let mut words = Vec::new();
+    let mut socket = None;
+    let mut json = false;
+    let mut args = raw.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            words.push(arg);
+            words.extend(args);
+            break;
+        }
+        if arg == "--json" {
+            anyhow::ensure!(!json, "Duplicate option --json");
+            json = true;
+        } else if arg == "--socket" || arg.starts_with("--socket=") {
+            anyhow::ensure!(socket.is_none(), "Duplicate option --socket");
+            let path = if let Some(path) = arg.strip_prefix("--socket=") {
+                path.to_owned()
+            } else {
+                args.next()
+                    .filter(|value| !value.starts_with("--"))
+                    .context("Missing value for --socket")?
+            };
+            anyhow::ensure!(
+                !path.is_empty() && !path.chars().any(char::is_control),
+                "Invalid --socket path"
+            );
+            socket = Some(PathBuf::from(path));
+        } else {
+            words.push(arg);
+        }
+    }
+    Ok((words, socket))
+}
+const MAX_SEND_MESSAGE: usize = 1024 * 1024;
+fn validate_send_message(message: &str) -> Result<()> {
+    anyhow::ensure!(!message.is_empty(), "send needs a message");
+    anyhow::ensure!(
+        message.len() <= MAX_SEND_MESSAGE,
+        "Send message exceeds 1 MiB"
+    );
+    Ok(())
+}
+fn read_send_message(input: &mut impl Read) -> Result<String> {
+    let mut body = String::new();
+    input
+        .take(MAX_SEND_MESSAGE as u64 + 1)
+        .read_to_string(&mut body)
+        .context("Send stdin must be UTF-8")?;
+    validate_send_message(&body)?;
+    Ok(body)
 }
 
 fn read_api_request(input: &mut impl Read) -> Result<Value> {

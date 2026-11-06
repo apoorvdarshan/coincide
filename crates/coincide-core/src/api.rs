@@ -536,6 +536,11 @@ impl Engine {
                 "agent.respond"
                 ,"agent.pending", "agent.answer", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
                 ];
+                methods.extend_from_slice(&[
+                    "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
+                    "providers.codex.profiles.login.start", "providers.codex.profiles.login.status", "providers.codex.profiles.login.cancel",
+                    "providers.codex.profiles.models.refresh", "providers.codex.profiles.models.status", "providers.codex.profiles.models.select",
+                ]);
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
