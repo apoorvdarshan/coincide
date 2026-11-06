@@ -7,7 +7,36 @@ mod sections;
 use sections::NO_PROJECT;
 
 impl Coincide {
-    pub(super) fn navigation_sidebar(&self, selected: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn navigation_sidebar(
+        &self,
+        selected: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let parent = cx.entity().downgrade();
+        let resize = gpui_kit::component::resizable::resize_handle(
+            "conversation-list-resize",
+            Axis::Horizontal,
+        )
+        .inside(gpui_kit::component::resizable::HandleEdge::Trailing)
+        .role(Role::Splitter)
+        .aria_label("Resize conversation list")
+        .on_drag(navigation_resize::ResizeList, move |drag, _, window, cx| {
+            let pointer = f64::from(f32::from(window.mouse_position().x));
+            let width = f64::from(f32::from(window.viewport_size().width));
+            let active = window.is_window_active();
+            let _ = parent.update(cx, |this, cx| {
+                if active
+                    && this.thread_list_open
+                    && !this.media.close_requested
+                    && !this.media.shutdown_requested
+                {
+                    this.sidebar_resize.begin(pointer, width);
+                    cx.notify();
+                }
+            });
+            cx.new(|_| drag.clone())
+        });
         let project_label = match self.selected_project.as_deref() {
             None => "All projects".into(),
             Some(NO_PROJECT) => "No project".into(),
@@ -145,10 +174,15 @@ impl Coincide {
             conversations = conversations.child(group);
         }
         div()
+            .id("conversation-list")
+            .relative()
             .track_focus(&self.thread_list_focus)
             .flex()
             .flex_col()
-            .w(px(280.))
+            .w(px(self
+                .sidebar_resize
+                .visible(f64::from(f32::from(window.viewport_size().width)))
+                as f32))
             .flex_shrink_0()
             .h_full()
             .bg(self.color(0x151922))
@@ -156,6 +190,24 @@ impl Coincide {
             .border_color(self.color(0x29303d))
             .p_3()
             .gap_2()
+            .on_drag_move(cx.listener(
+                |this, event: &DragMoveEvent<navigation_resize::ResizeList>, window, cx| {
+                    if this.sidebar_resize.move_to(
+                        f64::from(f32::from(event.event.position.x)),
+                        f64::from(f32::from(window.viewport_size().width)),
+                    ) {
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.finish_sidebar_resize(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.finish_sidebar_resize(cx)),
+            )
             .child(
                 Button::new("projects-toggle")
                     .ghost()
@@ -284,6 +336,10 @@ impl Coincide {
                     ),
             )
             .child(conversations)
+            .when_some(self.sidebar_resize.error(), |view, error| {
+                view.child(div().text_xs().child(error))
+            })
+            .child(resize)
             .into_any_element()
     }
 

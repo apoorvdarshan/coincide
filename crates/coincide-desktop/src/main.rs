@@ -38,6 +38,7 @@ mod microphone_settings;
 mod native_quit;
 mod navigation;
 mod navigation_rail;
+mod navigation_resize;
 mod notification_runtime;
 mod notification_settings;
 mod notifications;
@@ -334,6 +335,7 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     thread_list_open: bool,
+    sidebar_resize: navigation_resize::State,
     thread_list_focus: FocusHandle,
     navigation_focus: FocusHandle,
     settings_open: bool,
@@ -970,6 +972,7 @@ impl Coincide {
                 }
             }
         });
+        let sidebar_resize = navigation_resize::State::load(&engine);
         let mut this = Self {
             engine,
             quit_requested,
@@ -999,6 +1002,7 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             thread_list_open: true,
+            sidebar_resize,
             thread_list_focus: cx.focus_handle(),
             navigation_focus: cx.focus_handle(),
             settings_open: false,
@@ -3577,10 +3581,11 @@ impl Render for Coincide {
             .as_ref()
             .map(|v| text(v, "id"))
             .unwrap_or_default();
+        self.sync_sidebar_resize(window);
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self
             .thread_list_open
-            .then(|| self.navigation_sidebar(&selected_id, cx));
+            .then(|| self.navigation_sidebar(&selected_id, window, cx));
         let title = self
             .selected
             .as_ref()
