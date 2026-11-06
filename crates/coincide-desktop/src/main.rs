@@ -46,6 +46,7 @@ mod models_settings;
 mod native_quit;
 mod navigation;
 mod navigation_rail;
+mod open_targets;
 mod navigation_resize;
 mod notification_runtime;
 mod notification_settings;
@@ -353,6 +354,7 @@ struct Coincide {
     sidebar_resize: navigation_resize::State,
     thread_list_focus: FocusHandle,
     navigation_focus: FocusHandle,
+    open_targets: Vec<open_targets::Target>,
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
@@ -423,6 +425,7 @@ struct Coincide {
     threads: Vec<ThreadSummary>,
     projects: Vec<Value>,
     selected_project: Option<String>,
+    expanded_sidebar_lists: std::collections::HashSet<String>,
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
@@ -1095,6 +1098,7 @@ impl Coincide {
             sidebar_resize,
             thread_list_focus: cx.focus_handle(),
             navigation_focus: cx.focus_handle(),
+            open_targets: open_targets::installed(),
             settings_open: false,
             thread_actions_open: false,
             settings_search,
@@ -1164,6 +1168,7 @@ impl Coincide {
             threads,
             projects,
             selected_project: None,
+            expanded_sidebar_lists: std::collections::HashSet::new(),
             collapsed_projects: Default::default(),
             show_snoozed: false,
             navigation_last_clock: Instant::now(),
@@ -3957,7 +3962,7 @@ impl Render for Coincide {
         if self.settings_window.is_none() {
             self.sync_keyboard_recording(window, cx);
         }
-        let navigation_rail = self.navigation_rail(cx);
+        let navigation_rail = self.navigation_rail(window, cx);
         let sidebar = self
             .thread_list_open
             .then(|| self.navigation_sidebar(&selected_id, window, cx));

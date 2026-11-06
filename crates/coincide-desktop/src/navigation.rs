@@ -5,12 +5,21 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 #[path = "navigation_sections.rs"]
 mod sections;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use sections::NO_PROJECT;
 
 // Button's root alignment does not reach its independently centered label slot.
 // A full-width content child keeps the real Button and aligns/truncates its text.
 fn sidebar_button_label(label: String) -> Div {
     div().w_full().min_w_0().truncate().text_left().child(label)
+}
+
+#[derive(Clone, Copy)]
+enum SidebarThreadAction {
+    Pin,
+    Rename,
+    Fork,
+    Archive,
 }
 
 impl Coincide {
@@ -161,7 +170,21 @@ impl Coincide {
             }
             let pinned = section.project_id.is_none();
             let name = section.name;
-            let threads = section.threads;
+            let group_key = section.project_id.clone();
+            let expanded = group_key
+                .as_ref()
+                .is_some_and(|id| self.expanded_sidebar_lists.contains(id));
+            let limit = sections::automatic_limit(
+                (f32::from(window.viewport_size().height) - 130.).max(0.),
+            );
+            let total = section.threads.len();
+            let (threads, hidden) = sections::visible_rows(
+                &section.threads,
+                if pinned { 0 } else { limit },
+                selected,
+                expanded,
+                searching,
+            );
             // Keep existing raw project collapse keys and the bot-open reveal
             // contract. Pinned is a section, never a fabricated project key.
             let collapsed = !searching
@@ -241,9 +264,23 @@ impl Coincide {
                 );
             }
             if !collapsed {
+                if threads.is_empty() {
+                    group = group.child(
+                        div()
+                            .h(px(24.))
+                            .pl(px(36.))
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.55))
+                            .child("No threads yet"),
+                    );
+                }
                 for thread in threads {
                     let id = thread.id.clone();
                     let selecting = self.thread_bulk.mode;
+                    let menu_id = id.clone();
+                    let parent = cx.entity().downgrade();
+                    let is_pinned = thread.pinned;
+                    let is_archived = thread.archived;
                     let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
                     let label = format!(
                         "{}{}{}{}",
@@ -290,6 +327,82 @@ impl Coincide {
                             })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.bulk_row_click(&id, selecting, window, cx)
+                            }))
+                            .context_menu(move |mut menu, _, _| {
+                                for (label, action) in [
+                                    (
+                                        if is_pinned { "Unpin" } else { "Pin" },
+                                        SidebarThreadAction::Pin,
+                                    ),
+                                    ("Rename…", SidebarThreadAction::Rename),
+                                    ("Fork", SidebarThreadAction::Fork),
+                                    (
+                                        if is_archived { "Restore" } else { "Archive…" },
+                                        SidebarThreadAction::Archive,
+                                    ),
+                                ] {
+                                    let parent = parent.clone();
+                                    let id = menu_id.clone();
+                                    menu = menu.item(PopupMenuItem::new(label).on_click(
+                                        move |_, window, cx| {
+                                            let _ = parent.update(cx, |this, cx| {
+                                                if this.thread_bulk.mode
+                                                    || this.media.shutdown_requested
+                                                    || this.media.close_requested
+                                                {
+                                                    return;
+                                                }
+                                                this.select(&id, window, cx);
+                                                if this
+                                                    .selected
+                                                    .as_ref()
+                                                    .is_none_or(|thread| thread["id"] != id)
+                                                {
+                                                    return;
+                                                }
+                                                match action {
+                                                    SidebarThreadAction::Pin => {
+                                                        this.toggle("isPinned", cx)
+                                                    }
+                                                    SidebarThreadAction::Rename => {
+                                                        this.begin_rename(window, cx)
+                                                    }
+                                                    SidebarThreadAction::Fork => {
+                                                        this.fork(window, cx)
+                                                    }
+                                                    SidebarThreadAction::Archive => {
+                                                        this.request_archive(cx)
+                                                    }
+                                                }
+                                            });
+                                        },
+                                    ));
+                                }
+                                menu
+                            }),
+                    );
+                }
+            }
+            if !collapsed && !searching && !pinned && (hidden > 0 || (expanded && total > limit)) {
+                if let Some(key) = group_key {
+                    group = group.child(
+                        Button::new(SharedString::from(format!("sidebar-more-{key}")))
+                            .ghost()
+                            .compact()
+                            .w_full()
+                            .h(px(24.))
+                            .justify_start()
+                            .label(if hidden > 0 {
+                                format!("Show {hidden} more")
+                            } else {
+                                "Show less".into()
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.thread_bulk.invalidate();
+                                if !this.expanded_sidebar_lists.remove(&key) {
+                                    this.expanded_sidebar_lists.insert(key.clone());
+                                }
+                                cx.notify();
                             })),
                     );
                 }
