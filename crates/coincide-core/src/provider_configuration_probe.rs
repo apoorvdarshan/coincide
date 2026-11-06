@@ -258,7 +258,7 @@ mod tests {
             effective_var("CLAUDE_CONFIG_DIR"),
             Some(account.home.as_os_str().to_owned())
         );
-        assert_eq!(effective_var("ANTHROPIC_API_KEY"), Some("".into()));
+        assert!(effective_var("ANTHROPIC_API_KEY").is_none());
         engine
             .rename_native_login_account("claude", &account.id, &account.revision, "Changed")
             .unwrap();
