@@ -312,7 +312,7 @@ impl Coincide {
             coincide_core::api::call(
                 &engine,
                 "providers.codex.profiles.select",
-                json!({"threadId":target,"accountId":account,"expectedSelection":baseline}),
+                json!({"threadId":target,"accountId":account,"expectedSelection":baseline,"rememberComposerChoice":true}),
             )
         });
         cx.spawn_in(window, async move |this, cx| {

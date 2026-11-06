@@ -188,7 +188,7 @@ fn fixture(root: &Path, case: &str) -> Fixture {
         .to_owned();
     let a_home = state.join("providers/codex").join(&a);
     let b_home = state.join("providers/codex").join(&b);
-    fs::write(a_home.join("models.json"),json!([{"model":"synthetic-a","supportedReasoningEfforts":[{"reasoningEffort":"high"}],"supportedServiceTiers":["priority"]},{"model":"gpt-6-astra","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]},{"model":"openai.gpt-6-astra","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]).to_string()).unwrap();
+    fs::write(a_home.join("models.json"),json!([{"model":"synthetic-a","supportedReasoningEfforts":[{"reasoningEffort":"high"}],"serviceTiers":[{"id":"priority","name":"Fast"}]},{"model":"synthetic-low","supportedReasoningEfforts":[{"reasoningEffort":"low"}],"defaultReasoningEffort":"low"},{"model":"gpt-6-astra","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]},{"model":"openai.gpt-6-astra","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]).to_string()).unwrap();
     fs::write(
         b_home.join("models.json"),
         json!([{"model":"synthetic-b"}]).to_string(),
@@ -269,6 +269,132 @@ fn named_restore_child() {
         records(&root).len(),
         calls_before,
         "warm restore must reuse the exact existing catalog without executing a process"
+    );
+    let saved_choice = f.engine.store.thread(&id).unwrap();
+    let settings_before = call(&mut f.engine, "settings.read", json!({}));
+    assert_eq!(
+        settings_before["defaultSelection"],
+        saved_choice["selection"]
+    );
+    let new_thread = call(
+        &mut f.engine,
+        "threads.create",
+        json!({"projectId":f.source["projectID"]}),
+    );
+    assert_eq!(new_thread["selection"], saved_choice["selection"]);
+    let new_id = new_thread["id"].as_str().unwrap().to_owned();
+    f.engine.set_active_thread(Some(new_id.clone())).unwrap();
+    let unproved = call(
+        &mut f.engine,
+        "agent.selection.capabilities",
+        json!({"threadId":new_id}),
+    );
+    assert_eq!(
+        unproved["namedModels"]["fullAccessSupported"], false,
+        "new threads cannot borrow another thread's authenticated proof"
+    );
+    let mut initial = expected(&new_thread, "codex");
+    initial["restoreCurrent"] = json!(true);
+    let pending = call(&mut f.engine, "agent.provider.select", initial);
+    assert_eq!(pending["pending"], true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut p = retry(&new_thread, &pending);
+        p["restoreCurrent"] = json!(true);
+        let response = call(&mut f.engine, "agent.provider.select", p);
+        if response["pending"] != true {
+            assert_eq!(response["thread"]["selection"], saved_choice["selection"]);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        call(&mut f.engine, "settings.read", json!({})),
+        settings_before,
+        "restoring a saved choice does not move app defaults"
+    );
+    assert_eq!(
+        f.engine.store.thread(&id).unwrap(),
+        saved_choice,
+        "new thread restoration cannot mutate an existing thread"
+    );
+    drain(&mut f.engine);
+
+    // Desired reasoning/speed remain isolated across A -> B -> A. Switching
+    // through an incompatible same-account model uses its advertised fallback
+    // without replacing the user's desired value.
+    let mut f = fixture(&root, "desired-options");
+    f.source["modelPreferences"] = json!({format!("codex/{}",f.a):{"effort":"high","speed":"priority","future":17},format!("codex/{}",f.b):{"effort":"low","speed":"turbo"}});
+    fs::write(f.b_home.join("models.json"),json!([{"model":"synthetic-b","supportedReasoningEfforts":[{"reasoningEffort":"low"}],"defaultReasoningEffort":"low","serviceTiers":[{"id":"turbo","name":"Turbo"}]}]).to_string()).unwrap();
+    f.engine.store.save(&f.source).unwrap();
+    let pending = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&f.source, "codex"),
+    );
+    let mut a = finish(&mut f.engine, &f.source, &pending);
+    let low = call(
+        &mut f.engine,
+        "providers.codex.profiles.models.select",
+        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":a["thread"]["selection"],"requestId":pending["requestId"],"model":"synthetic-low","rememberComposerChoice":true}),
+    );
+    assert_eq!(low["selection"]["effort"], "low");
+    assert_eq!(low["selection"]["speed"], Value::Null);
+    assert_eq!(
+        low["modelPreferences"][format!("codex/{}", f.a)]["effort"],
+        "high"
+    );
+    assert_eq!(
+        low["modelPreferences"][format!("codex/{}", f.a)]["speed"],
+        "priority"
+    );
+    let high = call(
+        &mut f.engine,
+        "providers.codex.profiles.models.select",
+        json!({"threadId":f.source["id"],"accountId":f.a,"expectedSelection":low["selection"],"requestId":pending["requestId"],"model":"synthetic-a","rememberComposerChoice":true}),
+    );
+    a["thread"] = high;
+    assert_eq!(a["thread"]["selection"]["effort"], "high");
+    assert_eq!(a["thread"]["selection"]["speed"], "priority");
+    let mut away = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&a["thread"], "claude"),
+    )["thread"]
+        .clone();
+    away["sessions"]["codex"]["accountID"] = json!(f.b);
+    away["items"].as_array_mut().unwrap().push(json!({"id":uuid::Uuid::new_v4(),"provider":"codex","kind":"assistant","accountID":f.b,"modelID":"synthetic-b"}));
+    f.engine.store.save(&away).unwrap();
+    let pending = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&away, "codex"),
+    );
+    let b = finish(&mut f.engine, &away, &pending);
+    assert_eq!(b["thread"]["selection"]["accountID"], f.b);
+    assert_eq!(b["thread"]["selection"]["effort"], "low");
+    assert_eq!(b["thread"]["selection"]["speed"], "turbo");
+    let mut away = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&b["thread"], "claude"),
+    )["thread"]
+        .clone();
+    away["sessions"]["codex"]["accountID"] = json!(f.a);
+    away["items"].as_array_mut().unwrap().push(json!({"id":uuid::Uuid::new_v4(),"provider":"codex","kind":"assistant","accountID":f.a,"modelID":"synthetic-a"}));
+    f.engine.store.save(&away).unwrap();
+    let a = call(
+        &mut f.engine,
+        "agent.provider.select",
+        expected(&away, "codex"),
+    );
+    assert_eq!(a["pending"], Value::Null);
+    assert_eq!(a["thread"]["selection"]["effort"], "high");
+    assert_eq!(a["thread"]["selection"]["speed"], "priority");
+    assert_eq!(
+        a["thread"]["modelPreferences"][format!("codex/{}", f.a)]["future"],
+        17
     );
     drain(&mut f.engine);
 

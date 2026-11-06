@@ -321,6 +321,60 @@ impl ModelCatalog {
             Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
         }
     }
+    /// Resolve desired options only against this authenticated account's exact
+    /// current row. Unsupported desired values remain remembered for a later
+    /// compatible model, while the active choice uses its supported default.
+    pub(crate) fn resolve_named_preferences(
+        &self,
+        thread: &mut Value,
+        binding: &NamedBinding,
+        request: Option<&str>,
+    ) -> Result<()> {
+        let mut shape = thread.clone();
+        for key in ["effort", "speed"] {
+            shape["selection"]
+                .as_object_mut()
+                .context("Invalid selection")?
+                .remove(key);
+        }
+        let (_, row) = self.named_model_row(&shape, binding, request)?;
+        let key = format!("codex/{}", binding.account());
+        let desired = thread["modelPreferences"].get(&key).cloned().unwrap_or_else(|| json!({"effort":thread["selection"]["effort"],"speed":thread["selection"]["speed"]}));
+        ensure!(
+            desired.is_object(),
+            "Saved account options are unsupported; choose them explicitly"
+        );
+        let efforts = row["reportedEfforts"].as_array();
+        let supported_effort = |effort: &Value| {
+            effort.is_string() && efforts.is_some_and(|choices| choices.contains(effort))
+        };
+        let effort = if supported_effort(&desired["effort"]) {
+            desired["effort"].clone()
+        } else if !astra_model(thread["selection"]["modelID"].as_str().unwrap_or(""))
+            && supported_effort(&row["reportedDefaultEffort"])
+        {
+            row["reportedDefaultEffort"].clone()
+        } else {
+            Value::Null
+        };
+        let speed = if desired["speed"].is_string()
+            && row["reportedSpeeds"].as_array().is_some_and(|choices| {
+                choices
+                    .iter()
+                    .any(|choice| choice["id"] == desired["speed"])
+            }) {
+            desired["speed"].clone()
+        } else {
+            Value::Null
+        };
+        for (option, value) in [("effort", effort), ("speed", speed)] {
+            if !value.is_null() || thread["selection"].get(option).is_some() {
+                thread["selection"][option] = value;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn named_model_proof(
         &self,
         thread: &Value,

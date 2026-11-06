@@ -143,6 +143,7 @@ impl Engine {
                 "speed",
                 "expectedAccessMode",
                 "expectedInteractionMode",
+                "rememberComposerChoice",
             ][..],
             _ => bail!("Unknown profile model operation"),
         };
@@ -152,6 +153,7 @@ impl Engine {
         );
         let id = required(p, "threadId")?;
         let mut thread = self.store.thread(id)?;
+        let source = thread.clone();
         ensure!(
             p.get("accountId") == thread["selection"].get("accountID"),
             "Selected Codex profile changed"
@@ -210,6 +212,7 @@ impl Engine {
                 "Expected modes require an explicit access mode, interaction mode, effort or speed"
             );
         }
+        composer_choices_api::seed_preferences(&mut thread, &source)?;
         if let Some(access) = p.get("accessMode") {
             ensure!(access.is_string(), "Access mode must be text");
             thread["accessMode"] = access.clone();
@@ -251,6 +254,14 @@ impl Engine {
             } else {
                 Some(required(p, "requestId")?)
             };
+            if source["selection"]["modelID"] != model
+                && model != "default"
+                && p.get("effort").is_none()
+                && p.get("speed").is_none()
+            {
+                self.model_catalog
+                    .resolve_named_preferences(&mut thread, &binding, request)?;
+            }
             let proof = self.profile_model_proof(&thread, &binding, request)?;
             crate::composer_policy::Policy::parse_named(
                 &thread,
@@ -259,7 +270,7 @@ impl Engine {
             )?
             .preflight()?;
         }
-        self.store.save(&thread)?;
+        self.save_composer_choice(&source, &mut thread, p)?;
         self.revision += 1;
         Ok(thread)
     }

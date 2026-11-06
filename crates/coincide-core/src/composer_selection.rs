@@ -191,6 +191,7 @@ pub(crate) fn select_with_proofs(
                 | "speed"
                 | "accessMode"
                 | "interactionMode"
+                | "rememberComposerChoice"
         )),
         "Selection request contains unsupported options"
     );
@@ -331,6 +332,7 @@ fn repair_clear_option(params: &Value, current: &Value, option: &str) -> Result<
                 | "speed"
                 | "accessMode"
                 | "interactionMode"
+                | "rememberComposerChoice"
         )),
         "Selection request contains unsupported options"
     );

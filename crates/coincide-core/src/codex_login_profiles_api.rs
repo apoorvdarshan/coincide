@@ -51,7 +51,7 @@ impl Engine {
                 ensure!(
                     fields.keys().all(|key| matches!(
                         key.as_str(),
-                        "threadId" | "accountId" | "expectedSelection"
+                        "threadId" | "accountId" | "expectedSelection" | "rememberComposerChoice"
                     )),
                     "Unsupported Codex profile selection field"
                 );
@@ -70,6 +70,7 @@ impl Engine {
                     "Fork an imported thread before selecting a profile"
                 );
                 let mut thread = self.store.thread(id)?;
+                let source = thread.clone();
                 ensure!(
                     p.get("expectedSelection") == thread.get("selection"),
                     "Selection changed; reload before choosing a Codex profile"
@@ -101,7 +102,7 @@ impl Engine {
                     )?;
                     thread["selection"]["accountID"] = json!(account);
                 }
-                self.store.save(&thread)?;
+                self.save_composer_choice(&source, &mut thread, &json!({}))?;
                 self.revision += 1;
                 Ok(thread)
             }

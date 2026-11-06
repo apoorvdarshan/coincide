@@ -477,8 +477,16 @@ fn repair_clear_params(
 fn selection_response(
     engine: &mut coincide_core::api::Engine,
     method: &str,
-    params: Value,
+    mut params: Value,
 ) -> Result<Value> {
+    if matches!(
+        method,
+        "agent.select"
+            | "providers.codex.profiles.models.select"
+            | "providers.codex.profiles.select"
+    ) {
+        params["rememberComposerChoice"] = json!(true);
+    }
     let response = engine.dispatch(json!({"method":method,"params":params}));
     if let Some(error) = response.get("error") {
         anyhow::bail!(
@@ -543,6 +551,12 @@ fn command_params(
     command.mode().map(|_| draft.params(thread)).transpose()
 }
 fn expected_restore_account(thread: &Value, provider: &str) -> Value {
+    if thread["selection"]["provider"] == provider
+        && provider == "codex"
+        && !coincide_core::composer_selection::default_account(&thread["selection"]["accountID"])
+    {
+        return thread["selection"]["accountID"].clone();
+    }
     let session = thread["sessions"]
         .as_object()
         .and_then(|rows| rows.get(provider))
@@ -726,13 +740,22 @@ fn engine_command_transaction(
         engine.active_thread() == Some(id.as_str()),
         "Active conversation changed; command draft retained"
     );
-    command_transaction(submission, command, running, reported, |method, params| {
-        let response = engine.dispatch(json!({"method":method,"params":params}));
-        if let Some(error) = response.get("error") {
-            anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
-        }
-        Ok(response["result"].clone())
-    })
+    command_transaction(
+        submission,
+        command,
+        running,
+        reported,
+        |method, mut params| {
+            if method == "agent.select" {
+                params["rememberComposerChoice"] = json!(true);
+            }
+            let response = engine.dispatch(json!({"method":method,"params":params}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+            }
+            Ok(response["result"].clone())
+        },
+    )
 }
 #[derive(Default)]
 pub(super) struct ComposerSelection {
@@ -751,6 +774,7 @@ pub(super) struct ComposerSelection {
         crate::composer_commands::Submission,
     )>,
     pending_provider_picker: Option<PickerRestore>,
+    automatic_profile_context: Option<Value>,
     expanded: bool,
 }
 #[derive(Clone)]
@@ -996,6 +1020,7 @@ impl Coincide {
         retry: Option<PickerRestore>,
         cx: &mut Context<Self>,
     ) {
+        let retry_on_busy = retry.clone();
         let result = (|| -> Result<(Value, PickerRestore)> {
             let selected = self
                 .selected
@@ -1041,6 +1066,14 @@ impl Coincide {
                 json!({"threadId":id,"provider":provider,"expected":pending.source.thread});
             if let Some(request) = &pending.source.restore_request {
                 params["restoreRequestId"] = json!(request);
+            }
+            if current["selection"]["provider"] == provider
+                && provider == "codex"
+                && !coincide_core::composer_selection::default_account(
+                    &current["selection"]["accountID"],
+                )
+            {
+                params["restoreCurrent"] = json!(true);
             }
             let response = selection_response(&mut engine, "agent.provider.select", params)?;
             if response["pending"] == true {
@@ -1109,6 +1142,13 @@ impl Coincide {
                 self.status =
                     "Previous provider account and available model selected. No message was sent."
                         .into();
+            }
+            Err(error) if engine_busy(&error) => {
+                self.selection_ui.pending_provider_picker = retry_on_busy;
+                if self.selection_ui.pending_provider_picker.is_none() {
+                    self.selection_ui.automatic_profile_context = None;
+                }
+                return;
             }
             Err(error) => {
                 self.selection_ui.pending_provider_picker = None;
@@ -1240,6 +1280,10 @@ impl Coincide {
                     self.status="Command acknowledged; newer conversation/draft retained. No message was sent.".into();
                 }
             }
+            Err(error) if engine_busy(&error) => {
+                self.selection_ui.pending_provider = Some((command, submission));
+                return;
+            }
             Err(error) => {
                 self.selection_ui.pending_provider = None;
                 self.status = format!("Command was not sent; draft retained: {error}");
@@ -1258,6 +1302,31 @@ impl Coincide {
         self.selection_ui.context = None;
         self.selection_ui.bound = None;
     }
+    fn observe_saved_profile_once(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let named = &self.selection_ui.capabilities["namedModels"];
+        if !named_models::named_thread(thread)
+            || named["threadId"] != thread["id"]
+            || named["accountID"] != thread["selection"]["accountID"]
+            || named["refreshAllowed"] != true
+            || named["fullAccessSupported"] == true
+            || self.running.contains(&text(thread, "id"))
+            || self.selection_ui.pending_provider.is_some()
+            || self.selection_ui.pending_provider_picker.is_some()
+            || self.selection_ui.catalog_request.is_some()
+        {
+            return;
+        }
+        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]});
+        if self.selection_ui.automatic_profile_context.as_ref() == Some(&context) {
+            return;
+        }
+        self.selection_ui.automatic_profile_context = Some(context);
+        self.switch_provider_from_history("codex".into(), None, cx);
+    }
+
     pub(super) fn sync_composer_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pending) = self.selection_ui.pending_provider_picker.take() {
             self.switch_provider_from_history(pending.provider.clone(), Some(pending), cx);
@@ -1276,6 +1345,7 @@ impl Coincide {
                 self.status = "Provider restoration cancelled because the composer changed. Your draft was retained.".into();
             }
         }
+        self.observe_saved_profile_once(cx);
         let context = self.selected.as_ref().map(|thread| {
             let id = text(thread, "id");
             let running = self.running.contains(&id);
@@ -1309,6 +1379,7 @@ impl Coincide {
             });
         }
         self.refresh_selection_capabilities(cx);
+        self.observe_saved_profile_once(cx);
     }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref() else {

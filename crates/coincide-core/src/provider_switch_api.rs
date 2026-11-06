@@ -26,10 +26,10 @@ impl Engine {
             .as_object()
             .context("Provider selection must be an object")?;
         ensure!(
-            (fields.len() == 3 || fields.len() == 4)
+            (3..=5).contains(&fields.len())
                 && fields.keys().all(|key| matches!(
                     key.as_str(),
-                    "threadId" | "provider" | "expected" | "restoreRequestId"
+                    "threadId" | "provider" | "expected" | "restoreRequestId" | "restoreCurrent"
                 )),
             "Provider selection requires threadId, provider and expected only"
         );
@@ -86,7 +86,12 @@ impl Engine {
             "Saved composer changed; command draft retained"
         );
         ensure!(
-            current["selection"]["provider"] != provider,
+            current["selection"]["provider"] != provider
+                || (p.get("restoreCurrent") == Some(&json!(true))
+                    && provider == "codex"
+                    && !crate::composer_selection::default_account(
+                        &current["selection"]["accountID"]
+                    )),
             "This conversation already uses {provider}; command draft retained"
         );
         ensure!(
@@ -105,8 +110,26 @@ impl Engine {
         }) {
             self.cancel_provider_restore();
         }
+        if p.get("restoreCurrent").is_some() {
+            ensure!(
+                p["restoreCurrent"] == true
+                    && provider == "codex"
+                    && current["selection"]["provider"] == "codex"
+                    && !crate::composer_selection::default_account(
+                        &current["selection"]["accountID"]
+                    ),
+                "Only a selected named Codex profile can restore its saved choice"
+            );
+        }
+        let remembered = if p.get("restoreCurrent") == Some(&json!(true)) {
+            current["selection"]["accountID"]
+                .as_str()
+                .map(str::to_owned)
+        } else {
+            remembered_account(&current, provider)
+        };
         if provider == "codex"
-            && let Some(account) = remembered_account(&current, provider)
+            && let Some(account) = remembered
         {
             return self.restore_named_provider(current, account);
         }
@@ -182,7 +205,11 @@ impl Engine {
             target_proof.as_ref(),
         )?;
         remember_source(&mut thread, &current)?;
-        self.store.save(&thread)?;
+        self.save_composer_choice(
+            &current,
+            &mut thread,
+            &json!({"rememberComposerChoice":true}),
+        )?;
         self.revision += 1;
         Ok(
             json!({"thread":thread,"model":model,"restored":restored.is_some(),
@@ -224,7 +251,11 @@ impl Engine {
     fn restore_named_provider(&mut self, current: Value, account: String) -> Result<Value> {
         let mut candidate = current.clone();
         let preference = &current["rustProviderSelections"]["codex"];
-        let model = historical_account_model(&current, "codex", &json!(account))
+        let model = (current["selection"]["provider"] == "codex"
+            && current["selection"]["accountID"] == account)
+            .then(|| current["selection"]["modelID"].as_str())
+            .flatten()
+            .or_else(|| historical_account_model(&current, "codex", &json!(account)))
             .or_else(|| {
                 (preference["accountID"] == account
                     && !current["items"].as_array().is_some_and(|items| {
@@ -245,17 +276,34 @@ impl Engine {
                 }
             }
         }
+        if current["selection"]["provider"] == "codex"
+            && current["selection"]["accountID"] == account
+        {
+            for option in ["effort", "speed"] {
+                if let Some(value) = current["selection"].get(option) {
+                    candidate["selection"][option] = value.clone();
+                }
+            }
+        }
+        composer_choices_api::seed_preferences(&mut candidate, &current)?;
+        let desired = candidate.clone();
+        composer_choices_api::seed_preferences(&mut candidate, &desired)?;
         let binding = self.profile_model_binding(&candidate)?;
         // A still-live authenticated exact catalog is sufficient for a warm
         // switch. A historical account/session alone is never sufficient.
         if self.provider_restore.is_none() {
+            let mut warm = candidate.clone();
             if model != "default"
                 && self
                     .model_catalog
-                    .named_model_proof(&candidate, &binding, None)
+                    .resolve_named_preferences(&mut warm, &binding, None)
+                    .is_ok()
+                && self
+                    .model_catalog
+                    .named_model_proof(&warm, &binding, None)
                     .is_ok()
             {
-                return self.commit_named_restore(current, candidate, &binding, None);
+                return self.commit_named_restore(current, warm, &binding, None);
             }
             let response = self.model_catalog.refresh_named(binding.clone())?;
             let request = required(&response, "requestId")?.to_owned();
@@ -294,17 +342,12 @@ impl Engine {
             "The remembered account is not authenticated or its catalog lookup failed; draft retained"
         );
         // Match Swift's same-account first-model fallback, never an older model
-        // or another account's catalog. Unsupported remembered options remain
-        // explicit errors rather than silently changing their meaning.
+        // or another account's catalog. Desired options remain per-account
+        // metadata while the active model uses only its supported choices.
         let rows = status["models"]
             .as_array()
             .context("Invalid profile catalog")?;
         if !rows.iter().any(|row| row["id"] == model) {
-            ensure!(
-                candidate["selection"]["effort"].is_null()
-                    && candidate["selection"]["speed"].is_null(),
-                "Remembered model/options are unavailable; choose them explicitly"
-            );
             candidate["selection"]["modelID"] = rows
                 .first()
                 .and_then(|row| row.get("id"))
@@ -312,6 +355,8 @@ impl Engine {
                 .clone();
         }
         let request = intent.request.clone();
+        self.model_catalog
+            .resolve_named_preferences(&mut candidate, &binding, Some(&request))?;
         let result = self.commit_named_restore(current, candidate, &binding, Some(&request));
         if result.is_ok() {
             // Transfer the still-live job to ordinary selection authority. Do
@@ -354,7 +399,18 @@ impl Engine {
         )?
         .preflight()?;
         remember_source(&mut candidate, &current)?;
-        self.store.save(&candidate)?;
+        if current["selection"]["provider"] == candidate["selection"]["provider"]
+            && current["selection"]["accountID"] == candidate["selection"]["accountID"]
+        {
+            // Reopening/refreshing a saved choice is not a new user preference.
+            self.store.save(&candidate)?;
+        } else {
+            self.save_composer_choice(
+                &current,
+                &mut candidate,
+                &json!({"rememberComposerChoice":true}),
+            )?;
+        }
         self.revision += 1;
         Ok(
             json!({"thread":candidate,"model":candidate["selection"]["modelID"],"accountID":candidate["selection"]["accountID"],"restored":true,"provenance":"latest_authenticated_named_catalog","authenticationChecked":true,"accountRestored":true}),

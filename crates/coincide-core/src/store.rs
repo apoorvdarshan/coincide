@@ -445,6 +445,21 @@ impl Store {
         document: &Value,
         record: Option<&Value>,
     ) -> Result<()> {
+        self.save_with_usage_and_settings(document, record, None)
+    }
+    pub(crate) fn save_composer_choice(
+        &mut self,
+        document: &Value,
+        settings: Option<&Value>,
+    ) -> Result<()> {
+        self.save_with_usage_and_settings(document, None, settings)
+    }
+    fn save_with_usage_and_settings(
+        &mut self,
+        document: &Value,
+        record: Option<&Value>,
+        settings: Option<&Value>,
+    ) -> Result<()> {
         self.connection()?;
         let id = validate_thread(document)?;
         let existing: Option<String> = self
@@ -523,6 +538,9 @@ impl Store {
             index_thread(&tx, document)?;
         }
         cache_thread(&tx, document, reindex)?;
+        if let Some(settings) = settings {
+            tx.execute("INSERT INTO documents(name,document) VALUES ('settings.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [settings.to_string()])?;
+        }
         tx.commit()?;
         Ok(())
     }

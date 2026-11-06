@@ -46,6 +46,8 @@ mod codex_profile_models_api;
 mod codex_tool_metadata;
 #[path = "project_management_api.rs"]
 mod project_management_api;
+#[path = "composer_choices_api.rs"]
+mod composer_choices_api;
 #[path = "provider_switch_api.rs"]
 mod provider_switch_api;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
@@ -724,13 +726,14 @@ impl Engine {
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
+                let source = v.clone();
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
                 ensure!(v["rustBotContext"].is_null() && v["botID"].is_null(),"Bot selection is fixed for this conversation; create a new bot conversation");
                 if p.get("effort").is_some_and(Value::is_null) && p.get("speed").is_some_and(Value::is_null)
                     && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&v)
                 {
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
@@ -738,14 +741,14 @@ impl Engine {
                 {
                     // This exact one-field repair needs no provider/catalog IO.
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 if p.get("speed").is_some_and(Value::is_null) && !v["selection"]["speed"].is_null()
                     && let Ok(selection) = crate::composer_selection::repair_clear_speed(p,&v)
                 {
                     v["selection"] = selection;
-                    self.store.save(&v)?; self.revision += 1;
+                    self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     return Ok(v);
                 }
                 let current_proof = self.composer_current_selection_proof(&v)?;
@@ -756,7 +759,7 @@ impl Engine {
                 }
                 v["selection"] = selection;
                 crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
-                self.store.save(&v)?; self.revision += 1;
+                self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                 Ok(v)
             }
             "agent.pending" => {
