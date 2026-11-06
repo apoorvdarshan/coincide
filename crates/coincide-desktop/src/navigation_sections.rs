@@ -59,8 +59,8 @@ pub(super) fn display<'a>(
         }
     }
     sections.sort_by_key(|section| match section.project_id.as_deref() {
-        None => (0, 0),
-        Some(id) if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) => (1, 0),
+        None => (1, 0),
+        Some(id) if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) => (0, 0),
         Some(NO_PROJECT) => (3, 0),
         Some(id) => (
             2,
@@ -135,9 +135,50 @@ pub(super) fn project<'a>(
     }
     sections
 }
+/// The Swift fit-to-sidebar cut, in stable steps of five rows.
+pub(super) fn automatic_limit(height: f32) -> usize {
+    if !height.is_finite() || height <= 0. {
+        return 20;
+    }
+    (((height * 1.25 / 28.).floor() as usize) / 5 * 5).max(10)
+}
+pub(super) fn visible_rows<'a>(
+    rows: &[&'a ThreadSummary],
+    limit: usize,
+    selected: &str,
+    expanded: bool,
+    searching: bool,
+) -> (Vec<&'a ThreadSummary>, usize) {
+    if expanded || searching || limit == 0 || rows.len() <= limit {
+        return (rows.to_vec(), 0);
+    }
+    let mut visible = rows[..limit].to_vec();
+    if let Some(open) = rows[limit..].iter().find(|row| row.id == selected) {
+        visible.push(*open);
+    }
+    let hidden = rows.len() - visible.len();
+    (visible, hidden)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn cut_retains_selected_row_and_search_and_expansion_reveal_every_match() {
+        let all: Vec<_> = (0..15).map(|i| row(&format!("t{i}"), "p", false)).collect();
+        let refs: Vec<_> = all.iter().collect();
+        let (visible, hidden) = visible_rows(&refs, 10, "t14", false, false);
+        assert_eq!(visible.len(), 11);
+        assert_eq!(visible.last().unwrap().id, "t14");
+        assert_eq!(hidden, 4);
+        for (expanded, searching) in [(true, false), (false, true)] {
+            let (visible, hidden) = visible_rows(&refs, 10, "t14", expanded, searching);
+            assert_eq!(visible.len(), 15);
+            assert_eq!(hidden, 0);
+        }
+        assert_eq!(automatic_limit(280.), 10);
+        assert_eq!(automatic_limit(560.), 25);
+        assert_eq!(automatic_limit(f32::NAN), 20);
+    }
     fn row(id: &str, project: &str, pinned: bool) -> ThreadSummary {
         ThreadSummary {
             id: id.into(),
@@ -146,6 +187,7 @@ mod tests {
             archived: false,
             pinned,
             snoozed_until: None,
+            navigation: None,
         }
     }
     fn ids(sections: &[Section<'_>]) -> Vec<String> {
@@ -154,7 +196,7 @@ mod tests {
             .flat_map(|section| section.threads.iter().map(|thread| thread.id.clone()))
             .collect()
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn pinned_threads_appear_once_above_projects_and_chats_in_input_order() {
         let rows = vec![
             row("chat-pin", "", true),
@@ -180,7 +222,7 @@ mod tests {
         );
         assert_eq!(sections.last().unwrap().name, "Chats");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn project_and_snooze_filters_apply_before_pinned_projection() {
         let mut snoozed = row("hidden-pin", "p", true);
         snoozed.snoozed_until = Some(20.);
@@ -204,7 +246,7 @@ mod tests {
         );
         assert!(project(&rows, vec![], Some(NO_PROJECT), true, 10.).is_empty());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn upstream_search_archive_subset_is_not_resurrected_and_selected_identity_is_unchanged() {
         let mut archived = row("visible-archived-pin", "missing", true);
         archived.archived = true;
@@ -222,7 +264,7 @@ mod tests {
             ["selected"]
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn empty_and_unknown_projects_and_bots_never_lose_or_duplicate_rows() {
         let rows = vec![
             row("empty", "", false),
@@ -244,7 +286,7 @@ mod tests {
         );
         assert_eq!(rows[0].project_id, "");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn declared_project_order_is_stable_and_duplicate_project_metadata_does_not_duplicate_ids() {
         let rows = vec![row("a", "first", false), row("b", "second", false)];
         let sections = project(
@@ -261,7 +303,7 @@ mod tests {
         assert_eq!(ids(&sections), ["b", "a"]);
         assert_eq!(sections.len(), 2);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn display_groups_bots_folders_chats_and_shows_empty_configured_folders_only_outside_search() {
         let rows = vec![
             row("project", "p", false),
@@ -276,9 +318,9 @@ mod tests {
         let sections = display(&rows, projects.clone(), None, false, 0., false);
         assert_eq!(
             sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
-            ["Pinned", "Bots", "Project", "Empty folder", "Chats"]
+            ["Bots", "Pinned", "Project", "Empty folder", "Chats"]
         );
-        assert_eq!(ids(&sections), ["pin", "bot", "project", "chat"]);
+        assert_eq!(ids(&sections), ["bot", "pin", "project", "chat"]);
         assert!(sections[3].threads.is_empty());
         assert!(
             !display(&rows, projects.clone(), None, false, 0., true)

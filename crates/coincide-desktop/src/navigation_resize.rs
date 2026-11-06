@@ -144,6 +144,7 @@ impl Render for ResizeList {
 }
 impl Coincide {
     pub(super) fn sync_sidebar_resize(&mut self, window: &Window) {
+        self.sidebar_list_height = (f32::from(window.viewport_size().height) - 130.).max(0.);
         if !self.thread_list_open
             || self.media.close_requested
             || self.media.shutdown_requested

@@ -1,3 +1,5 @@
+#[path = "thread_navigation_cache.rs"]
+mod navigation_cache;
 #[path = "project_management.rs"]
 mod project_management;
 use anyhow::{Context, Result, bail, ensure};
@@ -47,6 +49,26 @@ pub struct ThreadSummary {
     pub pinned: bool,
     #[serde(default)]
     pub snoozed_until: Option<f64>,
+    /// Descriptive navigation only. Missing metadata preserves legacy summary JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub navigation: Option<ThreadNavigation>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThreadNavigation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_draft: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -181,6 +203,7 @@ impl Store {
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(thread_id UNINDEXED, body, tokenize='trigram case_sensitive 1');
                 CREATE TABLE IF NOT EXISTS documents(name TEXT PRIMARY KEY, document TEXT NOT NULL CHECK(json_valid(document)));
                 CREATE TABLE IF NOT EXISTS imported_threads(id TEXT PRIMARY KEY COLLATE NOCASE);")?;
+            navigation_cache::create(&tx)?;
             let duplicates: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM threads GROUP BY lower(id) HAVING count(*)>1)",
                 [],
@@ -232,6 +255,7 @@ impl Store {
             tx.execute("UPDATE metadata SET value='3' WHERE key='schema'", [])?;
             tx.commit()?;
         }
+        navigation_cache::install(&mut db)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -408,7 +432,9 @@ impl Store {
             " AND instr(search_body,?2)>0"
         };
         let sql = format!(
-            "SELECT id,title,project_id,archived,pinned,snoozed_until FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
+            "SELECT id,title,project_id,archived,pinned,snoozed_until,
+             (SELECT metadata FROM thread_navigation WHERE thread_navigation.id=thread_summaries.id COLLATE NOCASE)
+             FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
         let mut stmt = self.connection()?.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
@@ -419,6 +445,9 @@ impl Store {
                 archived: r.get(3)?,
                 pinned: r.get(4)?,
                 snoozed_until: r.get(5)?,
+                navigation: r
+                    .get::<_, Option<String>>(6)?
+                    .and_then(|raw| serde_json::from_str::<ThreadNavigation>(&raw).ok()),
             })
         };
         let result = if query.is_empty() {
@@ -995,6 +1024,75 @@ impl Store {
         );
         Ok(projects)
     }
+    /// Native manual ordering is an exact permutation of a reviewed array.
+    /// No project fields, folders, threads or session authority are changed.
+    pub fn reorder_projects_if_unchanged(
+        &mut self,
+        expected: &Value,
+        ids: &[String],
+    ) -> Result<Value> {
+        let projects = expected
+            .as_array()
+            .context("Project order source is not an array")?;
+        ensure!(
+            projects.len() <= 10_000
+                && ids.len() == projects.len()
+                && serde_json::to_vec(expected)?.len() <= 16 * 1024 * 1024,
+            "Project reorder exceeds bounds or omits projects"
+        );
+        let mut seen = std::collections::HashSet::new();
+        let mut ordered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let identity = canonical_uuid(id)?;
+            ensure!(seen.insert(identity), "Duplicate project in reorder");
+            ordered.push(
+                projects
+                    .iter()
+                    .find(|project| {
+                        project["id"]
+                            .as_str()
+                            .and_then(|id| canonical_uuid(id).ok())
+                            == Some(identity)
+                    })
+                    .context("Unknown project in reorder")?
+                    .clone(),
+            );
+        }
+        let value = json!(ordered);
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='projects.json'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current: Value = if let Some(local) = local {
+            serde_json::from_str(&local)?
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='projects.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+                .unwrap_or(json!([]))
+        };
+        ensure!(
+            &current == expected,
+            "Projects changed; refresh before reordering"
+        );
+        tx.execute("INSERT INTO documents(name,document) VALUES ('projects.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document",[value.to_string()])?;
+        tx.commit()?;
+        Ok(value)
+    }
     pub fn create_project(&mut self, path: &Path, name: Option<&str>) -> Result<Value> {
         self.connection()?;
         ensure!(path.is_dir(), "Project directory does not exist");
@@ -1500,6 +1598,7 @@ fn cache_thread(db: &Connection, v: &Value, reindex: bool) -> Result<()> {
     } else {
         db.execute("UPDATE thread_summaries SET title=?2,project_id=?3,archived=?4,pinned=?5,updated_at=?6,snoozed_until=?7 WHERE id=?1",params![id,text(v,"title"),text(v,"projectID"),v["isArchived"].as_bool().unwrap_or(false),v["isPinned"].as_bool().unwrap_or(false),updated,snooze_timestamp(&v["snoozedUntil"])])?;
     }
+    navigation_cache::write(db, v)?;
     Ok(())
 }
 
@@ -1646,12 +1745,44 @@ mod tests {
         let (_dir, _source, mut db) = setup();
         let v = json!({"id":ID,"items":[{"kind":"future","text":"Durable searchable transcript","future":42}],"title":"Before","draftContext":[{"kind":"new-kind","opaque":true}],"sessions":["codex",{"sessionID":"native","future":3}]});
         db.save(&v).unwrap();
+        // Observe the exact legitimate writes instead of assuming the derived
+        // cache has no maintenance. Any extra FTS writes still fail the bound.
+        db.connection().unwrap().execute_batch("CREATE TEMP TABLE patch_write_audit(table_name TEXT, operation TEXT);
+            CREATE TEMP TRIGGER audit_patch_thread AFTER UPDATE ON main.threads BEGIN
+                INSERT INTO patch_write_audit VALUES ('threads','update'); END;
+            CREATE TEMP TRIGGER audit_patch_summary AFTER UPDATE ON main.thread_summaries BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_summaries','update'); END;
+            CREATE TEMP TRIGGER audit_patch_navigation_delete AFTER DELETE ON main.thread_navigation BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_navigation','delete'); END;
+            CREATE TEMP TRIGGER audit_patch_navigation_insert AFTER INSERT ON main.thread_navigation BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_navigation','insert'); END;").unwrap();
         let before = db.connection().unwrap().total_changes();
         let changed = db
             .patch_thread(ID, &json!({"draft":"new draft","isPinned":true}))
             .unwrap();
-        // Two ordinary row updates; FTS maintenance would change additional rows.
-        assert_eq!(db.connection().unwrap().total_changes() - before, 2);
+        let audit: Vec<(String, String)> = db
+            .connection()
+            .unwrap()
+            .prepare(
+                "SELECT table_name,operation FROM patch_write_audit ORDER BY table_name,operation",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            audit,
+            vec![
+                ("thread_navigation".into(), "delete".into()),
+                ("thread_navigation".into(), "insert".into()),
+                ("thread_summaries".into(), "update".into()),
+                ("threads".into(), "update".into()),
+            ]
+        );
+        // Four observed writes plus their four temporary audit rows. Search
+        // maintenance would add unaccounted writes and violate this assertion.
+        assert_eq!(db.connection().unwrap().total_changes() - before, 8);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);
@@ -2101,5 +2232,97 @@ mod saved_usage_tests {
             )
             .unwrap();
         assert!(store.saved_usage_snapshot().is_err());
+    }
+}
+
+#[cfg(test)]
+mod navigation_metadata_tests {
+    use super::*;
+    #[test]
+    fn optional_summary_metadata_preserves_legacy_json_and_describes_bot_without_changing_source() {
+        let legacy = json!({"id":"legacy","title":"Legacy","project_id":"","archived":false,"pinned":false,"snoozed_until":null});
+        let summary: ThreadSummary = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(summary.navigation.is_none());
+        assert_eq!(serde_json::to_value(summary).unwrap(), legacy);
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("navigation.sqlite")).unwrap();
+        let mut thread = store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        thread["botID"] = json!("117E51F1-9D63-43DD-AF75-A5709E1B0123");
+        thread["branch"] = json!("feature/sidebar");
+        thread["updatedAt"] = json!(100.);
+        thread["items"] = json!([{ "id": "017E51F1-9D63-43DD-AF75-A5709E1B0123", "kind":"assistant", "text":" Hello\n\tfrom the bot " }]);
+        store.save(&thread).unwrap();
+        let before = store.thread(thread["id"].as_str().unwrap()).unwrap();
+        let rows = store.summaries("", false).unwrap();
+        let metadata = rows[0].navigation.as_ref().unwrap();
+        assert_eq!(metadata.bot_id.as_deref(), thread["botID"].as_str());
+        assert_eq!(metadata.branch.as_deref(), Some("feature/sidebar"));
+        assert_eq!(metadata.preview.as_deref(), Some("Hello from the bot"));
+        assert_eq!(metadata.item_count, Some(1));
+        assert_eq!(metadata.has_draft, Some(false));
+        assert_eq!(metadata.updated_at, Some(100.));
+        assert_eq!(
+            store.thread(thread["id"].as_str().unwrap()).unwrap(),
+            before
+        );
+        assert!(before.get("rustBotContext").is_none());
+        let mut drafted = before.clone();
+        drafted["draftContext"] = json!([{"futureAttachment":"retained"}]);
+        store.save(&drafted).unwrap();
+        assert_eq!(
+            store.summaries("", false).unwrap()[0]
+                .navigation
+                .as_ref()
+                .unwrap()
+                .has_draft,
+            Some(true)
+        );
+    }
+}
+
+#[cfg(test)]
+mod project_order_tests {
+    use super::*;
+    #[test]
+    fn reviewed_project_permutation_retains_unknown_fields_and_rejects_stale_or_invalid_orders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        let first = "00000000-0000-4000-8000-000000000001";
+        let second = "00000000-0000-4000-8000-000000000002";
+        let original = json!([{"id":first,"name":"One","path":"/fixture/one","future":{"keep":true}},{"id":second,"name":"Two","path":"/fixture/two","threadDefaults":{"future":"keep"}}]);
+        store.save_document("projects.json", &original).unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), first.into()])
+                .is_err()
+        );
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), original);
+        let reordered = store
+            .reorder_projects_if_unchanged(&original, &[second.into(), first.into()])
+            .unwrap();
+        assert_eq!(reordered, json!([original[1], original[0]]));
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&original, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap(), reordered);
+        let mut other = Store::open(&dir.path().join("projects.sqlite")).unwrap();
+        other
+            .patch_project(first, &json!({"name":"Changed elsewhere"}))
+            .unwrap();
+        assert!(
+            store
+                .reorder_projects_if_unchanged(&reordered, &[first.into(), second.into()])
+                .is_err()
+        );
+        assert_eq!(store.projects().unwrap()[1]["name"], "Changed elsewhere");
     }
 }

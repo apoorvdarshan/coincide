@@ -50,6 +50,7 @@ mod navigation_resize;
 mod notification_runtime;
 mod notification_settings;
 mod notifications;
+mod open_targets;
 mod presentation;
 mod project_management;
 mod project_management_mount;
@@ -61,6 +62,10 @@ mod session_import;
 mod settings;
 mod settings_window;
 mod shutdown_runtime;
+mod sidebar_bots;
+mod sidebar_controls;
+mod sidebar_preferences;
+mod sidebar_search;
 mod terminal_context_mount;
 mod terminal_selection;
 mod terminal_workspace;
@@ -351,8 +356,11 @@ struct Coincide {
     thread_bulk: thread_bulk::State,
     thread_bulk_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
+    sidebar_list_height: f32,
     thread_list_focus: FocusHandle,
     navigation_focus: FocusHandle,
+    open_targets: Vec<open_targets::Target>,
+    open_target_children: Vec<std::process::Child>,
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
@@ -421,8 +429,16 @@ struct Coincide {
     transcript_count: usize,
     expanded: std::collections::HashSet<usize>,
     threads: Vec<ThreadSummary>,
+    sidebar_all_threads: Vec<ThreadSummary>,
+    sidebar_preferences: sidebar_preferences::Preferences,
+    sidebar_bots: Vec<Value>,
+    sidebar_schedules: Vec<Value>,
+    sidebar_bot_baseline: String,
+    sidebar_bot_pending: Option<String>,
+    sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
     projects: Vec<Value>,
     selected_project: Option<String>,
+    expanded_sidebar_lists: std::collections::HashSet<String>,
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
@@ -1035,9 +1051,24 @@ impl Coincide {
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
-        let threads = call(&engine, "threads.list", json!({}))
-            .and_then(|v| Ok(serde_json::from_value(v)?))
+        let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
+        let sidebar_schedules = call(&engine, "schedules.list", json!({}))
+            .ok()
+            .and_then(|reply| reply["tasks"].as_array().cloned())
             .unwrap_or_default();
+        let sidebar_bot_reply = call(&engine, "bots.list", json!({})).unwrap_or(Value::Null);
+        let sidebar_bots = sidebar_bot_reply["bots"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let sidebar_bot_baseline = text(&sidebar_bot_reply, "baseline");
+        let threads: Vec<ThreadSummary> = call(
+            &engine,
+            "threads.list",
+            json!({"includeArchived":sidebar_preferences.flag("showsArchivedThreads")}),
+        )
+        .and_then(|v| Ok(serde_json::from_value(v)?))
+        .unwrap_or_default();
         let projects = call(&engine, "projects.list", json!({}))
             .ok()
             .and_then(|v| v.as_array().cloned())
@@ -1059,6 +1090,11 @@ impl Coincide {
                 }
             }
         });
+        let collapsed_projects = projects
+            .iter()
+            .filter(|project| project["isExpanded"] == false)
+            .map(|project| text(project, "id"))
+            .collect();
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
         let mut this = Self {
@@ -1093,8 +1129,11 @@ impl Coincide {
             thread_bulk: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
             sidebar_resize,
+            sidebar_list_height: 560.,
             thread_list_focus: cx.focus_handle(),
             navigation_focus: cx.focus_handle(),
+            open_targets: open_targets::installed(),
+            open_target_children: Vec::new(),
             settings_open: false,
             thread_actions_open: false,
             settings_search,
@@ -1161,11 +1200,20 @@ impl Coincide {
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
             expanded: Default::default(),
+            sidebar_all_threads: threads.clone(),
+            show_archived: sidebar_preferences.flag("showsArchivedThreads"),
+            show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
+            sidebar_preferences,
+            sidebar_bots,
+            sidebar_schedules,
+            sidebar_bot_baseline,
+            sidebar_bot_pending: None,
+            sidebar_settle_undo: None,
             threads,
             projects,
             selected_project: None,
-            collapsed_projects: Default::default(),
-            show_snoozed: false,
+            expanded_sidebar_lists: std::collections::HashSet::new(),
+            collapsed_projects,
             navigation_last_clock: Instant::now(),
             rename_target: None,
             rename_input,
@@ -1195,7 +1243,6 @@ impl Coincide {
             image_asset_order: Default::default(),
             search,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
-            show_archived: false,
             browser,
             browser_address,
             browser_address_page: None,
@@ -1622,12 +1669,40 @@ impl Coincide {
         }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
+            self.collapsed_projects = self
+                .projects
+                .iter()
+                .filter(|project| project["isExpanded"] == false)
+                .map(|project| text(project, "id"))
+                .collect();
         } else {
             complete = false;
         }
-        match call(&self.engine,"threads.list",json!({"query":self.search.read(cx).value().to_string(),"includeArchived":self.show_archived})).and_then(|v|Ok(serde_json::from_value(v)?)) {
-            Ok(threads) => self.threads = threads,
-            Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
+        match sidebar_search::read(
+            &self.engine,
+            &self.search.read(cx).value(),
+            self.show_archived,
+            &self.projects,
+        ) {
+            Ok((visible, all)) => {
+                self.threads = visible;
+                self.sidebar_all_threads = all;
+            }
+            Err(error) => {
+                complete = false;
+                self.status = format!("Unable to load conversations: {error}");
+            }
+        }
+        if let Ok(reply) = call(&self.engine, "schedules.list", json!({})) {
+            if let Some(tasks) = reply["tasks"].as_array() {
+                self.sidebar_schedules = tasks.clone();
+            }
+        }
+        if let Ok(reply) = call(&self.engine, "bots.list", json!({})) {
+            if let Some(bots) = reply["bots"].as_array() {
+                self.sidebar_bots = bots.clone();
+                self.sidebar_bot_baseline = text(&reply, "baseline");
+            }
         }
         cx.notify();
         complete
@@ -1681,7 +1756,24 @@ impl Coincide {
                 if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
                     self.schedule_editor.open = false;
                 }
+                let section = if v["botID"].is_string() {
+                    "bots"
+                } else if v["isPinned"] == true {
+                    "pinned"
+                } else if text(&v, "projectID").is_empty()
+                    || v["projectID"] == navigation::NO_PROJECT_ID
+                {
+                    "chats"
+                } else {
+                    "projects"
+                };
+                if self.sidebar_preferences.collapsed(section) {
+                    self.toggle_sidebar_section(section, cx);
+                }
                 self.selected = Some(v);
+                if self.sidebar_preferences.document["unseen"][id].is_string() {
+                    self.sidebar_thread_marker("unseen", id, None, cx);
+                }
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();
                 self.rename_target = None;
@@ -2147,6 +2239,25 @@ impl Coincide {
         cx.notify();
     }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bot) = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["botID"].as_str())
+            .map(str::to_owned)
+        {
+            if self.sidebar_bots.iter().any(|saved| {
+                saved["id"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&bot))
+            }) {
+                self.sidebar_open_bot(bot, true, window, cx);
+                return;
+            }
+        }
+        if self.settings["newThreadStartsChat"] == true {
+            self.new_thread_in_project(navigation::NO_PROJECT_ID, window, cx);
+            return;
+        }
         let project = self
             .selected_project
             .clone()
@@ -2189,8 +2300,13 @@ impl Coincide {
             json!({"projectId":project,"cwd":cwd}),
         ) {
             Ok(v) => {
+                let created = text(&v, "id");
+                self.created_bot_thread_to_focus = Some(created.clone());
+                self.schedules_open = false;
+                self.workspace_open = false;
+                self.session_import_open = false;
                 self.refresh(cx);
-                self.select(&text(&v, "id"), window, cx);
+                self.select(&created, window, cx);
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -2549,6 +2665,13 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_target_children
+            .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+        if self.sidebar_preferences.retry(&self.engine) {
+            self.show_archived = self.sidebar_preferences.flag("showsArchivedThreads");
+            self.show_snoozed = self.sidebar_preferences.flag("showsSnoozedThreads");
+            self.refresh(cx);
+        }
         let menu_quit = self
             .quit_requested
             .swap(false, std::sync::atomic::Ordering::AcqRel);
@@ -2657,6 +2780,17 @@ impl Coincide {
         self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
+        // A successful creation is retained by ID until its read succeeds.
+        // Retry navigation only, never the create request or a Send.
+        if let Some(created) = self.created_bot_thread_to_focus.clone() {
+            if self
+                .selected
+                .as_ref()
+                .is_none_or(|thread| thread["id"] != created)
+            {
+                self.select(&created, window, cx);
+            }
+        }
         if self
             .created_bot_thread_to_focus
             .as_deref()
@@ -2665,7 +2799,9 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|thread| thread["id"] == id)
             })
-            && !self.settings_in_main_window()
+            && self.find_context_available()
+            && !self.command_palette.read(cx).is_open()
+            && window.is_window_active()
         {
             self.created_bot_thread_to_focus = None;
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
@@ -3959,7 +4095,7 @@ impl Render for Coincide {
         if self.settings_window.is_none() {
             self.sync_keyboard_recording(window, cx);
         }
-        let navigation_rail = self.navigation_rail(cx);
+        let navigation_rail = self.navigation_rail(window, cx);
         let sidebar = self
             .thread_list_open
             .then(|| self.navigation_sidebar(&selected_id, window, cx));

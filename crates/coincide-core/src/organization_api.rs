@@ -172,3 +172,43 @@ impl Engine {
 #[cfg(test)]
 #[path = "organization_api_tests.rs"]
 mod tests;
+
+/// Native drag reorder changes only the order of the validated bot envelope.
+/// It never edits bot records or grants runtime/provider authority.
+impl Engine {
+    pub fn reorder_native_bots(&mut self, ids: &[String], baseline: &str) -> Result<Value> {
+        self.require_admissions()?;
+        let mut snapshot = load(&self.store)?;
+        ensure!(
+            snapshot.baseline == baseline,
+            "Bots changed; refresh before reordering"
+        );
+        let bots = snapshot.document["bots"]
+            .as_array()
+            .context("Invalid bot list")?;
+        ensure!(
+            ids.len() == bots.len() && ids.len() <= RECORD_LIMIT,
+            "Bot order must include every saved bot"
+        );
+        let mut seen = HashSet::new();
+        let mut ordered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let identity = Uuid::parse_str(id)?;
+            ensure!(seen.insert(identity), "Duplicate bot in reorder");
+            let bot = bots
+                .iter()
+                .find(|bot| {
+                    bot["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) == Some(identity)
+                })
+                .context("Reorder contains an unknown bot")?;
+            ordered.push(bot.clone());
+        }
+        snapshot.document["bots"] = json!(ordered);
+        validate(&snapshot.document)?;
+        self.store
+            .save_bots_document_if_unchanged(snapshot.source.as_ref(), &snapshot.document)?;
+        self.revision += 1;
+        let saved = load(&self.store)?;
+        Ok(response(&saved, None))
+    }
+}

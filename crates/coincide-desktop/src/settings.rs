@@ -451,7 +451,7 @@ impl Coincide {
         cx.notify();
     }
 
-    fn change_setting(
+    pub(super) fn change_setting(
         &mut self,
         key: &'static str,
         value: Value,
