@@ -204,7 +204,7 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap_1();
-                for row in catalog["models"].as_array().into_iter().flatten().take(200) {
+                for row in self.visible_picker_models(catalog, thread, cx) {
                     let model = text(row, "id");
                     let unsupported = astra_row_reason(&model, row, &selection);
                     let row_id = id.clone();

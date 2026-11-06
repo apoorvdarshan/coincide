@@ -433,9 +433,11 @@ struct Coincide {
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
+    pending_native_selection: Option<Option<String>>,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
+    model_picker_search: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
@@ -751,6 +753,8 @@ impl Coincide {
         });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
+        let model_picker_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -1000,6 +1004,11 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.push(cx.subscribe(&model_picker_search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         subscriptions.extend(models_settings.subscriptions(cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
@@ -1143,9 +1152,11 @@ impl Coincide {
             project_picker_open: false,
             project_path,
             selected: None,
+            pending_native_selection: None,
             pending_drafts: Default::default(),
             composer,
             model_input,
+            model_picker_search,
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
@@ -1171,7 +1182,18 @@ impl Coincide {
             _subscriptions: subscriptions,
         };
         this.apply_appearance(window, cx);
-        if let Some(id) = this.threads.first().map(|t| t.id.clone()) {
+        let remembered = match this.engine.lock() {
+            Ok(engine) => engine.store.native_last_selected_thread(),
+            Err(_) => Err(anyhow::anyhow!("Conversation owner unavailable")),
+        };
+        let remembered = match remembered {
+            Ok(id) => id.filter(|id| this.threads.iter().any(|thread| &thread.id == id)),
+            Err(error) => {
+                this.status = format!("Saved conversation selection unavailable: {error}");
+                None
+            }
+        };
+        if let Some(id) = remembered.or_else(|| this.threads.first().map(|t| t.id.clone())) {
             this.select(&id, window, cx);
         }
         this.poll_computer_use(cx);
@@ -1587,6 +1609,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
                     self.image_assets
@@ -1625,6 +1648,7 @@ impl Coincide {
                     self.browser_address
                         .update(cx, |input, cx| input.set_value(url, window, cx));
                 }
+                self.pending_native_selection = Some(Some(id.to_owned()));
                 let activate_requested = if let Ok(mut engine) = self.engine.try_lock() {
                     if engine.active_thread() != Some(id)
                         && let Err(error) = engine.set_active_thread(Some(id.into()))
@@ -2585,6 +2609,17 @@ impl Coincide {
             if engine.shutdown {
                 self.media.shutdown_requested = true;
                 return;
+            }
+            if let Some(selected) = &self.pending_native_selection {
+                match engine
+                    .store
+                    .remember_native_selected_thread(selected.as_deref())
+                {
+                    Ok(_) => self.pending_native_selection = None,
+                    Err(error) => {
+                        self.status = format!("Unable to remember conversation selection: {error}");
+                    }
+                }
             }
             engine.ui_available = self.browser.is_some();
             let selected = self.selected.as_ref().map(|thread| text(thread, "id"));

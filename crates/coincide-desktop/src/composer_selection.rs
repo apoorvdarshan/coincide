@@ -880,6 +880,7 @@ pub(super) struct ComposerSelection {
     automatic_profile_quiet: Option<(Value, Instant)>,
     expanded: bool,
     pub(super) facet: PickerFacet,
+    favorites_only: bool,
 }
 #[derive(Clone)]
 struct PickerRestore {
@@ -995,6 +996,90 @@ fn picker_view_scope(thread: &Value) -> Value {
         "accessMode":thread.get("accessMode"),"accessPresent":thread.get("accessMode").is_some(),
         "interactionMode":thread.get("interactionMode"),"interactionPresent":thread.get("interactionMode").is_some(),
         "projectID":thread["projectID"],"worktreePath":thread["worktreePath"]})
+}
+fn model_marked(settings: &Value, key: &str, provider: &str, model: &str) -> bool {
+    settings[key].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["provider"] == provider && row["modelID"] == model)
+    })
+}
+fn filtered_picker_models<'a>(
+    settings: &Value,
+    catalog: &'a Value,
+    provider: &str,
+    selected: &str,
+    query: &str,
+    favorites_only: bool,
+) -> Vec<&'a Value> {
+    let query = query.to_lowercase();
+    let words = query.split_whitespace().collect::<Vec<_>>();
+    let mut rows = catalog["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            let id = row["id"].as_str().unwrap_or_default();
+            if id.is_empty()
+                || (model_marked(settings, "hiddenModels", provider, id) && id != selected)
+                || (favorites_only && !model_marked(settings, "favoriteModels", provider, id))
+            {
+                return false;
+            }
+            let label = format!("{} {}", id, row["displayName"].as_str().unwrap_or_default())
+                .to_lowercase();
+            words.iter().all(|word| label.contains(word))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| {
+        !model_marked(
+            settings,
+            "favoriteModels",
+            provider,
+            row["id"].as_str().unwrap_or_default(),
+        )
+    });
+    rows.truncate(200);
+    rows
+}
+fn reported_picker_model_label(thread: &Value, catalog: &Value) -> Option<String> {
+    let selection = &thread["selection"];
+    if catalog["state"] != "ready"
+        || catalog["provider"] != selection["provider"]
+        || restore_account_id(&catalog["accountID"]) != restore_account_id(&selection["accountID"])
+        || (!coincide_core::composer_selection::default_account(&selection["accountID"])
+            && catalog["threadId"] != thread["id"])
+        || (catalog["threadId"].is_string() && catalog["threadId"] != thread["id"])
+    {
+        return None;
+    }
+    let row = catalog["models"]
+        .as_array()?
+        .iter()
+        .find(|row| row["id"] == selection["modelID"])?;
+    row["displayName"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .map(|_| footer_value(&row["displayName"], ""))
+}
+fn effort_picker_title(value: &Value) -> String {
+    let raw = footer_value(value, "Auto");
+    match raw.as_str() {
+        "none" | "off" => "Off".into(),
+        "auto" => "Auto".into(),
+        "minimal" => "Minimal".into(),
+        "low" => "Low".into(),
+        "medium" => "Medium".into(),
+        "high" => "High".into(),
+        "xhigh" | "extra-high" | "extra_high" => "Extra High".into(),
+        "max" | "maximum" => "Max".into(),
+        _ => {
+            let mut chars = raw.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or(raw)
+        }
+    }
 }
 struct FooterSummary {
     saved: String,
@@ -1621,6 +1706,15 @@ impl Coincide {
             cx.notify();
         }
     }
+    pub(super) fn invalidate_native_conversation_view(&mut self) {
+        self.selection_ui.capability_cache.invalidate();
+        self.selection_ui.context = None;
+        self.selection_ui.automatic_profile_context = None;
+        self.selection_ui.automatic_profile_quiet = None;
+        self.selection_ui.pending_provider = None;
+        self.selection_ui.pending_provider_picker = None;
+        self.selection_ui.expanded = false;
+    }
     pub(super) fn retry_selected_account_readiness(&mut self) {
         if self
             .selected
@@ -2195,10 +2289,24 @@ impl Coincide {
         let model = if selection["modelID"] == "default" {
             "Provider default".to_owned()
         } else {
-            footer_value(&selection["modelID"], "Choose model")
+            reported_picker_model_label(thread, &self.selection_ui.catalog)
+                .unwrap_or_else(|| footer_value(&selection["modelID"], "Choose model"))
         };
-        let effort = footer_value(&selection["effort"], "Default");
-        let speed = footer_value(&selection["speed"], "Standard");
+        let effort = effort_picker_title(&selection["effort"]);
+        let speed = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|provider| provider["provider"] == selection["provider"])
+            .and_then(|provider| provider["speed"]["choices"].as_array())
+            .and_then(|choices| {
+                choices
+                    .iter()
+                    .find(|choice| choice["id"] == selection["speed"])
+            })
+            .and_then(|choice| choice["name"].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| footer_value(&selection["speed"], "Standard"));
         let access = if thread["accessMode"] == "fullAccess" {
             "Full access"
         } else {
@@ -2291,6 +2399,41 @@ impl Coincide {
     }
     pub(super) fn composer_selection_expanded(&self) -> bool {
         self.selection_ui.expanded
+    }
+    fn model_picker_filter_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(Input::new(&self.model_picker_search).w_full())
+            .child(
+                Button::new("picker-favorites-only")
+                    .label("Favorites only")
+                    .icon(gpui_kit::assets::IconName::Star)
+                    .compact()
+                    .ghost()
+                    .when(self.selection_ui.favorites_only, |button| button.primary())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.favorites_only = !this.selection_ui.favorites_only;
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+    fn visible_picker_models<'a>(
+        &self,
+        catalog: &'a Value,
+        thread: &Value,
+        cx: &App,
+    ) -> Vec<&'a Value> {
+        filtered_picker_models(
+            &self.settings,
+            catalog,
+            thread["selection"]["provider"].as_str().unwrap_or_default(),
+            thread["selection"]["modelID"].as_str().unwrap_or_default(),
+            &self.model_picker_search.read(cx).value(),
+            self.selection_ui.favorites_only,
+        )
     }
     fn composer_provider_tabs(&self, thread: &Value, cx: &mut Context<Self>) -> AnyElement {
         let source = Arc::new(picker_view_scope(thread));
@@ -2406,6 +2549,7 @@ impl Coincide {
                     .gap_2()
                     .child(self.composer_provider_tabs(thread, cx))
                     .child(self.composer_codex_accounts(thread, cx))
+                    .child(self.model_picker_filter_bar(cx))
                     .child(pane)
                     .into_any_element()
             } else {
@@ -2758,6 +2902,7 @@ impl Coincide {
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
             .when(draft.provider == "codex", |view|view.child(self.composer_codex_accounts(thread,cx)))
             .when(draft.provider != "codex", |view|view.child(accounts))
+            .child(self.model_picker_filter_bar(cx))
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)
                     .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
@@ -2851,8 +2996,8 @@ impl Coincide {
                 .flex()
                 .flex_col()
                 .gap_1();
-            if let Some(rows) = catalog["models"].as_array() {
-                for model in rows.iter().take(200) {
+            if catalog["models"].is_array() {
+                for model in self.visible_picker_models(catalog, thread, cx) {
                     let id = text(model, "id");
                     if id.is_empty() {
                         continue;
@@ -2903,6 +3048,62 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
+        let settings = json!({"favoriteModels":[{"provider":"codex","modelID":"b"},{"provider":"codex","modelID":"not-reported"}],"hiddenModels":[{"provider":"codex","modelID":"a"},{"provider":"claude","modelID":"c"}]});
+        let catalog = json!({"models":[{"id":"a","displayName":"Alpha","opaque":{"retained":true}},{"id":"b","displayName":"Beta"},{"id":"c","displayName":"Gamma"}]});
+        let before = catalog.clone();
+        let all = filtered_picker_models(&settings, &catalog, "codex", "a", "", false);
+        assert_eq!(
+            all.iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["b", "a", "c"]
+        );
+        assert_eq!(all[1]["opaque"], json!({"retained":true}));
+        let favorites = filtered_picker_models(&settings, &catalog, "codex", "c", "BE ta", true);
+        assert_eq!(
+            favorites
+                .iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        assert!(
+            filtered_picker_models(&settings, &catalog, "codex", "c", "alpha", false).is_empty()
+        );
+        assert_eq!(catalog, before);
+    }
+    #[::core::prelude::v1::test]
+    fn picker_display_name_never_borrows_another_account_or_thread_catalog() {
+        let thread = json!({"id":"A","selection":{"provider":"codex","accountID":"named-a","modelID":"reported-id"}});
+        let mut catalog = json!({"state":"ready","provider":"codex","accountID":"named-a","threadId":"A","models":[{"id":"reported-id","displayName":"Friendly name"}]});
+        assert_eq!(
+            reported_picker_model_label(&thread, &catalog).as_deref(),
+            Some("Friendly name")
+        );
+        catalog["accountID"] = json!("named-b");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+        catalog["accountID"] = json!("named-a");
+        catalog["threadId"] = json!("B");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+        catalog["threadId"] = json!("A");
+        catalog["state"] = json!("loading");
+        assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+    }
+    #[::core::prelude::v1::test]
+    fn effort_labels_follow_the_swift_menu_without_changing_saved_values() {
+        for (raw, label) in [
+            (Value::Null, "Auto"),
+            (json!("xhigh"), "Extra High"),
+            (json!("ultra"), "Ultra"),
+            (json!("off"), "Off"),
+            (json!("max"), "Max"),
+        ] {
+            assert_eq!(effort_picker_title(&raw), label);
+        }
+    }
+
     #[::core::prelude::v1::test]
     fn footer_reports_saved_values_while_proposed_choices_remain_pending() {
         let thread = json!({"id":"t","selection":{"provider":"codex","modelID":"saved-model","effort":"high","speed":"priority","accountID":"named-account"},"accessMode":"approval","interactionMode":"build"});
