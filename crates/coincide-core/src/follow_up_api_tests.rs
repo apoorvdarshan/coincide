@@ -434,3 +434,119 @@ fn disabled_provider_refuses_every_native_follow_up_before_request_or_worker_cha
     assert!(engine.steering_operations.is_empty());
     finish_fake(&mut engine, &id, release);
 }
+
+#[test]
+fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let mut source = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut source, "synthetic queued immediate steer").unwrap();
+    source["draftContext"] = json!([{"future":"unopened context"}]);
+    source["rustDraftImages"] = json!([{"future":"unopened image"}]);
+    source["rustMessageQueue"][0]["future"] = json!({"keep":true});
+    engine.store.save(&source).unwrap();
+    engine.enabled_queues.remove(&id);
+    let visible = serde_json::to_value(&crate::message_queue::read(&source).unwrap()[0]).unwrap();
+    let ticket = engine.native_send_queued_now(&source, &visible).unwrap();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Pending
+    );
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
+        "dispatching"
+    );
+    let request = server.next_request().unwrap();
+    assert_eq!(
+        request["params"]["input"][0]["text"],
+        "synthetic queued immediate steer"
+    );
+    engine
+        .store
+        .patch_thread(&id, &json!({"draft":"new unrelated draft during ACK"}))
+        .unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: false
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new unrelated draft during ACK");
+    for field in ["draftContext", "rustDraftImages"] {
+        assert_eq!(saved[field], source[field]);
+    }
+    assert_eq!(saved["rustMessageQueue"][0]["state"], "completed");
+    assert_eq!(saved["rustMessageQueue"][0]["future"], json!({"keep":true}));
+    assert!(!engine.enabled_queues.contains(&id));
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn queued_interrupt_waits_for_owned_worker_and_rejects_changed_execution_context() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        observed,
+        ..
+    } = fixture();
+    server.close();
+    let mut source = engine.store.thread(&id).unwrap();
+    let message = crate::message_queue::add(&mut source, "synthetic queued interrupt").unwrap();
+    engine.store.save(&source).unwrap();
+    let ticket = engine
+        .native_send_queued_now(&source, &serde_json::to_value(message).unwrap())
+        .unwrap();
+    observed.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..3 {
+        engine.poll();
+    }
+    assert!(!engine.runs.contains_key(&id));
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Pending,
+        "semantic Finished must not launch replacement before actual worker return"
+    );
+    engine
+        .store
+        .patch_thread(
+            &id,
+            &json!({"draft":"unrelated new draft", "projectPath":"/synthetic/changed-project"}),
+        )
+        .unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.native_follow_up_status(&ticket).unwrap() == NativeFollowUpStatus::Pending {
+        engine.poll();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(matches!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Retained(_)
+    ));
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "unrelated new draft");
+    assert_eq!(
+        saved["rustMessageQueue"][0]["state"], "dispatching",
+        "unconfirmed claim is retained, never replayed"
+    );
+    assert!(!engine.enabled_queues.contains(&id));
+    assert!(engine.runs.is_empty());
+    engine.collect_native_follow_up(ticket).unwrap();
+}

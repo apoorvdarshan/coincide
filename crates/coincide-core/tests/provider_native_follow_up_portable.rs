@@ -397,6 +397,59 @@ fn fixture(root: &Path) {
     assert_eq!(resumes.len(), 2);
     assert_eq!(resumes[1]["params"]["threadId"], first_native);
     assert_eq!(engine.provider_workers_status().returned, 3);
+    // Explicit native Send now also admits a paused named queue through the
+    // real account/catalog/native-session path, preserving its separate draft.
+    call(&mut engine, "agent.queue.pause", json!({"threadId":id}));
+    let mut source = engine.store.thread(&id).unwrap();
+    let mut queue_source = source.clone();
+    queue_source["rustDraftImages"] = json!([]);
+    let immediate =
+        coincide_core::message_queue::add(&mut queue_source, "synthetic named Send now delta")
+            .unwrap();
+    source["rustMessageQueue"] = queue_source["rustMessageQueue"].clone();
+    let immediate_id = immediate.id.clone();
+    engine.store.save(&source).unwrap();
+    let immediate = serde_json::to_value(immediate).unwrap();
+    let ticket = engine.native_send_queued_now(&source, &immediate).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Send,
+            draft_cleared: false
+        }
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    wait(
+        &mut engine,
+        "native paused named Send now and actual worker join",
+        |engine| {
+            engine.provider_workers_status().running == 0
+                && engine.store.thread(&id).unwrap()["rustMessageQueue"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == immediate_id && row["state"] == "completed")
+        },
+    );
+    let after_now = engine.store.thread(&id).unwrap();
+    for field in ["draft", "draftContext", "rustDraftImages", "future"] {
+        assert_eq!(after_now[field], source[field]);
+    }
+    let wire: Vec<Value> = fs::read_to_string(root.join("wire.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let turns: Vec<_> = wire
+        .iter()
+        .filter(|frame| frame["method"] == "turn/start")
+        .collect();
+    assert_eq!(turns.len(), 7);
+    assert_eq!(
+        turns[6]["params"]["input"][0]["text"],
+        "synthetic named Send now delta"
+    );
+    assert_eq!(engine.provider_workers_status().returned, 4);
     // A frozen selection is never silently redirected into another account.
     let second_account = call(
         &mut engine,
@@ -482,7 +535,7 @@ fn fixture(root: &Path) {
     });
     engine.close_store_after_core_shutdown().unwrap();
     println!(
-        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; named queued delta/account boundary/unrelated composer preserved; restart queue claim never replayed; six saved/joined provider returns PASS"
+        "Actual fake follow-ups: interrupt full prefix once; ACK-lost primary finalized before polling; cold uncertain context fresh; unrelated exact original resume; named queued delta/account boundary/unrelated composer preserved; restart queue claim never replayed; paused named native Send now preserved separate draft; seven saved/joined provider returns PASS"
     );
 }
 fn provider() {
