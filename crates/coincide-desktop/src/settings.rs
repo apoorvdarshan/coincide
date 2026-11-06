@@ -883,6 +883,56 @@ impl Coincide {
                     ("Command / Control + Return", json!(false)),
                 ],
             ),
+            (
+                S::Conversation,
+                "follow up behavior steer queue interrupt running agent new threads",
+                "Follow-up behavior for new threads",
+                "followUpBehavior",
+                json!("steer"),
+                vec![
+                    ("Steer", json!("steer")),
+                    ("Queue", json!("queue")),
+                    ("Interrupt", json!("interrupt")),
+                ],
+            ),
+            (
+                S::Conversation,
+                "new threads default access approval full commands edit files",
+                "Access for new threads",
+                "defaultAccessMode",
+                json!("fullAccess"),
+                vec![
+                    ("Ask before changes", json!("approval")),
+                    ("Full access", json!("fullAccess")),
+                ],
+            ),
+            (
+                S::Conversation,
+                "new thread starts chat project command n",
+                "New Thread starts a chat",
+                "newThreadStartsChat",
+                json!(false),
+                vec![("On", json!(true)), ("Off", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "confirm deleting delete threads history",
+                "Confirm before deleting threads",
+                "confirmBeforeDeletingThreads",
+                json!(true),
+                vec![
+                    ("Ask", json!(true)),
+                    ("Skip for idle threads", json!(false)),
+                ],
+            ),
+            (
+                S::Conversation,
+                "confirm archiving archive threads",
+                "Confirm before archiving threads",
+                "confirmBeforeArchivingThreads",
+                json!(true),
+                vec![("Ask", json!(true)), ("Archive immediately", json!(false))],
+            ),
         ] {
             if matches(section, terms) {
                 count += 1;

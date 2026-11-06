@@ -29,9 +29,13 @@ pub(super) struct State {
     review: Option<Review>,
     undo: Option<Undo>,
     stopping: bool,
+    auto_apply: bool,
     status: String,
 }
 impl State {
+    fn initial_delete(&self) -> bool {
+        !self.stopping && !matches!(self.review, Some(Review::Waiting(_)))
+    }
     pub(super) fn visible(&self) -> bool {
         self.review.is_some() || self.undo.is_some() || !self.status.is_empty()
     }
@@ -62,6 +66,8 @@ impl Coincide {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
+        let previously_waiting = !self.sidebar_lifecycle.initial_delete();
+        self.sidebar_lifecycle.auto_apply = false;
         if !self.flush_pending_drafts() {
             self.sidebar_lifecycle.review = Some(Review::Waiting(intent));
             self.sidebar_lifecycle.status =
@@ -75,9 +81,11 @@ impl Coincide {
                 Intent::Move(id, target) => {
                     Ok(Review::Move(engine.prepare_native_thread_move(id, target)?))
                 }
-                Intent::Delete(id) => Ok(Review::Delete(
-                    engine.prepare_native_conversation_deletion(std::slice::from_ref(id))?,
-                )),
+                Intent::Delete(id) => Ok(Review::Delete(if previously_waiting {
+                    engine.prepare_native_conversation_deletion(std::slice::from_ref(id))?
+                } else {
+                    engine.prepare_native_sidebar_conversation_deletion(std::slice::from_ref(id))?
+                })),
                 Intent::Bot(id, mode) => {
                     Ok(Review::Bot(engine.prepare_native_bot_deletion(id, *mode)?))
                 }
@@ -86,9 +94,14 @@ impl Coincide {
         self.sidebar_lifecycle.stopping = false;
         match result {
             Ok(review) => {
+                self.sidebar_lifecycle.auto_apply =
+                    matches!(&review, Review::Delete(plan) if !plan.requires_confirmation());
                 self.sidebar_lifecycle.review = Some(review);
-                self.sidebar_lifecycle.status =
-                    "Review the exact scope, then confirm. Nothing has changed yet.".into();
+                self.sidebar_lifecycle.status = if self.sidebar_lifecycle.auto_apply {
+                    "Applying your saved confirmation preference to this idle conversation.".into()
+                } else {
+                    "Review the exact scope, then confirm. Nothing has changed yet.".into()
+                };
             }
             Err(error) => {
                 self.sidebar_lifecycle.review = Some(Review::Waiting(intent));
@@ -129,7 +142,14 @@ impl Coincide {
         };
         cx.notify();
     }
-    pub(super) fn poll_sidebar_lifecycle(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn poll_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_lifecycle.auto_apply {
+            self.sidebar_lifecycle.auto_apply = false;
+            if matches!(&self.sidebar_lifecycle.review, Some(Review::Delete(plan)) if !plan.requires_confirmation())
+            {
+                self.apply_sidebar_lifecycle(window, cx);
+            }
+        }
         if !self.sidebar_lifecycle.stopping {
             return;
         }
@@ -147,6 +167,7 @@ impl Coincide {
         }
     }
     fn apply_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_lifecycle.auto_apply = false;
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
@@ -371,5 +392,27 @@ impl Coincide {
             .overflow_y_scroll()
             .child(pane)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod confirmation_policy_tests {
+    use super::{Intent, Review, State};
+    #[::core::prelude::v1::test]
+    fn initial_delete_opt_out_is_never_reused_after_wait_or_stop() {
+        let mut state = State::default();
+        assert!(state.initial_delete());
+        state.review = Some(Review::Waiting(Intent::Delete("synthetic-thread".into())));
+        assert!(
+            !state.initial_delete(),
+            "draft, persistence or worker recovery requires review"
+        );
+        state.stopping = true;
+        assert!(!state.initial_delete());
+        state.review = None;
+        assert!(
+            !state.initial_delete(),
+            "a Stop path still requires fresh review after worker cleanup"
+        );
     }
 }

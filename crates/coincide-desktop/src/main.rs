@@ -2767,7 +2767,7 @@ impl Coincide {
         self.poll_thread_bulk(window, cx);
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
-        self.poll_sidebar_lifecycle(cx);
+        self.poll_sidebar_lifecycle(window, cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
