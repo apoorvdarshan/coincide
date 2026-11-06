@@ -7,9 +7,11 @@ Do not point both applications at one mutable data store.
 
 ## Acceptance checklist
 
-Percentages in progress reports are estimates of verified feature parity, not
-percentages of source lines rewritten. An implemented but untested item remains
-unchecked. The following inventory is based on the macOS README, app structure,
+This inventory counts fully accepted feature groups. It is not a weighted
+engineering completion percentage: a group can contain many implemented and
+verified workflows while remaining open for other required behavior. Report
+recent workflow results separately instead of treating 7/32 as overall progress.
+An implemented but untested item remains unchecked. The inventory is based on the macOS README, app structure,
 provider protocols and CLI command parser. Expand it when another behavior is found.
 
 - [x] Rust workspace and independent GPUI macOS build.
@@ -159,8 +161,22 @@ native results do not close a full feature row.
 - Automatic file suggestions now have scoped keyboard selection/activation and
   a measured scroll handle in source. Input actions are captured before native
   submission; held Enter/Tab custody remains through pane hide. Rejected choices
-  are revoked and errors shown first. Combined compilation/tests and native key
-  acceptance are pending; no keyboard runtime pass is claimed yet.
+  are revoked and errors shown first. Combined compilation/tests passed on
+  8ce2b21: 421 desktop units plus all four integration targets (19, 10, 14, 11),
+  577 Core units plus every integration target, strict feature Core Clippy,
+  formatting and the ordinary desktop build. Native key acceptance is pending;
+  no keyboard runtime pass is claimed yet.
+- Explicit CLI socket routing, multiword and bounded UTF-8 stdin messages,
+  global `--json`, and empty/context-only text forwarding passed five shipped
+  binary socket regressions on the same checkpoint. Task-owned default and
+  inherited Swift socket decoys remained untouched. These changes retain Core
+  content admission and do not complete the broader CLI/API parity row.
+- The scoped CLI follow-up passed all nine compatibility regressions and strict
+  feature Core Clippy: exact restore/decline aliases, authoritative user-question
+  listing with opaque fields retained, read option equality forms, and help
+  aliases. Malformed inputs are rejected before transport, and stale target
+  resolution cannot trigger a mutation. Rich thread creation and other CLI
+  behavior remain separate open work.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
