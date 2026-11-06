@@ -29,6 +29,11 @@ impl Engine {
         // an unsupported stored model or clear any other selection field.
         let mut shape = thread.clone();
         shape["selection"]["modelID"] = json!("default");
+        // Binding capture grants no model/access authority. Keep refresh and
+        // explicit approval repair available for a saved, now-unproved mode.
+        if shape["accessMode"] == "fullAccess" {
+            shape["accessMode"] = json!("approval");
+        }
         let profile = self
             .codex_login_context(&shape)?
             .context("Missing named Codex profile")?;
@@ -55,24 +60,32 @@ impl Engine {
         } else {
             binding.as_ref().err().map(ToString::to_string)
         };
-        let proof_reason = binding
+        let proof = binding
             .as_ref()
             .ok()
-            .and_then(|binding| self.profile_model_proof(thread, binding, None).err())
-            .map(|error| error.to_string());
+            .map(|binding| self.profile_model_proof(thread, binding, None));
+        let proof_reason = proof
+            .as_ref()
+            .and_then(|proof| proof.as_ref().err())
+            .map(ToString::to_string);
+        let full_access = base_reason.is_none() && matches!(proof, Some(Ok(Some(_))));
         let reason = base_reason.clone().or(proof_reason);
         result["locked"] = json!(reason.is_some());
         result["lockReason"] = json!(reason);
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
             "refreshAllowed":base_reason.is_none(),"reason":base_reason,"authenticationChecked":false,
-            "accountIdentityVerified":false,"effortSupported":false,"speedSupported":false,"nativeResumeSupported":false});
+            "accountIdentityVerified":false,"effortSupported":false,"speedSupported":false,"nativeResumeSupported":false,"fullAccessSupported":full_access});
         if let Some(codex) = result["providers"]
             .as_array_mut()
             .and_then(|rows| rows.iter_mut().find(|row| row["provider"] == "codex"))
         {
             codex["accountPolicy"] = json!("configured_codex_profile");
             codex["customModel"] = json!({"supported":false,"reason":"Choose a model reported by this exact profile's refreshed catalog"});
-            codex["accessModes"] = json!(["approval"]);
+            codex["accessModes"] = if full_access {
+                json!(["approval", "fullAccess"])
+            } else {
+                json!(["approval"])
+            };
             codex["interactionModes"] = json!(["build"]);
             codex["effort"] =
                 json!({"supported":false,"reason":"Named-profile effort is not connected"});
@@ -97,6 +110,9 @@ impl Engine {
                 "expectedSelection",
                 "requestId",
                 "model",
+                "accessMode",
+                "expectedAccessMode",
+                "expectedInteractionMode",
             ][..],
             _ => bail!("Unknown profile model operation"),
         };
@@ -130,6 +146,23 @@ impl Engine {
         }
         let model = required(p, "model")?;
         crate::composer_selection::validate_model(model)?;
+        if let Some(access) = p.get("accessMode") {
+            ensure!(
+                fields.contains_key("expectedAccessMode")
+                    && fields.contains_key("expectedInteractionMode")
+                    && p.get("expectedAccessMode") == thread.get("accessMode")
+                    && p.get("expectedInteractionMode") == thread.get("interactionMode"),
+                "Conversation modes changed; reload profile controls"
+            );
+            ensure!(access.is_string(), "Access mode must be text");
+            thread["accessMode"] = access.clone();
+        } else {
+            ensure!(
+                !fields.contains_key("expectedAccessMode")
+                    && !fields.contains_key("expectedInteractionMode"),
+                "Expected modes require an explicit access mode"
+            );
+        }
         thread["selection"]["modelID"] = json!(model);
         profiles::validate_model_thread(&thread)?;
         crate::composer_selection::validate_thread_with_proof(
