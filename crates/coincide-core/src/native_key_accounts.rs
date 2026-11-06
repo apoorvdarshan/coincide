@@ -319,7 +319,7 @@ pub(super) fn launch_configuration(
     let secrets = NativeSecretStore::from_owner(owner)?;
     launch_with_secrets(owner, store, account, &secrets)
 }
-fn launch_with_secrets(
+pub(super) fn launch_with_secrets(
     owner: &Private,
     store: &Store,
     account: Account,
@@ -329,10 +329,13 @@ fn launch_with_secrets(
     ensure!(
         matches!(
             account.provider.as_str(),
-            "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+            "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "codex"
         ),
         "This API-key provider still requires its guarded native runtime enrollment"
     );
+    if account.provider == "codex" {
+        codex_key_enrollment::validate(owner, &account)?;
+    }
     let slot = account
         .key
         .as_ref()

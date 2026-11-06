@@ -131,6 +131,16 @@ impl Engine {
         );
         profiles::validate_model_thread(thread)?;
         let account = required(&thread["selection"], "accountID")?;
+        if provider_configuration::native_key_profile("codex")
+            && provider_configuration::native_account_matches(&thread["selection"])
+        {
+            return profiles::LaunchContext::capture_native_key(
+                &self.store.data_directory()?,
+                account,
+                &self.composer_codex_executable()?,
+            )
+            .map(Some);
+        }
         profiles::account(&profiles::configuration(&self.store)?, account)?;
         ensure!(
             self.codex_profile_login

@@ -163,7 +163,7 @@ mod tests {
         command
             .args(["-c", "echo $$ > \"$1\"; exec sleep 30", "synthetic-cancel"])
             .arg(&pid);
-        let allowed = || !pid.exists();
+        let allowed = || !pid.metadata().is_ok_and(|metadata| metadata.len() > 0);
         assert!(
             run(
                 &mut command,

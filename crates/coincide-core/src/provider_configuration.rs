@@ -919,6 +919,22 @@ impl Engine {
         method: &str,
         params: &Value,
     ) -> Result<Scope> {
+        if (method.starts_with("providers.codex.profiles.")
+            || matches!(
+                method,
+                "agent.models.refresh" | "agent.models.status" | "agent.selection.capabilities"
+            ))
+            && let Some(id) = params["threadId"].as_str()
+        {
+            let thread = self.store.thread(id)?;
+            if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
+                && self.routes_native_provider_account(&thread)?
+            {
+                return Ok(enter(
+                    self.provider_launch_configuration_for_thread(&thread)?,
+                ));
+            }
+        }
         let provider = if method.starts_with("providers.codex.")
             || method.starts_with("usage.codex")
         {
@@ -1133,6 +1149,7 @@ pub mod account_secret_store;
 
 #[path = "native_provider_accounts.rs"]
 mod accounts;
+pub(crate) use accounts::NativeCodexApiContext;
 pub use accounts::{
     NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave,
     NativeLoginAccount,

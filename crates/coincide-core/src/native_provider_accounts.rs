@@ -271,6 +271,12 @@ impl LoginHome {
                     == self.account.guard_identity,
             "Native account owner was replaced"
         );
+        if self.account.provider == "codex"
+            && self.account.authentication == Authentication::ApiKey
+            && self.account.codex_enrollment.is_some()
+        {
+            codex_key_enrollment::validate_auth(&self.account)?;
+        }
         ensure!(
             self.auth_stamp()? == self.captured_auth,
             "Native login authentication changed; capture the account again"
@@ -584,11 +590,16 @@ impl Engine {
         ensure!(
             matches!(
                 provider.as_str(),
-                "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+                "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "codex"
             ),
             "Use this provider's existing guarded account workflow"
         );
         let target = account.filter(|account| !account.is_empty() && *account != "default");
+        if provider == "codex" && current["selection"]["accountID"].as_str() != target {
+            let source_configuration = self.provider_launch_configuration_for_thread(&current)?;
+            let _scope = enter(source_configuration);
+            self.park_named_departure(&current)?;
+        }
         let configuration = if let Some(target) = target {
             Some(self.native_account_launch_configuration(&provider, target)?)
         } else {
@@ -845,6 +856,9 @@ pub(super) fn synthetic_key_configuration(
 ) -> (LaunchConfiguration, PathBuf) {
     keys::synthetic_configuration(engine, provider)
 }
+#[path = "native_codex_key_context.rs"]
+mod codex_key_context;
+pub(crate) use codex_key_context::NativeCodexApiContext;
 #[path = "native_codex_key_enrollment.rs"]
 mod codex_key_enrollment;
 pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt};

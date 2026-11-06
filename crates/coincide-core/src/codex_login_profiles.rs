@@ -18,6 +18,8 @@ pub(crate) struct LaunchContext {
     home_identity: crate::private_fs::Identity,
     executable: PathBuf,
     executable_identity: (crate::private_fs::Identity, u64, std::time::SystemTime),
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_api_key: Option<crate::provider_configuration::NativeCodexApiContext>,
 }
 impl LaunchContext {
     pub(crate) fn capture(root: &Path, account: &str, executable: &Path) -> Result<Self> {
@@ -32,6 +34,7 @@ impl LaunchContext {
         let home = managed_home(root, account, false)?;
         let value = Self {
             account: account.into(),
+            native_api_key: None,
             root: root.into(),
             home: home.clone(),
             home_identity: crate::private_fs::identity(&home)?,
@@ -47,6 +50,34 @@ impl LaunchContext {
         value.validate()?;
         Ok(value)
     }
+    pub(crate) fn capture_native_key(
+        root: &Path,
+        account: &str,
+        executable: &Path,
+    ) -> Result<Self> {
+        canonical_id(account)?;
+        let grant = crate::provider_configuration::NativeCodexApiContext::capture(
+            root, account, executable,
+        )?;
+        let executable = executable.canonicalize()?;
+        let metadata = fs::metadata(&executable)?;
+        let home = grant.home().to_path_buf();
+        let value = Self {
+            account: account.into(),
+            root: root.into(),
+            home_identity: crate::private_fs::identity(&home)?,
+            home,
+            executable: executable.clone(),
+            executable_identity: (
+                crate::private_fs::identity(&executable)?,
+                metadata.len(),
+                metadata.modified()?,
+            ),
+            native_api_key: Some(grant),
+        };
+        value.validate()?;
+        Ok(value)
+    }
     pub(crate) fn account(&self) -> &str {
         &self.account
     }
@@ -57,10 +88,15 @@ impl LaunchContext {
         &self.home
     }
     pub(crate) fn validate(&self) -> Result<()> {
-        ensure!(
-            managed_home(&self.root, &self.account, false)? == self.home,
-            "Codex profile home changed"
-        );
+        if let Some(native) = &self.native_api_key {
+            native.validate()?;
+            ensure!(native.home() == self.home, "Codex API profile home changed");
+        } else {
+            ensure!(
+                managed_home(&self.root, &self.account, false)? == self.home,
+                "Codex profile home changed"
+            );
+        }
         ensure!(
             crate::private_fs::identity(&self.home)? == self.home_identity,
             "Codex profile home was replaced"
@@ -107,6 +143,22 @@ impl LaunchContext {
         Ok(())
     }
     pub(crate) fn arguments(&self) -> Vec<String> {
+        if self.native_api_key.is_some() {
+            return [
+                "-c",
+                "cli_auth_credentials_store=\"file\"",
+                "-c",
+                "forced_login_method=\"api\"",
+                "-c",
+                "model_provider=\"openai\"",
+                "-c",
+                "openai_base_url=\"https://api.openai.com/v1\"",
+                "app-server",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        }
         [
             "-c",
             "cli_auth_credentials_store=\"file\"",
@@ -126,6 +178,9 @@ impl LaunchContext {
     }
     pub(crate) fn configure(&self, command: &mut Command) -> Result<()> {
         self.validate()?;
+        if self.native_api_key.is_some() {
+            return Ok(());
+        } // captured native child scope applies next
         // An allowlist avoids inherited API keys, endpoint/proxy overrides,
         // external bearer tokens and arbitrary configured auth-command variables.
         command.env_clear();
@@ -154,6 +209,13 @@ impl LaunchContext {
     }
     pub(crate) fn admit_account(&self, result: &Value) -> Result<()> {
         self.validate()?;
+        if self.native_api_key.is_some() {
+            ensure!(
+                result["requiresOpenaiAuth"] == true && result["account"]["type"] == "apiKey",
+                "Selected Codex API profile is not enrolled as an API key"
+            );
+            return Ok(());
+        }
         ensure!(
             result["requiresOpenaiAuth"] == true
                 && result["account"].is_object()

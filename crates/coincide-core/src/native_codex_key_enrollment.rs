@@ -193,6 +193,17 @@ impl NativeCodexKeyEnrollment {
         })
     }
 }
+pub(super) fn validate_auth(account: &Account) -> Result<()> {
+    let enrollment = account
+        .codex_enrollment
+        .as_ref()
+        .context("Apply the saved Codex API key before use")?;
+    ensure!(
+        enrollment["auth"] == auth(&account.home)?.0,
+        "Codex API-key enrollment changed; apply the saved key again"
+    );
+    Ok(())
+}
 pub(super) fn validate(owner: &Private, account: &Account) -> Result<()> {
     let enrollment = account
         .codex_enrollment
@@ -306,6 +317,72 @@ mod tests {
                 .verify_native_codex_key_enrollment(&saved.id, &saved.revision)
                 .is_err()
         );
+    }
+    #[test]
+    fn api_context_requires_native_capture_and_actual_api_account_shape() {
+        struct Fake;
+        impl account_secret_store::Backend for Fake {
+            fn write(&self, _service: &str, _id: &str, _value: &[u8]) -> Result<()> {
+                anyhow::bail!("Unused synthetic write")
+            }
+            fn read(&self, _service: &str, _id: &str) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+                Ok(zeroize::Zeroizing::new(
+                    b"synthetic-codex-account-key".to_vec(),
+                ))
+            }
+            fn delete(&self, _service: &str, _id: &str) -> Result<()> {
+                anyhow::bail!("Unused synthetic delete")
+            }
+        }
+        let (_root, mut engine, plan, binary) = fixture();
+        let receipt = local_cli(plan, &binary);
+        let saved = engine.apply_native_codex_key_enrollment(receipt).unwrap();
+        let root = engine.store.data_directory().unwrap();
+        assert!(
+            crate::codex_login_profiles::LaunchContext::capture_native_key(
+                &root, &saved.id, &binary
+            )
+            .is_err()
+        );
+        let configuration = {
+            let owner = Private::open(&engine.store, false).unwrap().unwrap();
+            let raw = engine.store.native_accounts_payload("codex").unwrap();
+            let row = account(
+                &read(&owner, "codex", raw.as_deref()).unwrap(),
+                "codex",
+                &saved.id,
+            )
+            .unwrap();
+            let secrets = NativeSecretStore::from_owner(&owner)
+                .unwrap()
+                .with_backend(std::sync::Arc::new(Fake));
+            keys::launch_with_secrets(&owner, &engine.store, row, &secrets).unwrap()
+        };
+        let context = {
+            let _scope = enter(Some(configuration));
+            let context = crate::codex_login_profiles::LaunchContext::capture_native_key(
+                &root, &saved.id, &binary,
+            )
+            .unwrap();
+            assert!(
+                context
+                    .admit_account(&json!({"requiresOpenaiAuth":true,"account":{"type":"apiKey"}}))
+                    .is_ok()
+            );
+            assert!(
+                context
+                    .admit_account(&json!({"requiresOpenaiAuth":true,"account":{"type":"chatgpt"}}))
+                    .is_err()
+            );
+            assert!(
+                context
+                    .arguments()
+                    .iter()
+                    .any(|argument| argument == "forced_login_method=\"api\"")
+            );
+            context
+        };
+        assert!(context.validate().is_err());
     }
     #[test]
     fn configuration_change_rejects_enrollment_receipt_without_losing_saved_key() {
