@@ -38,14 +38,7 @@ impl Coincide {
                     })
                     .selected(self.thread_list_open)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.thread_list_open = !this.thread_list_open;
-                        // Do not leave keyboard input targeting a hidden search field.
-                        if !this.thread_list_open
-                            && this.thread_list_focus.contains_focused(window, cx)
-                        {
-                            this.navigation_focus.focus(window, cx);
-                        }
-                        cx.notify();
+                        this.toggle_sidebar(window, cx);
                     })),
             )
             .child(

@@ -13,6 +13,9 @@ use std::{
 use uuid::Uuid;
 #[path = "browser_history_store.rs"]
 mod browser_history_store;
+#[path = "thread_bulk_store.rs"]
+mod thread_bulk_store;
+pub(crate) use thread_bulk_store::FlagRow;
 
 /// A new database is always independent of the Swift app. Unknown JSON fields and
 /// original file bytes are retained, including provider/account session identity.

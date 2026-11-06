@@ -87,6 +87,9 @@ pub use shutdown_owner::CoreOwnerShutdownStatus;
 mod steering_api;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
+#[path = "thread_bulk_api.rs"]
+mod thread_bulk_api;
+pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]
@@ -121,6 +124,7 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    thread_bulk_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
     model_catalog: crate::model_catalog::ModelCatalog,
@@ -192,6 +196,7 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            thread_bulk_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
             model_catalog: crate::model_catalog::ModelCatalog::default(),

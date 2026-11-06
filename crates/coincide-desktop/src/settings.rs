@@ -961,14 +961,7 @@ impl Coincide {
             match command {
                 K::NewThread => self.new_thread(window, cx),
                 K::Palette => unreachable!(),
-                K::Sidebar => {
-                    self.thread_list_open = !self.thread_list_open;
-                    if !self.thread_list_open && self.thread_list_focus.contains_focused(window, cx)
-                    {
-                        self.navigation_focus.focus(window, cx);
-                    }
-                    cx.notify();
-                }
+                K::Sidebar => self.toggle_sidebar(window, cx),
                 K::Terminal => {
                     if self.settings_open || self.schedules_open || self.selected.is_none() {
                         return;

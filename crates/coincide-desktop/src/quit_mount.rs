@@ -85,6 +85,7 @@ impl Coincide {
             }
         }
         let drafts_saved = self.flush_pending_drafts();
+        self.thread_bulk.close();
         self.usage_history.request_shutdown();
         self.codex_limits.request_shutdown();
         self.steering.request_shutdown();
@@ -123,6 +124,7 @@ impl Coincide {
         self.request_media_owner_shutdown(cx);
         let media = self.poll_media_owner_shutdown(cx);
         let statuses = [
+            self.thread_bulk.shutdown_status(),
             self.usage_history.shutdown_status(),
             self.steering.shutdown_status(),
             self.credential_panel
@@ -175,7 +177,8 @@ impl Coincide {
             && self.computer_use_shutdown_ready()
             && self.image_validations_running == 0
             && self.image_validation_tasks.is_empty()
-            && self.navigation_tasks.is_empty();
+            && self.navigation_tasks.is_empty()
+            && self.thread_bulk.receipts_drained();
         let Some(runtime) = &self.quit_runtime else {
             if let Some(error) = &self.quit_runtime_error {
                 self.status = format!("Quitting is paused: {error}");

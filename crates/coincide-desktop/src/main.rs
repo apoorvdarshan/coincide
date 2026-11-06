@@ -55,6 +55,7 @@ mod settings;
 mod shutdown_runtime;
 mod terminal_selection;
 mod terminal_workspace;
+mod thread_bulk;
 mod transcript;
 mod transcript_find;
 mod transcription_composer;
@@ -338,6 +339,8 @@ struct Coincide {
     queue_enabled: bool,
     queue_error: String,
     thread_list_open: bool,
+    thread_bulk: thread_bulk::State,
+    thread_bulk_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
     thread_list_focus: FocusHandle,
     navigation_focus: FocusHandle,
@@ -497,6 +500,7 @@ impl Coincide {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<transcription_settings::ComposerBinding> {
+        self.sync_thread_bulk(cx);
         self.sync_browser_settings_route(cx);
         let thread = if self.settings_open
             && self.transcription_open
@@ -927,10 +931,12 @@ impl Coincide {
             }),
             cx.subscribe(&search, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.thread_bulk.invalidate();
                     this.refresh(cx);
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
                 {
@@ -1008,6 +1014,8 @@ impl Coincide {
             queue_enabled: false,
             queue_error: String::new(),
             thread_list_open: true,
+            thread_bulk: Default::default(),
+            thread_bulk_focus: cx.focus_handle(),
             sidebar_resize,
             thread_list_focus: cx.focus_handle(),
             navigation_focus: cx.focus_handle(),
@@ -1493,6 +1501,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_bulk.close_selection();
         self.dismiss_palette(window, cx);
         self.dismiss_find(window, cx);
         self.credential_panel
@@ -2417,6 +2426,7 @@ impl Coincide {
         let drafts_saved = self.flush_pending_drafts();
         self.sync_media_context(cx);
         self.poll_media_parent(cx);
+        self.poll_thread_bulk(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
@@ -2450,6 +2460,7 @@ impl Coincide {
                 && cookies_ready
                 && self.media_shutdown_ready(cx)
                 && self.computer_use_shutdown_ready()
+                && self.thread_bulk.closed_and_drained()
             {
                 window.remove_window();
             } else if !drafts_saved {
@@ -2467,6 +2478,9 @@ impl Coincide {
             } else if !self.media_shutdown_ready(cx) {
                 self.computer_use_open = false;
                 self.show_media_shutdown(window, cx);
+            } else if !self.thread_bulk.closed_and_drained() {
+                self.status = "Closing waits for the owned sidebar operation to finish and join. Committed changes retain their receipt.".into();
+                cx.notify();
             } else {
                 self.settings_open = true;
                 self.computer_use_open = true;
@@ -3750,6 +3764,7 @@ impl Render for Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         self.sync_sidebar_resize(window);
+        self.sync_thread_bulk(cx);
         self.sync_keyboard_recording(window, cx);
         let navigation_rail = self.navigation_rail(cx);
         let sidebar = self

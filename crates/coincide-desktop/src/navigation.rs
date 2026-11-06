@@ -13,6 +13,57 @@ fn sidebar_button_label(label: String) -> Div {
 }
 
 impl Coincide {
+    fn sidebar_sections(&self, now: f64) -> Vec<sections::Section<'_>> {
+        sections::project(
+            &self.threads,
+            self.projects
+                .iter()
+                .map(|p| (text(p, "id"), text(p, "name")))
+                .collect(),
+            self.selected_project.as_deref(),
+            self.show_snoozed,
+            now,
+        )
+    }
+    pub(super) fn bulk_sidebar_binding(&self, cx: &Context<Self>) -> thread_bulk::Binding {
+        let query = self.search.read(cx).value().to_string();
+        let searching = !query.trim().is_empty();
+        let rows = self
+            .sidebar_sections(coincide_core::store::swift_timestamp())
+            .into_iter()
+            .filter(|section| {
+                searching
+                    || section
+                        .project_id
+                        .as_ref()
+                        .is_none_or(|id| !self.collapsed_projects.contains(id))
+            })
+            .flat_map(|section| {
+                section
+                    .threads
+                    .into_iter()
+                    .map(|t| (t.id.clone(), t.pinned, t.archived))
+            })
+            .collect();
+        thread_bulk::Binding {
+            rows,
+            project: self.selected_project.clone(),
+            query,
+            archived: self.show_archived,
+            snoozed: self.show_snoozed,
+            available: self.thread_list_open
+                && self.microphone_window_active
+                && !self.settings_open
+                && !self.schedules_open
+                && !self.session_import_open
+                && !self.workspace_open
+                && !self.project_picker_open
+                && !self.command_palette.read(cx).is_open()
+                && !self.historical_image_is_open()
+                && !self.media.close_requested
+                && !self.media.shutdown_requested,
+        }
+    }
     pub(super) fn navigation_sidebar(
         &self,
         selected: &str,
@@ -56,16 +107,7 @@ impl Coincide {
         };
         let searching = !self.search.read(cx).value().trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
-        let sections = sections::project(
-            &self.threads,
-            self.projects
-                .iter()
-                .map(|p| (text(p, "id"), text(p, "name")))
-                .collect(),
-            self.selected_project.as_deref(),
-            self.show_snoozed,
-            now,
-        );
+        let sections = self.sidebar_sections(now);
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
         if sections.is_empty() {
             conversations = conversations.child(
@@ -118,6 +160,7 @@ impl Coincide {
                             button.tooltip("Clear search to collapse project groups")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            this.thread_bulk.invalidate();
                             if !this.collapsed_projects.remove(&target) {
                                 this.collapsed_projects.insert(target.clone());
                             }
@@ -146,6 +189,7 @@ impl Coincide {
             if !collapsed {
                 for thread in threads {
                     let id = thread.id.clone();
+                    let selecting = self.thread_bulk.mode;
                     let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
                     let label = format!(
                         "{}{}{}{}",
@@ -154,27 +198,46 @@ impl Coincide {
                         if snoozed { "Snoozed · " } else { "" },
                         thread.title
                     );
-                    group =
-                        group.child(
-                            Button::new(SharedString::from(format!("thread-{id}")))
-                                .ghost()
-                                .compact()
-                                .justify_start()
-                                .h(px(28.))
-                                .min_w_0()
-                                .accessibility_id(SharedString::from(format!("thread-{id}")))
-                                .accessibility_label(SharedString::from(format!(
-                                    "Open conversation: {}",
-                                    thread.title
-                                )))
-                                .child(sidebar_button_label(label))
-                                .tooltip(thread.title.clone())
-                                .w_full()
-                                .selected(id == selected)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.select(&id, window, cx)
-                                })),
-                        );
+                    group = group.child(
+                        Button::new(SharedString::from(format!("thread-{id}")))
+                            .ghost()
+                            .compact()
+                            .justify_start()
+                            .h(px(28.))
+                            .min_w_0()
+                            .accessibility_id(SharedString::from(format!("thread-{id}")))
+                            .accessibility_label(SharedString::from(format!(
+                                "{} conversation: {}",
+                                if self.thread_bulk.mode {
+                                    "Select"
+                                } else {
+                                    "Open"
+                                },
+                                thread.title
+                            )))
+                            .child(sidebar_button_label(if self.thread_bulk.mode {
+                                format!(
+                                    "{} {label}",
+                                    if self.thread_bulk.picked.contains(&id) {
+                                        "☑"
+                                    } else {
+                                        "☐"
+                                    }
+                                )
+                            } else {
+                                label
+                            }))
+                            .tooltip(thread.title.clone())
+                            .w_full()
+                            .selected(if self.thread_bulk.mode {
+                                self.thread_bulk.picked.contains(&id)
+                            } else {
+                                id == selected
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.bulk_row_click(&id, selecting, window, cx)
+                            })),
+                    );
                 }
             }
             conversations = conversations.child(group);
@@ -223,6 +286,7 @@ impl Coincide {
                     .accessibility_label(format!("Project: {project_label}"))
                     .child(sidebar_button_label(format!("Project: {project_label}")))
                     .on_click(cx.listener(|this, _, window, cx| {
+                        this.thread_bulk.invalidate();
                         this.project_picker_open = !this.project_picker_open;
                         if !this.project_picker_open {
                             this.close_project_form(window, cx);
@@ -241,6 +305,7 @@ impl Coincide {
                                 .label("All projects")
                                 .when(self.selected_project.is_none(), |b| b.primary())
                                 .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_bulk.invalidate();
                                     this.selected_project = None;
                                     cx.notify();
                                 })),
@@ -252,6 +317,7 @@ impl Coincide {
                                     b.primary()
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_bulk.invalidate();
                                     this.selected_project = Some(NO_PROJECT.into());
                                     cx.notify();
                                 })),
@@ -264,6 +330,7 @@ impl Coincide {
                                     |b| b.primary(),
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_bulk.invalidate();
                                     this.selected_project = Some(BOTS_PROJECT_ID.into());
                                     cx.notify();
                                 })),
@@ -300,6 +367,7 @@ impl Coincide {
                                                     |b| b.primary(),
                                                 )
                                                 .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.thread_bulk.invalidate();
                                                     this.selected_project = Some(id.clone());
                                                     cx.notify();
                                                 }))
@@ -370,6 +438,7 @@ impl Coincide {
                                 "Show archived"
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.thread_bulk.invalidate();
                                 this.show_archived = !this.show_archived;
                                 this.refresh(cx);
                             })),
@@ -384,11 +453,13 @@ impl Coincide {
                                 "Show snoozed"
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.thread_bulk.invalidate();
                                 this.show_snoozed = !this.show_snoozed;
                                 cx.notify();
                             })),
                     ),
             )
+            .child(self.bulk_controls(cx))
             .child(conversations)
             .when_some(self.sidebar_resize.error(), |view, error| {
                 view.child(div().text_xs().child(error))
