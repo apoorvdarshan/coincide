@@ -59,6 +59,7 @@ enum Failure {
     Timeout,
     Process,
     Output,
+    Cleanup,
 }
 trait Backend: Send + Sync {
     fn transcribe(&self, configuration: Configuration) -> Result<String, Failure>;
@@ -84,7 +85,8 @@ fn classify(error: LocalError) -> Failure {
         LocalError::InvalidAudio => Failure::Audio,
         LocalError::TooLarge => Failure::TooLarge,
         LocalError::TimedOut => Failure::Timeout,
-        LocalError::ProcessFailed => Failure::Process,
+        LocalError::ProcessFailed | LocalError::Cancelled => Failure::Process,
+        LocalError::CleanupPending => Failure::Cleanup,
         LocalError::InvalidOutput => Failure::Output,
         LocalError::UnsupportedPlatform | LocalError::Unavailable => Failure::Unavailable,
     }
@@ -95,6 +97,18 @@ fn read_wav(path: PathBuf) -> Result<Vec<u8>, Failure> {
     }
     let mut options = OpenOptions::new();
     options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        if !matches!(path.components().next(), Some(std::path::Component::Prefix(prefix))
+            if matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)))
+        {
+            return Err(Failure::Audio);
+        }
+        options
+            .custom_flags(windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0)
+            .share_mode(windows::Win32::Storage::FileSystem::FILE_SHARE_READ.0);
+    }
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -112,6 +126,16 @@ fn read_wav(path: PathBuf) -> Result<Vec<u8>, Failure> {
     let metadata = file.metadata().map_err(|_| Failure::Audio)?;
     if !metadata.is_file() {
         return Err(Failure::Audio);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes()
+            & windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT.0
+            != 0
+        {
+            return Err(Failure::Audio);
+        }
     }
     if metadata.len() > MAX_WAV {
         return Err(Failure::TooLarge);
@@ -369,6 +393,7 @@ impl TranscriptionSettings {
                 Completion::Failed(Failure::Timeout) => "Transcription exceeded 120 seconds. Process cleanup completed; composer unchanged.",
                 Completion::Failed(Failure::Process) => "whisper-cli failed. Check model compatibility and installed runtime resources.",
                 Completion::Failed(Failure::Output) => "whisper-cli did not produce a valid bounded JSON transcript.",
+                Completion::Failed(Failure::Cleanup) => "Temporary audio cleanup could not be confirmed. Private audio may remain; no transcript was inserted.",
             }.into();
             cx.notify();
         }
@@ -415,7 +440,13 @@ impl TranscriptionSettings {
         if self.workflow.workers.closed() {
             return;
         }
-        if self.picker || !cfg!(any(target_os = "macos", target_os = "linux")) {
+        if self.picker
+            || !cfg!(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "windows"
+            ))
+        {
             return;
         }
         let (Some(executable), Some(model), Some(wav)) = (
@@ -513,8 +544,11 @@ impl Render for TranscriptionSettings {
                 Button::new("transcription-run")
                     .label("Transcribe selected WAV")
                     .disabled(
-                        busy || !cfg!(any(target_os = "macos", target_os = "linux"))
-                            || self.workflow.binding.is_none()
+                        busy || !cfg!(any(
+                            target_os = "macos",
+                            target_os = "linux",
+                            target_os = "windows"
+                        )) || self.workflow.binding.is_none()
                             || self.executable.is_none()
                             || self.model.is_none()
                             || self.wav.is_none(),
@@ -522,8 +556,12 @@ impl Render for TranscriptionSettings {
                     .on_click(cx.listener(|this, _, _, cx| this.transcribe(cx))),
             )
             .child(SharedString::from(self.status.clone()));
-        if !cfg!(any(target_os = "macos", target_os = "linux")) {
-            panel = panel.child("This file workflow supports macOS and Linux. Windows process support is not implemented.");
+        if !cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        )) {
+            panel = panel.child("Local file transcription supports macOS, Windows and Linux.");
         }
         panel
     }
