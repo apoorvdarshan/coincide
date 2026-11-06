@@ -274,12 +274,13 @@ fn preference_patch(settings: &Value, change: Change<'_>) -> Result<Value> {
 fn save(engine: &SharedEngine, change: Change<'_>) -> Result<Value> {
     let mut owner = try_state(engine)?;
     anyhow::ensure!(!owner.admissions_frozen(), "App is closing");
-    let response = owner.dispatch(json!({"method":"settings.read","params":{}}));
-    anyhow::ensure!(
-        response.get("error").is_none(),
-        "Settings could not be read"
-    );
-    let patch = preference_patch(&response["result"], change)?;
+    // Native editing merges the current raw document under the same owner lock;
+    // public JSON responses deliberately omit legacy environment values.
+    let current = owner
+        .store
+        .document("settings.json")?
+        .unwrap_or_else(|| json!({}));
+    let patch = preference_patch(&current, change)?;
     let response = owner.dispatch(json!({"method":"settings.patch","params":{"patch":patch}}));
     if let Some(error) = response.get("error") {
         anyhow::bail!(

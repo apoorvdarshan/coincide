@@ -454,6 +454,78 @@ fn read_record(payload: &Value, provider: &str) -> Result<Option<Record>> {
         })
         .transpose()
 }
+/// Public JSON responses never return legacy provider environment values. Native
+/// editing reads its separate typed private store; raw imported documents stay intact.
+pub(super) fn public_settings(mut settings: Value) -> Value {
+    match settings.get_mut("providers") {
+        Some(Value::Object(providers)) => {
+            for provider in providers.values_mut() {
+                if let Some(fields) = provider.as_object_mut() {
+                    fields.remove("environment");
+                }
+            }
+        }
+        Some(Value::Array(providers)) => {
+            for provider in providers {
+                if let Some(fields) = provider.as_object_mut() {
+                    fields.remove("environment");
+                }
+            }
+        }
+        _ => {}
+    }
+    settings
+}
+fn legacy_environment(settings: &Value, provider: &str) -> Option<Value> {
+    let providers = &settings["providers"];
+    let configuration = if let Some(providers) = providers.as_object() {
+        providers.get(provider)
+    } else {
+        providers
+            .as_array()?
+            .chunks(2)
+            .find(|pair| pair.len() == 2 && pair[0].as_str() == Some(provider))
+            .map(|pair| &pair[1])
+    }?;
+    configuration.get("environment").cloned()
+}
+/// Retain omitted legacy secrets when clients edit a redacted provider response,
+/// including Swift's whole-array dictionary encoding. An explicit environment
+/// field remains caller-supplied inert legacy data, never a native launch grant.
+pub(super) fn retain_legacy_environment(current: &Value, patch: &Value) -> Value {
+    let mut patch = patch.clone();
+    let retain = |id: &str, configuration: &mut Value| {
+        let Some(fields) = configuration.as_object_mut() else {
+            return;
+        };
+        if fields.contains_key("environment") {
+            return;
+        }
+        if let Some(environment) = legacy_environment(current, id) {
+            fields.insert("environment".into(), environment);
+        }
+    };
+    match patch.get_mut("providers") {
+        Some(Value::Object(providers)) => {
+            for (id, configuration) in providers {
+                retain(id, configuration);
+            }
+        }
+        Some(Value::Array(providers)) => {
+            for pair in providers.chunks_mut(2) {
+                if pair.len() == 2 {
+                    let (id, configuration) = pair.split_first_mut().unwrap();
+                    if let Some(id) = id.as_str() {
+                        retain(id, &mut configuration[0]);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    patch
+}
+
 fn provider_id(provider: &str) -> Result<()> {
     agent::Provider::from_name(provider)?;
     ensure!(
@@ -954,6 +1026,53 @@ mod tests {
         assert!(configuration.validate_launch().is_err());
         let _scope = enter(Some(configuration));
         assert!(apply_to_child(&mut Command::new(&binary), false).is_err());
+    }
+    #[test]
+    fn public_settings_redacts_legacy_environments_without_erasing_saved_provider_data() {
+        for providers in [
+            json!({"codex":{"environment":{"SYNTHETIC_TEST_VALUE":"not-a-real-secret"},"customModels":["old"],"opaque":{"preserve":true}}}),
+            json!(["codex",{"environment":{"SYNTHETIC_TEST_VALUE":"not-a-real-secret"},"customModels":["old"],"opaque":{"preserve":true}}]),
+        ] {
+            let (_root, mut engine, _binary) = fixture();
+            let saved = json!({"providers":providers,"opaqueRoot":42});
+            engine.store.save_document("settings.json", &saved).unwrap();
+            let public = engine.execute("settings.read", &json!({})).unwrap();
+            assert!(legacy_environment(&public, "codex").is_none());
+            assert_eq!(
+                engine.store.document("settings.json").unwrap().unwrap(),
+                saved
+            );
+            let unrelated = engine
+                .execute("settings.patch", &json!({"patch":{"sendOnReturn":false}}))
+                .unwrap();
+            assert!(legacy_environment(&unrelated, "codex").is_none());
+            // Simulate a read/modify/write client editing the redacted full provider
+            // representation: omission cannot delete the legacy environment.
+            let mut edited = public["providers"].clone();
+            if let Some(providers) = edited.as_object_mut() {
+                providers.get_mut("codex").unwrap()["customModels"] = json!(["new"]);
+            } else {
+                edited[1]["customModels"] = json!(["new"]);
+            }
+            let response = engine
+                .execute("settings.patch", &json!({"patch":{"providers":edited}}))
+                .unwrap();
+            assert!(legacy_environment(&response, "codex").is_none());
+            assert_eq!(response["providers"], edited);
+            let raw = engine.store.document("settings.json").unwrap().unwrap();
+            assert_eq!(
+                legacy_environment(&raw, "codex"),
+                legacy_environment(&saved, "codex")
+            );
+            assert_eq!(raw["opaqueRoot"], 42);
+            assert_eq!(public_settings(raw)["providers"], response["providers"]);
+            assert!(
+                engine
+                    .provider_launch_configuration("codex")
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
     #[test]
     fn imported_settings_and_agent_json_cannot_grant_executable_or_environment_authority() {
