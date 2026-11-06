@@ -282,6 +282,9 @@ impl LoginHome {
             .map(|(_, value)| value.into())
     }
     fn auth_stamp(&self) -> Result<Value> {
+        if self.account.authentication == Authentication::ApiKey {
+            return Ok(Value::Null);
+        }
         let path = match self.account.provider.as_str() {
             "claude" => self.account.home.join(".credentials.json"),
             "grok" => self.account.home.join("auth.json"),
@@ -486,6 +489,13 @@ impl Engine {
         expected: &Value,
         account: Option<&str>,
     ) -> Result<Value> {
+        self.select_native_provider_account(expected, account)
+    }
+    pub fn select_native_provider_account(
+        &mut self,
+        expected: &Value,
+        account: Option<&str>,
+    ) -> Result<Value> {
         self.require_admissions()?;
         let id = required(expected, "id")?;
         ensure!(
@@ -521,10 +531,13 @@ impl Engine {
             "Finish queued messages before changing accounts"
         );
         let provider = text(&current["selection"], "provider");
-        supported(&provider)?;
+        ensure!(
+            matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode"),
+            "Use this provider's existing guarded account workflow"
+        );
         let target = account.filter(|account| !account.is_empty() && *account != "default");
         let configuration = if let Some(target) = target {
-            Some(self.native_login_launch_configuration(&provider, target)?)
+            Some(self.native_account_launch_configuration(&provider, target)?)
         } else {
             self.provider_launch_configuration(&provider)?
         };
@@ -556,6 +569,22 @@ impl Engine {
             .save_native_account_selection(&current, &changed, grant.as_deref())?;
         self.revision += 1;
         Ok(changed)
+    }
+    pub(super) fn native_account_launch_configuration(
+        &self,
+        provider: &str,
+        id: &str,
+    ) -> Result<LaunchConfiguration> {
+        let owner = Private::open(&self.store, false)?
+            .context("Add this account in native Settings first")?;
+        let raw = self.store.native_accounts_payload(provider)?;
+        let payload = read(&owner, provider, raw.as_deref())?;
+        let account = account(&payload, provider, id)?;
+        if account.authentication == Authentication::ApiKey {
+            return keys::launch_configuration(&owner, &self.store, account);
+        }
+        drop(owner);
+        self.native_login_launch_configuration(provider, id)
     }
     pub(super) fn native_login_launch_configuration(
         &self,
@@ -630,10 +659,19 @@ fn build_configuration(
                 .iter()
                 .any(|owned| key.eq_ignore_ascii_case(owned))
     });
-    record.environment.insert(
-        supported(provider)?.into(),
-        profile.account.home.to_string_lossy().into_owned(),
-    );
+    let home_variable = if profile.account.authentication == Authentication::Login {
+        Some(supported(provider)?)
+    } else if provider == "opencode" {
+        Some("XDG_DATA_HOME")
+    } else {
+        None
+    };
+    if let Some(variable) = home_variable {
+        record.environment.insert(
+            variable.into(),
+            profile.account.home.to_string_lossy().into_owned(),
+        );
+    }
     let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
         &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
     )?));

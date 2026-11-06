@@ -882,7 +882,7 @@ impl Engine {
     ) -> Result<Option<LaunchConfiguration>> {
         let provider = text(&thread["selection"], "provider");
         if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
-            && matches!(provider.as_str(), "claude" | "grok" | "opencode")
+            && matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode")
         {
             let id = thread["id"]
                 .as_str()
@@ -896,7 +896,7 @@ impl Engine {
                 .as_str()
                 .context("Native account identity must be text")?;
             return self
-                .native_login_launch_configuration(&provider, account)
+                .native_account_launch_configuration(&provider, account)
                 .map(Some);
         }
         self.provider_launch_configuration(&provider)

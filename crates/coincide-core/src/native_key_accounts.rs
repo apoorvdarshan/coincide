@@ -310,6 +310,62 @@ impl Engine {
     }
 }
 
+pub(super) fn launch_configuration(
+    owner: &Private,
+    store: &Store,
+    account: Account,
+) -> Result<LaunchConfiguration> {
+    let secrets = NativeSecretStore::from_owner(owner)?;
+    launch_with_secrets(owner, store, account, &secrets)
+}
+fn launch_with_secrets(
+    owner: &Private,
+    store: &Store,
+    account: Account,
+    secrets: &NativeSecretStore,
+) -> Result<LaunchConfiguration> {
+    let summary = summary(&account)?;
+    ensure!(
+        matches!(
+            account.provider.as_str(),
+            "claude" | "cursor" | "grok" | "opencode"
+        ),
+        "This API-key provider still requires its guarded native runtime enrollment"
+    );
+    let slot = account
+        .key
+        .as_ref()
+        .context("Save this account's API key in native Settings before use")?
+        .clone();
+    let value = secrets.read(&slot)?;
+    let value =
+        std::str::from_utf8(&value).context("The saved API key has unsupported encoding")?;
+    ensure!(
+        !value.is_empty() && !value.chars().any(char::is_control),
+        "Replace the invalid saved account key"
+    );
+    let provider = account.provider.clone();
+    let profile = LoginHome::capture(&store.data_directory()?, account)?;
+    let record = read_record(&owner.read()?, &provider)?;
+    ensure!(
+        record.is_some() || !store.requires_native_provider_configuration(&provider)?,
+        "Approved provider configuration is missing; save it again in native Settings"
+    );
+    if let Some(record) = &record {
+        validate_environment(&record.environment)?;
+    }
+    let mut configuration = build_configuration(owner, profile, record, None)?;
+    configuration
+        .record
+        .environment
+        .insert(summary.key_variable, value.into());
+    let bytes = zeroize::Zeroizing::new(serde_json::to_vec(
+        &json!({"captured":configuration.stamp,"keySlot":slot,"effective":configuration.record}),
+    )?);
+    configuration.stamp.digest = crate::digest_hex::lower_hex(Sha256::digest(bytes.as_slice()));
+    Ok(configuration)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +520,75 @@ mod tests {
                 .key
                 .is_none()
         );
+    }
+    #[test]
+    fn owned_key_runtime_captures_secret_generation_and_never_borrows_other_slots() {
+        let (_root, mut engine, binary) = super::super::super::tests::fixture();
+        super::super::super::tests::save(&mut engine, "grok", &binary, "global-fixture");
+        let account = engine
+            .create_native_key_account("grok", "Own key", "XAI_API_KEY")
+            .unwrap();
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let fake = Arc::new(Fake::default());
+        let secrets = NativeSecretStore::from_owner(&owner)
+            .unwrap()
+            .with_backend(fake.clone());
+        let saved = engine
+            .save_account_key_with(
+                &owner,
+                &secrets,
+                "grok",
+                &account.id,
+                &account.revision,
+                "synthetic-first-key",
+            )
+            .unwrap();
+        let raw = engine.store.native_accounts_payload("grok").unwrap();
+        let row = super::super::account(
+            &read(&owner, "grok", raw.as_deref()).unwrap(),
+            "grok",
+            &account.id,
+        )
+        .unwrap();
+        let first = launch_with_secrets(&owner, &engine.store, row, &secrets).unwrap();
+        let saved2 = engine
+            .save_account_key_with(
+                &owner,
+                &secrets,
+                "grok",
+                &account.id,
+                &saved.account.revision,
+                "synthetic-second-key",
+            )
+            .unwrap();
+        let raw = engine.store.native_accounts_payload("grok").unwrap();
+        let row = super::super::account(
+            &read(&owner, "grok", raw.as_deref()).unwrap(),
+            "grok",
+            &account.id,
+        )
+        .unwrap();
+        let second = launch_with_secrets(&owner, &engine.store, row, &secrets).unwrap();
+        assert_ne!(first.stamp, second.stamp);
+        {
+            let _scope = enter(Some(first));
+            assert_eq!(
+                effective_var("XAI_API_KEY"),
+                Some("synthetic-first-key".into())
+            );
+            let mut child = Command::new(&binary);
+            apply_to_child(&mut child, false).unwrap();
+            assert!(child.get_envs().any(|(key, value)| key == "XAI_API_KEY"
+                && value == Some(std::ffi::OsStr::new("synthetic-first-key"))));
+        }
+        {
+            let _scope = enter(Some(second));
+            assert_eq!(
+                effective_var("XAI_API_KEY"),
+                Some("synthetic-second-key".into())
+            );
+        }
+        assert_ne!(saved2.account.revision, saved.account.revision);
     }
     #[test]
     fn all_provider_services_are_validated_without_vault_reads_or_json_authority() {

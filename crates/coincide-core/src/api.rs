@@ -1073,6 +1073,7 @@ impl Engine {
             provider == "antigravity"
                 || codex_profile.is_some()
                 || crate::composer_selection::default_account(&v["selection"]["accountID"])
+                || provider_configuration::native_account_matches(&v["selection"])
                 || bot_instructions.is_some(),
             "Alternate provider accounts are not connected yet"
         );
