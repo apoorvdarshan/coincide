@@ -1,7 +1,9 @@
 //! Private continuation journal, deliberately outside Store documents/imports.
 //! This authenticates app-minted receipts; it is not a defence against a local
 //! user who can replace both this database and its private authentication key.
-use anyhow::{Context as _, Result, ensure};
+#[cfg(unix)]
+use anyhow::Context as _;
+use anyhow::{Result, ensure};
 use ring::hmac;
 #[cfg(unix)]
 use ring::rand::{SecureRandom, SystemRandom};
@@ -266,7 +268,9 @@ mod tests {
     use crate::store::Store;
     use serde_json::json;
     fn fixture() -> (tempfile::TempDir, Store, Journal) {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let store = Store::open(&dir.path().join("state.sqlite")).unwrap();
         let journal = Journal::open(&store).unwrap();
         (dir, store, journal)

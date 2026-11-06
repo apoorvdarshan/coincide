@@ -372,7 +372,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn restart_readmission_preserves_mode_presence_and_same_engine_proof_identity() {
+        use std::{fs, os::unix::fs::PermissionsExt};
         let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let root = dir.path().canonicalize().unwrap();
         let account = Uuid::new_v4().to_string();
         crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();

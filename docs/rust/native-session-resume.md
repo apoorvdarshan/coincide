@@ -25,9 +25,10 @@ no serialized proof recreates an Arc or catalog authorization. Fresh account
 verification and a matching native resume ID/resolved-model ACK precede the
 next turn. Only newly appended transcript items are dispatched on continuation.
 
-Changed context, invalid authentication tags, missing/unsafe key state, a copied
-Store, and corruption fail closed to a new session where normal admission is
-otherwise valid. Original Store tables, imported bytes, search data and unknown
+Changed context, invalid authentication tags, missing/unsafe key state, copied
+Stores, and corrupt receipt rows fail closed to a new session where normal
+admission is otherwise valid. Journal-consumption errors block launch rather
+than risk reusing authority. Original Store tables, imported bytes, search data and unknown
 JSON fields are not migrated or rewritten for this journal. The optional
 journal is currently enabled only on Unix with verified private ownership,
 permissions, no symlinks/hardlinks and an exclusive flock. Unverified non-Unix
@@ -37,5 +38,7 @@ replace both the private key state and database is outside this boundary.
 Validation targets are `named_profile_resume`, its private journal unit tests,
 and `provider_codex_profile_resume`. The latter launches distinct fresh OS
 processes and requires actual `thread/resume` with unchanged native identity
-and only the new prompt. Compilation, automated execution and native candidate
-Quit/reopen acceptance remain pending at the initial draft checkpoint.
+and only the new prompt. Compilation passed at the second draft checkpoint.
+Focused execution found temporary test directories with insufficient privacy;
+fixtures now explicitly set mode 0700 without relaxing production guards.
+Automated retesting and native candidate Quit/reopen acceptance remain pending.

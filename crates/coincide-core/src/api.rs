@@ -968,8 +968,8 @@ impl Engine {
                 .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
             "Draft images exceed 20 MiB"
         );
-        // Persisted session metadata never authorizes a named resume. Only
-        // this Engine's successful saved turn + owned worker join can do so.
+        // Session JSON cannot authorize named resume. The private registry
+        // and authenticated restart journal require a saved owned worker join.
         let named_resume = if let Some(profile) = &codex_profile {
             Some(
                 self.named_resume.prepare(
