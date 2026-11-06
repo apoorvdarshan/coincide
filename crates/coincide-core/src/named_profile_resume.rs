@@ -84,11 +84,9 @@ impl Authority {
         let resolved = result["model"]
             .as_str()
             .context("Named session did not resolve a model")?;
-        crate::composer_selection::validate_model(resolved)?;
-        ensure!(
-            resolved != "default",
-            "Named session did not resolve an actual model"
-        );
+        // A resume receipt must meet the same actual-model contract as the
+        // turn policy, including trimmed, nonblank and non-default identity.
+        crate::composer_policy::ResolvedCodexModel::from_thread_result(native, result)?;
         if let Some(previous) = &self.previous {
             ensure!(
                 native == previous.native && resolved == previous.resolved,
@@ -289,6 +287,54 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(unix)]
+    #[test]
+    fn acknowledgement_requires_the_actual_resolved_model_contract() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let account = Uuid::new_v4().to_string();
+        crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+        let profile =
+            LaunchContext::capture(&root, &account, &std::env::current_exe().unwrap()).unwrap();
+        let thread = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","accountID":account,"modelID":"default"},"accessMode":"approval","interactionMode":"build","items":[]});
+        let policy =
+            Policy::parse_named(&thread, crate::composer_policy::Origin::Ordinary, None).unwrap();
+        let mut registry = Registry::default();
+        let authority = registry.prepare(&thread, profile, &root, policy).unwrap();
+        assert!(authority.session().is_none());
+        for model in [
+            None,
+            Some(Value::Null),
+            Some(json!(17)),
+            Some(json!("")),
+            Some(json!("   ")),
+            Some(json!(" model-actual")),
+            Some(json!("model-actual ")),
+            Some(json!("default")),
+            Some(json!(" default ")),
+        ] {
+            let mut result = json!({"thread":{"id":"native-owned"}});
+            if let Some(model) = model {
+                result["model"] = model;
+            }
+            assert!(
+                authority.acknowledge(&result).is_err(),
+                "Invalid resolved model must not create completion authority: {result}"
+            );
+            assert!(registry.ready.is_empty() && registry.pending.is_empty());
+        }
+        let result = json!({"thread":{"id":"native-owned"},"model":"model-actual"});
+        let ack = authority.acknowledge(&result).unwrap();
+        assert_eq!(ack.native, "native-owned");
+        assert_eq!(ack.resolved, "model-actual");
+        assert!(
+            registry.ready.is_empty() && registry.pending.is_empty(),
+            "Even a valid ACK alone cannot mint a resume receipt"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn semantic_finished_cannot_mint_until_exact_owned_worker_join() {
