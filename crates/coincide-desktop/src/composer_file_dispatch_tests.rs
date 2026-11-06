@@ -821,6 +821,72 @@ fn headless_closed_pane_keeps_held_activation_until_real_key_up(cx: &mut TestApp
     }
 }
 
+#[gpui_kit::test]
+#[ignore = "private-child wrapper only"]
+fn headless_folder_completion_uses_actual_native_range_and_preserves_newer_text_and_ime(
+    cx: &mut TestAppContext,
+) {
+    for case in 0..4 {
+        let (view, vcx) = setup(cx, true);
+        let before = read(&view, vcx);
+        let (range, query) = mentions::detect(TEXT, before.selection.clone(), false, &[]).unwrap();
+        let ticket = mentions::Ticket {
+            binding: super::Binding {
+                thread: "synthetic".into(),
+                draft: TEXT.into(),
+                context: coincide_core::composer_context::ExpectedContext::from_thread(
+                    &serde_json::json!({}),
+                ),
+                project: serde_json::Value::Null,
+                worktree: serde_json::Value::Null,
+            },
+            selection: before.selection.clone(),
+            range: range.clone(),
+            query,
+            revision: before.revision,
+        };
+        let applied = vcx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.input.update(cx, |input, cx| {
+                    if case == 1 {
+                        input.set_value(format!("{TEXT} newer"), window, cx);
+                    }
+                    if case == 2 {
+                        EntityInputHandler::set_selected_text_range(input, 0..0, window, cx);
+                    }
+                    if case == 3 {
+                        let utf16 = TEXT[..range.start].encode_utf16().count()
+                            ..TEXT[..range.end].encode_utf16().count();
+                        EntityInputHandler::replace_and_mark_text_in_range(
+                            input,
+                            Some(utf16),
+                            "@",
+                            Some(1..1),
+                            window,
+                            cx,
+                        );
+                        assert_eq!(input.value().as_ref(), TEXT);
+                        assert!(input.marked_text_range(window, cx).is_some());
+                    }
+                    let preserved = input.value().to_string();
+                    let applied = mentions::apply_folder(input, &ticket, "src/café", window, cx);
+                    if case != 0 {
+                        assert_eq!(input.value().as_ref(), preserved);
+                    }
+                    applied
+                })
+            })
+        });
+        vcx.run_until_parked();
+        assert_eq!(applied, case == 0);
+        let after = read(&view, vcx);
+        if case == 0 {
+            assert_eq!(after.draft, TEXT.replacen('@', "@src/café/", 1));
+            assert_eq!(after.press_enter, 0);
+        }
+    }
+}
+
 #[::core::prelude::v1::test]
 fn actual_textarea_capture_in_private_child() {
     use std::{fs, process::Command};
@@ -863,7 +929,7 @@ fn actual_textarea_capture_in_private_child() {
         "actual headless dispatch child failed\n{stdout}\n{stderr}"
     );
     assert!(
-        stdout.contains("7 passed"),
-        "all seven actual-dispatch cases must run\n{stdout}\n{stderr}"
+        stdout.contains("8 passed"),
+        "all eight actual-dispatch cases must run\n{stdout}\n{stderr}"
     );
 }

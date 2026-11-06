@@ -196,6 +196,86 @@ pub fn files(directory: &Path, query: &str, limit: usize) -> Result<Value> {
     Ok(json!({"files":paths,"total":total,"truncated":total>limit}))
 }
 
+/// Composer completion includes folders derived from Git's literal paths. This
+/// stays distinct from the public file-list API, and never reads file bodies.
+pub(crate) fn composer_paths(directory: &Path, query: &str, limit: usize) -> Result<Value> {
+    let bytes = git(
+        directory,
+        &[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    composer_path_results(&bytes, query, limit)
+}
+fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Value> {
+    ensure!(
+        (1..=80).contains(&limit),
+        "Composer result limit must be 1–80"
+    );
+    let mut entries = std::collections::BTreeMap::<String, bool>::new();
+    let mut limited = false;
+    for raw in bytes.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let path = std::str::from_utf8(raw).context("Project path is not UTF-8")?;
+        if entries.len() >= 25_000 {
+            limited = true;
+            break;
+        }
+        entries.entry(path.to_owned()).or_insert(false);
+        let mut parent = Path::new(path).parent();
+        while let Some(folder) = parent.filter(|p| !p.as_os_str().is_empty()) {
+            if entries.len() >= 25_000 {
+                limited = true;
+                break;
+            }
+            if let Some(folder) = folder.to_str() {
+                entries.entry(folder.to_owned()).or_insert(true);
+            }
+            parent = folder.parent();
+        }
+    }
+    let query = query.to_lowercase();
+    let mut matches: Vec<_> = entries
+        .into_iter()
+        .filter_map(|(path, directory)| {
+            let lower = path.to_lowercase();
+            let name = lower.rsplit('/').next().unwrap_or(&lower);
+            let depth = lower.bytes().filter(|b| *b == b'/').count();
+            let rank = if query.is_empty() {
+                if depth == 0 {
+                    0
+                } else {
+                    return None;
+                }
+            } else if name == query {
+                0
+            } else if name.starts_with(&query) {
+                1
+            } else if lower.starts_with(&query) {
+                2
+            } else if name.contains(&query) {
+                3
+            } else if lower.contains(&query) {
+                4
+            } else {
+                return None;
+            };
+            Some((rank, depth, !directory, lower, path))
+        })
+        .collect();
+    matches.sort_unstable();
+    let total = matches.len();
+    let paths: Vec<_> = matches
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, _, _, path)| path)
+        .collect();
+    Ok(json!({"files":paths,"total":total,"truncated":limited || total>limit}))
+}
+
 pub fn read_file(directory: &Path, path: &str, offset: usize, limit: usize) -> Result<Value> {
     ensure!((1..=5000).contains(&limit), "Line limit must be 1–5000");
     let relative = relative_path(path)?;
@@ -225,6 +305,28 @@ pub fn read_file(directory: &Path, path: &str, offset: usize, limit: usize) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn composer_folder_results_narrow_paths_and_preserve_public_file_list_contract() {
+        let paths =
+            "src/café.rs\0src/deep/main.rs\0src/deep/main.rs\0top.rs\0white space/child.rs\0";
+        let top = composer_path_results(paths.as_bytes(), "", 80).unwrap();
+        assert_eq!(top["files"], json!(["src", "white space", "top.rs"]));
+        let nested = composer_path_results(paths.as_bytes(), "src/", 80).unwrap();
+        assert_eq!(
+            nested["files"],
+            json!(["src/deep", "src/café.rs", "src/deep/main.rs"])
+        );
+        let limited = composer_path_results(paths.as_bytes(), "src", 1).unwrap();
+        assert_eq!(limited["files"], json!(["src"]));
+        assert_eq!(limited["total"], 4);
+        assert_eq!(limited["truncated"], true);
+        assert_eq!(
+            composer_path_results(paths.as_bytes(), "CAFÉ", 80).unwrap()["files"],
+            json!(["src/café.rs"])
+        );
+        assert!(composer_path_results(&[255, 0], "", 80).is_err());
+        assert!(composer_path_results(paths.as_bytes(), "", 81).is_err());
+    }
     #[test]
     fn repository_status_diff_and_literal_file_paths() {
         let dir = tempfile::tempdir().unwrap();
