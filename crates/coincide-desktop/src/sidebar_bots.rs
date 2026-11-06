@@ -356,10 +356,19 @@ impl Coincide {
                                 }
                                 let parent_edit = parent.clone();
                                 let id = menu_id.clone();
-                                menu.item(PopupMenuItem::new("Edit Bot…").on_click(
+                                menu = menu.item(PopupMenuItem::new("Edit Bot…").on_click(
                                     move |_, window, cx| {
                                         let _ = parent_edit.update(cx, |this, cx| {
                                             this.sidebar_edit_bot(Some(id.clone()), window, cx)
+                                        });
+                                    },
+                                ));
+                                let parent_delete = parent.clone();
+                                let id = menu_id.clone();
+                                menu.item(PopupMenuItem::new("Delete Bot…").on_click(
+                                    move |_, _, cx| {
+                                        let _ = parent_delete.update(cx, |this, cx| {
+                                            this.sidebar_bot_delete_review(id.clone(), cx)
                                         });
                                     },
                                 ))

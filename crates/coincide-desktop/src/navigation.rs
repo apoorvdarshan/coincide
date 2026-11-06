@@ -36,6 +36,8 @@ enum SidebarThreadAction {
     Rename,
     Fork,
     Archive,
+    Move,
+    Delete,
     Schedule,
     CopyID,
     CopyPath,
@@ -836,7 +838,7 @@ impl Coincide {
                                             SidebarThreadAction::Archive,
                                         ),
                                     ];
-                                    actions.extend([("Schedule…",SidebarThreadAction::Schedule),("Open In",SidebarThreadAction::Open),("Copy Path",SidebarThreadAction::CopyPath),("Copy Thread ID",SidebarThreadAction::CopyID),(if was_unread { "Mark as Read" } else { "Mark as Unread" },SidebarThreadAction::Unread),(if was_settled { "Unsettle" } else { "Settle" },SidebarThreadAction::Settle)]);
+                                    actions.extend([("Move to Project…",SidebarThreadAction::Move),("Delete Conversation…",SidebarThreadAction::Delete),("Schedule…",SidebarThreadAction::Schedule),("Open In",SidebarThreadAction::Open),("Copy Path",SidebarThreadAction::CopyPath),("Copy Thread ID",SidebarThreadAction::CopyID),(if was_unread { "Mark as Read" } else { "Mark as Unread" },SidebarThreadAction::Unread),(if was_settled { "Unsettle" } else { "Settle" },SidebarThreadAction::Settle)]);
                                     if snoozed { actions.push(("Unsnooze",SidebarThreadAction::Unsnooze)); } else { actions.extend(coincide_core::scheduling::native_snooze_presets().into_iter().map(|(label,date)|(label,SidebarThreadAction::Snooze(date)))); }
                                     for (label,action) in actions {
                                         let parent = parent.clone();
@@ -871,6 +873,8 @@ impl Coincide {
                                                         SidebarThreadAction::Archive => {
                                                             if !this.running.contains(&id) { this.request_archive(cx); } else { this.status="Stop this conversation before archiving it.".into(); cx.notify(); }
                                                         }
+                                                        SidebarThreadAction::Move => { this.sidebar_move_review(id.clone(),cx); }
+                                                        SidebarThreadAction::Delete => { this.sidebar_delete_review(id.clone(),cx); }
                                                         SidebarThreadAction::Schedule => { this.open_conversation_schedules(cx); this.open_schedule_editor(None,window,cx); }
                                                         SidebarThreadAction::CopyID => cx.write_to_clipboard(ClipboardItem::new_string(id.clone())),
                                                         SidebarThreadAction::CopyPath => { if let Some(path)=this.open_folder() { cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned())); } }
@@ -1290,6 +1294,9 @@ impl Coincide {
                 self.thread_bulk.mode || !self.thread_bulk.status.is_empty(),
                 |view| view.child(self.bulk_controls(cx)),
             )
+            .when(self.sidebar_lifecycle.visible(), |view| {
+                view.child(self.sidebar_lifecycle_controls(cx))
+            })
             .child(conversations)
             .when_some(self.sidebar_preferences.error.as_ref(), |view, error| {
                 view.child(div().text_xs().child(error.clone()))

@@ -150,6 +150,39 @@ impl Store {
                 targets.push(target);
             }
         }
+        // Include locally authorized snapshots of already-deleted conversations:
+        // an older Archive Undo must not resurrect execution of a removed bot.
+        let mut context_query = self.connection()?.prepare("SELECT name,document FROM documents WHERE name GLOB 'rust-bot-context-*.json' LIMIT 8193")?;
+        let contexts = context_query
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(
+            contexts.len() <= 8192,
+            "Bot authorization cleanup exceeds its review bound"
+        );
+        let mut context_bytes = 0usize;
+        for (name, raw) in contexts {
+            ensure!(
+                raw.len() <= 512 * 1024,
+                "A bot authorization record exceeds its safe bound"
+            );
+            let context: Value = serde_json::from_str(&raw)?;
+            if Uuid::parse_str(&text(&context, "botId")).ok() == Some(id) {
+                ensure!(
+                    crate::bot_runtime::context_document_name(&context)? == name,
+                    "Bot authorization record identity changed"
+                );
+                context_bytes = context_bytes.saturating_add(raw.len());
+                ensure!(
+                    context_bytes <= 32 * 1024 * 1024,
+                    "Bot authorization Undo exceeds its review bound"
+                );
+                before.insert(name.clone(), Some(context));
+                after.insert(name, None);
+            }
+        }
         // Remove only previously local, exact authorization records for this
         // bot, never materialize imported context claims into local authority.
         for row in &rows {

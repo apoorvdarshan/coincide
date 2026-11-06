@@ -66,6 +66,19 @@ fn validate_folder(folder: &(PathBuf, crate::private_fs::Identity)) -> Result<()
     Ok(())
 }
 impl Engine {
+    /// Native Stop-and-review only: requests cancellation of this selected
+    /// bot's actual running conversations; the caller must still wait for joins.
+    pub fn request_native_bot_stop(&mut self, bot: &str) -> Result<usize> {
+        let plan = self.store.prepare_bot_lifecycle(bot, true)?;
+        let mut stopped = 0;
+        for row in &plan.rows {
+            if self.runs.contains_key(&row.id) {
+                self.request_provider_stop(&row.id)?;
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
+    }
     pub fn prepare_native_bot_deletion(
         &mut self,
         bot: &str,
@@ -227,6 +240,34 @@ mod tests {
         store.save_document(&context_name, &context).unwrap();
         store.save_document("scheduled-tasks.json",&json!({"tasks":[{"id":"selected-task","threadID":id,"future":7},{"id":"other-task","threadID":Uuid::new_v4().to_string(),"future":8}],"unknown":{"keep":true}})).unwrap();
         (dir, Engine::fixture(store), bot, id, context_name)
+    }
+    #[test]
+    fn an_older_archive_undo_cannot_reauthorize_a_deleted_bots_local_instruction_snapshot() {
+        let (_dir, mut engine, bot, id, context) = fixture(true);
+        let mut thread = engine.store.thread(&id).unwrap();
+        thread["isArchived"] = json!(true);
+        engine.store.save(&thread).unwrap();
+        let archived = engine
+            .prepare_native_thread_deletion(&[id.clone()])
+            .unwrap();
+        let archived = engine.apply_native_thread_deletion(archived).unwrap();
+        assert!(engine.store.local_document(&context).unwrap().is_some());
+        let plan = engine
+            .prepare_native_bot_deletion(&bot, BotConversationDisposition::Delete)
+            .unwrap();
+        assert_eq!(plan.conversation_count(), 0);
+        let _undo = engine.apply_native_bot_deletion(plan).unwrap();
+        assert!(engine.store.local_document(&context).unwrap().is_none());
+        engine.undo_native_thread_deletion(&archived).unwrap();
+        let restored = engine.store.thread(&id).unwrap();
+        assert!(
+            engine
+                .bot_instructions(
+                    &restored,
+                    std::path::Path::new(restored["rustBotContext"]["cwd"].as_str().unwrap())
+                )
+                .is_err()
+        );
     }
     #[test]
     fn both_native_bot_delete_modes_and_undo_are_atomic_preserve_unknowns_and_deny_old_sessions() {

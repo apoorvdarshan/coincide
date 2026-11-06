@@ -51,6 +51,7 @@ pub struct ThreadMoveUndo {
     store: (PathBuf, crate::private_fs::Identity),
     original: Value,
     destination: String,
+    generation: Option<u64>,
     from: Folder,
     to: Folder,
 }
@@ -134,6 +135,7 @@ impl Engine {
             owner: prepared.owner,
             store: prepared.store,
             destination: required(&next, "projectID")?.into(),
+            generation: self.store.selection_scope_generation(&prepared.row.id),
             original: prepared.original,
             from: prepared.from,
             to: prepared.to,
@@ -147,6 +149,10 @@ impl Engine {
         );
         let id = required(&undo.original, "id")?;
         self.archive_delete_admitted(&[id.into()], false)?;
+        ensure!(
+            self.store.selection_scope_generation(id) == undo.generation,
+            "Conversation scope changed since this Move; Undo was refused"
+        );
         undo.from.validate()?;
         undo.to.validate()?;
         let current = self.store.thread(id)?;
@@ -219,6 +225,19 @@ mod tests {
         store.save(&thread).unwrap();
         let id = required(&thread, "id").unwrap().to_owned();
         (dir, Engine::fixture(store), id, a, b)
+    }
+    #[test]
+    fn old_move_undo_cannot_cross_a_later_native_move_intent() {
+        let (_dir, mut engine, id, _, b) = fixture();
+        let first = engine.prepare_native_thread_move(&id, &b).unwrap();
+        let first = engine.apply_native_thread_move(first).unwrap();
+        engine.undo_native_thread_move(&first).unwrap();
+        let second = engine.prepare_native_thread_move(&id, &b).unwrap();
+        let second = engine.apply_native_thread_move(second).unwrap();
+        let before = engine.store.thread(&id).unwrap();
+        assert!(engine.undo_native_thread_move(&first).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        engine.undo_native_thread_move(&second).unwrap();
     }
     #[test]
     fn real_owned_worker_return_is_required_before_move_or_ordinary_delete_review() {
