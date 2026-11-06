@@ -13,6 +13,10 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "appshots_api.rs"]
+mod appshots_api;
+pub use appshots_api::{AppshotTicket, PreparedAppshot};
+
 #[path = "follow_up_api.rs"]
 mod follow_up_api;
 #[path = "project_defaults.rs"]
@@ -162,6 +166,7 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
     native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
@@ -241,6 +246,7 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
             native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),

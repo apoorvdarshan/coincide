@@ -1,3 +1,6 @@
+mod appshots;
+mod appshots_platform;
+mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
 mod usage_history_mount;
@@ -383,6 +386,7 @@ struct Coincide {
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
+    appshots: appshots::State,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -757,10 +761,11 @@ impl Coincide {
                 }
                 let drafts_saved = this.flush_pending_drafts();
                 let cookies_ready = this.poll_cookie_close(cx);
+                this.appshots.close();
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
                 cx.notify();
-                drafts_saved && media_ready && cookies_ready && this.computer_use_shutdown_ready()
+                drafts_saved && media_ready && cookies_ready && this.computer_use_shutdown_ready() && this.appshots.drained()
             })
             .unwrap_or(false)
         });
@@ -1172,6 +1177,7 @@ impl Coincide {
             settings_window_pending: false,
             main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
+            appshots: appshots::State::new(cx),
             keyboard,
             usage_history,
             codex_limits,
@@ -1279,6 +1285,7 @@ impl Coincide {
         };
         this.apply_appearance(window, cx);
         this.restore_startup_selection(window, cx);
+        this.appshots.sync(&this.settings);
         this.poll_computer_use(cx);
         this
     }
@@ -2754,11 +2761,13 @@ impl Coincide {
             true
         };
         if self.media.close_requested {
+            self.appshots.close();
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
             if drafts_saved
                 && cookies_ready
                 && self.media_shutdown_ready(cx)
+                && self.appshots.drained()
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.composer_files.closed_and_drained()
@@ -2803,6 +2812,7 @@ impl Coincide {
             return;
         }
         self.poll_app_menu(window, cx);
+        self.poll_appshots(window,cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
@@ -4146,6 +4156,7 @@ impl Render for Coincide {
             .on_children_prepainted(self.media_layout_observer(cx))
             .flex_1()
             .min_h(px(120.))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, _| this.record_appshot_interaction()))
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
                     entity.update(cx, |this, cx| this.message(index, window, cx))

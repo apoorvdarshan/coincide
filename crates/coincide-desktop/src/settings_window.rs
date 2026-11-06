@@ -88,6 +88,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.record_appshot_shortcut(event, window, cx) { return; }
         if self.record_shortcut_event(event, window, cx) {
             return;
         }
