@@ -401,8 +401,12 @@ fn fixture(root: &Path) {
     // real account/catalog/native-session path, preserving its separate draft.
     call(&mut engine, "agent.queue.pause", json!({"threadId":id}));
     let mut source = engine.store.thread(&id).unwrap();
+    let mut queue_source = source.clone();
+    queue_source["rustDraftImages"] = json!([]);
     let immediate =
-        coincide_core::message_queue::add(&mut source, "synthetic named Send now delta").unwrap();
+        coincide_core::message_queue::add(&mut queue_source, "synthetic named Send now delta")
+            .unwrap();
+    source["rustMessageQueue"] = queue_source["rustMessageQueue"].clone();
     let immediate_id = immediate.id.clone();
     engine.store.save(&source).unwrap();
     let immediate = serde_json::to_value(immediate).unwrap();

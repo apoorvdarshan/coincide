@@ -445,9 +445,9 @@ fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
         ..
     } = fixture();
     let mut source = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut source, "synthetic queued immediate steer").unwrap();
     source["draftContext"] = json!([{"future":"unopened context"}]);
     source["rustDraftImages"] = json!([{"future":"unopened image"}]);
-    crate::message_queue::add(&mut source, "synthetic queued immediate steer").unwrap();
     source["rustMessageQueue"][0]["future"] = json!({"keep":true});
     engine.store.save(&source).unwrap();
     engine.enabled_queues.remove(&id);
