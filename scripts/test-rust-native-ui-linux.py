@@ -86,7 +86,7 @@ def main():
         process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
         wait_for("live application control", lambda: process.poll() is None and rpc("app.status"))
         window = wait_for("visible Coincide X11 window", lambda: command(
-            "xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
             "--name", "^Coincide Rust Preview$", env=env).splitlines()[0])
         command("xdotool", "windowfocus", "--sync", window, env=env)
         return window
@@ -152,7 +152,7 @@ def main():
         command("xdotool", "key", "Return", env=env)
         time.sleep(0.6)
         settings_window = wait_for("separate Settings window", lambda: command(
-            "xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
             "--name", "^General$", env=env).splitlines()[0])
         assert settings_window != window, "Settings must leave the conversation in its own window"
         capture(settings_window, "settings", "General")
@@ -160,13 +160,13 @@ def main():
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
         time.sleep(0.5)
-        matches = command("xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+        matches = command("xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
                           "--name", "^General$", env=env).splitlines()
         assert matches == [settings_window], "Opening Settings again must reuse its existing window"
         command("xdotool", "windowfocus", "--sync", settings_window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+w", env=env)
         def settings_closed():
-            result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
+            result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
                                      "--name", "^General$"], capture_output=True, text=True, env=env)
             return result.returncode == 1 and not result.stdout.strip()
         wait_for("Settings closed independently", settings_closed)

@@ -19,6 +19,21 @@ $CompilerReferences = @(
         Where-Object { $_.BaseName -notin @('System.Drawing','System.Drawing.Common','System.Drawing.Primitives') } |
         ForEach-Object { $_.FullName }
 ) + @([System.Drawing.Bitmap].Assembly.Location,[System.Drawing.Point].Assembly.Location)
+# .NET 10 splits Drawing's public image interfaces into private Windows
+# runtime assemblies. Reference those installed transitive dependencies too.
+$DrawingQueue = [Collections.Generic.Queue[Reflection.Assembly]]::new()
+$DrawingQueue.Enqueue([System.Drawing.Bitmap].Assembly)
+$DrawingSeen = [Collections.Generic.HashSet[string]]::new()
+while ($DrawingQueue.Count -gt 0) {
+    $assembly = $DrawingQueue.Dequeue()
+    foreach ($reference in $assembly.GetReferencedAssemblies()) {
+        if ($reference.Name.StartsWith('System.Private.Windows.') -and $DrawingSeen.Add($reference.FullName)) {
+            $dependency = [Reflection.Assembly]::Load($reference)
+            $CompilerReferences += $dependency.Location
+            $DrawingQueue.Enqueue($dependency)
+        }
+    }
+}
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
