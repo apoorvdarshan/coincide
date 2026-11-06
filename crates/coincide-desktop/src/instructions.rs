@@ -4,6 +4,8 @@
 mod file;
 #[path = "instructions_setup.rs"]
 mod setup;
+#[path = "instructions_sync.rs"]
+mod sync;
 use file::EditorFile;
 use gpui_kit::{
     base::Disableable,
@@ -222,7 +224,8 @@ impl Render for InstructionsPanel {
                                 !readable
                                     || !dirty
                                     || self.blocked
-                                    || self.setup.review.is_some()
+                                    || (self.setup.review.is_some()
+                                        || self.setup.has_copy_review())
                                     || self.setup.picker_pending,
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -247,7 +250,9 @@ impl Render for InstructionsPanel {
                     .min_h(px(180.))
                     .font_family("monospace")
                     .child(Textarea::new(&self.editor).h_full().disabled(
-                        !readable || self.setup.review.is_some() || self.setup.picker_pending,
+                        !readable
+                            || (self.setup.review.is_some() || self.setup.has_copy_review())
+                            || self.setup.picker_pending,
                     )),
             )
             .child(self.setup_review(cx))

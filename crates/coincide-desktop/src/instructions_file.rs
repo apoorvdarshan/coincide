@@ -49,6 +49,10 @@ impl EditorFile {
             snapshot: None,
         }
     }
+    #[cfg(test)]
+    pub(super) fn synthetic_recovery(&mut self, path: PathBuf) {
+        self.recovery_root = path;
+    }
     pub(super) fn path(&self) -> &Path {
         &self.master
     }
@@ -75,6 +79,25 @@ impl EditorFile {
             "Reviewed instruction source changed; review it again"
         );
         Ok(())
+    }
+    pub(super) fn retain_sync_backup(&self) -> Result<PathBuf> {
+        self.validate_review_source()?;
+        let expected = self
+            .snapshot
+            .as_ref()
+            .context("Instruction source was not loaded")?;
+        native_file::private_directory(&self.recovery_root)?;
+        let path = self
+            .recovery_root
+            .join(format!("sync-version-{}.md", uuid::Uuid::new_v4()));
+        let mut file = native_file::create_private_file(&path)?;
+        file.write_all(&expected.bytes)?;
+        file.sync_all()?;
+        #[cfg(unix)]
+        File::open(&self.recovery_root)?.sync_all()?;
+        self.validate_review_source()
+            .with_context(|| format!("Captured version retained at {}", path.display()))?;
+        Ok(path)
     }
     pub(super) fn save(&mut self, text: &str) -> Result<()> {
         self.save_using(text, |file, bytes| {

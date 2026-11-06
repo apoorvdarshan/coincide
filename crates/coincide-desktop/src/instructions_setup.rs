@@ -9,8 +9,12 @@ use anyhow::{Context as _, Result};
 use coincide_core::api::SharedEngine;
 use serde_json::Value;
 use std::path::PathBuf;
+#[path = "instructions_sync_ui.rs"]
+mod copy_ui;
+use std::path::Path;
 pub(super) struct Setup {
     engine: SharedEngine,
+    copy: copy_ui::State,
     pub(super) scope: Option<NativeScope>,
     metadata: Option<Metadata>,
     projects: Vec<Value>,
@@ -20,12 +24,16 @@ pub(super) struct Setup {
     pub(super) review: Option<NativeReviewPlan>,
     review_editor: Option<EditorFile>,
     choices: Vec<Choice>,
+    disable_review: bool,
     pub(super) picker: Option<Task<()>>,
     pub(super) picker_pending: bool,
     generation: u64,
     status: String,
 }
 impl Setup {
+    pub(super) fn has_copy_review(&self) -> bool {
+        self.copy.review.is_some()
+    }
     pub(super) fn new(engine: SharedEngine) -> Self {
         let scope = NativeScope::global_native();
         let status = scope
@@ -35,6 +43,7 @@ impl Setup {
             .unwrap_or_default();
         let mut result = Self {
             engine,
+            copy: copy_ui::State::new(),
             scope: scope.ok(),
             metadata: None,
             projects: Vec::new(),
@@ -44,6 +53,7 @@ impl Setup {
             review: None,
             review_editor: None,
             choices: Vec::new(),
+            disable_review: false,
             picker: None,
             picker_pending: false,
             generation: 0,
@@ -148,6 +158,7 @@ impl InstructionsPanel {
         match result {
             Ok((scope, root)) => {
                 self.setup.generation = self.setup.generation.wrapping_add(1);
+                self.setup.copy.invalidate();
                 self.setup.review = None;
                 self.setup.review_editor = None;
                 self.setup.project = project;
@@ -188,6 +199,7 @@ impl InstructionsPanel {
         match result {
             Ok(scope) => {
                 self.setup.generation = self.setup.generation.wrapping_add(1);
+                self.setup.copy.invalidate();
                 self.setup.review = None;
                 self.setup.review_editor = None;
                 self.setup.scope = Some(scope.clone());
@@ -247,6 +259,7 @@ impl InstructionsPanel {
         self.setup.review_editor = None;
         self.setup.picker_pending = true;
         self.setup.generation = self.setup.generation.wrapping_add(1);
+        self.setup.copy.invalidate();
         let generation = self.setup.generation;
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -348,6 +361,8 @@ impl InstructionsPanel {
         cx.notify();
     }
     fn setup_prepare_links(&mut self, cx: &mut Context<Self>) {
+        self.setup.disable_review = false;
+        self.setup.copy.invalidate_review();
         if !self.setup_clean(cx) {
             return;
         }
@@ -403,6 +418,89 @@ impl InstructionsPanel {
             }
             Err(error) => self.setup.status = error.to_string(),
         }
+        cx.notify();
+    }
+    fn setup_prepare_disable(&mut self, cx: &mut Context<Self>) {
+        self.setup_prepare_links(cx);
+        if self.setup.review.is_some() {
+            self.setup.disable_review = true;
+            self.setup.status =
+                "Choose whether to keep links or replace this master's links with separate copies."
+                    .into();
+        }
+        cx.notify();
+    }
+    fn setup_confirm_disable(
+        &mut self,
+        replace: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dirty(cx) {
+            self.setup.status =
+                "Save or discard editor changes before disabling the shared master.".into();
+            cx.notify();
+            return;
+        }
+        let Some(plan) = self.setup.review.take() else {
+            return;
+        };
+        self.setup.copy.invalidate();
+        self.setup.review_editor = None;
+        let result = (|| -> Result<(NativeScope, Vec<crate::instructions_scope::LinkOutcome>)> {
+            let engine = self.setup.engine.clone();
+            let mut owner = crate::try_state(&engine)?;
+            let (scope, outcomes) = plan.disable_native(&owner.store, replace)?;
+            if outcomes.iter().all(|o| o.error.is_none()) {
+                let baseline = self
+                    .setup
+                    .metadata
+                    .as_ref()
+                    .context("Refresh instruction configuration")?;
+                self.setup.metadata =
+                    Some(scope.persist_configuration_native(&mut owner.store, baseline, false)?);
+            }
+            Ok((scope, outcomes))
+        })();
+        match result {
+            Ok((scope, outcomes)) => {
+                let converted = outcomes.iter().filter(|o| o.linked).count();
+                let failed = outcomes.iter().any(|o| o.error.is_some());
+                let mut status = if failed {
+                    format!(
+                        "Copied {converted} link(s); shared-master configuration was kept because a file operation failed."
+                    )
+                } else if replace {
+                    format!(
+                        "Shared-master mode turned off; {converted} link(s) replaced with separate copies."
+                    )
+                } else {
+                    "Shared-master mode turned off. Existing links still read the master.".into()
+                };
+                for outcome in outcomes {
+                    if let Some(backup) = outcome.backup {
+                        status.push_str(&format!(" Backup: {}.", backup.display()));
+                    }
+                    if let Some(error) = outcome.error {
+                        status.push_str(&format!(
+                            " {}: {error}. Setup was only partially changed.",
+                            outcome.path.display()
+                        ));
+                    }
+                }
+                self.setup.scope = Some(scope.clone());
+                if let Err(e) = self.bind_native_source(&scope, window, cx) {
+                    status.push_str(&format!(" {e}"));
+                }
+                self.setup.status = status;
+                if let Err(e) = self.setup.refresh() {
+                    self.setup.status.push_str(&format!(" {e}"));
+                }
+            }
+            Err(error) => {
+                self.setup.status = format!("Shared-master setup was not changed: {error}")
+            }
+        };
         cx.notify();
     }
     fn setup_apply_links(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -482,7 +580,9 @@ impl InstructionsPanel {
         cx.notify();
     }
     pub(super) fn setup_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let pending = self.setup.picker_pending || self.setup.review.is_some();
+        let pending = self.setup.picker_pending
+            || self.setup.review.is_some()
+            || self.setup.has_copy_review();
         let mut scopes = div().flex().flex_wrap().gap_1().child(
             Button::new("instructions-global-scope")
                 .label("Global")
@@ -570,6 +670,12 @@ impl InstructionsPanel {
                         .on_click(cx.listener(|this, _, _, cx| this.setup_prepare_links(cx))),
                 )
                 .child(
+                    Button::new("instructions-disable-master")
+                        .label("Turn Off Shared Master…")
+                        .disabled(pending || self.setup.scope.is_none())
+                        .on_click(cx.listener(|this, _, _, cx| this.setup_prepare_disable(cx))),
+                )
+                .child(
                     Button::new("instructions-refresh-setup")
                         .label("Refresh Files")
                         .disabled(pending)
@@ -603,12 +709,54 @@ impl InstructionsPanel {
             );
         }
         pane.child(files)
+            .child(self.copy_controls(cx))
             .child(self.setup.status.clone())
             .into_any_element()
     }
     pub(super) fn setup_review(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut pane = div().flex().flex_col().gap_2();
         if let Some(review) = &self.setup.review {
+            if self.setup.disable_review {
+                pane=pane.child(format!("Turn off shared-master mode for {}?",review.master_path().display())).child("Only links to this master can become copies. Other files and foreign links stay unchanged.");
+                for target in review
+                    .targets
+                    .iter()
+                    .filter(|t| t.state == crate::instructions_config::TargetState::Linked)
+                {
+                    pane = pane.child(target.path.display().to_string());
+                }
+                return pane
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("instructions-disable-cancel")
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.setup.review = None;
+                                        this.setup.review_editor = None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("instructions-disable-keep")
+                                    .label("Keep Links and Turn Off")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.setup_confirm_disable(false, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("instructions-disable-copies")
+                                    .label("Replace Links with Copies")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.setup_confirm_disable(true, window, cx)
+                                    })),
+                            ),
+                    )
+                    .into_any_element();
+            }
             pane = pane.child("Proposed master text").child(
                 div()
                     .id("instruction-plan-preview")
@@ -663,6 +811,6 @@ impl InstructionsPanel {
                 }
             }
         }
-        pane.into_any_element()
+        pane.child(self.copy_review(cx)).into_any_element()
     }
 }

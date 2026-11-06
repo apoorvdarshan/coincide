@@ -13,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
+#[path = "instructions_discovery.rs"]
+mod discovery;
 const LIMIT: usize = 1024 * 1024;
 const NAMES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"];
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +196,9 @@ impl NativeScope {
             managed: Vec::new(),
         })
     }
+    pub fn validate_native(&self, store: &Store) -> Result<()> {
+        self.validate(store)
+    }
     fn validate(&self, store: &Store) -> Result<()> {
         for home in &self.managed {
             home.instruction_path(store)?;
@@ -297,19 +302,7 @@ impl NativeScope {
         self.validate(store)?;
         let mut paths = vec![self.master.clone()];
         match &self.kind {
-            Kind::Project { .. } => {
-                for name in [
-                    "AGENTS.md",
-                    "AGENTS.override.md",
-                    "CLAUDE.md",
-                    "CLAUDE.local.md",
-                    "GEMINI.md",
-                    ".cursorrules",
-                    ".claude/CLAUDE.md",
-                ] {
-                    paths.push(self.root.join(name));
-                }
-            }
+            Kind::Project { .. } => paths.extend(discovery::project_paths(&self.root)),
             Kind::Global => {
                 for name in [
                     ".claude/CLAUDE.md",
@@ -367,6 +360,52 @@ impl NativeScope {
             .unwrap_or_else(|| json!({"isEnabled":false,"sync":{"off":{}}}));
         config["masterPath"] = json!(self.master);
         config["isEnabled"] = json!(enabled);
+        let next = baseline.with_configuration(self.key(), &config)?;
+        store.save_document("instructions.json", &next)?;
+        Metadata::from_document(Some(next))
+    }
+    pub fn prepare_creation_native(&self, store: &Store) -> Result<NativeInstructionCreation> {
+        self.validate(store)?;
+        let observed = Observation::capture(&self.master)?;
+        ensure!(!observed.present, "Instruction file already exists");
+        Ok(NativeInstructionCreation {
+            scope: self.clone(),
+            observed,
+        })
+    }
+    pub fn persist_file_copy_native(
+        &self,
+        store: &mut Store,
+        baseline: &Metadata,
+        copy: Option<&NativeScope>,
+        agreed: Option<&str>,
+    ) -> Result<Metadata> {
+        self.validate(store)?;
+        if let Some(copy) = copy {
+            copy.validate(store)?;
+            ensure!(
+                copy.root == self.root && copy.root_identity == self.root_identity,
+                "Copy belongs to another native scope"
+            );
+        }
+        let actual = Metadata::from_document(store.document("instructions.json")?)?;
+        ensure!(
+            actual.document == baseline.document,
+            "Instruction configuration changed; review sync again"
+        );
+        let mut config = baseline
+            .configuration(self.key())?
+            .map(|c| c.raw)
+            .unwrap_or_else(
+                || json!({"isEnabled":false,"sync":{"off":{}},"masterPath":self.master}),
+            );
+        ensure!(
+            config["masterPath"] == json!(self.master),
+            "Configured master changed; select it before syncing"
+        );
+        config["fileCopy"] = copy
+            .map(|copy| json!({"path":copy.master,"agreed":agreed}))
+            .unwrap_or(serde_json::Value::Null);
         let next = baseline.with_configuration(self.key(), &config)?;
         store.save_document("instructions.json", &next)?;
         Metadata::from_document(Some(next))
@@ -454,6 +493,25 @@ impl NativeScope {
         })
     }
 }
+pub(super) struct NativeInstructionCreation {
+    scope: NativeScope,
+    observed: Observation,
+}
+impl NativeInstructionCreation {
+    pub fn validate(&self, store: &Store) -> Result<()> {
+        self.scope.validate(store)?;
+        self.observed.unchanged()
+    }
+    pub fn create(self, store: &Store, text: &str) -> Result<()> {
+        self.validate(store)?;
+        ensure!(
+            text.len() <= LIMIT && !text.contains('\0'),
+            "Instruction copy is invalid or oversized"
+        );
+        create_exclusive(&self.observed.path, text)?;
+        Ok(())
+    }
+}
 fn classify(master: &Observation, target: &Observation) -> TargetState {
     if target.link {
         if target.resolved.is_some() && target.resolved == master.resolved {
@@ -524,6 +582,44 @@ impl NativeReviewPlan {
         }
         ensure!(text.len() <= LIMIT, "Merged instructions exceed 1 MiB");
         Ok(text)
+    }
+    /// Turn off shared-master mode. Only captured links resolving to this
+    /// exact master may become copies; foreign targets are always retained.
+    pub fn disable_native(
+        self,
+        store: &Store,
+        replace_with_copies: bool,
+    ) -> Result<(NativeScope, Vec<LinkOutcome>)> {
+        self.scope.validate(store)?;
+        self.master.unchanged()?;
+        for target in &self.targets {
+            if let Some(observed) = &target.observation {
+                observed.unchanged()?;
+            }
+        }
+        let mut outcomes = Vec::new();
+        if replace_with_copies {
+            for target in &self.targets {
+                if target.state != TargetState::Linked {
+                    continue;
+                }
+                self.scope.validate(store)?;
+                self.master.unchanged()?;
+                let expected = target
+                    .observation
+                    .as_ref()
+                    .context("Linked target observation missing")?;
+                let (backup, result) =
+                    replace_reviewed_link_with_copy(&self.master, expected, || Ok(()));
+                outcomes.push(LinkOutcome {
+                    path: target.path.clone(),
+                    backup,
+                    linked: result.is_ok(),
+                    error: result.err().map(|e| e.to_string()),
+                });
+            }
+        }
+        Ok((self.scope, outcomes))
     }
     /// Native confirmation only. Existing-master writes are delegated to the
     /// retained editor's recovery/CAS writer, never a JSON/path-selected writer.
@@ -717,6 +813,53 @@ fn restore_no_replace(backup: &Path, target: &Path) -> Result<()> {
     fs::remove_file(backup)?;
     Ok(())
 }
+fn replace_reviewed_link_with_copy(
+    master: &Observation,
+    expected: &Observation,
+    before_install: impl FnOnce() -> Result<()>,
+) -> (Option<PathBuf>, Result<()>) {
+    let mut backup = None;
+    let result = (|| -> Result<()> {
+        master.unchanged()?;
+        expected.unchanged()?;
+        ensure!(
+            classify(master, expected) == TargetState::Linked,
+            "Only this master's captured links can become copies"
+        );
+        let path = expected.path.with_file_name(format!(
+            "{}.coincide-backup-{}",
+            expected
+                .path
+                .file_name()
+                .context("Missing target name")?
+                .to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::rename(&expected.path, &path)?;
+        backup = Some(path.clone());
+        ensure!(
+            same_item(expected, &Observation::capture(&path)?),
+            "Linked file changed before backup"
+        );
+        before_install()?;
+        create_exclusive(&expected.path, master.text())?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if let Some(path) = &backup {
+            if restore_no_replace(path, &expected.path).is_ok() {
+                backup = None;
+            }
+        }
+        let error = if let Some(path) = &backup {
+            error.context(format!("Original link retained at {}", path.display()))
+        } else {
+            error
+        };
+        return (backup, Err(error));
+    }
+    (backup, Ok(()))
+}
 fn create_exclusive(path: &Path, text: &str) -> Result<Observation> {
     let mut file = native_file::create_private_file(path)?;
     let identity = native_file::file_identity(&file)?;
@@ -830,6 +973,44 @@ mod tests {
             let _ = self.store.close_for_shutdown();
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+    #[cfg(unix)]
+    #[::core::prelude::v1::test]
+    fn disable_copies_only_owned_links_preserving_master_foreign_links_and_competing_targets() {
+        let fixture = Fixture::new();
+        let master = fixture.root.join("AGENTS.md");
+        let a = fixture.root.join("CLAUDE.md");
+        let b = fixture.root.join("GEMINI.md");
+        fs::write(&master, "Synthetic master\n").unwrap();
+        fs::write(fixture.root.join("foreign.md"), "Foreign").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", &a).unwrap();
+        std::os::unix::fs::symlink("foreign.md", &b).unwrap();
+        let id = native_file::path_identity(&master).unwrap();
+        let plan = fixture.scope().review_native(&fixture.store).unwrap();
+        let (_, outcomes) = plan.disable_native(&fixture.store, true).unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].error.is_none());
+        assert!(!fs::symlink_metadata(&a).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&a).unwrap(), "Synthetic master\n");
+        assert_eq!(native_file::path_identity(&master).unwrap(), id);
+        assert_eq!(fs::read_link(&b).unwrap(), PathBuf::from("foreign.md"));
+        fs::remove_file(&a).unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", &a).unwrap();
+        let observed_master = Observation::capture(&master).unwrap();
+        let observed_target = Observation::capture(&a).unwrap();
+        let (backup, result) =
+            replace_reviewed_link_with_copy(&observed_master, &observed_target, || {
+                fs::write(&a, "External competitor")?;
+                Ok(())
+            });
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&a).unwrap(), "External competitor");
+        assert!(
+            fs::symlink_metadata(backup.unwrap())
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
     #[cfg(unix)]
     #[::core::prelude::v1::test]
