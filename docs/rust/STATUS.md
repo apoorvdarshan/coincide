@@ -21,7 +21,8 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [x] Preserve unknown fields, attachments, drafts and provider session references.
 - [x] Rollback invalid/duplicate imports and refuse symlink traversal.
 - [x] Display imported conversations in the macOS preview.
-- [ ] Match the existing macOS app's UI and UX in Rust: window/sidebar layout,
+- [ ] Match Swift UI and UX in shared Rust on macOS, Windows and Linux, allowing
+  platform-appropriate styling: window/sidebar layout,
   typography, spacing, colors, icons, transcript/composer, panels, menus, dialogs,
   shortcuts, focus, scrolling, loading/error states and accessibility. Verify
   equivalent screens and interaction flows side by side before migration.
@@ -50,7 +51,35 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [ ] Real-account acceptance, full test parity and data cutover rehearsal.
 - [ ] Remove superseded Swift/C++ desktop implementation and build tooling.
 
-## Latest combined checkpoint (2026-11-06)
+## Current integration (2026-11-07)
+
+Shared UI/UX parity applies to macOS, Windows and Linux. The current verified
+merged sidebar is [#272](https://github.com/apoorvdarshan/coincide/pull/272),
+exact tested head `a7b632ed746d758e733da1e72dc849a1cb8c8aca`, merged as
+`677c7a7049392dff1b20cf3e8d3dfcbef061b5b7` with the identical tree. All 14
+applicable hosted checks passed, including actual Windows/Linux native input,
+Settings open/close, normal Quit, and restoration of an older selected chat and
+its unsent draft. This is scoped workflow acceptance, not full UI acceptance.
+
+Instructions Git [#268](https://github.com/apoorvdarshan/coincide/pull/268) is also
+merged after exact-head checks. Its headless test exercised the actual native
+handlers and real local Git operations with an injected picker response; no
+physical picker-entry result or modification of global user instructions is claimed.
+
+[#274](https://github.com/apoorvdarshan/coincide/pull/274) integrates the remaining
+shared composer/Settings work, Project Defaults, guarded lifecycle actions,
+queue editing, empty-chat reuse, snooze wake-up and off-by-default Appshots.
+[#273](https://github.com/apoorvdarshan/coincide/pull/273) supplies complete provider
+setup/configuration controls and the separately owned terminal handoff. Both are
+under active verification. Context-detail and selected-reply quote workflows are
+being validated separately before integration. The active Swift app, original
+checkout and actual user data remain preserved; no cutover or release occurred.
+
+See [CHECKLIST](CHECKLIST.md) for the current concise worklist. The following older
+checkpoints retain their original evidence and limitations; their pending notes
+may have been superseded by the scoped results above.
+
+## Historical combined checkpoint (2026-11-06)
 
 The broad inventory remains 7 of 32 accepted areas. Partial source and scoped
 native results do not close a full feature row.

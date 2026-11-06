@@ -368,11 +368,30 @@ impl Session {
     ) -> Option<crate::named_profile_resume::Acknowledged> {
         self.named_completion.lock().ok()?.take()
     }
-    pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
+    pub(crate) fn can_steer(&self) -> bool {
+        self.steering
+            .as_ref()
+            .is_some_and(codex_steering::Client::can_submit)
+    }
+    pub(crate) fn steering_identity(&self) -> Result<(String, String)> {
         self.steering
             .as_ref()
             .context("Active-turn steering is supported only for Codex")?
-            .submit(text)
+            .identity()
+    }
+    #[cfg(test)]
+    pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
+        self.steer_exact(text, &self.steering_identity()?)
+    }
+    pub(crate) fn steer_exact(
+        &self,
+        text: &str,
+        identity: &(String, String),
+    ) -> Result<codex_steering::Ticket> {
+        self.steering
+            .as_ref()
+            .context("Active-turn steering is supported only for Codex")?
+            .submit_exact(text, identity)
     }
     pub(crate) fn take_usage(&self) -> Option<usage_capture::Snapshot> {
         self.usage.lock().ok()?.take()

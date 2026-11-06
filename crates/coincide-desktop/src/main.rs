@@ -1,3 +1,6 @@
+mod appshots;
+mod appshots_platform;
+mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
 mod usage_history_mount;
@@ -12,12 +15,14 @@ mod assets;
 mod bot_settings;
 mod browser;
 mod browser_settings;
+mod chat_layout;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
+mod composer_follow_up_mount;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
@@ -52,6 +57,7 @@ mod notification_settings;
 mod notifications;
 mod open_targets;
 mod presentation;
+mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
 mod provider_settings;
@@ -60,10 +66,12 @@ mod quit_mount;
 mod scheduling;
 mod session_import;
 mod settings;
+mod settings_navigation;
 mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
 mod sidebar_controls;
+mod sidebar_lifecycle;
 mod sidebar_preferences;
 mod sidebar_search;
 mod terminal_context_mount;
@@ -347,6 +355,8 @@ struct Coincide {
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
+    follow_up_picker: bool,
+    follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     queued_messages: Vec<Value>,
@@ -354,6 +364,7 @@ struct Coincide {
     queue_error: String,
     thread_list_open: bool,
     thread_bulk: thread_bulk::State,
+    sidebar_lifecycle: sidebar_lifecycle::State,
     thread_bulk_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
     sidebar_list_height: f32,
@@ -364,6 +375,7 @@ struct Coincide {
     settings_open: bool,
     thread_actions_open: bool,
     settings_search: Entity<InputState>,
+    settings_navigation: settings_navigation::State,
     instructions_panel: Entity<instructions::InstructionsPanel>,
     models_settings: models_settings::ModelsSettings,
     archive_settings: archive_settings::ArchiveSettings,
@@ -374,6 +386,7 @@ struct Coincide {
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
+    appshots: appshots::State,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -446,6 +459,7 @@ struct Coincide {
     rename_input: Entity<InputState>,
     archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
+    project_defaults: project_defaults_ui::State,
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
@@ -747,10 +761,15 @@ impl Coincide {
                 }
                 let drafts_saved = this.flush_pending_drafts();
                 let cookies_ready = this.poll_cookie_close(cx);
+                this.appshots.close();
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
                 cx.notify();
-                drafts_saved && media_ready && cookies_ready && this.computer_use_shutdown_ready()
+                drafts_saved
+                    && media_ready
+                    && cookies_ready
+                    && this.computer_use_shutdown_ready()
+                    && this.appshots.drained()
             })
             .unwrap_or(false)
         });
@@ -779,8 +798,7 @@ impl Coincide {
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
-        let settings_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),
@@ -849,6 +867,7 @@ impl Coincide {
         if let Ok(mut engine) = engine.try_lock() {
             engine.ui_available = browser.is_some();
         }
+        let mut composer_sizing = chat_layout::ComposerSizing::default();
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
@@ -899,7 +918,7 @@ impl Coincide {
                 this.sync_transcription_binding(cx);
             }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
-            cx.observe(&composer, |this, _, cx| {
+            cx.observe(&composer, move |this, _, cx| {
                 let composer = this.composer.read(cx);
                 this.composer_files.observe_composer(
                     composer.value().to_string(),
@@ -911,6 +930,17 @@ impl Coincide {
                 // caret-away/back sequence; hidden unfocused composer is stable.
                 this.transcription_target.changed();
                 this.sync_transcription_binding(cx);
+                // Cursor/selection notifications do not change composer height.
+                // Only a changed native wrapped-text measurement refits it.
+                {
+                    let composer = this.composer.read(cx);
+                    if composer_sizing.changed(
+                        composer.display_map().wrap_row_count(),
+                        composer.line_height().map(f32::from).unwrap_or(20.),
+                    ) {
+                        cx.notify();
+                    }
+                }
             }),
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
                 if this.media.shutdown_requested { return; }
@@ -1120,6 +1150,8 @@ impl Coincide {
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
+            follow_up_picker: false,
+            follow_up_deliveries: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
             queued_messages: Vec::new(),
@@ -1127,6 +1159,7 @@ impl Coincide {
             queue_error: String::new(),
             thread_list_open: true,
             thread_bulk: Default::default(),
+            sidebar_lifecycle: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
             sidebar_resize,
             sidebar_list_height: 560.,
@@ -1137,6 +1170,7 @@ impl Coincide {
             settings_open: false,
             thread_actions_open: false,
             settings_search,
+            settings_navigation: Default::default(),
             settings_section: Default::default(),
             instructions_panel,
             models_settings,
@@ -1147,6 +1181,7 @@ impl Coincide {
             settings_window_pending: false,
             main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
+            appshots: appshots::State::new(cx),
             keyboard,
             usage_history,
             codex_limits,
@@ -1219,6 +1254,7 @@ impl Coincide {
             rename_input,
             archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
+            project_defaults: project_defaults_ui::State::new(window, cx),
             project_picker_open: false,
             project_path,
             selected: None,
@@ -1253,6 +1289,7 @@ impl Coincide {
         };
         this.apply_appearance(window, cx);
         this.restore_startup_selection(window, cx);
+        this.appshots.sync(&this.settings);
         this.poll_computer_use(cx);
         this
     }
@@ -2294,11 +2331,18 @@ impl Coincide {
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::current_dir().ok());
-        match call(
-            &self.engine,
-            "threads.create",
-            json!({"projectId":project,"cwd":cwd}),
-        ) {
+        if !self.flush_pending_drafts() {
+            self.status = "Save pending drafts before opening a new conversation.".into();
+            cx.notify();
+            return;
+        }
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let intent =
+                engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
+            engine.apply_native_new_thread(intent)
+        })();
+        match result {
             Ok(v) => {
                 let created = text(&v, "id");
                 self.created_bot_thread_to_focus = Some(created.clone());
@@ -2665,6 +2709,7 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.poll_project_defaults(window, cx);
         self.open_target_children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
         if self.sidebar_preferences.retry(&self.engine) {
@@ -2698,6 +2743,7 @@ impl Coincide {
         self.poll_thread_bulk(window, cx);
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
+        self.poll_sidebar_lifecycle(cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
@@ -2726,11 +2772,13 @@ impl Coincide {
             true
         };
         if self.media.close_requested {
+            self.appshots.close();
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
             if drafts_saved
                 && cookies_ready
                 && self.media_shutdown_ready(cx)
+                && self.appshots.drained()
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.composer_files.closed_and_drained()
@@ -2775,6 +2823,7 @@ impl Coincide {
             return;
         }
         self.poll_app_menu(window, cx);
+        self.poll_appshots(window, cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
@@ -2822,6 +2871,11 @@ impl Coincide {
                     }
                 }
             }
+            if !self.media.close_requested && !self.media.shutdown_requested {
+                if let Err(error) = engine.native_wake_due_snoozes() {
+                    self.status = format!("Snoozed conversations could not wake: {error}");
+                }
+            }
             engine.ui_available = self.browser.is_some();
             let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
             let pending_open_compatible = engine
@@ -2856,6 +2910,7 @@ impl Coincide {
         if self.steering.poll() {
             cx.notify();
         }
+        self.poll_composer_follow_ups(window, cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
         self.poll_codex_account_settings(cx);
@@ -3426,6 +3481,9 @@ impl Coincide {
         )
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_selected(false, window, cx);
+    }
+    fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
         // A hidden composer may retain focus after opening the Git pane.
         if self.workspace_open || self.session_import_open {
             return;
@@ -3446,7 +3504,7 @@ impl Coincide {
             if self.running.contains(&text(thread, "id"))
                 && coincide_core::composer_context::has_context(context)
             {
-                self.status = "Queued messages do not yet support references. Send after the current turn finishes, or remove the references explicitly.".into();
+                self.status = "Follow-up messages currently support text only. Keep the attached references for a direct send after the current turn.".into();
                 cx.notify();
                 return;
             }
@@ -3462,7 +3520,7 @@ impl Coincide {
             .as_ref()
             .is_some_and(|v| self.running.contains(&text(v, "id")))
         {
-            self.queue_message(window, cx);
+            self.send_follow_up(alternate, cx);
             return;
         }
         if let Some(v) = self.selected.as_ref() {
@@ -3540,6 +3598,11 @@ impl Coincide {
             return div().into_any_element();
         }
         let body = text(item, "text");
+        // The active find target uses the existing expanded native body so a
+        // later-line match remains visible. Clearing Find remounts the compact row.
+        if kind == "notice" && !find_revealed {
+            return self.notice_row(&source_id, &item_id, body, window, cx);
+        }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
         let expanded = self.expanded.contains(&index) || find_revealed;
@@ -4040,6 +4103,17 @@ impl Render for Coincide {
                 })
                 .child(self.status.clone())
                 .when_some(cookie_recovery, |view, recovery| view.child(recovery))
+                .when(self.appshots.private_cleanup_pending(), |view| {
+                    view.child(div().text_sm().child(self.appshots.outcome.clone()))
+                        .child(
+                            Button::new("quit-retry-appshot-cleanup")
+                                .label("Retry capture cleanup")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.appshots.retry_private_cleanup();
+                                    cx.notify();
+                                })),
+                        )
+                })
                 .when(!self.pending_drafts.is_empty(), |view| {
                     view.child(Button::new("quit-retry-save").label("Retry save").on_click(
                         cx.listener(|this, _, _, cx| {
@@ -4109,6 +4183,10 @@ impl Render for Coincide {
             .on_children_prepainted(self.media_layout_observer(cx))
             .flex_1()
             .min_h(px(120.))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.record_appshot_interaction()),
+            )
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
                     entity.update(cx, |this, cx| this.message(index, window, cx))
@@ -4231,7 +4309,8 @@ impl Render for Coincide {
             .relative()
             .capture_key_down(
                 cx.listener(|this, event, window, cx| {
-                    if !this.historical_image_shortcut(event, window, cx) {
+                    if !this.project_defaults_key(event, window, cx)
+                        && !this.historical_image_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
                 }),
@@ -4318,8 +4397,7 @@ impl Render for Coincide {
                                 .flex_col()
                                 .items_center()
                                 .justify_center()
-                                .min_h(px(140.))
-                                .max_h(px(320.))
+
                                 .flex_shrink_0()
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
@@ -4329,7 +4407,7 @@ impl Render for Coincide {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-                                        .max_h(px(296.))
+
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
@@ -4364,6 +4442,7 @@ impl Render for Coincide {
                                                         .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
                                                         .when(!self.composer_files.opened, |view| view
                                                         .when(self.composer_selection_expanded(), |view| view.child(self.composer_selection_pane(cx)))
+                                                        .when_some(self.follow_up_pane(cx), |view, pane| view.child(pane))
                                                         .when_some(
                                                             self.composer_steering_pane(cx),
                                                             |view, steering| view.child(steering),
@@ -4398,9 +4477,20 @@ impl Render for Coincide {
                                                 ))
                                                 .child(
                                                     Textarea::new(&self.composer)
+                                                        .accessibility_id("composer-input")
+                                                        .aria_label("Message")
                                                         .appearance(false)
                                                         .bordered(false)
-                                                        .h(px(if self.composer_files.opened {56.} else {110.}))
+                                                        .h({
+                                                            {
+                                                                let state = self.composer.read(cx);
+                                                                px(chat_layout::composer_height(
+                                                                    state.display_map().wrap_row_count(),
+                                                                    state.line_height().map(f32::from).unwrap_or(20.),
+                                                                    f32::from(window.viewport_size().height),
+                                                                ))
+                                                            }
+                                                        })
                                                         .on_paste(move |item, _, cx| {
                                                             target
                                                                 .update(cx, |this, cx| {
@@ -4419,6 +4509,7 @@ impl Render for Coincide {
                                                 .items_center()
                                                 .min_w_0()
                                                 .gap_1()
+                                                .gap(px(6.))
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
@@ -4432,44 +4523,30 @@ impl Render for Coincide {
                                                         })
                                                         .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
                                                         .compact().ghost()
+                                                        .xsmall().h(px(26.)).rounded(px(7.))
                                                         .disabled(importing_images)
                                                         .on_click(cx.listener(|this, _, _, cx| {
                                                             this.attach_images(cx)
                                                         })),
                                                 )
+                                                .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .child(
                                                     Button::new("send")
                                                         .primary()
                                                         .disabled(importing_images || self.selection_send_blocked())
-                                                        .label(
-                                                            if self.running.contains(&selected_id) {
-                                                                "Queue message"
-                                                            } else {
-                                                                "Send"
-                                                            },
-                                                        )
+                                                        .accessibility_label(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
+                                                        .tooltip(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
+                                                        .icon(composer_follow_up_mount::dispatch_icon(self.composer_send_dispatch(false)))
+                                                        .w(px(28.)).h(px(28.)).rounded(px(14.)).p_0()
                                                         .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.send(window, cx)
+                                                            |this, event: &gpui_kit::ClickEvent, window, cx| {
+                                                                let modifiers = event.modifiers();
+                                                                let alternate = if cfg!(target_os = "macos") { modifiers.platform } else { modifiers.control };
+                                                                this.send_selected(alternate, window, cx)
                                                             },
                                                         )),
                                                 )
-                                                .child(Button::new("stop").icon(gpui_kit::assets::IconName::Square)
-                                                    .accessibility_label("Stop agent").tooltip("Stop agent")
-                                                    .compact().ghost().disabled(!self.running.contains(&selected_id)).on_click(
-                                                    cx.listener(|this, _, _, cx| {
-                                                        if let Some(v) = this.selected.as_ref()
-                                                            && let Err(e) = call(
-                                                                &this.engine,
-                                                                "agent.stop",
-                                                                json!({"threadId":v["id"]}),
-                                                            )
-                                                        {
-                                                            this.status = e.to_string();
-                                                        }
-                                                        cx.notify();
-                                                    }),
-                                                )),
+
                                         )
                                         .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
                                             div()
@@ -4488,6 +4565,7 @@ impl Render for Coincide {
             )
             .when_some(browser_pane, |view, pane| view.child(pane))
             .when_some(historical_image, |view, image| view.child(image))
+            .when_some(self.project_defaults_form(cx), |view, form| view.child(form))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()
@@ -4562,6 +4640,7 @@ fn main() -> Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             composer_file_picker::init(cx);
+            composer_follow_up_mount::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);

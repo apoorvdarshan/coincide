@@ -7,6 +7,8 @@ pub mod attachments;
 pub mod browser_protocol;
 pub mod control;
 pub mod provider_catalog;
+pub mod provider_preferences;
+pub use api::project_defaults;
 pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
@@ -36,6 +38,7 @@ pub mod updater;
 
 pub mod legacy_media;
 
+pub mod composer_follow_up;
 pub mod composer_selection;
 
 pub mod legacy_media_service;
@@ -72,3 +75,5 @@ mod private_fs;
 pub mod native_file;
 pub mod native_instruction_profiles;
 pub mod native_ui_edits;
+
+pub mod appshots;

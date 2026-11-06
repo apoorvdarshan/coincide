@@ -280,7 +280,16 @@ fn slots_phase(root: &Path, phase: &str) {
                 expected_native: Option<&str>,
                 outgoing: &str|
      -> String {
-        fs::write(&metadata,serde_json::to_vec(&json!({"expected":expected_method,"native":expected_native,"turn":outgoing,"account":account})).unwrap()).unwrap();
+        let current = engine.store.thread(&id).unwrap();
+        let projects = engine.store.projects().unwrap();
+        let cwd = projects
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == current["projectID"])
+            .unwrap()["path"]
+            .clone();
+        fs::write(&metadata,serde_json::to_vec(&json!({"expected":expected_method,"native":expected_native,"turn":outgoing,"account":account,"cwd":cwd})).unwrap()).unwrap();
         call(engine, "agent.send", json!({"threadId":id,"text":request}));
         wait(engine, "slot saved and actual joined", |engine| {
             call(engine, "app.status", json!({}))["running"]
@@ -447,6 +456,93 @@ fn slots_phase(root: &Path, phase: &str) {
             "thread/resume",
             saved["nativeA"].as_str(),
             "A no duplicate",
+        );
+    }
+    if !seed && explicit {
+        // Actual typed Move/Undo, not a raw projectID patch: private completed
+        // authority is parked before the old catalog is cancelled.
+        let original = engine.store.thread(&id).unwrap();
+        let original_native = text(&original["sessions"]["codex"], "sessionID");
+        let destination_path = root.join("move-target");
+        fs::create_dir(&destination_path).unwrap();
+        let destination = call(
+            &mut engine,
+            "projects.create",
+            json!({"path":destination_path,"name":"Move target"}),
+        );
+        let move_plan = engine
+            .prepare_native_thread_move(&id, destination["id"].as_str().unwrap())
+            .unwrap();
+        let undo = engine.apply_native_thread_move(move_plan).unwrap();
+        assert_eq!(engine.store.thread(&id).unwrap()["sessions"], json!({}));
+        engine.undo_native_thread_move(&undo).unwrap();
+        assert_eq!(engine.store.thread(&id).unwrap(), original);
+        let refused = engine.dispatch(json!({"method":"agent.send","params":{"threadId":id,"text":"Must wait for original-folder proof"}}));
+        assert!(refused.get("error").is_some());
+        assert_eq!(engine.store.thread(&id).unwrap(), original);
+        ordinary_choice(&mut engine, &id, "codex", None, true);
+        turn(
+            &mut engine,
+            &a,
+            "Move untouched resumed",
+            "thread/resume",
+            Some(&original_native),
+            "Move untouched resumed",
+        );
+        let move_plan = engine
+            .prepare_native_thread_move(&id, destination["id"].as_str().unwrap())
+            .unwrap();
+        let undo = engine.apply_native_thread_move(move_plan).unwrap();
+        ordinary_choice(&mut engine, &id, "codex", None, true);
+        let recap = |thread: &Value, request: &str| {
+            format!(
+                "Earlier conversation context (historical messages, not a new user request):\n\n{}\n\nCurrent user request:\n{}",
+                thread["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|item| item["kind"] == "user")
+                    .map(|item| format!("user: {}", text(item, "text")))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+                request
+            )
+        };
+        let expected = recap(&engine.store.thread(&id).unwrap(), "New target-folder turn");
+        let target_native = turn(
+            &mut engine,
+            &a,
+            "New target-folder turn",
+            "thread/start",
+            None,
+            &expected,
+        );
+        assert_ne!(target_native, original_native);
+        let target_items = engine.store.thread(&id).unwrap()["items"].clone();
+        engine.undo_native_thread_move(&undo).unwrap();
+        let returned = engine.store.thread(&id).unwrap();
+        assert_eq!(returned["projectID"], original["projectID"]);
+        assert_eq!(returned["items"], target_items);
+        assert_eq!(returned["sessions"], json!({}));
+        ordinary_choice(&mut engine, &id, "codex", None, true);
+        let expected = recap(&returned, "Back in source folder");
+        let new_source = turn(
+            &mut engine,
+            &a,
+            "Back in source folder",
+            "thread/start",
+            None,
+            &expected,
+        );
+        assert_ne!(new_source, original_native);
+        assert_ne!(new_source, target_native);
+        turn(
+            &mut engine,
+            &a,
+            "Source delta only",
+            "thread/resume",
+            Some(&new_source),
+            "Source delta only",
         );
     }
     engine.freeze_admissions();
@@ -646,6 +742,13 @@ fn provider() {
                 json!({"data":[{"model":"portable-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}],"defaultReasoningEffort":"high"}],"nextCursor":null})
             }
             "thread/start" | "thread/resume" => {
+                if let Some(cwd) = config["cwd"].as_str() {
+                    assert_eq!(
+                        std::env::current_dir().unwrap().canonicalize().unwrap(),
+                        Path::new(cwd).canonicalize().unwrap(),
+                        "Native actor must run only in its currently reviewed project folder"
+                    );
+                }
                 assert_eq!(
                     method, config["expected"],
                     "No start-or-resume alternative is accepted"

@@ -1,6 +1,100 @@
 use super::*;
 
 impl Coincide {
+    fn edit_queued_message(
+        &mut self,
+        message: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
+        let composing = self.composer.update(cx, |input, cx| {
+            gpui_kit::EntityInputHandler::marked_text_range(input, window, cx).is_some()
+        });
+        if composing || !self.flush_pending_drafts() {
+            self.status =
+                "Finish composing and save the current draft before editing a queued message."
+                    .into();
+            cx.notify();
+            return;
+        }
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let draft = self.composer.read(cx).value().to_string();
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let current = engine.store.thread(&id)?;
+            anyhow::ensure!(
+                current["draft"].as_str().unwrap_or_default() == draft,
+                "Saved draft changed; current draft and queue retained"
+            );
+            engine.edit_native_queued_message(&current, message)
+        })();
+        match result {
+            Ok(thread) => {
+                let draft = text(&thread, "draft");
+                self.selected = Some(thread);
+                self.composer_files.invalidate();
+                self.composer
+                    .update(cx, |input, cx| input.set_value(draft, window, cx));
+                self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                self.status = "Queued message moved into the draft.".into();
+                self.refresh_queue(cx);
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        cx.notify();
+    }
+    pub(super) fn edit_last_queued_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key = &event.keystroke;
+        if event.is_held
+            || !window.is_window_active()
+            || key.key != "up" && key.key != "arrowup"
+            || !key.modifiers.alt
+            || key.modifiers.platform
+            || key.modifiers.control
+            || key.modifiers.shift
+            || self.settings_open
+            || self.schedules_open
+            || self.workspace_open
+            || self.session_import_open
+            || self.composer_files.opened
+            || !self.composer.read(cx).focus_handle(cx).is_focused(window)
+        {
+            return false;
+        }
+        if self.composer.update(cx, |input, cx| {
+            gpui_kit::EntityInputHandler::marked_text_range(input, window, cx).is_some()
+        }) {
+            return false;
+        }
+        let Some(message) = self
+            .queued_messages
+            .iter()
+            .rev()
+            .find(|message| {
+                matches!(
+                    message["state"].as_str(),
+                    Some("pending" | "failed" | "interrupted")
+                )
+            })
+            .cloned()
+        else {
+            return false;
+        };
+        self.edit_queued_message(&message, window, cx);
+        window.prevent_default();
+        cx.stop_propagation();
+        true
+    }
     pub(super) fn refresh_queue(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) else {
             self.queued_messages.clear();
@@ -22,66 +116,6 @@ impl Coincide {
             }
         }
         cx.notify();
-    }
-
-    pub(super) fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref() else {
-            return;
-        };
-        let id = text(thread, "id");
-        if self.attachment_import_threads.contains(&id) {
-            self.status = "Wait for image imports to finish before queueing.".into();
-            cx.notify();
-            return;
-        }
-        // Core also checks persisted attachments, including imports completed
-        // since the last native refresh. A rejected enqueue keeps the draft.
-        if thread["rustDraftImages"]
-            .as_array()
-            .is_some_and(|images| !images.is_empty())
-        {
-            self.status =
-                "Queued messages currently support text only. Keep these images for a direct send."
-                    .into();
-            cx.notify();
-            return;
-        }
-        let message = self.composer.read(cx).value().to_string();
-        match call(
-            &self.engine,
-            "agent.queue.add",
-            json!({"threadId":id,"text":message}),
-        ) {
-            Ok(result) => {
-                match call(
-                    &self.engine,
-                    "threads.patch",
-                    json!({"threadId":id,"patch":{"draft":""}}),
-                ) {
-                    Ok(thread) => {
-                        self.pending_drafts.remove(&id);
-                        self.selected = Some(thread);
-                        self.composer
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                        self.status = if result["enabled"] == true {
-                            "Message queued. It will run after the current turn finishes successfully.".into()
-                        } else {
-                            "Message queued. Resume the queue when ready.".into()
-                        };
-                    }
-                    Err(error) => {
-                        self.status = format!(
-                            "Message queued, but draft cleanup failed: {error}. Do not queue it again."
-                        )
-                    }
-                }
-                self.refresh_queue(cx);
-            }
-            Err(error) => {
-                self.status = format!("Message could not be queued: {error}");
-                cx.notify();
-            }
-        }
     }
 
     fn queue_action(
@@ -169,6 +203,8 @@ impl Coincide {
                     let id = text(message, "id");
                     let state = text(message, "state");
                     let full_text = text(message, "text");
+                    let edit_message = message.clone();
+                    let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted");
                     let mut preview: String = full_text.chars().take(400).collect();
                     if preview.len() < full_text.len() {
                         preview.push('…');
@@ -189,6 +225,16 @@ impl Coincide {
                                 .when_some(message["error"].as_str(), |row, error| {
                                     row.child(div().text_sm().child(error.to_owned()))
                                 }),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("edit-queued-{id}")))
+                                .label("Edit")
+                                .accessibility_label("Edit queued message")
+                                .tooltip("Move this message back into the composer")
+                                .disabled(!editable)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.edit_queued_message(&edit_message, window, cx)
+                                })),
                         )
                         .child(
                             Button::new(SharedString::from(format!("remove-queued-{id}")))

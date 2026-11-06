@@ -13,6 +13,17 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "appshots_api.rs"]
+mod appshots_api;
+pub use appshots_api::{AppshotTicket, PreparedAppshot};
+
+#[path = "follow_up_api.rs"]
+mod follow_up_api;
+#[path = "project_defaults.rs"]
+pub mod project_defaults;
+#[path = "queue_edit_api.rs"]
+mod queue_edit_api;
+pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]
@@ -112,9 +123,19 @@ pub mod terminal_shutdown;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
+#[path = "bot_lifecycle_api.rs"]
+mod bot_lifecycle_api;
+pub use bot_lifecycle_api::{BotConversationDisposition, BotDeletionUndo, PreparedBotDeletion};
+#[path = "sidebar_lifecycle_api.rs"]
+mod sidebar_lifecycle_api;
 #[path = "thread_delete_api.rs"]
 mod thread_delete_api;
+pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
+
 pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
+#[path = "thread_idle_api.rs"]
+mod thread_idle_api;
+pub use thread_idle_api::NativeNewThread;
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]
@@ -139,6 +160,7 @@ pub struct ProviderWorkersStatus {
 struct Running {
     usage_context: Option<agent::usage_capture::TurnContext>,
     session: Session,
+    resume_safe: Arc<std::sync::atomic::AtomicBool>,
     provider: String,
     transcript_start: usize,
     pending: HashMap<String, Value>,
@@ -149,7 +171,9 @@ struct Running {
     persistence_error: Option<String>,
 }
 pub struct Engine {
+    appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
+    native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
@@ -199,6 +223,7 @@ pub struct Engine {
     pending_usage: HashMap<String, agent::usage_capture::Record>,
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
+    native_follow_up: follow_up_api::State,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -226,7 +251,9 @@ impl Engine {
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
         Self {
+            appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
+            native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
@@ -278,6 +305,7 @@ impl Engine {
             pending_usage: HashMap::new(),
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
+            native_follow_up: follow_up_api::State::default(),
         }
     }
     pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
@@ -664,6 +692,7 @@ impl Engine {
             }
             "agent.models.refresh" => {
                 let provider = crate::model_catalog::refresh_provider(p)?;
+                self.require_provider_enabled(provider)?;
                 let executable = if crate::model_catalog::supported(provider) {
                     let variable = if provider == "codex" { "COINCIDE_CODEX_EXECUTABLE" } else { "COINCIDE_CLAUDE_EXECUTABLE" };
                     std::env::var_os(variable).map(PathBuf::from).or_else(|| {
@@ -682,13 +711,18 @@ impl Engine {
             }
             "agent.selection.capabilities" => {
                 let mut result = crate::composer_selection::capabilities();
+                self.apply_provider_preferences(&mut result)?;
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
                     if codex_profile_models_api::named_thread(&thread) {
-                        return Ok(self.codex_profile_model_capabilities(&thread));
+                        let mut named = self.codex_profile_model_capabilities(&thread);
+                        self.apply_provider_preferences(&mut named)?;
+                        return Ok(named);
                     }
-                    let reason = if !thread["rustBotContext"].is_null() {
+                    let reason = if let Err(error) = self.require_provider_enabled(text(&thread["selection"], "provider").as_str()) {
+                        Some(error.to_string())
+                    } else if !thread["rustBotContext"].is_null() {
                         Some("Bot selection is fixed for this conversation; create a new bot conversation".to_owned())
                     } else if self.store.is_imported(id)? {
                         Some("Fork an imported thread before changing its provider".to_owned())
@@ -844,6 +878,15 @@ impl Engine {
     }
     /// Trusted native UI entry point. Deliberately not part of the agent dispatcher.
     fn send_turn(&mut self, p: &Value, scheduled: bool) -> Result<Value> {
+        self.send_turn_if_unchanged(p, scheduled, None, false)
+    }
+    fn send_turn_if_unchanged(
+        &mut self,
+        p: &Value,
+        scheduled: bool,
+        expected_scope: Option<&Value>,
+        force_fresh: bool,
+    ) -> Result<Value> {
         self.require_admissions()?;
         let id = required(p, "threadId")?.to_owned();
         ensure!(
@@ -869,6 +912,16 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
+        self.require_provider_enabled(text(&v["selection"], "provider").as_str())?;
+        let original = if let Some(expected) = expected_scope {
+            ensure!(
+                crate::composer_follow_up::scope(&v) == crate::composer_follow_up::scope(expected),
+                "Composer changed before replacement admission; draft retained"
+            );
+            Some(v.clone())
+        } else {
+            None
+        };
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"
@@ -995,12 +1048,19 @@ impl Engine {
             "Draft images exceed 20 MiB"
         );
         let saved_session = agent::provider_session(&v, &provider);
-        let allowed_session = self.unrevoked_provider_session(&v, &provider)?;
-        if codex_profile.is_some() && saved_session.is_some() && allowed_session.is_none() {
-            // Undo restores exact content, while deletion permanently consumes
-            // every old continuation opportunity, including private receipts.
+        let available_session = self.unrevoked_provider_session(&v, &provider)?;
+        // Only the private native Interrupt operation forces a fresh replacement.
+        // Public JSON cannot select this branch or create continuation authority.
+        let allowed_session = if force_fresh { None } else { available_session };
+        if let Some(profile) = codex_profile.as_ref()
+            && saved_session.is_some()
+            && allowed_session.is_none()
+        {
+            // Delete already consumes every slot. A denial of this native
+            // context (including uncertain steering) revokes only this account;
+            // independent parked accounts remain available.
             self.named_resume
-                .invalidate_threads(std::slice::from_ref(&id), &self.store)?;
+                .invalidate_account(&id, profile.account(), &self.store)?;
         }
         // Session JSON cannot authorize named resume. The private registry
         // and authenticated restart journal require a saved owned worker join.
@@ -1160,10 +1220,15 @@ impl Engine {
                 prompt.chars().take(70).collect::<String>()
             });
         }
-        self.store.save(&v)?;
+        if let Some(expected) = original.as_ref() {
+            self.store.save_native_follow_up_turn(expected, &v)?;
+        } else {
+            self.store.save(&v)?;
+        }
         self.insert_running(
             id,
             Running {
+                resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 usage_context: Some(agent::usage_capture::TurnContext::new(&v)),
                 session: Session::start_with_mode_policy_and_profile(
                     adapter,
@@ -1376,7 +1441,10 @@ impl Engine {
         use crate::message_queue::{self as queue, State};
         let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
         for id in ids {
-            if self.runs.contains_key(&id) || self.unsaved_threads.contains_key(&id) {
+            if self.runs.contains_key(&id)
+                || self.unsaved_threads.contains_key(&id)
+                || self.native_follow_up.pending_thread(&id)
+            {
                 continue;
             }
             let launched = (|| -> Result<bool> {
@@ -2008,6 +2076,9 @@ impl Engine {
                     && failure.is_none()
                     && !self.runs[&id].cancelled
                     && self.runs[&id].persistence_error.is_none()
+                    && self.runs[&id]
+                        .resume_safe
+                        .load(std::sync::atomic::Ordering::Acquire)
                     && let Some(ack) = self.runs[&id].session.take_named_completion()
                 {
                     self.named_resume.persisted(
@@ -2033,6 +2104,7 @@ impl Engine {
                 self.schedule_completions.push((claim, outcome, failure));
             }
         }
+        self.poll_native_follow_ups();
         self.poll_message_queues();
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
             let resumed = self.schedule_last_poll.elapsed() > Duration::from_secs(120);

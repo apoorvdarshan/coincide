@@ -271,6 +271,39 @@ impl Registry {
         }
         registry
     }
+    /// Consume only the selected account's denied native context. Other parked
+    /// accounts are independent capabilities and remain untouched.
+    pub(crate) fn invalidate_account(
+        &mut self,
+        thread: &str,
+        account: &str,
+        store: &crate::store::Store,
+    ) -> Result<()> {
+        let key = slot(thread, account)?;
+        self.ready.remove(&key);
+        self.pending.remove(&key);
+        self.parked.remove(&key);
+        if self.journal.is_none() {
+            self.journal = Some(journal::Journal::open(store)?);
+        }
+        if let Some(value) = self.journal.as_mut().unwrap().take(&key)? {
+            ensure!(
+                value["schema"] == 2
+                    && value["context"]["binding"]["thread"]
+                        .as_str()
+                        .is_some_and(
+                            |value| Uuid::parse_str(value).ok() == Uuid::parse_str(thread).ok()
+                        )
+                    && value["context"]["binding"]["profile"]["account"]
+                        .as_str()
+                        .is_some_and(
+                            |value| Uuid::parse_str(value).ok() == Uuid::parse_str(account).ok()
+                        ),
+                "Invalid authenticated continuation slot binding"
+            );
+        }
+        Ok(())
+    }
     /// Deny-only return values for native Delete/Undo. Revoke every parked
     /// account, including private IDs absent from descriptive thread JSON.
     pub(crate) fn invalidate_threads(
@@ -680,6 +713,92 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn invalidating_one_uncertain_account_preserves_the_other_parked_private_slot() {
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let private = dir.path().join("private");
+        crate::native_file::private_directory(&private).unwrap();
+        let root = private.canonicalize().unwrap();
+        let mut store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
+        let id = Uuid::new_v4().to_string();
+        let accounts = [Uuid::new_v4().to_string(), Uuid::new_v4().to_string()];
+        let mut registry = Registry::for_store(&store);
+        let mut threads = Vec::new();
+        let mut profiles = Vec::new();
+        for (index, account) in accounts.iter().enumerate() {
+            crate::codex_login_profiles::managed_home(&root, account, true).unwrap();
+            let profile =
+                LaunchContext::capture(&root, account, &std::env::current_exe().unwrap()).unwrap();
+            let native = format!("synthetic-native-{index}");
+            let thread = json!({"id":id,"selection":{"provider":"codex","modelID":"default","accountID":account},"items":[{"kind":"user","text":"synthetic prefix"}],"sessions":{"codex":{"accountID":account,"sessionID":native}}});
+            let policy =
+                Policy::parse_named(&thread, crate::composer_policy::Origin::Ordinary, None)
+                    .unwrap();
+            let ack = registry
+                .prepare(&thread, profile.clone(), &root, policy)
+                .unwrap()
+                .acknowledge(&json!({"thread":{"id":native},"model":"synthetic-model"}))
+                .unwrap();
+            let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while worker.status() == WorkerThreadStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            store.save(&thread).unwrap();
+            registry.persisted(ack, &thread, worker);
+            registry.poll();
+            threads.push(thread);
+            profiles.push(profile);
+        }
+        let binding = registry.departure_binding(&threads[1]).unwrap().unwrap();
+        let mut catalog = crate::model_catalog::ModelCatalog::default();
+        catalog.fixture_resume_job(binding.clone(), "before-departure");
+        registry
+            .park_departure(&threads[1], catalog.named_catalog_fence(&binding))
+            .unwrap();
+        registry
+            .invalidate_account(&id, &accounts[0], &store)
+            .unwrap();
+        assert!(registry.ready.is_empty());
+        assert_eq!(registry.parked.len(), 1);
+        assert!(
+            !registry
+                .journal
+                .as_ref()
+                .unwrap()
+                .has_ticket(&slot(&id, &accounts[0]).unwrap())
+                .unwrap()
+        );
+        assert!(
+            registry
+                .journal
+                .as_ref()
+                .unwrap()
+                .has_ticket(&slot(&id, &accounts[1]).unwrap())
+                .unwrap()
+        );
+        catalog.fixture_resume_job(binding.clone(), "fresh-return");
+        let admission = catalog
+            .named_resume_admission(&threads[1], &binding)
+            .unwrap();
+        let policy =
+            Policy::parse_named(&threads[1], crate::composer_policy::Origin::Ordinary, None)
+                .unwrap();
+        let resumed = registry
+            .prepare_admitted(
+                &threads[1],
+                profiles[1].clone(),
+                &root,
+                policy,
+                Some(admission),
+            )
+            .unwrap();
+        assert_eq!(resumed.session(), Some("synthetic-native-1"));
+        assert_eq!(resumed.seen(), 1);
+    }
     #[cfg(any(unix, windows))]
     #[test]
     fn independent_account_slots_require_explicit_park_and_fresh_catalog_actor() {

@@ -62,23 +62,38 @@ pub(crate) fn pair() -> (Client, Server) {
     )
 }
 impl Client {
-    pub(crate) fn submit(&self, text: &str) -> Result<Ticket> {
-        ensure!(
-            !text.trim().is_empty() && text.len() <= 1024 * 1024,
-            "Steering text must be nonempty and fit within 1 MiB"
-        );
+    pub(crate) fn can_submit(&self) -> bool {
+        self.view
+            .try_lock()
+            .is_ok_and(|view| view.identity.is_some() && view.assistant.is_none())
+    }
+    pub(crate) fn identity(&self) -> Result<(String, String)> {
         let view = self
             .view
             .try_lock()
-            .map_err(|_| anyhow::anyhow!("Steering state is busy or unavailable"))?
-            .clone();
+            .map_err(|_| anyhow::anyhow!("Steering state is busy or unavailable"))?;
         ensure!(
             view.assistant.is_none(),
             "Wait for the current assistant message to finish before steering"
         );
-        let identity = view.identity.ok_or_else(|| {
+        view.identity.clone().ok_or_else(|| {
             anyhow::anyhow!("Codex has no acknowledged active turn available for steering")
-        })?;
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn submit(&self, text: &str) -> Result<Ticket> {
+        self.submit_exact(text, &self.identity()?)
+    }
+    pub(crate) fn submit_exact(&self, text: &str, expected: &(String, String)) -> Result<Ticket> {
+        ensure!(
+            !text.trim().is_empty() && text.len() <= 1024 * 1024,
+            "Steering text must be nonempty and fit within 1 MiB"
+        );
+        let identity = self.identity()?;
+        ensure!(
+            &identity == expected,
+            "Acknowledged steering turn changed before delivery"
+        );
         let (reply, receiver) = mpsc::sync_channel(1);
         self.commands
             .try_send(Command {

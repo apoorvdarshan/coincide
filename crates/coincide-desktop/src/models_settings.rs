@@ -11,6 +11,12 @@ pub(super) struct ModelsSettings {
     message: String,
 }
 impl ModelsSettings {
+    pub(super) fn focus_provider(&mut self, provider: Option<String>) {
+        if let Some(provider) = &provider {
+            self.custom_provider = provider.clone();
+        }
+        self.provider = provider;
+    }
     pub(super) fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
         Self {
             search: cx.new(|cx| InputState::new(window, cx).placeholder("Filter models")),
@@ -42,7 +48,7 @@ pub(super) struct ModelRow {
     pub favorite: bool,
     pub hidden: bool,
 }
-fn providers() -> Vec<(String, String)> {
+pub(super) fn providers() -> Vec<(String, String)> {
     coincide_core::provider_catalog::provider_catalog()
         .iter()
         .map(|p| {
@@ -57,7 +63,7 @@ fn providers() -> Vec<(String, String)> {
         })
         .collect()
 }
-fn provider_value<'a>(settings: &'a Value, provider: &str) -> &'a Value {
+pub(super) fn provider_value<'a>(settings: &'a Value, provider: &str) -> &'a Value {
     let entries = &settings["providers"];
     if let Some(rows) = entries.as_array() {
         rows.chunks_exact(2)
@@ -68,7 +74,7 @@ fn provider_value<'a>(settings: &'a Value, provider: &str) -> &'a Value {
         &entries[provider]
     }
 }
-fn replace_provider(entries: &mut Value, provider: &str, value: Value) -> Result<()> {
+pub(super) fn replace_provider(entries: &mut Value, provider: &str, value: Value) -> Result<()> {
     if let Some(rows) = entries.as_array_mut() {
         anyhow::ensure!(
             rows.len() % 2 == 0 && rows.chunks_exact(2).all(|p| p[0].is_string()),

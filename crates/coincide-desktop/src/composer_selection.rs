@@ -1226,6 +1226,14 @@ impl Coincide {
             return true;
         }
         self.selected.as_ref().is_some_and(|thread| {
+            if !coincide_core::provider_preferences::enabled(
+                &self.settings,
+                &text(&thread["selection"], "provider"),
+            )
+            .unwrap_or(false)
+            {
+                return true;
+            }
             if named_models::named_thread(thread) && !self.running.contains(&text(thread, "id")) {
                 let named = &self.selection_ui.capabilities["namedModels"];
                 if named["threadId"] != thread["id"]
@@ -1642,6 +1650,10 @@ impl Coincide {
         }
         self.refresh_selection_capabilities(cx);
         self.observe_saved_profile_once(cx);
+    }
+    pub(super) fn refresh_provider_preferences(&mut self, cx: &mut Context<Self>) {
+        self.selection_ui.capability_cache.invalidate();
+        self.refresh_selection_capabilities(cx);
     }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref() else {
@@ -2316,7 +2328,7 @@ impl Coincide {
         } else {
             "Build"
         };
-        let mut controls = div().flex().flex_wrap().items_center().gap_1();
+        let mut controls = div().flex().flex_wrap().items_center().gap_1().gap(px(2.));
         for (facet, id, label, help) in [
             (
                 PickerFacet::Model,
@@ -2351,8 +2363,20 @@ impl Coincide {
         ] {
             controls = controls.child(
                 Button::new(id)
-                    .label(label)
+                    .when(facet != PickerFacet::Model, |button| {
+                        button.label(label.clone())
+                    })
+                    .accessibility_label(help.clone())
                     .tooltip(help)
+                    .xsmall()
+                    .h(px(26.))
+                    .rounded(px(7.))
+                    .when(facet == PickerFacet::Model, |button| {
+                        button.child(chat_layout::provider_label(
+                            &text(selection, "provider"),
+                            label.clone(),
+                        ))
+                    })
                     .when(facet != PickerFacet::Mode, |button| {
                         button.dropdown_caret(true)
                     })
@@ -2366,6 +2390,9 @@ impl Coincide {
                                 } else {
                                     gpui_kit::assets::IconName::Lock
                                 }
+                            }
+                            PickerFacet::Mode if mode == "Plan" => {
+                                gpui_kit::assets::IconName::PencilRuler
                             }
                             _ => gpui_kit::assets::IconName::Hammer,
                         })
@@ -2383,6 +2410,9 @@ impl Coincide {
                         cx.notify();
                     })),
             );
+            if facet == PickerFacet::Access {
+                controls = controls.child(self.follow_up_button(cx));
+            }
         }
         div()
             .flex_1()
@@ -2441,6 +2471,7 @@ impl Coincide {
             .as_array()
             .into_iter()
             .flatten()
+            .filter(|provider| provider["enabled"] != false)
         {
             let id = text(provider, "provider");
             let source = source.clone();

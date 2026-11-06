@@ -11,6 +11,7 @@ pub(super) fn named_thread(thread: &Value) -> bool {
 }
 impl Engine {
     pub(super) fn profile_model_binding(&self, thread: &Value) -> Result<NamedBinding> {
+        self.require_provider_enabled("codex")?;
         let id = required(thread, "id")?;
         ensure!(
             self.active_thread().and_then(|id| Uuid::parse_str(id).ok())
