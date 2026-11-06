@@ -11,10 +11,13 @@ use serde_json::Value;
 use std::path::PathBuf;
 #[path = "instructions_sync_ui.rs"]
 mod copy_ui;
+#[path = "instructions_git_ui.rs"]
+mod git_ui;
 use std::path::Path;
 pub(super) struct Setup {
     engine: SharedEngine,
     copy: copy_ui::State,
+    git: git_ui::State,
     pub(super) scope: Option<NativeScope>,
     metadata: Option<Metadata>,
     projects: Vec<Value>,
@@ -31,6 +34,9 @@ pub(super) struct Setup {
     status: String,
 }
 impl Setup {
+    pub(super) fn git_busy(&self) -> bool {
+        self.git.busy() || self.git.reviewing()
+    }
     pub(super) fn has_copy_review(&self) -> bool {
         self.copy.review.is_some()
     }
@@ -44,6 +50,7 @@ impl Setup {
         let mut result = Self {
             engine,
             copy: copy_ui::State::new(),
+            git: git_ui::State::new(),
             scope: scope.ok(),
             metadata: None,
             projects: Vec::new(),
@@ -100,8 +107,8 @@ impl InstructionsPanel {
             cx.notify();
             return false;
         }
-        if self.setup.picker_pending {
-            self.setup.status = "Finish choosing a master first.".into();
+        if self.setup.picker_pending || self.setup.git.busy() {
+            self.setup.status = "Finish or cancel the current instruction operation first.".into();
             cx.notify();
             return false;
         }
@@ -159,6 +166,7 @@ impl InstructionsPanel {
             Ok((scope, root)) => {
                 self.setup.generation = self.setup.generation.wrapping_add(1);
                 self.setup.copy.invalidate();
+                self.setup.git.invalidate();
                 self.setup.review = None;
                 self.setup.review_editor = None;
                 self.setup.project = project;
@@ -200,6 +208,7 @@ impl InstructionsPanel {
             Ok(scope) => {
                 self.setup.generation = self.setup.generation.wrapping_add(1);
                 self.setup.copy.invalidate();
+                self.setup.git.invalidate();
                 self.setup.review = None;
                 self.setup.review_editor = None;
                 self.setup.scope = Some(scope.clone());
@@ -260,6 +269,7 @@ impl InstructionsPanel {
         self.setup.picker_pending = true;
         self.setup.generation = self.setup.generation.wrapping_add(1);
         self.setup.copy.invalidate();
+        self.setup.git.invalidate();
         let generation = self.setup.generation;
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -446,6 +456,7 @@ impl InstructionsPanel {
             return;
         };
         self.setup.copy.invalidate();
+        self.setup.git.invalidate();
         self.setup.review_editor = None;
         let result = (|| -> Result<(NativeScope, Vec<crate::instructions_scope::LinkOutcome>)> {
             let engine = self.setup.engine.clone();
@@ -582,7 +593,8 @@ impl InstructionsPanel {
     pub(super) fn setup_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let pending = self.setup.picker_pending
             || self.setup.review.is_some()
-            || self.setup.has_copy_review();
+            || self.setup.has_copy_review()
+            || self.setup.git_busy();
         let mut scopes = div().flex().flex_wrap().gap_1().child(
             Button::new("instructions-global-scope")
                 .label("Global")
@@ -710,6 +722,7 @@ impl InstructionsPanel {
         }
         pane.child(files)
             .child(self.copy_controls(cx))
+            .child(self.git_copy_controls(cx))
             .child(self.setup.status.clone())
             .into_any_element()
     }

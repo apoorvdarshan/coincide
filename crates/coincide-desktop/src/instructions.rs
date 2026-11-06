@@ -2,6 +2,8 @@
 //! callback invokes the bound file writer. No API/tool route can submit text.
 #[path = "instructions_file.rs"]
 mod file;
+#[path = "instructions_git.rs"]
+mod git;
 #[path = "instructions_setup.rs"]
 mod setup;
 #[path = "instructions_sync.rs"]
@@ -225,7 +227,8 @@ impl Render for InstructionsPanel {
                                     || !dirty
                                     || self.blocked
                                     || (self.setup.review.is_some()
-                                        || self.setup.has_copy_review())
+                                        || self.setup.has_copy_review()
+                                        || self.setup.git_busy())
                                     || self.setup.picker_pending,
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -251,7 +254,9 @@ impl Render for InstructionsPanel {
                     .font_family("monospace")
                     .child(Textarea::new(&self.editor).h_full().disabled(
                         !readable
-                            || (self.setup.review.is_some() || self.setup.has_copy_review())
+                            || (self.setup.review.is_some()
+                                || self.setup.has_copy_review()
+                                || self.setup.git_busy())
                             || self.setup.picker_pending,
                     )),
             )

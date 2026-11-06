@@ -16,6 +16,9 @@ impl State {
             receipt: None,
         }
     }
+    pub(super) fn native_scope(&self) -> Option<NativeScope> {
+        self.scope.clone()
+    }
     pub(super) fn invalidate(&mut self) {
         self.scope = None;
         self.receipt = None;
@@ -82,6 +85,7 @@ impl InstructionsPanel {
             return;
         }
         self.setup.copy.invalidate_review();
+        self.setup.git.invalidate();
         self.setup.picker_pending = true;
         self.setup.generation = self.setup.generation.wrapping_add(1);
         let generation = self.setup.generation;
@@ -159,7 +163,7 @@ impl InstructionsPanel {
         }
         cx.notify();
     }
-    fn prepare_copy_sync(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn prepare_copy_sync(&mut self, cx: &mut Context<Self>) {
         if !self.setup_clean(cx) {
             return;
         }
@@ -290,7 +294,8 @@ impl InstructionsPanel {
     pub(super) fn copy_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.setup.review.is_some()
             || self.setup.copy.review.is_some()
-            || self.setup.picker_pending;
+            || self.setup.picker_pending
+            || self.setup.git_busy();
         let configured = self
             .setup
             .metadata
