@@ -474,7 +474,8 @@ impl Coincide {
                                 cx.new(|_| drag.clone())
                             })
                             .on_drop(cx.listener(move |this, drag: &ProjectDrag, _, cx| {
-                                if searching
+                                if drag.0.eq_ignore_ascii_case(&drop_project)
+                                    || searching
                                     || chats
                                     || this.media.shutdown_requested
                                     || this.media.close_requested
@@ -777,7 +778,7 @@ impl Coincide {
                         group = group.child(div().id(SharedString::from(format!("sidebar-thread-drag-{}",thread.id))).w_full().flex().items_center().group("sidebar-thread-row")
                                 .when(pinned, |row| row.on_drag(PinnedDrag(pinned_drag),|drag,_,_,cx|cx.new(|_|drag.clone())))
                                 .on_drop(cx.listener(move |this,drag:&PinnedDrag,_,cx| {
-                                    if !pinned || searching || !this.search.read(cx).value().trim().is_empty() || this.thread_bulk.mode || this.media.shutdown_requested || this.media.close_requested { return; }
+                                    if drag.0.eq_ignore_ascii_case(&pinned_drop) || !pinned || searching || !this.search.read(cx).value().trim().is_empty() || this.thread_bulk.mode || this.media.shutdown_requested || this.media.close_requested { return; }
                                     let mut ids:Vec<_>=this.sidebar_sections(coincide_core::store::swift_timestamp(),false,"").into_iter().find(|section|section.project_id.is_none()).map(|section|section.threads.iter().map(|thread|thread.id.clone()).collect()).unwrap_or_default();
                                     if !ids.contains(&drag.0) { return; } ids.retain(|id|id!=&drag.0); let index=ids.iter().position(|id|id==&pinned_drop).unwrap_or(ids.len()); ids.insert(index,drag.0.clone()); this.sidebar_preference("pinnedThreads",json!(ids),cx);
                                 }))

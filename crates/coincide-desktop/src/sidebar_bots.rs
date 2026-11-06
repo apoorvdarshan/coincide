@@ -212,7 +212,8 @@ impl Coincide {
                     .w_full()
                     .on_drag(BotDrag(drag_id), |drag, _, _, cx| cx.new(|_| drag.clone()))
                     .on_drop(cx.listener(move |this, drag: &BotDrag, _, cx| {
-                        if !this.search.read(cx).value().trim().is_empty()
+                        if drag.0.eq_ignore_ascii_case(&drop_id)
+                            || !this.search.read(cx).value().trim().is_empty()
                             || this.thread_bulk.mode
                             || this.sidebar_bot_pending.is_some()
                             || this.media.close_requested
