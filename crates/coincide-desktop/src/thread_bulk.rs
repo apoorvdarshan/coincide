@@ -319,6 +319,69 @@ impl Coincide {
             self.select(id, window, cx);
         }
     }
+    pub(super) fn sidebar_modified_click(
+        &mut self,
+        id: &str,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let modifiers = event.modifiers();
+        let multiple = if cfg!(target_os = "macos") {
+            modifiers.platform
+        } else {
+            modifiers.control
+        };
+        if !multiple && !modifiers.shift {
+            return false;
+        }
+        self.sync_thread_bulk(cx);
+        let binding = self.bulk_sidebar_binding(cx);
+        if !binding.available {
+            return true;
+        }
+        let rows = binding
+            .rows
+            .iter()
+            .map(|row| row.0.as_str())
+            .collect::<Vec<_>>();
+        let Some(clicked) = rows.iter().position(|row| *row == id) else {
+            return true;
+        };
+        let was_mode = self.thread_bulk.mode;
+        self.thread_bulk.mode = true;
+        if !was_mode && multiple {
+            if let Some(current) = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+                .filter(|id| rows.contains(id))
+            {
+                self.thread_bulk.picked.insert(current.into());
+            }
+        }
+        if modifiers.shift {
+            let anchor = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+                .and_then(|id| rows.iter().position(|row| *row == id))
+                .unwrap_or(clicked);
+            let range = anchor.min(clicked)..=anchor.max(clicked);
+            if range.clone().count() > LIMIT {
+                self.thread_bulk.status = "Select at most 50 conversations.".into();
+                cx.notify();
+                return true;
+            }
+            self.thread_bulk.picked = range.map(|index| rows[index].to_owned()).collect();
+            self.thread_bulk.invalidate();
+        } else if let Err(error) = self.thread_bulk.toggle(id) {
+            self.thread_bulk.status = error.to_string();
+        }
+        self.thread_list_focus.focus(window, cx);
+        cx.notify();
+        true
+    }
     fn bulk_drafts_clean(&self, ids: &[String]) -> bool {
         !ids.iter().any(|id| self.pending_drafts.contains_key(id))
     }

@@ -1,7 +1,7 @@
 //! Shared section controls: real collapse, ordering, sorting and saved filters.
 use super::*;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
 #[derive(Clone)]
 pub(super) struct SectionDrag(pub String);
 impl Render for SectionDrag {
@@ -19,80 +19,9 @@ impl Coincide {
     ) -> AnyElement {
         let collapsed = !searching && self.sidebar_preferences.collapsed(section);
         let parent = cx.entity().downgrade();
-        div()
-            .id(SharedString::from(format!("sidebar-section-{section}")))
-            .flex()
-            .items_center()
-            .h(px(36.))
-            .gap_1()
-            .child(
-                Button::new(SharedString::from(format!("sidebar-collapse-{section}")))
-                    .ghost()
-                    .compact()
-                    .flex_1()
-                    .h(px(30.))
-                    .justify_start()
-                    .icon(if collapsed {
-                        IconName::ChevronRight
-                    } else {
-                        IconName::ChevronDown
-                    })
-                    .label(label)
-                    .disabled(searching)
-                    .accessibility_label(format!(
-                        "{} {label}",
-                        if collapsed { "Expand" } else { "Collapse" }
-                    ))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.toggle_sidebar_section(section, cx)),
-                    ),
-            )
-            .when(section == "projects", |row| {
-                row.child(
-                    Button::new("sidebar-add-project")
-                        .icon(IconName::FolderPlus)
-                        .accessibility_label("Add project folders")
-                        .tooltip("Add folders…")
-                        .ghost()
-                        .compact()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_project_form(project_management::Mode::Add, None, window, cx)
-                        })),
-                )
-            })
-            .when(section == "bots", |row| {
-                row.child(
-                    Button::new("sidebar-add-bot")
-                        .icon(IconName::Plus)
-                        .accessibility_label("New Bot")
-                        .tooltip("New Bot…")
-                        .ghost()
-                        .compact()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.sidebar_edit_bot(None, window, cx)
-                        })),
-                )
-            })
-            .on_drag(SectionDrag(section.into()), |drag, _, _, cx| {
-                cx.new(|_| drag.clone())
-            })
-            .on_drop(cx.listener(move |this, drag: &SectionDrag, _, cx| {
-                if searching
-                    || !this.search.read(cx).value().trim().is_empty()
-                    || this.media.close_requested
-                    || this.media.shutdown_requested
-                    || !sidebar_preferences::SECTIONS.contains(&drag.0.as_str())
-                {
-                    return;
-                }
-                let order = sidebar_preferences::moved(
-                    &this.sidebar_preferences.strings("sidebarSections"),
-                    &drag.0,
-                    Some(section),
-                );
-                this.sidebar_preference("sidebarSections", json!(order), cx);
-            }))
-            .context_menu(move |mut menu, _, _| {
+        let preferences = self.sidebar_preferences.clone();
+        let options = std::rc::Rc::new(
+            move |mut menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
                 for target in sidebar_preferences::SECTIONS {
                     if target == section {
                         continue;
@@ -136,16 +65,22 @@ impl Coincide {
                             continue;
                         }
                         let parent = parent.clone();
-                        menu = menu.item(PopupMenuItem::new(format!("{title}: {name}")).on_click(
-                            move |_, _, cx| {
-                                let _ = parent.update(cx, |this, cx| {
-                                    if key == "botSort" {
-                                        this.sidebar_preference("choseBotSort", json!(true), cx);
-                                    }
-                                    this.sidebar_preference(key, json!(sort), cx);
-                                });
-                            },
-                        ));
+                        menu = menu.item(
+                            PopupMenuItem::new(format!("{title}: {name}"))
+                                .checked(preferences.sort(key) == sort)
+                                .on_click(move |_, _, cx| {
+                                    let _ = parent.update(cx, |this, cx| {
+                                        if key == "botSort" {
+                                            this.sidebar_preference(
+                                                "choseBotSort",
+                                                json!(true),
+                                                cx,
+                                            );
+                                        }
+                                        this.sidebar_preference(key, json!(sort), cx);
+                                    });
+                                }),
+                        );
                     }
                 }
                 if matches!(section, "projects" | "chats") {
@@ -159,8 +94,12 @@ impl Coincide {
                     ] {
                         let parent = parent.clone();
                         menu = menu.item(
-                            PopupMenuItem::new(format!("Threads per Project: {title}")).on_click(
-                                move |_, _, cx| {
+                            PopupMenuItem::new(format!("Threads per Project: {title}"))
+                                .checked(
+                                    preferences.document["sidebarThreadsPerProject"]
+                                        == json!(limit),
+                                )
+                                .on_click(move |_, _, cx| {
                                     let _ = parent.update(cx, |this, cx| {
                                         this.sidebar_preference(
                                             "sidebarThreadsPerProject",
@@ -168,8 +107,7 @@ impl Coincide {
                                             cx,
                                         )
                                     });
-                                },
-                            ),
+                                }),
                         );
                     }
                 }
@@ -181,17 +119,21 @@ impl Coincide {
                         ("showsSettledThreads", "Show Settled Threads"),
                     ] {
                         let parent = parent.clone();
-                        menu = menu.item(PopupMenuItem::new(title).on_click(move |_, _, cx| {
-                            let _ = parent.update(cx, |this, cx| {
-                                let value = !this.sidebar_preferences.flag(key);
-                                this.sidebar_preference(key, json!(value), cx);
-                                this.show_archived =
-                                    this.sidebar_preferences.flag("showsArchivedThreads");
-                                this.show_snoozed =
-                                    this.sidebar_preferences.flag("showsSnoozedThreads");
-                                this.refresh(cx);
-                            });
-                        }));
+                        menu = menu.item(
+                            PopupMenuItem::new(title)
+                                .checked(preferences.flag(key))
+                                .on_click(move |_, _, cx| {
+                                    let _ = parent.update(cx, |this, cx| {
+                                        let value = !this.sidebar_preferences.flag(key);
+                                        this.sidebar_preference(key, json!(value), cx);
+                                        this.show_archived =
+                                            this.sidebar_preferences.flag("showsArchivedThreads");
+                                        this.show_snoozed =
+                                            this.sidebar_preferences.flag("showsSnoozedThreads");
+                                        this.refresh(cx);
+                                    });
+                                }),
+                        );
                     }
                     for (title, expanded) in [
                         ("Expand All Projects", true),
@@ -216,7 +158,107 @@ impl Coincide {
                     }
                 }
                 menu
+            },
+        );
+        let context_options = options.clone();
+        div()
+            .id(SharedString::from(format!("sidebar-section-{section}")))
+            .flex()
+            .items_center()
+            .h(px(36.))
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(format!("sidebar-collapse-{section}")))
+                    .ghost()
+                    .compact()
+                    .flex_1()
+                    .h(px(30.))
+                    .justify_start()
+                    .icon(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .label(label)
+                    .disabled(searching)
+                    .accessibility_label(format!(
+                        "{} {label}",
+                        if collapsed { "Expand" } else { "Collapse" }
+                    ))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.toggle_sidebar_section(section, cx)),
+                    ),
+            )
+            .when(section == "projects", |row| {
+                row.child(
+                    Button::new("sidebar-add-project")
+                        .icon(IconName::FolderPlus)
+                        .accessibility_label("Add project folders")
+                        .tooltip("Add folders…")
+                        .ghost()
+                        .compact()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_project_form(project_management::Mode::Add, None, window, cx)
+                        })),
+                )
             })
+            .when(section == "chats", |row| {
+                row.child(
+                    Button::new("sidebar-add-chat")
+                        .icon(IconName::SquarePen)
+                        .ghost()
+                        .compact()
+                        .accessibility_label("New Chat")
+                        .tooltip("New Chat")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.new_thread_in_project(navigation::NO_PROJECT_ID, window, cx)
+                        })),
+                )
+            })
+            .when(section == "bots", |row| {
+                row.child(
+                    Button::new("sidebar-add-bot")
+                        .icon(IconName::Plus)
+                        .accessibility_label("New Bot")
+                        .tooltip("New Bot…")
+                        .ghost()
+                        .compact()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.sidebar_edit_bot(None, window, cx)
+                        })),
+                )
+            })
+            .when(section != "pinned", |row| {
+                row.child(
+                    Button::new(SharedString::from(format!("sidebar-options-{section}")))
+                        .icon(IconName::Ellipsis)
+                        .ghost()
+                        .compact()
+                        .accessibility_label(format!("{label} Options"))
+                        .tooltip(format!("{label} Options"))
+                        .dropdown_menu(move |menu, window, cx| options(menu, window, cx)),
+                )
+            })
+            .on_drag(SectionDrag(section.into()), |drag, _, _, cx| {
+                cx.new(|_| drag.clone())
+            })
+            .on_drop(cx.listener(move |this, drag: &SectionDrag, _, cx| {
+                if searching
+                    || !this.search.read(cx).value().trim().is_empty()
+                    || this.media.close_requested
+                    || this.media.shutdown_requested
+                    || !sidebar_preferences::SECTIONS.contains(&drag.0.as_str())
+                {
+                    return;
+                }
+                let order = sidebar_preferences::moved(
+                    &this.sidebar_preferences.strings("sidebarSections"),
+                    &drag.0,
+                    Some(section),
+                );
+                this.sidebar_preference("sidebarSections", json!(order), cx);
+            }))
+            .context_menu(move |menu, window, cx| context_options(menu, window, cx))
             .into_any_element()
     }
     pub(super) fn sidebar_expand_project(

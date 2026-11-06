@@ -45,6 +45,27 @@ enum SidebarThreadAction {
     Unsnooze,
 }
 
+fn adjacent_sidebar_row<'a>(
+    rows: &[&'a str],
+    selected: Option<&str>,
+    step: i32,
+) -> Option<&'a str> {
+    if rows.is_empty() {
+        return None;
+    }
+    let current = selected.and_then(|id| rows.iter().position(|row| *row == id));
+    let index = match current {
+        Some(index) => (index as i32 + step).clamp(0, rows.len() as i32 - 1) as usize,
+        None => {
+            if step < 0 {
+                rows.len() - 1
+            } else {
+                0
+            }
+        }
+    };
+    rows.get(index).copied()
+}
 pub(super) fn sidebar_age(date: Option<f64>, now: f64) -> String {
     let Some(date) = date else {
         return String::new();
@@ -74,7 +95,12 @@ fn section_key(section: &sections::Section<'_>) -> &'static str {
 }
 
 impl Coincide {
-    fn sidebar_sections(&self, now: f64, searching: bool) -> Vec<sections::Section<'_>> {
+    fn sidebar_sections(
+        &self,
+        now: f64,
+        searching: bool,
+        query: &str,
+    ) -> Vec<sections::Section<'_>> {
         let mut projects: Vec<_> = self
             .projects
             .iter()
@@ -102,8 +128,15 @@ impl Coincide {
             self.selected_project.as_deref(),
             true, // Running/approval rows stay visible even while snoozed.
             now,
-            searching,
+            false, // Keep matching empty projects, then apply the search below.
         );
+        if searching {
+            result.retain(|section| {
+                !section.threads.is_empty()
+                    || (section_key(section) == "projects"
+                        && sidebar_search::terms_match(&section.name, query))
+            });
+        }
         for section in &mut result {
             let key = if section.project_id.as_deref() == Some(NO_PROJECT) {
                 "chatSort"
@@ -236,7 +269,7 @@ impl Coincide {
         let query = self.search.read(cx).value().to_string();
         let searching = !query.trim().is_empty();
         let rows = self
-            .sidebar_sections(coincide_core::store::swift_timestamp(), searching)
+            .sidebar_sections(coincide_core::store::swift_timestamp(), searching, &query)
             .into_iter()
             .filter(|section| {
                 searching
@@ -328,12 +361,18 @@ impl Coincide {
                 .map(|p| text(p, "name"))
                 .unwrap_or_else(|| "Unavailable project".into()),
         };
-        let searching = !self.search.read(cx).value().trim().is_empty();
+        let query = self.search.read(cx).value().to_string();
+        let searching = !query.trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
-        let sections = self.sidebar_sections(now, searching);
+        let sections = self.sidebar_sections(now, searching, &query);
         let mut section_index = 0usize;
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
-        if sections.is_empty() && self.sidebar_bots.is_empty() {
+        if !sections
+            .iter()
+            .any(|section| !section.threads.is_empty() || section_key(section) == "projects")
+            && !self.has_sidebar_bot_rows(searching, cx)
+            && (searching || sections.is_empty())
+        {
             conversations = conversations.child(
                 div()
                     .p_3()
@@ -355,7 +394,7 @@ impl Coincide {
                 }
             }
             if section_kind == "bots"
-                && !self.sidebar_bots.is_empty()
+                && self.has_sidebar_bot_rows(searching, cx)
                 && self
                     .selected_project
                     .as_deref()
@@ -410,6 +449,7 @@ impl Coincide {
                     let chats = group_id == NO_PROJECT;
                     let target = group_id.clone();
                     let menu_target = group_id.clone();
+                    let new_project_id = group_id.clone();
                     let drag_project = group_id.clone();
                     let drop_project = group_id.clone();
                     let expected_projects = json!(self.projects);
@@ -427,6 +467,9 @@ impl Coincide {
                                 "sidebar-project-drag-{group_id}"
                             )))
                             .w_full()
+                            .flex()
+                            .items_center()
+                            .group("sidebar-project-row")
                             .on_drag(ProjectDrag(drag_project), |drag, _, _, cx| {
                                 cx.new(|_| drag.clone())
                             })
@@ -616,6 +659,36 @@ impl Coincide {
                                         menu
                                     },
                                 ),
+                            )
+                            .when(
+                                !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
+                                |row| {
+                                    row.child(
+                                        Button::new(SharedString::from(format!(
+                                            "sidebar-project-new-{new_project_id}"
+                                        )))
+                                        .icon(IconName::SquarePen)
+                                        .ghost()
+                                        .compact()
+                                        .w(px(24.))
+                                        .h(px(28.))
+                                        .opacity(0.)
+                                        .group_hover("sidebar-project-row", |button| {
+                                            button.opacity(1.)
+                                        })
+                                        .accessibility_label("New Thread in Project")
+                                        .tooltip("New Thread")
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.new_thread_in_project(
+                                                    &new_project_id,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        ),
+                                    )
+                                },
                             ),
                     );
                 } else {
@@ -665,6 +738,7 @@ impl Coincide {
                         let id = thread.id.clone();
                         let selecting = self.thread_bulk.mode;
                         let menu_id = id.clone();
+                        let archive_id = id.clone();
                         let pinned_drag = id.clone();
                         let pinned_drop = id.clone();
                         let parent = cx.entity().downgrade();
@@ -700,11 +774,11 @@ impl Coincide {
                                 thread.title
                             )
                         );
-                        group = group.child(div().id(SharedString::from(format!("sidebar-thread-drag-{}",thread.id))).w_full()
+                        group = group.child(div().id(SharedString::from(format!("sidebar-thread-drag-{}",thread.id))).w_full().flex().items_center().group("sidebar-thread-row")
                                 .when(pinned, |row| row.on_drag(PinnedDrag(pinned_drag),|drag,_,_,cx|cx.new(|_|drag.clone())))
                                 .on_drop(cx.listener(move |this,drag:&PinnedDrag,_,cx| {
                                     if !pinned || searching || !this.search.read(cx).value().trim().is_empty() || this.thread_bulk.mode || this.media.shutdown_requested || this.media.close_requested { return; }
-                                    let mut ids:Vec<_>=this.sidebar_sections(coincide_core::store::swift_timestamp(),false).into_iter().find(|section|section.project_id.is_none()).map(|section|section.threads.iter().map(|thread|thread.id.clone()).collect()).unwrap_or_default();
+                                    let mut ids:Vec<_>=this.sidebar_sections(coincide_core::store::swift_timestamp(),false,"").into_iter().find(|section|section.project_id.is_none()).map(|section|section.threads.iter().map(|thread|thread.id.clone()).collect()).unwrap_or_default();
                                     if !ids.contains(&drag.0) { return; } ids.retain(|id|id!=&drag.0); let index=ids.iter().position(|id|id==&pinned_drop).unwrap_or(ids.len()); ids.insert(index,drag.0.clone()); this.sidebar_preference("pinnedThreads",json!(ids),cx);
                                 }))
                             .child(Button::new(SharedString::from(format!("thread-{id}")))
@@ -742,8 +816,10 @@ impl Coincide {
                                 } else {
                                     id == selected
                                 })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.bulk_row_click(&id, selecting, window, cx)
+                                .on_click(cx.listener(move |this, event, window, cx| {
+                                    if this.sidebar_modified_click(&id,event,window,cx) {return;}
+                                    this.bulk_row_click(&id, selecting, window, cx);
+                                    if !selecting && this.selected.as_ref().is_some_and(|thread|thread["id"]==id) && this.find_context_available() {this.composer.read(cx).focus_handle(cx).focus(window,cx);}
                                 }))
                                 .context_menu(move |mut menu, _, _| {
                                     let mut actions = vec![
@@ -812,7 +888,10 @@ impl Coincide {
                                         ));
                                     }
                                     menu
-                                })),
+                                })).child(Button::new(SharedString::from(format!("sidebar-thread-archive-{archive_id}"))).icon(IconName::Archive).ghost().compact().w(px(24.)).h(px(28.)).opacity(0.).group_hover("sidebar-thread-row",|button|button.opacity(1.)).disabled(self.thread_bulk.mode || self.running.contains(&archive_id)).accessibility_label(if is_archived {"Restore conversation"} else {"Archive conversation"}).tooltip(if is_archived {"Restore"} else {"Archive"}).on_click(cx.listener(move |this,_,window,cx| {
+                                    if this.thread_bulk.mode || this.running.contains(&archive_id) {return;}
+                                    this.select(&archive_id,window,cx);if this.selected.as_ref().is_some_and(|thread|thread["id"]==archive_id) {this.request_archive(cx);}
+                                }))),
                         );
                     }
                 }
@@ -865,6 +944,41 @@ impl Coincide {
             .border_color(self.color(0x29303d))
             .p_3()
             .gap_2()
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                if this.search.read(cx).focus_handle(cx).is_focused(window)
+                    || this.project_picker_open
+                    || this.thread_bulk.mode
+                {
+                    return;
+                }
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.platform || modifiers.control || modifiers.alt || modifiers.shift {
+                    return;
+                }
+                let step = match event.keystroke.key.as_str() {
+                    "up" | "arrowup" => -1,
+                    "down" | "arrowdown" => 1,
+                    "enter" | "return" if this.thread_list_focus.is_focused(window) => {
+                        if this.find_context_available() {
+                            this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                            cx.stop_propagation();
+                        }
+                        return;
+                    }
+                    _ => return,
+                };
+                let rows = this.bulk_sidebar_binding(cx).rows;
+                let ids = rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>();
+                let selected = this
+                    .selected
+                    .as_ref()
+                    .and_then(|thread| thread["id"].as_str());
+                if let Some(id) = adjacent_sidebar_row(&ids, selected, step).map(str::to_owned) {
+                    this.select(&id, window, cx);
+                    this.thread_list_focus.focus(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_drag_move(cx.listener(
                 |this, event: &DragMoveEvent<navigation_resize::ResizeList>, window, cx| {
                     if this.sidebar_resize.move_to(
@@ -1428,5 +1542,28 @@ impl Coincide {
             );
         }
         Some(pane.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod keyboard_navigation_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn arrow_navigation_uses_only_visible_rows_and_preserves_boundaries() {
+        let visible = ["first", "selected", "last"];
+        assert_eq!(
+            adjacent_sidebar_row(&visible, Some("selected"), 1),
+            Some("last")
+        );
+        assert_eq!(
+            adjacent_sidebar_row(&visible, Some("first"), -1),
+            Some("first")
+        );
+        assert_eq!(
+            adjacent_sidebar_row(&visible, Some("hidden-by-filter"), 1),
+            Some("first")
+        );
+        assert_eq!(adjacent_sidebar_row(&visible, None, -1), Some("last"));
+        assert_eq!(adjacent_sidebar_row(&[], None, 1), None);
     }
 }

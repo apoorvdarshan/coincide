@@ -58,11 +58,16 @@ impl Coincide {
             let target = thread.id.clone();
             let reusable = !fresh
                 || (!self.pending_drafts.contains_key(&target)
+                    && !self.attachment_import_threads.contains(&target)
                     && call(&self.engine, "threads.read", json!({"threadId":target}))
                         .ok()
                         .is_some_and(|saved| {
                             saved["items"].as_array().is_some_and(Vec::is_empty)
                                 && saved["draft"].as_str().is_none_or(str::is_empty)
+                                && saved["draftContext"].as_array().is_none_or(Vec::is_empty)
+                                && saved["rustDraftImages"]
+                                    .as_array()
+                                    .is_none_or(Vec::is_empty)
                         }));
             if reusable {
                 self.created_bot_thread_to_focus = Some(target.clone());
@@ -113,24 +118,32 @@ impl Coincide {
         self.navigation_tasks.push(completion);
         cx.notify();
     }
+    fn sidebar_bot_matches(&self, bot: &Value, searching: bool, cx: &Context<Self>) -> bool {
+        !searching
+            || sidebar_search::terms_match(&text(bot, "name"), &self.search.read(cx).value())
+            || self.threads.iter().any(|thread| {
+                thread
+                    .navigation
+                    .as_ref()
+                    .and_then(|meta| meta.bot_id.as_deref())
+                    .is_some_and(|id| {
+                        bot["id"]
+                            .as_str()
+                            .is_some_and(|known| known.eq_ignore_ascii_case(id))
+                    })
+            })
+    }
+    pub(super) fn has_sidebar_bot_rows(&self, searching: bool, cx: &Context<Self>) -> bool {
+        self.sidebar_bots
+            .iter()
+            .any(|bot| self.sidebar_bot_matches(bot, searching, cx))
+    }
     pub(super) fn sidebar_bot_rows(&self, searching: bool, cx: &mut Context<Self>) -> AnyElement {
-        let mut bots: Vec<_> = self.sidebar_bots.iter().collect();
-        let query = self.search.read(cx).value().to_lowercase();
-        bots.retain(|bot| {
-            !searching
-                || text(bot, "name").to_lowercase().contains(&query)
-                || self.threads.iter().any(|thread| {
-                    thread
-                        .navigation
-                        .as_ref()
-                        .and_then(|meta| meta.bot_id.as_deref())
-                        .is_some_and(|id| {
-                            bot["id"]
-                                .as_str()
-                                .is_some_and(|known| known.eq_ignore_ascii_case(id))
-                        })
-                })
-        });
+        let mut bots: Vec<_> = self
+            .sidebar_bots
+            .iter()
+            .filter(|bot| self.sidebar_bot_matches(bot, searching, cx))
+            .collect();
         match self.sidebar_preferences.sort("botSort") {
             "name" => bots.sort_by(|left, right| {
                 sidebar_preferences::name_order(&text(left, "name"), &text(right, "name"))

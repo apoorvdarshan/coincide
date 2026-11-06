@@ -431,7 +431,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT id,title,project_id,archived,pinned,snoozed_until,
-             (SELECT json_object('botID',json_extract(document,'$.botID'),'branch',json_extract(document,'$.branch'),'createdAt',json_extract(document,'$.createdAt'),'updatedAt',json_extract(document,'$.updatedAt'),'itemCount',json_array_length(document,'$.items'),'hasDraft',coalesce(length(json_extract(document,'$.draft')),0)>0,'preview',(SELECT substr(json_extract(value,'$.text'),1,560) FROM json_each(document,'$.items') WHERE json_extract(value,'$.kind') IN ('user','assistant') AND length(trim(json_extract(value,'$.text')))>0 ORDER BY cast(key AS INTEGER) DESC LIMIT 1)) FROM threads WHERE threads.id=thread_summaries.id COLLATE NOCASE)
+             (SELECT json_object('botID',json_extract(document,'$.botID'),'branch',json_extract(document,'$.branch'),'createdAt',json_extract(document,'$.createdAt'),'updatedAt',json_extract(document,'$.updatedAt'),'itemCount',json_array_length(document,'$.items'),'hasDraft',(coalesce(length(json_extract(document,'$.draft')),0)>0 OR coalesce(json_array_length(document,'$.draftContext'),0)>0 OR coalesce(json_array_length(document,'$.rustDraftImages'),0)>0),'preview',CASE WHEN json_type(document,'$.botID')='text' THEN (SELECT substr(json_extract(value,'$.text'),1,560) FROM json_each(document,'$.items') WHERE json_extract(value,'$.kind') IN ('user','assistant') AND length(trim(json_extract(value,'$.text'),char(9)||char(10)||char(13)||char(32)))>0 ORDER BY cast(key AS INTEGER) DESC LIMIT 1) ELSE NULL END) FROM threads WHERE threads.id=thread_summaries.id COLLATE NOCASE)
              FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
         let mut stmt = self.connection()?.prepare(&sql)?;
@@ -2262,6 +2262,17 @@ mod navigation_metadata_tests {
             before
         );
         assert!(before.get("rustBotContext").is_none());
+        let mut drafted = before.clone();
+        drafted["draftContext"] = json!([{"futureAttachment":"retained"}]);
+        store.save(&drafted).unwrap();
+        assert_eq!(
+            store.summaries("", false).unwrap()[0]
+                .navigation
+                .as_ref()
+                .unwrap()
+                .has_draft,
+            Some(true)
+        );
     }
 }
 

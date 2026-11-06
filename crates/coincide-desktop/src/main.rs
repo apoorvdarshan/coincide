@@ -48,6 +48,7 @@ mod native_quit;
 mod sidebar_preferences;
 mod sidebar_controls;
 mod sidebar_bots;
+mod sidebar_search;
 mod navigation;
 mod navigation_rail;
 mod open_targets;
@@ -1673,14 +1674,12 @@ impl Coincide {
         } else {
             complete = false;
         }
-        match call(&self.engine,"threads.list",json!({"query":self.search.read(cx).value().to_string(),"includeArchived":self.show_archived})).and_then(|v|Ok(serde_json::from_value(v)?)) {
-            Ok(threads) => self.threads = threads,
-            Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
+        match sidebar_search::read(&self.engine,&self.search.read(cx).value(),self.show_archived,&self.projects) {
+            Ok((visible,all))=> {self.threads=visible;self.sidebar_all_threads=all;},
+            Err(error)=> {complete=false;self.status=format!("Unable to load conversations: {error}");}
         }
         if let Ok(reply)=call(&self.engine,"schedules.list",json!({})) { if let Some(tasks)=reply["tasks"].as_array() {self.sidebar_schedules=tasks.clone();} }
         if let Ok(reply) = call(&self.engine, "bots.list", json!({})) { if let Some(bots) = reply["bots"].as_array() { self.sidebar_bots = bots.clone(); self.sidebar_bot_baseline=text(&reply,"baseline"); } }
-        if self.search.read(cx).value().trim().is_empty() { self.sidebar_all_threads = self.threads.clone(); }
-        else if let Ok(rows) = call(&self.engine, "threads.list", json!({"includeArchived":true})).and_then(|reply| Ok(serde_json::from_value(reply)?)) { self.sidebar_all_threads = rows; }
         cx.notify();
         complete
     }
