@@ -52,7 +52,11 @@ pub(crate) fn resolve_reported_preferences(
     let supported_effort = |effort: &Value| {
         effort.is_string() && efforts.is_some_and(|choices| choices.contains(effort))
     };
-    let effort = if supported_effort(&desired["effort"]) {
+    let effort = if desired["effort"].is_null() {
+        // Automatic remains Automatic. A reported default is useful only when
+        // adapting an unsupported explicit choice, not as a saved override.
+        Value::Null
+    } else if supported_effort(&desired["effort"]) {
         desired["effort"].clone()
     } else if !astra_model(thread["selection"]["modelID"].as_str().unwrap_or(""))
         && supported_effort(&row["reportedDefaultEffort"])
@@ -94,6 +98,36 @@ mod tests {
     fn insert(catalog: &mut ModelCatalog, id: &str, job: Job) {
         catalog.jobs.insert(id.into(), job);
         catalog.order.push_back(id.into());
+    }
+    #[test]
+    fn automatic_option_presence_survives_an_advertised_high_default() {
+        let rows = vec![
+            json!({"id":"synthetic-model","reportedEfforts":["high"],"reportedDefaultEffort":"high","reportedSpeeds":[{"id":"priority"}]}),
+        ];
+        for effort in [None, Some(Value::Null)] {
+            for speed in [None, Some(Value::Null)] {
+                let mut thread = json!({"selection":{"provider":"codex","modelID":"synthetic-model"},"future":{"opaque":7}});
+                if let Some(value) = &effort {
+                    thread["selection"]["effort"] = value.clone();
+                }
+                if let Some(value) = &speed {
+                    thread["selection"]["speed"] = value.clone();
+                }
+                let before = thread.clone();
+                resolve_reported_preferences(&mut thread, "default", &rows).unwrap();
+                assert_eq!(
+                    thread, before,
+                    "An advertised high default cannot materialize Automatic or Standard fields"
+                );
+            }
+        }
+        let mut unsupported = json!({"selection":{"provider":"codex","modelID":"synthetic-model","effort":"low"},"modelPreferences":{"codex/default":{"effort":"low","speed":null}}});
+        resolve_reported_preferences(&mut unsupported, "default", &rows).unwrap();
+        assert_eq!(unsupported["selection"]["effort"], "high");
+        assert_eq!(
+            unsupported["modelPreferences"]["codex/default"]["effort"], "low",
+            "Unsupported desired choice remains descriptive metadata"
+        );
     }
     #[test]
     fn only_latest_live_provider_and_executable_can_corroborate_history() {

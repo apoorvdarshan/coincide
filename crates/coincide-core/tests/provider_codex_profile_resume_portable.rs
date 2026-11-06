@@ -310,12 +310,14 @@ fn slots_phase(root: &Path, phase: &str) {
     if seed {
         fs::write(&metadata, b"{}").unwrap();
         choose(&mut engine, &a);
+        let selection_a = engine.store.thread(&id).unwrap()["selection"].clone();
         let native_a = turn(&mut engine, &a, "A first", "thread/start", None, "A first");
         if ordinary {
             ordinary_choice(&mut engine, &id, "codex", None, true);
         }
 
         choose(&mut engine, &b);
+        let selection_b = engine.store.thread(&id).unwrap()["selection"].clone();
         let native_b = turn(
             &mut engine,
             &b,
@@ -326,6 +328,11 @@ fn slots_phase(root: &Path, phase: &str) {
         );
         assert_ne!(native_a, native_b);
         choose(&mut engine, &a);
+        assert_eq!(
+            engine.store.thread(&id).unwrap()["selection"],
+            selection_a,
+            "A return preserves exact Automatic option presence despite reported high default"
+        );
         turn(
             &mut engine,
             &a,
@@ -356,6 +363,7 @@ fn slots_phase(root: &Path, phase: &str) {
             choose(&mut engine, &a);
         }
         choose(&mut engine, &b);
+        assert_eq!(engine.store.thread(&id).unwrap()["selection"], selection_b);
         turn(
             &mut engine,
             &b,
@@ -365,15 +373,17 @@ fn slots_phase(root: &Path, phase: &str) {
             "Earlier conversation context (historical messages, not a new user request):\n\nuser: A second\n\nCurrent user request:\nB second",
         );
         choose(&mut engine, &a);
+        assert_eq!(engine.store.thread(&id).unwrap()["selection"], selection_a);
         fs::write(
             &saved_path,
-            serde_json::to_vec(&json!({"id":id,"a":a,"b":b,"nativeA":native_a,"nativeB":native_b}))
+            serde_json::to_vec(&json!({"id":id,"a":a,"b":b,"nativeA":native_a,"nativeB":native_b,"selectionA":selection_a}))
                 .unwrap(),
         )
         .unwrap();
     } else {
         let saved: Value = serde_json::from_slice(&fs::read(&saved_path).unwrap()).unwrap();
         let before = engine.store.thread(&id).unwrap();
+        assert_eq!(before["selection"], saved["selectionA"]);
         let refused=engine.dispatch(json!({"method":"agent.send","params":{"threadId":id,"text":"must wait without consuming default-model receipt"}}));
         assert!(
             refused.get("error").is_some(),
@@ -571,7 +581,7 @@ fn provider() {
             "initialized" => continue,
             "account/read" => json!({"requiresOpenaiAuth":true,"account":{"type":"chatgpt"}}),
             "model/list" => {
-                json!({"data":[{"model":"portable-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}],"nextCursor":null})
+                json!({"data":[{"model":"portable-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}],"defaultReasoningEffort":"high"}],"nextCursor":null})
             }
             "thread/start" | "thread/resume" => {
                 assert_eq!(
@@ -598,6 +608,13 @@ fn provider() {
                 json!({"thread":{"id":native},"model":"portable-model"})
             }
             "turn/start" => {
+                assert!(
+                    frame["params"].get("effort").is_none(),
+                    "Automatic must not become advertised high on the actual wire"
+                );
+                assert!(
+                    frame["params"]["collaborationMode"]["settings"]["reasoning_effort"].is_null()
+                );
                 assert_eq!(frame["params"]["threadId"], native);
                 assert_eq!(
                     frame["params"]["input"][0]["text"], config["turn"],
