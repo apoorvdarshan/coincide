@@ -730,6 +730,11 @@ fn profile_access_fixture_child() {
     assert_eq!(repaired, expected);
     assert_eq!(records(&root).len(), count);
     fs::write(home.join("fixture-mode"), "allow").unwrap();
+    // Change the captured auth generation before admission so this test always
+    // exercises thread/start, even if the earlier joined turn minted a durable
+    // continuation before the first Engine was dropped.
+    fs::write(home.join("auth.json"), "synthetic captured auth generation").unwrap();
+    fs::set_permissions(home.join("auth.json"), fs::Permissions::from_mode(0o600)).unwrap();
     let refreshed = start_catalog(&mut engine, &id, &account);
     assert_eq!(
         wait_catalog(&mut engine, &id, &account, &refreshed)["state"],
@@ -748,6 +753,10 @@ fn profile_access_fixture_child() {
     );
     // A captured auth-generation change after thread/start stops before turn/start.
     fs::write(home.join("fixture-mode"), "revoke-after-start").unwrap();
+    let starts = records(&root)
+        .iter()
+        .filter(|row| row["method"] == "thread/start")
+        .count();
     let turns = records(&root)
         .iter()
         .filter(|row| row["method"] == "turn/start")
@@ -764,6 +773,23 @@ fn profile_access_fixture_child() {
             .filter(|row| row["method"] == "turn/start")
             .count(),
         turns
+    );
+    let rejected_calls = records(&root);
+    assert_eq!(
+        rejected_calls
+            .iter()
+            .filter(|row| row["method"] == "thread/start")
+            .count(),
+        starts + 1
+    );
+    assert!(
+        !rejected_calls
+            .iter()
+            .any(|row| row["method"] == "thread/resume")
+    );
+    assert_eq!(
+        fs::read_to_string(home.join("auth.json")).unwrap(),
+        "synthetic revocation marker, not credentials"
     );
     fs::remove_file(home.join("auth.json")).unwrap();
     fs::write(home.join("fixture-mode"), "hold-turn").unwrap();

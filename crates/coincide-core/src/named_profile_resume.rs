@@ -7,7 +7,7 @@ use crate::{
     agent::{self, WorkerCompletion, WorkerThreadStatus},
     codex_login_profiles::LaunchContext,
     composer_policy::Policy,
-    model_catalog::NamedBinding,
+    model_catalog::{NamedBinding, NamedCatalogFence, NamedResumeAdmission},
 };
 use anyhow::{Context as _, Result, ensure};
 use serde_json::Value;
@@ -139,11 +139,12 @@ struct Receipt {
 impl Receipt {
     fn durable(&self) -> Result<Value> {
         Ok(
-            serde_json::json!({"owner":self.context.owner,"context":self.context.durable()?,"native":self.native,
+            serde_json::json!({"schema":2,"owner":self.context.owner,"context":self.context.durable()?,"native":self.native,
             "resolved":self.resolved,"items":serde_json::to_value(&self.items)?}),
         )
     }
     fn restore(value: Value, context: &Context) -> Result<Self> {
+        ensure!(value["schema"] == 2, "Invalid continuation receipt schema");
         ensure!(
             value["owner"]
                 .as_str()
@@ -175,6 +176,18 @@ impl Receipt {
         })
     }
 }
+struct Parked {
+    receipt: Receipt,
+    stable: Value,
+    fence: Option<NamedCatalogFence>,
+}
+fn slot(thread: &str, account: &str) -> Result<String> {
+    Ok(format!(
+        "slot-v2/{}/{}",
+        Uuid::parse_str(thread)?,
+        Uuid::parse_str(account)?
+    ))
+}
 struct Pending {
     receipt: Receipt,
     worker: WorkerCompletion,
@@ -183,6 +196,7 @@ pub(crate) struct Registry {
     owner: Uuid,
     pending: HashMap<String, Pending>,
     ready: HashMap<String, Receipt>,
+    parked: HashMap<String, Parked>,
     journal: Option<journal::Journal>,
     storage_failure: Option<&'static str>,
     last_mint_error: Option<&'static str>,
@@ -193,6 +207,7 @@ impl Default for Registry {
             owner: Uuid::new_v4(),
             pending: HashMap::new(),
             ready: HashMap::new(),
+            parked: HashMap::new(),
             journal: None,
             storage_failure: None,
             last_mint_error: None,
@@ -200,79 +215,8 @@ impl Default for Registry {
     }
 }
 impl Registry {
-    /// Native deletion only: revoke in-memory candidates and durably consume
-    /// optional restart opportunities before the thread row can be removed.
-    /// Failure blocks deletion; no Store/Undo JSON can recreate this authority.
-    pub(crate) fn invalidate_threads(
-        &mut self,
-        ids: &[String],
-        store: &crate::store::Store,
-    ) -> Result<Vec<(String, String)>> {
-        let selected = ids
-            .iter()
-            .map(|id| Uuid::parse_str(id))
-            .collect::<Result<std::collections::HashSet<_>, _>>()?;
-        let mut records = std::collections::BTreeSet::new();
-        let mut capture = |thread: &str, native: &str| -> Result<()> {
-            let thread = Uuid::parse_str(thread)?;
-            ensure!(
-                selected.contains(&thread),
-                "Private continuation belongs to another conversation"
-            );
-            ensure!(
-                !native.is_empty() && native.len() <= 512 && !native.chars().any(char::is_control),
-                "Invalid private native-session identity"
-            );
-            records.insert((thread.to_string(), native.to_owned()));
-            ensure!(
-                records.len() <= 256,
-                "Private continuation revocation exceeds its bound"
-            );
-            Ok(())
-        };
-        for receipt in self
-            .ready
-            .values()
-            .chain(self.pending.values().map(|pending| &pending.receipt))
-        {
-            if Uuid::parse_str(receipt.context.binding.thread())
-                .is_ok_and(|thread| selected.contains(&thread))
-            {
-                capture(receipt.context.binding.thread(), &receipt.native)?;
-            }
-        }
-        self.ready
-            .retain(|id, _| Uuid::parse_str(id).is_ok_and(|id| !selected.contains(&id)));
-        self.pending
-            .retain(|id, _| Uuid::parse_str(id).is_ok_and(|id| !selected.contains(&id)));
-        if self.journal.is_none() {
-            self.journal = Some(
-                journal::Journal::open(store)
-                    .context("Private continuation storage could not be revoked before deletion")?,
-            );
-            self.storage_failure = None;
-        }
-        if let Some(journal) = &mut self.journal {
-            for id in ids {
-                if let Some(record) = journal.take(id)? {
-                    let thread = record["context"]["binding"]["thread"]
-                        .as_str()
-                        .context("Private continuation thread identity is malformed")?;
-                    ensure!(
-                        Uuid::parse_str(thread)? == Uuid::parse_str(id)?,
-                        "Private continuation thread identity changed"
-                    );
-                    let native = record["native"]
-                        .as_str()
-                        .context("Private continuation native identity is malformed")?;
-                    capture(thread, native)?;
-                }
-            }
-        }
-        Ok(records.into_iter().collect())
-    }
     pub(crate) fn for_store(store: &crate::store::Store) -> Self {
-        match journal::Journal::open(store) {
+        let mut registry = match journal::Journal::open(store) {
             Ok(journal) => Self {
                 journal: Some(journal),
                 ..Self::default()
@@ -281,7 +225,138 @@ impl Registry {
                 storage_failure: Some("private_storage_unavailable"),
                 ..Self::default()
             },
+        };
+        // Consume authenticated legacy tickets before rewriting their canonical
+        // private binding slot. A crash during migration only loses an option.
+        if let Some(journal) = &mut registry.journal {
+            let migration = (|| -> Result<()> {
+                for key in journal.keys()? {
+                    if key.starts_with("slot-v2/") {
+                        continue;
+                    }
+                    let thread = Uuid::parse_str(&key)?;
+                    let Some(mut value) = journal.take(&key)? else {
+                        continue;
+                    };
+                    ensure!(
+                        value.get("schema").is_none(),
+                        "Unknown legacy continuation schema"
+                    );
+                    let binding_thread = value["context"]["binding"]["thread"]
+                        .as_str()
+                        .context("Missing legacy bound thread")?;
+                    let binding_account = value["context"]["binding"]["profile"]["account"]
+                        .as_str()
+                        .context("Missing legacy bound account")?;
+                    ensure!(
+                        Uuid::parse_str(binding_thread)? == thread,
+                        "Legacy receipt thread mismatch"
+                    );
+                    let target = slot(binding_thread, binding_account)?;
+                    ensure!(
+                        value["context"]["selection"]["accountID"] == binding_account
+                            && value["context"]["selection"]["provider"] == "codex",
+                        "Legacy receipt account mismatch"
+                    );
+                    Uuid::parse_str(value["owner"].as_str().context("Invalid legacy owner")?)?;
+                    value["schema"] = serde_json::json!(2);
+                    journal.put(&target, &value)?;
+                }
+                Ok(())
+            })();
+            if migration.is_err() {
+                registry.journal = None;
+                registry.storage_failure = Some("private_storage_migration_failed");
+            }
         }
+        registry
+    }
+    /// Deny-only return values for native Delete/Undo. Revoke every parked
+    /// account, including private IDs absent from descriptive thread JSON.
+    pub(crate) fn invalidate_threads(
+        &mut self,
+        ids: &[String],
+        store: &crate::store::Store,
+    ) -> Result<Vec<(String, String)>> {
+        let targets = ids
+            .iter()
+            .map(|id| Uuid::parse_str(id))
+            .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+        let mut denied = Vec::new();
+        let mut capture = |receipt: &Receipt| -> Result<()> {
+            let id = Uuid::parse_str(receipt.context.binding.thread())?;
+            if targets.contains(&id) {
+                denied.push((id.to_string(), receipt.native.clone()));
+            }
+            Ok(())
+        };
+        for receipt in self.ready.values() {
+            capture(receipt)?;
+        }
+        for parked in self.parked.values() {
+            capture(&parked.receipt)?;
+        }
+        for pending in self.pending.values() {
+            capture(&pending.receipt)?;
+        }
+        self.ready.retain(|_, r| {
+            !Uuid::parse_str(r.context.binding.thread()).is_ok_and(|id| targets.contains(&id))
+        });
+        self.parked.retain(|_, r| {
+            !Uuid::parse_str(r.receipt.context.binding.thread())
+                .is_ok_and(|id| targets.contains(&id))
+        });
+        self.pending.retain(|_, r| {
+            !Uuid::parse_str(r.receipt.context.binding.thread())
+                .is_ok_and(|id| targets.contains(&id))
+        });
+        if self.journal.is_none() {
+            self.journal = Some(journal::Journal::open(store)?);
+            self.storage_failure = None;
+        }
+        let journal = self.journal.as_mut().unwrap();
+        for key in journal.keys()? {
+            let parts = key.split('/').collect::<Vec<_>>();
+            ensure!(
+                parts.len() == 3 && parts[0] == "slot-v2",
+                "Invalid continuation slot identity"
+            );
+            let thread = Uuid::parse_str(parts[1])?;
+            let account = Uuid::parse_str(parts[2])?;
+            ensure!(
+                slot(parts[1], parts[2])? == key,
+                "Noncanonical continuation slot"
+            );
+            if !targets.contains(&thread) {
+                continue;
+            }
+            if let Some(value) = journal.take(&key)? {
+                ensure!(
+                    value["schema"] == 2
+                        && value["context"]["binding"]["thread"]
+                            .as_str()
+                            .is_some_and(|s| Uuid::parse_str(s).ok() == Some(thread))
+                        && value["context"]["binding"]["profile"]["account"]
+                            .as_str()
+                            .is_some_and(|s| Uuid::parse_str(s).ok() == Some(account)),
+                    "Invalid authenticated continuation slot binding"
+                );
+                let native = value["native"]
+                    .as_str()
+                    .context("Invalid private native ID")?;
+                ensure!(
+                    !native.is_empty()
+                        && native.len() <= 512
+                        && !native.chars().any(char::is_control),
+                    "Invalid private native ID"
+                );
+                denied.push((thread.to_string(), native.into()));
+            }
+        }
+        denied.sort();
+        denied.dedup();
+        ensure!(denied.len() <= 256, "Too many private native IDs to revoke");
+        Ok(denied)
     }
     /// Static support and actual metadata readiness are distinct from minted
     /// authority. Status never writes or exposes private paths/raw errors.
@@ -294,7 +369,7 @@ impl Registry {
             "storageReady":ready,"storageError":if ready{None}else{self.storage_failure.or(Some("private_storage_validation_failed"))},
             "lastMintError":self.last_mint_error,
             "authority":"saved_turn_actual_join_authenticated_one_attempt",
-            "requiresFreshAccountRead":true,"requiresFreshPrivateCatalogForExplicitModel":true})
+            "requiresFreshAccountRead":true,"requiresFreshPrivateCatalogForExplicitModel":true,"requiresFreshPrivateCatalogForDefaultModel":true})
     }
     pub(crate) fn poll(&mut self) {
         let completed: Vec<_> = self
@@ -325,6 +400,83 @@ impl Registry {
             }
         }
     }
+    /// Deny-only readiness hint for ordinary account restoration. A cached job
+    /// preceding explicit departure cannot re-admit a parked completion. Active
+    /// exact contexts are left alone, including pure restoreCurrent warmups.
+    pub(crate) fn catalog_refresh_required(
+        &self,
+        binding: &NamedBinding,
+        latest: &NamedCatalogFence,
+    ) -> Result<bool> {
+        let key = slot(binding.thread(), binding.account())?;
+        Ok(self
+            .parked
+            .get(&key)
+            .and_then(|parked| parked.fence.as_ref())
+            .is_some_and(|fence| latest.is_actor(fence)))
+    }
+    /// Explicit departure is the only same-owner projection into a dormant
+    /// capability. Capture it before cancelling the account's catalog owner.
+    pub(crate) fn departure_binding(&mut self, thread: &Value) -> Result<Option<NamedBinding>> {
+        self.poll();
+        let Some(account) = thread["selection"]["accountID"].as_str() else {
+            return Ok(None);
+        };
+        let key = slot(
+            thread["id"].as_str().context("Missing thread identity")?,
+            account,
+        )?;
+        ensure!(
+            !self.pending.contains_key(&key),
+            "Wait for the previous named worker to finish cleanup"
+        );
+        Ok(self.ready.get(&key).map(|r| r.context.binding.clone()))
+    }
+    pub(crate) fn park_departure(
+        &mut self,
+        thread: &Value,
+        fence: Option<NamedCatalogFence>,
+    ) -> Result<()> {
+        let Some(account) = thread["selection"]["accountID"].as_str() else {
+            return Ok(());
+        };
+        let key = slot(
+            thread["id"].as_str().context("Missing thread identity")?,
+            account,
+        )?;
+        self.poll();
+        ensure!(
+            !self.pending.contains_key(&key),
+            "Wait for the previous named worker to finish cleanup"
+        );
+        let Some(receipt) = self.ready.remove(&key) else {
+            return Ok(());
+        };
+        if receipt.context.owner != self.owner
+            || receipt.context.selection != thread["selection"]
+            || receipt.context.access.as_ref() != thread.get("accessMode")
+            || receipt.context.interaction.as_ref() != thread.get("interactionMode")
+            || agent::provider_session(thread, "codex").as_deref() != Some(receipt.native.as_str())
+            || !receipt.items.matches(thread)
+        {
+            return Ok(());
+        }
+        // durable() validates the still-live exact proof before its deliberate
+        // retirement. A revoked arbitrary refresh can never create this state.
+        let Ok(stable) = receipt.context.durable() else {
+            return Ok(());
+        };
+        self.parked.insert(
+            key,
+            Parked {
+                receipt,
+                stable,
+                fence,
+            },
+        );
+        Ok(())
+    }
+    #[cfg(test)]
     pub(crate) fn prepare(
         &mut self,
         thread: &Value,
@@ -332,12 +484,23 @@ impl Registry {
         cwd: &Path,
         policy: Policy,
     ) -> Result<Authority> {
+        self.prepare_admitted(thread, profile, cwd, policy, None)
+    }
+    pub(crate) fn prepare_admitted(
+        &mut self,
+        thread: &Value,
+        profile: LaunchContext,
+        cwd: &Path,
+        policy: Policy,
+        admission: Option<NamedResumeAdmission>,
+    ) -> Result<Authority> {
         self.poll();
         let id = thread["id"]
             .as_str()
             .context("Missing named thread identity")?;
+        let key = slot(id, profile.account())?;
         ensure!(
-            !self.pending.contains_key(id),
+            !self.pending.contains_key(&key),
             "Wait for the previous named worker to finish cleanup"
         );
         let context = Context {
@@ -349,17 +512,64 @@ impl Registry {
             policy,
         };
         context.validate()?;
-        // Consume disk authority first, even for a same-Engine continuation.
-        // Launch is forbidden if consumption cannot be durably committed.
+        // A cold slot can carry completed authority, including Provider default
+        // selections that have no explicit model proof. Wait for current private
+        // admission before consuming it; presence itself never reads/grants an
+        // ID. Same-owner eviction still fails Receipt::restore after consumption.
+        if !self.ready.contains_key(&key)
+            && !self.parked.contains_key(&key)
+            && self
+                .journal
+                .as_ref()
+                .map(|journal| journal.has_ticket(&key))
+                .transpose()?
+                .unwrap_or(false)
+        {
+            admission
+                .as_ref()
+                .context("Refresh this selected account's private catalog before resuming")?
+                .validate(&context.binding, &context.selection, None)?;
+        }
+        // A parked opportunity must wait for an ordinary fresh authenticated
+        // catalog; missing readiness neither launches nor consumes its ticket.
+        if let Some(parked) = self.parked.get(&key) {
+            admission
+                .as_ref()
+                .context("Refresh this selected account's private catalog before resuming")?
+                .validate(
+                    &context.binding,
+                    &context.selection,
+                    // A changed stable context can never reuse this receipt.
+                    // Require current authenticated admission, then consume it
+                    // and start fresh rather than waiting on an obsolete fence.
+                    if parked.stable == context.durable()? {
+                        parked.fence.as_ref()
+                    } else {
+                        None
+                    },
+                )?;
+        }
         let durable = match &mut self.journal {
-            Some(journal) => journal.take(id)?,
+            Some(journal) => journal.take(&key)?,
             None => None,
         };
-        let in_memory = self.ready.remove(id);
-        let previous = if let Some(receipt) = in_memory {
+        let active = self.ready.remove(&key);
+        let parked = self.parked.remove(&key);
+        let previous = if let Some(receipt) = active {
             Some(receipt).filter(|receipt| receipt.context == context)
+        } else if let Some(parked) = parked {
+            (parked.stable == context.durable()?).then(|| Receipt {
+                context: context.clone(),
+                ..parked.receipt
+            })
         } else {
-            durable.and_then(|value| Receipt::restore(value, &context).ok())
+            durable.and_then(|value| {
+                admission
+                    .as_ref()?
+                    .validate(&context.binding, &context.selection, None)
+                    .ok()?;
+                Receipt::restore(value, &context).ok()
+            })
         }
         .filter(|receipt| {
             receipt.context == context
@@ -377,10 +587,15 @@ impl Registry {
         thread: &Value,
         worker: WorkerCompletion,
     ) {
-        let id = ack.context.binding.thread().to_owned();
+        let thread_id = ack.context.binding.thread().to_owned();
+        let Ok(id) = slot(&thread_id, ack.context.binding.account()) else {
+            return;
+        };
+        self.parked.remove(&id);
         self.ready.remove(&id);
         self.pending.remove(&id);
-        if self.ready.len() + self.pending.len() >= MAX_RECEIPTS {
+        if self.ready.len() + self.pending.len() + self.parked.len() >= MAX_RECEIPTS {
+            self.parked.clear();
             self.ready.clear();
             // Pending workers retain their independent Engine ownership. Only
             // their optional continuation opportunity is discarded here.
@@ -391,7 +606,7 @@ impl Registry {
         };
         if ack.context.owner != self.owner
             || ack.validate().is_err()
-            || thread["id"] != id
+            || thread["id"] != thread_id
             || thread["selection"] != ack.context.selection
             || thread.get("accessMode") != ack.context.access.as_ref()
             || thread.get("interactionMode") != ack.context.interaction.as_ref()
@@ -465,6 +680,320 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn independent_account_slots_require_explicit_park_and_fresh_catalog_actor() {
+        use std::{
+            fs,
+            time::{Duration, Instant},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let private_root = dir.path().join("private-data");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&private_root)
+                .unwrap();
+        }
+        #[cfg(windows)]
+        crate::private_fs::windows::create_directory(&private_root).unwrap();
+        let root = private_root.canonicalize().unwrap();
+        let mut store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
+        let id = Uuid::new_v4().to_string();
+        let accounts = [Uuid::new_v4().to_string(), Uuid::new_v4().to_string()];
+        let mut registry = Registry::for_store(&store);
+        let mut threads = Vec::new();
+        let mut profiles = Vec::new();
+        for (index, account) in accounts.iter().enumerate() {
+            crate::codex_login_profiles::managed_home(&root, account, true).unwrap();
+            let profile =
+                LaunchContext::capture(&root, account, &std::env::current_exe().unwrap()).unwrap();
+            let native = format!("private-{index}");
+            let thread = json!({"id":id,"selection":{"provider":"codex","modelID":"default","accountID":account},"items":[{"kind":"user","text":"prefix"}],"sessions":{"codex":{"accountID":account,"sessionID":native}}});
+            let policy =
+                Policy::parse_named(&thread, crate::composer_policy::Origin::Ordinary, None)
+                    .unwrap();
+            let authority = registry
+                .prepare(&thread, profile.clone(), &root, policy)
+                .unwrap();
+            let ack = authority
+                .acknowledge(&json!({"thread":{"id":native},"model":"actual-model"}))
+                .unwrap();
+            let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while worker.status() == WorkerThreadStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            store.save(&thread).unwrap();
+            registry.persisted(ack, &thread, worker);
+            registry.poll();
+            threads.push(thread);
+            profiles.push(profile);
+        }
+        assert_eq!(registry.ready.len(), 2, "B must never replace A's receipt");
+        let binding = registry.departure_binding(&threads[0]).unwrap().unwrap();
+        let mut catalog = crate::model_catalog::ModelCatalog::default();
+        catalog.fixture_resume_job(binding.clone(), "old");
+        let old = catalog
+            .named_resume_admission(&threads[0], &binding)
+            .unwrap();
+        registry
+            .park_departure(&threads[0], catalog.named_catalog_fence(&binding))
+            .unwrap();
+        assert!(
+            registry
+                .catalog_refresh_required(&binding, &catalog.named_catalog_fence(&binding).unwrap())
+                .unwrap()
+        );
+        let policy = || {
+            Policy::parse_named(&threads[0], crate::composer_policy::Origin::Ordinary, None)
+                .unwrap()
+        };
+        assert!(
+            registry
+                .prepare_admitted(&threads[0], profiles[0].clone(), &root, policy(), None)
+                .is_err()
+        );
+        assert!(
+            registry
+                .prepare_admitted(&threads[0], profiles[0].clone(), &root, policy(), Some(old))
+                .is_err()
+        );
+        assert_eq!(
+            registry.parked.len(),
+            1,
+            "not-ready admission cannot consume parked authority"
+        );
+        catalog.fixture_resume_job(binding.clone(), "fresh");
+        let fresh = catalog
+            .named_resume_admission(&threads[0], &binding)
+            .unwrap();
+        assert!(
+            !registry
+                .catalog_refresh_required(&binding, &catalog.named_catalog_fence(&binding).unwrap())
+                .unwrap()
+        );
+        let resumed = registry
+            .prepare_admitted(
+                &threads[0],
+                profiles[0].clone(),
+                &root,
+                policy(),
+                Some(fresh),
+            )
+            .unwrap();
+        assert_eq!(resumed.session(), Some("private-0"));
+        assert_eq!(resumed.seen(), 1);
+        assert_eq!(registry.ready.len(), 1, "A consumes only A's slot");
+        assert!(
+            registry
+                .prepare(&threads[0], profiles[0].clone(), &root, policy())
+                .unwrap()
+                .session()
+                .is_none()
+        );
+        let p = Policy::parse_named(&threads[1], crate::composer_policy::Origin::Ordinary, None)
+            .unwrap();
+        let resumed_b = registry
+            .prepare(&threads[1], profiles[1].clone(), &root, p)
+            .unwrap();
+        assert_eq!(resumed_b.session(), Some("private-1"));
+        let ack = resumed_b
+            .acknowledge(&json!({"thread":{"id":"private-1"},"model":"actual-model"}))
+            .unwrap();
+        let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        store.save(&threads[1]).unwrap();
+        registry.persisted(ack, &threads[1], worker);
+        registry.poll();
+        registry.ready.clear(); // actual resident eviction, durable ticket remains
+        assert_eq!(registry.journal.as_ref().unwrap().keys().unwrap().len(), 1);
+        let p = || {
+            Policy::parse_named(&threads[1], crate::composer_policy::Origin::Ordinary, None)
+                .unwrap()
+        };
+        assert!(
+            registry
+                .prepare(&threads[1], profiles[1].clone(), &root, p())
+                .is_err(),
+            "A disk ticket cannot be consumed before current admission"
+        );
+        let binding = NamedBinding::capture(profiles[1].clone(), &id, &root).unwrap();
+        catalog.fixture_resume_job(binding.clone(), "fresh-b");
+        let admission = catalog
+            .named_resume_admission(&threads[1], &binding)
+            .unwrap();
+        let fresh = registry
+            .prepare_admitted(
+                &threads[1],
+                profiles[1].clone(),
+                &root,
+                p(),
+                Some(admission),
+            )
+            .unwrap();
+        assert!(
+            fresh.session().is_none(),
+            "Current-owner eviction cannot regain authority from its own disk receipt"
+        );
+        assert_eq!(fresh.seen(), 0);
+        assert!(
+            registry
+                .journal
+                .as_ref()
+                .unwrap()
+                .keys()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn parked_changed_context_waits_for_current_admission_then_consumes_and_starts_fresh() {
+        use std::{
+            fs,
+            time::{Duration, Instant},
+        };
+        for changed in ["auth", "executable", "cwd", "mode-presence"] {
+            let dir = tempfile::tempdir().unwrap();
+            let private_root = dir.path().join("private-data");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&private_root)
+                    .unwrap();
+            }
+            #[cfg(windows)]
+            crate::private_fs::windows::create_directory(&private_root).unwrap();
+            let root = private_root.canonicalize().unwrap();
+            let store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
+            let account = Uuid::new_v4().to_string();
+            let home = crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+            let executable = root.join("synthetic-executable");
+            fs::write(&executable, b"synthetic metadata only").unwrap();
+            let profile = LaunchContext::capture(&root, &account, &executable).unwrap();
+            let thread = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","modelID":"default","accountID":account},"items":[{"kind":"user","text":"owned prefix"}],"sessions":{"codex":{"accountID":account,"sessionID":"old-private-native"}}});
+            let policy = |thread: &Value| {
+                Policy::parse_named(thread, crate::composer_policy::Origin::Ordinary, None).unwrap()
+            };
+            let mut registry = Registry::for_store(&store);
+            let authority = registry
+                .prepare(&thread, profile.clone(), &root, policy(&thread))
+                .unwrap();
+            let ack = authority
+                .acknowledge(&json!({"thread":{"id":"old-private-native"},"model":"actual-model"}))
+                .unwrap();
+            let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while worker.status() == WorkerThreadStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            registry.persisted(ack, &thread, worker);
+            registry.poll();
+            let binding = registry.departure_binding(&thread).unwrap().unwrap();
+            let mut catalog = crate::model_catalog::ModelCatalog::default();
+            catalog.fixture_resume_job(binding.clone(), "old");
+            registry
+                .park_departure(&thread, catalog.named_catalog_fence(&binding))
+                .unwrap();
+            let mut current = thread.clone();
+            let mut cwd = root.clone();
+            let mut selected_executable = executable;
+            match changed {
+                "auth" => {
+                    #[cfg(windows)]
+                    {
+                        let mut file =
+                            crate::private_fs::windows::open_file(&home.join("auth.json"), true)
+                                .unwrap();
+                        file.write_all(b"synthetic fixture only").unwrap();
+                        file.sync_all().unwrap();
+                    }
+                    #[cfg(unix)]
+                    fs::write(home.join("auth.json"), b"synthetic fixture only").unwrap();
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(
+                            home.join("auth.json"),
+                            fs::Permissions::from_mode(0o600),
+                        )
+                        .unwrap();
+                    }
+                }
+                "executable" => {
+                    selected_executable = root.join("different-executable");
+                    fs::write(&selected_executable, b"different synthetic metadata").unwrap();
+                }
+                "cwd" => {
+                    cwd = root.join("different-project");
+                    fs::create_dir(&cwd).unwrap();
+                }
+                "mode-presence" => current["accessMode"] = Value::Null,
+                _ => unreachable!(),
+            }
+            let profile = LaunchContext::capture(&root, &account, &selected_executable).unwrap();
+            assert!(
+                registry
+                    .prepare_admitted(&current, profile.clone(), &cwd, policy(&current), None)
+                    .is_err(),
+                "{changed}"
+            );
+            assert_eq!(registry.parked.len(), 1);
+            assert_eq!(
+                registry.journal.as_ref().unwrap().keys().unwrap().len(),
+                1,
+                "Missing current admission must not consume {changed}"
+            );
+            let binding =
+                NamedBinding::capture(profile.clone(), thread["id"].as_str().unwrap(), &cwd)
+                    .unwrap();
+            catalog.fixture_resume_job(binding.clone(), "current");
+            let admitted = catalog.named_resume_admission(&current, &binding).unwrap();
+            let fresh = registry
+                .prepare_admitted(
+                    &current,
+                    profile.clone(),
+                    &cwd,
+                    policy(&current),
+                    Some(admitted),
+                )
+                .unwrap();
+            assert!(
+                fresh.session().is_none(),
+                "Changed {changed} must never resume old native"
+            );
+            assert_eq!(fresh.seen(), 0);
+            assert!(registry.parked.is_empty());
+            assert!(
+                registry
+                    .journal
+                    .as_ref()
+                    .unwrap()
+                    .keys()
+                    .unwrap()
+                    .is_empty(),
+                "Old ticket must be durably consumed for {changed}"
+            );
+            let next = registry
+                .prepare(&current, profile, &cwd, policy(&current))
+                .unwrap();
+            assert!(
+                next.session().is_none(),
+                "Descriptive old sessionID cannot regain {changed} authority"
+            );
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn durable_status_validates_metadata_without_minting_or_rewriting() {

@@ -231,6 +231,7 @@ fn assert_preserved(source: &Value, result: &Value) {
     let mut want = source.clone();
     want["selection"] = result["selection"].clone();
     want["rustProviderSelections"] = json!({"claude":source["selection"]});
+    want["rustAccountSelections"]["claude/default"] = source["selection"].clone();
     assert_eq!(result, &want);
 }
 fn finish_explicit(e: &mut Engine, source: &Value, pending: &Value, account: Value) -> Value {

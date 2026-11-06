@@ -83,10 +83,18 @@ impl Engine {
             .map(ToString::to_string);
         let explicit_model_ready = base_reason.is_none() && matches!(proof, Some(Ok(Some(_))));
         let account_catalog_ready = base_reason.is_none()
-            && binding
-                .as_ref()
-                .ok()
-                .is_some_and(|binding| self.model_catalog.ready_named_restore(binding).is_some());
+            && binding.as_ref().ok().is_some_and(|binding| {
+                self.model_catalog.ready_named_restore(binding).is_some()
+                    && self
+                        .model_catalog
+                        .named_catalog_fence(binding)
+                        .as_ref()
+                        .is_some_and(|latest| {
+                            self.named_resume
+                                .catalog_refresh_required(binding, latest)
+                                .is_ok_and(|required| !required)
+                        })
+            });
         let readiness_generation = binding
             .as_ref()
             .ok()
