@@ -733,12 +733,18 @@ mod tests {
         };
         for changed in ["auth", "executable", "cwd", "mode-presence"] {
             let dir = tempfile::tempdir().unwrap();
+            let private_root = dir.path().join("private-data");
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&private_root)
+                    .unwrap();
             }
-            let root = dir.path().canonicalize().unwrap();
+            #[cfg(windows)]
+            crate::private_fs::windows::create_directory(&private_root).unwrap();
+            let root = private_root.canonicalize().unwrap();
             let store = crate::store::Store::open(&root.join("state.sqlite")).unwrap();
             let account = Uuid::new_v4().to_string();
             let home = crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
@@ -775,6 +781,15 @@ mod tests {
             let mut selected_executable = executable;
             match changed {
                 "auth" => {
+                    #[cfg(windows)]
+                    {
+                        let mut file =
+                            crate::private_fs::windows::open_file(&home.join("auth.json"), true)
+                                .unwrap();
+                        file.write_all(b"synthetic fixture only").unwrap();
+                        file.sync_all().unwrap();
+                    }
+                    #[cfg(unix)]
                     fs::write(home.join("auth.json"), b"synthetic fixture only").unwrap();
                     #[cfg(unix)]
                     {
