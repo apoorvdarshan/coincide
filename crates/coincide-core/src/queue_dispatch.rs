@@ -127,18 +127,18 @@ impl Engine {
                 "Queue message identity is ambiguous"
             );
         }
-        let Some(index) = messages
-            .iter()
-            .position(|message| message.state == State::Pending)
-        else {
-            return Ok(None);
-        };
         ensure!(
             !messages
                 .iter()
                 .any(|message| message.state == State::Dispatching),
             "Queue has an unconfirmed dispatch; resume it explicitly"
         );
+        let Some(index) = messages
+            .iter()
+            .position(|message| message.state == State::Pending)
+        else {
+            return Ok(None);
+        };
         ensure!(
             messages[index].selection == source["selection"],
             "Provider selection changed; remove and requeue this message"
@@ -378,10 +378,10 @@ mod tests {
     fn failed_admission_retains_latest_unrelated_draft_and_all_raw_queue_metadata() {
         let (_directory, mut engine, id) = fixture();
         let claim = engine.claim_next_queue_turn(&id).unwrap().unwrap();
-        engine
-            .store
-            .patch_thread(&id, &json!({"draft":"new unrelated draft","future":7}))
-            .unwrap();
+        let mut newer = engine.store.thread(&id).unwrap();
+        newer["draft"] = json!("new unrelated draft");
+        newer["future"] = json!(7);
+        engine.store.save(&newer).unwrap();
         engine
             .fail_queue_claim(&claim, "synthetic preflight denial")
             .unwrap();
