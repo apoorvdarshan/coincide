@@ -157,6 +157,7 @@ struct Running {
 }
 pub struct Engine {
     thread_bulk_owner: Uuid,
+    native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
     project_management: project_management_api::State,
@@ -234,6 +235,7 @@ impl Engine {
         let notification_events = notification_events::Outbox::new(&store);
         Self {
             thread_bulk_owner: Uuid::new_v4(),
+            native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),

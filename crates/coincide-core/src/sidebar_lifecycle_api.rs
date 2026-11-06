@@ -51,7 +51,8 @@ pub struct ThreadMoveUndo {
     store: (PathBuf, crate::private_fs::Identity),
     original: Value,
     destination: String,
-    generation: Option<u64>,
+    token: Uuid,
+    external: i64,
     from: Folder,
     to: Folder,
 }
@@ -131,11 +132,18 @@ impl Engine {
         self.computer_use_selection_changed(Uuid::parse_str(&prepared.row.id)?);
         self.revision += 1;
         let next: Value = serde_json::from_str(&prepared.row.target)?;
+        if self.native_move_undos.len() >= 256 {
+            self.native_move_undos.clear();
+        }
+        let token = Uuid::new_v4();
+        self.native_move_undos
+            .insert(prepared.row.id.clone(), token);
         Ok(ThreadMoveUndo {
             owner: prepared.owner,
             store: prepared.store,
             destination: required(&next, "projectID")?.into(),
-            generation: self.store.selection_scope_generation(&prepared.row.id),
+            token,
+            external: self.store.sidebar_external_version()?,
             original: prepared.original,
             from: prepared.from,
             to: prepared.to,
@@ -150,8 +158,9 @@ impl Engine {
         let id = required(&undo.original, "id")?;
         self.archive_delete_admitted(&[id.into()], false)?;
         ensure!(
-            self.store.selection_scope_generation(id) == undo.generation,
-            "Conversation scope changed since this Move; Undo was refused"
+            self.native_move_undos.get(id) == Some(&undo.token)
+                && self.store.sidebar_external_version()? == undo.external,
+            "A later Move or external Store change invalidated this Undo"
         );
         undo.from.validate()?;
         undo.to.validate()?;
@@ -193,6 +202,7 @@ impl Engine {
         self.cancel_provider_restore();
         self.model_catalog.invalidate_deleted_threads(&[id.into()]);
         self.store.apply_sidebar_row(&row)?;
+        self.native_move_undos.remove(id);
         self.computer_use_selection_changed(Uuid::parse_str(id)?);
         self.revision += 1;
         Ok(())
@@ -225,6 +235,25 @@ mod tests {
         store.save(&thread).unwrap();
         let id = required(&thread, "id").unwrap().to_owned();
         (dir, Engine::fixture(store), id, a, b)
+    }
+    #[test]
+    fn absent_private_undo_token_and_external_aba_cannot_be_adopted() {
+        let (dir, mut engine, id, _, b) = fixture();
+        let plan = engine.prepare_native_thread_move(&id, &b).unwrap();
+        let undo = engine.apply_native_thread_move(plan).unwrap();
+        let moved = engine.store.thread(&id).unwrap();
+        engine.native_move_undos.clear();
+        assert!(engine.undo_native_thread_move(&undo).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), moved);
+        let mut other = Store::open(&dir.path().join("state.sqlite")).unwrap();
+        // Even reinstating the private token cannot erase observed external ABA.
+        engine.native_move_undos.insert(id.clone(), undo.token);
+        other
+            .patch_thread(&id, &json!({"draft":"External transient"}))
+            .unwrap();
+        other.save(&moved).unwrap();
+        assert!(engine.undo_native_thread_move(&undo).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), moved);
     }
     #[test]
     fn old_move_undo_cannot_cross_a_later_native_move_intent() {

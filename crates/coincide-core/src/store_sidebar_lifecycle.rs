@@ -10,6 +10,11 @@ pub(crate) struct SidebarRow {
     external: i64,
 }
 impl Store {
+    pub(crate) fn sidebar_external_version(&self) -> Result<i64> {
+        Ok(self
+            .connection()?
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?)
+    }
     pub(crate) fn capture_sidebar_row(&self, source: &Value, target: &Value) -> Result<SidebarRow> {
         let id = validate_thread(source)?.to_owned();
         ensure!(
