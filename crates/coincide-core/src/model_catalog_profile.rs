@@ -234,6 +234,10 @@ impl ModelCatalog {
         let model = thread["selection"]["modelID"]
             .as_str()
             .context("Invalid named model")?;
+        ensure!(
+            model != "default",
+            "Effort requires an explicit profile-catalog model"
+        );
         let reported = job.response["models"]
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["id"] == model))
@@ -508,6 +512,15 @@ mod tests {
         );
         changed["selection"]["modelID"] = json!("default");
         assert!(catalog.named_model_proof(&changed, &binding, None).is_err());
+        changed["selection"]["effort"] = Value::Null;
+        catalog.jobs.get_mut("a").unwrap().response["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"default","reportedEfforts":["high"]}));
+        assert_eq!(
+            catalog.named_effort_capability(&changed, &binding)["supported"],
+            false
+        );
         catalog.jobs["a"].cancelled.store(true, Ordering::Release);
         assert!(policy.preflight().is_err());
         assert!(
