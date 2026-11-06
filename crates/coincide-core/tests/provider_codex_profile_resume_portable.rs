@@ -431,6 +431,31 @@ fn slots_phase(root: &Path, phase: &str) {
     });
     engine.close_store_after_core_shutdown().unwrap();
 }
+fn cf_encoding_metadata(value: &std::ffi::OsStr) -> bool {
+    let Some(text) = value.to_str() else {
+        return false;
+    };
+    if text.len() > 64 {
+        return false;
+    }
+    let parts = text.split(':').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            let (digits, radix) = part
+                .strip_prefix("0x")
+                .or_else(|| part.strip_prefix("0X"))
+                .map_or((*part, 10), |digits| (digits, 16));
+            !digits.is_empty()
+                && digits.bytes().all(|b| {
+                    if radix == 16 {
+                        b.is_ascii_hexdigit()
+                    } else {
+                        b.is_ascii_digit()
+                    }
+                })
+                && u32::from_str_radix(digits, radix).is_ok()
+        })
+}
 fn provider_diagnostic(root: &Path, named: bool, stage: &str) {
     let role = if named { "named" } else { "default" };
     let _ = fs::write(root.join(format!("provider-diagnostic-{role}")), stage);
@@ -463,22 +488,31 @@ fn provider() {
             provider_check(
                 &root,
                 false,
-                matches!(
-                    name.as_str(),
-                    "PATH"
-                        | "SYSTEMROOT"
-                        | "WINDIR"
-                        | "TMP"
-                        | "TEMP"
-                        | "HOME"
-                        | "OPENAI_API_KEY"
-                        | "COINCIDE_CONTROL_SOCKET"
-                        | "COINCIDE_PORTABLE_ROOT"
-                        | "COINCIDE_PORTABLE_PHASE"
-                        | "COINCIDE_CODEX_EXECUTABLE"
-                ),
+                (cfg!(target_os = "macos") && name == "__CF_USER_TEXT_ENCODING")
+                    || matches!(
+                        name.as_str(),
+                        "PATH"
+                            | "SYSTEMROOT"
+                            | "WINDIR"
+                            | "TMP"
+                            | "TEMP"
+                            | "HOME"
+                            | "OPENAI_API_KEY"
+                            | "COINCIDE_CONTROL_SOCKET"
+                            | "COINCIDE_PORTABLE_ROOT"
+                            | "COINCIDE_PORTABLE_PHASE"
+                            | "COINCIDE_CODEX_EXECUTABLE"
+                    ),
                 &format!("default_environment_key_{name}"),
             );
+            if name == "__CF_USER_TEXT_ENCODING" {
+                provider_check(
+                    &root,
+                    false,
+                    cfg!(target_os = "macos") && cf_encoding_metadata(&value),
+                    "default_cf_metadata_shape",
+                );
+            }
             if name == "COINCIDE_PORTABLE_ROOT" {
                 provider_check(
                     &root,
@@ -656,6 +690,17 @@ fn main() {
             phase_name.to_str().unwrap(),
         );
         return;
+    }
+    for accepted in ["0x1F5:0x0:0x0", "501:0:0"] {
+        assert!(cf_encoding_metadata(std::ffi::OsStr::new(accepted)));
+    }
+    for rejected in [
+        "not-system-metadata",
+        "0x1F5:0:0:extra",
+        "0xFFFFFFFFF:0:0",
+        "+501:0:0",
+    ] {
+        assert!(!cf_encoding_metadata(std::ffi::OsStr::new(rejected)));
     }
     let dir = tempfile::tempdir().unwrap();
     #[cfg(unix)]
