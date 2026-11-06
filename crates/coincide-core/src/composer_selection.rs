@@ -87,7 +87,9 @@ pub fn validate_selection(value: &Value) -> Result<()> {
         "Account ID must be text or null"
     );
     ensure!(
-        provider == "antigravity" || default_account(account),
+        provider == "antigravity"
+            || default_account(account)
+            || crate::provider_configuration::native_account_matches(value),
         "Alternate provider accounts are not connected yet"
     );
     Ok(())

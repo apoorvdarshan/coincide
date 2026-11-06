@@ -939,8 +939,7 @@ impl Engine {
             "Message text must fit within 1 MiB"
         );
         let mut v = self.store.thread(&id)?;
-        let native_configuration =
-            self.provider_launch_configuration(text(&v["selection"], "provider").as_str())?;
+        let native_configuration = self.provider_launch_configuration_for_thread(&v)?;
         if let Some(configuration) = &native_configuration {
             configuration.validate_launch()?;
         }
