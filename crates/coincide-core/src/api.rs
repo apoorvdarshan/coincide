@@ -168,7 +168,7 @@ pub struct ProviderWorkersStatus {
 enum SendOrigin {
     Ordinary,
     Scheduled,
-    Queued(queue_dispatch::QueueClaim),
+    Queued(Box<queue_dispatch::QueueClaim>),
 }
 impl SendOrigin {
     fn consumes_composer(&self) -> bool {
@@ -1517,7 +1517,7 @@ impl Engine {
                     return Ok(false);
                 };
                 let prompt = claim.text().to_owned();
-                let origin = SendOrigin::Queued(claim);
+                let origin = SendOrigin::Queued(Box::new(claim));
                 match self.send_turn_if_unchanged(
                     &json!({"threadId":id,"text":prompt}),
                     &origin,

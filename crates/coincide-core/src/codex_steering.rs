@@ -84,6 +84,7 @@ impl Client {
     pub(crate) fn submit(&self, text: &str) -> Result<Ticket> {
         self.submit_exact(text, &self.identity()?)
     }
+    #[cfg(test)]
     pub(crate) fn submit_exact(&self, text: &str, expected: &(String, String)) -> Result<Ticket> {
         ensure!(
             !text.trim().is_empty() && text.len() <= 1024 * 1024,

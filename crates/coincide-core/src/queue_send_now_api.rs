@@ -22,7 +22,7 @@ impl Engine {
             return result;
         }
         let claim = claim.take().unwrap();
-        let origin = SendOrigin::Queued(claim);
+        let origin = SendOrigin::Queued(Box::new(claim));
         let text = visible["text"]
             .as_str()
             .context("Queued text is missing")?

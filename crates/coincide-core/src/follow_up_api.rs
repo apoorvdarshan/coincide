@@ -518,7 +518,7 @@ impl Engine {
                         );
                         if let Some(claim) = op.queue.as_ref() {
                             let claim = claim.rebound(self.thread_bulk_owner, &current)?;
-                            let origin = SendOrigin::Queued(claim);
+                            let origin = SendOrigin::Queued(Box::new(claim));
                             self.send_turn_if_unchanged(
                                 &json!({"threadId":op.thread,"text":op.text}),
                                 &origin,
