@@ -312,8 +312,8 @@ impl Coincide {
             epoch: self.media.epoch,
         })
     }
-    /// Runs after the actual List child prepaint has installed its measured
-    /// bounds. Defer parent mutation until traversal and its borrows finish.
+    /// Capture the exact child prepaint identity, then defer both geometry
+    /// sampling and parent mutation until its actual paint and borrows finish.
     pub(super) fn media_layout_observer(
         &self,
         cx: &mut Context<Self>,
@@ -330,20 +330,10 @@ impl Coincide {
             if let Some(next) = next {
                 sequence.set(next);
             }
-            let visible_indices = match (
-                list.completed_layout_visible_range(),
-                list.completed_layout_viewport_bounds(),
-            ) {
-                (Some(range), Some(viewport)) => range
-                    .take(200)
-                    .filter(|index| {
-                        list.completed_layout_bounds_for_item(*index)
-                            .is_some_and(|row| row_intersects(row, viewport))
-                    })
-                    .take(20)
-                    .collect::<Vec<_>>(),
-                _ => Vec::new(),
+            let Some(layout_token) = list.prepaint_layout_token() else {
+                return;
             };
+            let list = list.clone();
             let parent = parent.clone();
             cx.defer(move |cx| {
                 let _ = parent.update(cx, |this, cx| {
@@ -352,8 +342,28 @@ impl Coincide {
                     if current.as_ref() != Some(&binding) {
                         return;
                     }
-                    // Resolve only these actually prepainted indices after the
-                    // full source/thread/revision/epoch binding check above.
+                    // A transaction may have abandoned this callback's prepaint,
+                    // or another frame may have superseded it. Only this exact
+                    // still-current, actually painted pass authorizes geometry.
+                    if !list.is_completed_layout(&layout_token) {
+                        return;
+                    }
+                    let visible_indices = match (
+                        list.completed_layout_visible_range(),
+                        list.completed_layout_viewport_bounds(),
+                    ) {
+                        (Some(range), Some(viewport)) => range
+                            .take(200)
+                            .filter(|index| {
+                                list.completed_layout_bounds_for_item(*index)
+                                    .is_some_and(|row| row_intersects(row, viewport))
+                            })
+                            .take(20)
+                            .collect::<Vec<_>>(),
+                        _ => return,
+                    };
+                    // Resolve actual painted indices only after the complete
+                    // source/thread/revision/epoch and layout-token checks.
                     let visible = this
                         .selected
                         .as_ref()

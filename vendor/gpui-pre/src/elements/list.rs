@@ -15,7 +15,11 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
 use sum_tree::{Bias, Dimensions, SumTree};
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
@@ -76,15 +80,26 @@ struct StateInner {
     follow_state: FollowState,
 }
 
+/// Opaque identity for one List prepaint. Capturing this token is not visibility
+/// proof: use [`ListState::is_completed_layout`] after painting to validate it.
+#[derive(Clone)]
+pub struct ListLayoutToken(Rc<Cell<bool>>);
+
 /// Exact geometry of items actually prepainted in the final successful pass.
-/// The logical end anchor is intentionally independent from visual geometry.
+/// Publication waits for that same List to finish painting. The logical end
+/// anchor is intentionally independent from visual geometry.
 struct CompletedListLayout {
+    token: ListLayoutToken,
     viewport: Bounds<Pixels>,
     visible_range: Range<usize>,
     items: Vec<(usize, Bounds<Pixels>)>,
 }
 impl CompletedListLayout {
-    fn new(viewport: Bounds<Pixels>, items: Vec<(usize, Bounds<Pixels>)>) -> Self {
+    fn new(
+        token: ListLayoutToken,
+        viewport: Bounds<Pixels>,
+        items: Vec<(usize, Bounds<Pixels>)>,
+    ) -> Self {
         let mut visible = items
             .iter()
             .filter(|(_, row)| {
@@ -105,6 +120,7 @@ impl CompletedListLayout {
             0..0
         };
         Self {
+            token,
             viewport,
             visible_range,
             items,
@@ -261,6 +277,7 @@ struct ItemLayout {
 
 /// Frame state used by the [List] element after layout.
 pub struct ListPrepaintState {
+    geometry_token: ListLayoutToken,
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
 }
@@ -755,17 +772,41 @@ impl ListState {
         state.set_scroll_anchor(Some(scroll_top));
     }
 
-    /// Exact viewport from the last completed prepaint pass. Unlike
-    /// `viewport_bounds`, returns None after mutation and before the next layout.
+    /// Captures the identity of the latest prepaint, which may still be pending
+    /// or abandoned by an enclosing prepaint transaction. It is not visibility
+    /// proof. Deferred observers must validate this exact token after painting.
+    pub fn prepaint_layout_token(&self) -> Option<ListLayoutToken> {
+        self.0
+            .borrow()
+            .completed_layout
+            .as_ref()
+            .map(|layout| layout.token.clone())
+    }
+
+    /// Whether this exact prepaint is still current and its List actually painted.
+    /// A later layout cannot authorize an earlier deferred observer's token.
+    pub fn is_completed_layout(&self, token: &ListLayoutToken) -> bool {
+        token.0.get()
+            && self
+                .0
+                .borrow()
+                .completed_layout
+                .as_ref()
+                .is_some_and(|layout| Rc::ptr_eq(&layout.token.0, &token.0))
+    }
+
+    /// Exact viewport from the last actually painted List pass. Unlike
+    /// `viewport_bounds`, returns None after mutation and before the next paint.
     pub fn completed_layout_viewport_bounds(&self) -> Option<Bounds<Pixels>> {
         self.0
             .borrow()
             .completed_layout
             .as_ref()
+            .filter(|layout| layout.token.0.get())
             .map(|layout| layout.viewport)
     }
 
-    /// Range enclosing actually intersecting, prepainted rows. A completed
+    /// Range enclosing actually intersecting, painted rows. A completed
     /// empty/zero-sized viewport returns Some(0..0); unmeasured state returns None.
     /// This is visual position, not the logical follow-tail/end anchor.
     pub fn completed_layout_visible_range(&self) -> Option<Range<usize>> {
@@ -773,17 +814,19 @@ impl ListState {
             .borrow()
             .completed_layout
             .as_ref()
+            .filter(|layout| layout.token.0.get())
             .map(|layout| layout.visible_range.clone())
     }
 
-    /// Exact window bounds of an item actually prepainted in that same completed
+    /// Exact window bounds of an item actually painted in that same completed
     /// pass. Offscreen measured/overdraw-only rows do not become visible proof.
     /// Callers must still intersect these bounds with the completed viewport.
     pub fn completed_layout_bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0
             .borrow()
             .completed_layout
-            .as_ref()?
+            .as_ref()
+            .filter(|layout| layout.token.0.get())?
             .items
             .iter()
             .find_map(|(index, bounds)| (*index == ix).then_some(*bounds))
@@ -1683,7 +1726,9 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
+        let geometry_token = ListLayoutToken(Rc::new(Cell::new(false)));
         state.completed_layout = Some(CompletedListLayout::new(
+            geometry_token.clone(),
             bounds,
             layout
                 .item_layouts
@@ -1691,7 +1736,11 @@ impl Element for List {
                 .filter_map(|item| Some((item.index, item.prepaint_bounds?)))
                 .collect(),
         ));
-        ListPrepaintState { hitbox, layout }
+        ListPrepaintState {
+            geometry_token,
+            hitbox,
+            layout,
+        }
     }
 
     fn paint(
@@ -1736,6 +1785,10 @@ impl Element for List {
                 item.element.paint(window, cx);
             }
         });
+        // Window::transact rolls back window draw state, but not ListState or
+        // deferred App effects. Only the actual paint of this exact pass can
+        // authorize its geometry; an abandoned prepaint never reaches here.
+        prepaint.geometry_token.0.set(true);
     }
 }
 
@@ -2040,6 +2093,76 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn completed_geometry_aborted_prepaint_cannot_authorize_deferred_observer(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(1, crate::ListAlignment::Bottom, px(0.)).measure_all();
+        let aborted_token = Rc::new(RefCell::new(None));
+        let deferred_ran = Rc::new(Cell::new(false));
+        let pending_state = state.clone();
+        let captured_token = aborted_token.clone();
+        let observed_deferred = deferred_ran.clone();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            canvas(
+                move |bounds, window, cx| {
+                    let result: Result<(), ()> = window.transact(|window| {
+                        let mut pending = list(pending_state.clone(), |_, _, _| {
+                            div().h(px(20.)).w_full().into_any()
+                        })
+                        .w_full()
+                        .h_full()
+                        .into_any_element();
+                        pending.layout_as_root(
+                            size(bounds.size.width.into(), bounds.size.height.into()),
+                            window,
+                            cx,
+                        );
+                        pending.prepaint_at(bounds.origin, window, cx);
+                        let token = pending_state.prepaint_layout_token().unwrap();
+                        assert!(!pending_state.is_completed_layout(&token));
+                        assert!(pending_state.completed_layout_visible_range().is_none());
+                        assert!(pending_state.completed_layout_viewport_bounds().is_none());
+                        assert!(pending_state.completed_layout_bounds_for_item(0).is_none());
+                        *captured_token.borrow_mut() = Some(token.clone());
+                        // App effects survive Window::transact rollback. This is
+                        // the exact callback queued by the abandoned prepaint.
+                        let deferred_state = pending_state.clone();
+                        cx.defer(move |_| {
+                            assert!(!deferred_state.is_completed_layout(&token));
+                            assert!(deferred_state.completed_layout_visible_range().is_none());
+                            observed_deferred.set(true);
+                        });
+                        Err(())
+                    });
+                    assert!(result.is_err());
+                },
+                |_, (), _, _| {},
+            )
+            .w_full()
+            .h_full()
+            .into_any_element()
+        });
+        assert!(deferred_ran.get());
+        assert!(state.completed_layout_visible_range().is_none());
+        let aborted_token = aborted_token.borrow().clone().unwrap();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert_eq!(state.completed_layout_visible_range(), Some(0..1));
+        assert!(!state.is_completed_layout(&aborted_token));
+        let painted_token = state.prepaint_layout_token().unwrap();
+        assert!(state.is_completed_layout(&painted_token));
+        // Even an earlier successful paint cannot authorize a later frame's
+        // geometry to an observer that captured the earlier identity.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(80.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert!(!state.is_completed_layout(&painted_token));
+        assert!(state.is_completed_layout(&state.prepaint_layout_token().unwrap()));
     }
 
     #[gpui::test]
