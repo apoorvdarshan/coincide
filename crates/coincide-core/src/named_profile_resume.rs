@@ -20,8 +20,8 @@ struct Context {
     owner: Uuid,
     binding: NamedBinding,
     selection: Value,
-    access: Value,
-    interaction: Value,
+    access: Option<Value>,
+    interaction: Option<Value>,
     policy: Policy,
 }
 impl Context {
@@ -180,8 +180,8 @@ impl Registry {
             owner: self.owner,
             binding: NamedBinding::capture(profile, id, cwd)?,
             selection: thread["selection"].clone(),
-            access: thread["accessMode"].clone(),
-            interaction: thread["interactionMode"].clone(),
+            access: thread.get("accessMode").cloned(),
+            interaction: thread.get("interactionMode").cloned(),
             policy,
         };
         context.validate()?;
@@ -217,8 +217,8 @@ impl Registry {
             || ack.validate().is_err()
             || thread["id"] != id
             || thread["selection"] != ack.context.selection
-            || thread["accessMode"] != ack.context.access
-            || thread["interactionMode"] != ack.context.interaction
+            || thread.get("accessMode") != ack.context.access.as_ref()
+            || thread.get("interactionMode") != ack.context.interaction.as_ref()
             || agent::provider_session(thread, "codex").as_deref() != Some(ack.native.as_str())
         {
             return;
@@ -371,6 +371,121 @@ mod tests {
                 .is_none(),
             "Another Engine cannot restore authority from the same JSON"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mode_presence_changes_consume_receipt_even_with_identical_effective_policy() {
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            time::{Duration, Instant},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let account = Uuid::new_v4().to_string();
+        crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+        let profile =
+            LaunchContext::capture(&root, &account, &std::env::current_exe().unwrap()).unwrap();
+        let baseline = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","accountID":account,"modelID":"default"},"accessMode":"approval","interactionMode":"build","items":[{"kind":"user","text":"preserved owned prefix","future":42}],"sessions":{"codex":{"accountID":account,"sessionID":"native-owned","seenItemCount":99999}},"future":{"preserve":true}});
+        for (field, text) in [("accessMode", "approval"), ("interactionMode", "build")] {
+            for (captured, current) in [
+                (None, Some(Value::Null)),
+                (Some(Value::Null), None),
+                (None, Some(json!(text))),
+                (Some(json!(text)), None),
+                (Some(Value::Null), Some(json!(text))),
+                (Some(json!(text)), Some(Value::Null)),
+            ] {
+                let mut original = baseline.clone();
+                match captured {
+                    Some(value) => {
+                        original[field] = value;
+                    }
+                    None => {
+                        original.as_object_mut().unwrap().remove(field);
+                    }
+                }
+                let mut changed = original.clone();
+                match current {
+                    Some(value) => {
+                        changed[field] = value;
+                    }
+                    None => {
+                        changed.as_object_mut().unwrap().remove(field);
+                    }
+                }
+                let policy =
+                    Policy::parse_named(&original, crate::composer_policy::Origin::Ordinary, None)
+                        .unwrap();
+                let current_policy =
+                    Policy::parse_named(&changed, crate::composer_policy::Origin::Ordinary, None)
+                        .unwrap();
+                assert_eq!(
+                    policy, current_policy,
+                    "This regression must change shape, not effective permissions"
+                );
+                let mut registry = Registry::default();
+                let authority = registry
+                    .prepare(&original, profile.clone(), &root, policy.clone())
+                    .unwrap();
+                let ack = authority
+                    .acknowledge(&json!({"thread":{"id":"native-owned"},"model":"actual-model"}))
+                    .unwrap();
+                let worker = WorkerCompletion::observe(std::thread::spawn(|| {}));
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while worker.status() == WorkerThreadStatus::Running {
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                assert_eq!(worker.status(), WorkerThreadStatus::Returned);
+                registry.persisted(ack, &original, worker.clone());
+                registry.poll();
+                assert_eq!(registry.ready.len(), 1);
+                let before = changed.clone();
+                let fresh = registry
+                    .prepare(&changed, profile.clone(), &root, current_policy.clone())
+                    .unwrap();
+                assert!(fresh.session().is_none());
+                assert_eq!(fresh.seen(), 0);
+                assert_eq!(
+                    changed, before,
+                    "Receipt validation must not normalize stored metadata"
+                );
+                assert!(
+                    registry.ready.is_empty(),
+                    "A mismatched receipt is consumed"
+                );
+                assert!(
+                    registry
+                        .prepare(&original, profile.clone(), &root, policy.clone())
+                        .unwrap()
+                        .session()
+                        .is_none(),
+                    "Restoring an old shape cannot resurrect consumed authority"
+                );
+                // A presence change before the final save also prevents the
+                // pending candidate from entering the ready registry at all.
+                let mut pending = Registry::default();
+                let authority = pending
+                    .prepare(&original, profile.clone(), &root, policy)
+                    .unwrap();
+                let ack = authority
+                    .acknowledge(&json!({"thread":{"id":"native-owned"},"model":"actual-model"}))
+                    .unwrap();
+                pending.persisted(ack, &changed, worker);
+                pending.poll();
+                assert!(pending.ready.is_empty() && pending.pending.is_empty());
+                assert!(
+                    pending
+                        .prepare(&changed, profile.clone(), &root, current_policy)
+                        .unwrap()
+                        .session()
+                        .is_none()
+                );
+            }
+        }
     }
 
     #[test]
