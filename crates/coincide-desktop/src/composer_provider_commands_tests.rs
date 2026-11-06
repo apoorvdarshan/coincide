@@ -66,8 +66,16 @@ fn submission(f: &Fixture) -> Submission {
     Submission::new(&t, t["draft"].as_str().unwrap())
 }
 fn assert_no_execution(f: &mut Fixture) {
-    let status = selection_response(&mut f.engine, "app.status", json!({})).unwrap();
-    assert!(status["running"].as_array().unwrap().is_empty());
+    if f.engine.admissions_frozen() {
+        let refused = f
+            .engine
+            .dispatch(json!({"method":"app.status","params":{}}));
+        assert_eq!(refused["error"]["message"], "Engine admissions are frozen");
+        assert!(refused.get("result").is_none());
+    } else {
+        let status = selection_response(&mut f.engine, "app.status", json!({})).unwrap();
+        assert!(status["running"].as_array().unwrap().is_empty());
+    }
     let providers = f.engine.provider_workers_status();
     assert_eq!(providers.running, 0);
     assert_eq!(providers.returned, 0);
@@ -79,6 +87,8 @@ fn assert_no_execution(f: &mut Fixture) {
     let reads = f.engine.model_catalog_shutdown_status().unwrap();
     assert_eq!(reads.running, 0);
     assert_eq!(reads.returned, 0);
+    assert_eq!(reads.panicked, 0);
+    assert_eq!(reads.unclassified, 0);
     assert_eq!(
         f.engine.store.thread(&text(&f.other, "id")).unwrap(),
         f.other
