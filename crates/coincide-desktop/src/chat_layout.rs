@@ -1,4 +1,4 @@
-//! AppKit reference geometry for macOS chat chrome only.
+//! Shared chat structure and geometry, following the Swift desktop reference.
 use super::*;
 
 // Existing provider-owned branding, already used by the Coincide website.
@@ -27,26 +27,33 @@ const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     ),
 ];
 
-pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
+pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
     static IMAGES: std::sync::OnceLock<std::collections::HashMap<&str, Arc<Image>>> =
         std::sync::OnceLock::new();
-    let images = IMAGES.get_or_init(|| {
-        PROVIDER_LOGOS
-            .into_iter()
-            .map(|(name, bytes)| {
-                (
-                    name,
-                    Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())),
-                )
-            })
-            .collect()
-    });
+    IMAGES
+        .get_or_init(|| {
+            PROVIDER_LOGOS
+                .into_iter()
+                .map(|(name, bytes)| {
+                    (
+                        name,
+                        Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())),
+                    )
+                })
+                .collect()
+        })
+        .get(provider)
+        .cloned()
+}
+
+pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
+    let image = provider_logo(provider);
     div()
         .flex()
         .items_center()
         .gap(px(5.))
         .min_w_0()
-        .when_some(images.get(provider), |view, image| {
+        .when_some(image.clone(), |view, image| {
             // Original monochrome branding is black on transparency. A small
             // light backing preserves its pixels in either app appearance.
             view.child(
@@ -57,7 +64,7 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
                     .bg(rgb(0xffffff)),
             )
         })
-        .when(!images.contains_key(provider), |view| {
+        .when(image.is_none(), |view| {
             view.child(Icon::new(gpui_kit::assets::IconName::Cpu).xsmall())
         })
         .child(div().truncate().child(label))
@@ -99,7 +106,7 @@ fn notice_label(body: &str) -> &str {
 }
 
 impl Coincide {
-    pub(super) fn macos_stop_button(&self, cx: &mut Context<Self>) -> Button {
+    pub(super) fn composer_stop_button(&self, cx: &mut Context<Self>) -> Button {
         Button::new("stop")
             .icon(gpui_kit::assets::IconName::Square)
             .accessibility_label("Stop agent")
