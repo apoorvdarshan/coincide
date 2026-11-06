@@ -421,6 +421,7 @@ struct Coincide {
     microphone_panel: Entity<microphone_settings::MicrophoneSettings>,
     microphone_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     microphone_window_active: bool,
+    microphone_settings_active: bool,
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
     credentials_open: bool,
@@ -593,18 +594,18 @@ impl Coincide {
             .transcription_panel
             .read(cx)
             .recording_configuration(cx);
-        let microphone_binding = self
-            .microphone_window_active
+        let microphone_binding = (self.microphone_window_active || self.microphone_settings_active)
             .then(|| binding.clone())
             .flatten();
         self.microphone_panel.update(cx, |panel, cx| {
-            // Compilation is not live acceptance. No runtime or persisted
-            // setting can enable native permission/capture through this mount.
+            // This is a compiled capability, not OS permission or a capture
+            // acceptance claim. Only the native Enable/Record actions can
+            // request authorization/open a device; rendering has no OS effects.
             panel.set_target(
                 microphone_binding,
                 settings_revision,
                 configuration,
-                false,
+                microphone::compiled_backend_available(),
                 cx,
             );
         });
@@ -1231,6 +1232,7 @@ impl Coincide {
             microphone_panel,
             microphone_events,
             microphone_window_active: window.is_window_active() && window.visibility().is_visible(),
+            microphone_settings_active: false,
             session_import_open: false,
             session_import_panel,
             credentials_open: false,
