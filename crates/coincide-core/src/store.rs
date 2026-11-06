@@ -11,6 +11,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
+#[path = "browser_history_store.rs"]
+mod browser_history_store;
 
 /// A new database is always independent of the Swift app. Unknown JSON fields and
 /// original file bytes are retained, including provider/account session identity.

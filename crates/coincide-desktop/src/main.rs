@@ -2133,7 +2133,7 @@ impl Coincide {
         .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
         .flatten()
     }
-    fn sync_browser_settings(&mut self, cx: &mut Context<Self>) {
+    fn sync_browser_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_browser_settings_route(cx);
         let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -2168,16 +2168,27 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let (bookmark, reservation, prepared) =
+        let history_binding = if visible {
+            selected_thread.as_deref().and_then(|thread| {
+                self.browser
+                    .as_ref()
+                    .map(|browser| browser.history_binding(thread))
+            })
+        } else {
+            None
+        };
+        let (bookmark, reservation, prepared, history) =
             self.browser_settings_panel.update(cx, |panel, cx| {
                 // Idempotent injection: only the first binding initializes context.
                 panel.set_library_engine(engine);
                 panel.set_snapshot(snapshot, cx);
+                panel.set_history_binding(history_binding, cx);
                 panel.poll(cx);
                 (
                     panel.take_bookmark_open(),
                     panel.take_cookie_reservation_request(),
                     panel.take_prepared_cookie_import(),
+                    panel.take_history_open(),
                 )
             });
         if let Some(request) = reservation {
@@ -2223,6 +2234,48 @@ impl Coincide {
             });
             self.browser_settings_panel
                 .update(cx, |panel, cx| panel.set_snapshot(snapshot, cx));
+        }
+        if let Some(history) = history {
+            let result = (|| -> Result<()> {
+                anyhow::ensure!(
+                    visible
+                        && !self.media.shutdown_requested
+                        && !self.media.close_requested
+                        && !self.historical_image_is_open()
+                        && selected_thread.as_deref()
+                            == Some(history.binding.snapshot.thread.as_str()),
+                    "History settings closed or selected conversation changed"
+                );
+                let browser = self.browser.as_ref().context("Browser unavailable")?;
+                anyhow::ensure!(
+                    browser.history_binding(&history.binding.snapshot.thread) == history.binding,
+                    "Browser profile, tab or page changed; click Open again"
+                );
+                let admitted = {
+                    let engine = self
+                        .engine
+                        .try_lock()
+                        .map_err(|_| anyhow::anyhow!("App is busy; click Open again"))?;
+                    engine.admit_prepared_history(history.prepared)?
+                };
+                self.browser
+                    .as_mut()
+                    .context("Browser unavailable")?
+                    .open_saved_history(&history.binding, admitted, window, cx)?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    self.browser_panels.insert(history.binding.snapshot.thread);
+                    self.browser_settings_open = false;
+                    self.settings_open = false;
+                    self.sync_browser_settings_route(cx);
+                    cx.notify();
+                }
+                Err(error) => self.browser_settings_panel.update(cx, |panel, cx| {
+                    panel.history_open_error(error.to_string(), cx)
+                }),
+            }
         }
         if let Some(bookmark) = bookmark
             && visible
@@ -2479,7 +2532,7 @@ impl Coincide {
             cx.notify();
         }
         self.poll_browser(window, cx);
-        self.sync_browser_settings(cx);
+        self.sync_browser_settings(window, cx);
         self.sync_github_context(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);

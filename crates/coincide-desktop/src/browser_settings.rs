@@ -32,6 +32,8 @@ use uuid::Uuid;
 const MAX_DOCUMENT: u64 = 1_048_576;
 #[path = "cookie_import_flow.rs"]
 pub(crate) mod cookie_flow;
+#[path = "browser_history_flow.rs"]
+pub(crate) mod history_flow;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CookieImportMarker {
     Incomplete,
@@ -658,6 +660,7 @@ fn update_route_epoch(
 }
 pub struct BrowserSettings {
     workers: WorkerOwner,
+    history: history_flow::State,
     cookie_flow: cookie_flow::Flow,
     form_scroll: ScrollHandle,
     engine: Option<SharedEngine>,
@@ -682,6 +685,7 @@ pub struct BrowserSettings {
 impl BrowserSettings {
     pub fn request_shutdown(&mut self) {
         self.cookie_flow.close();
+        self.history.close();
         if self.workers.close() {
             self.generation = self.generation.wrapping_add(1);
             self.epoch.store(self.generation, Ordering::Release);
@@ -711,6 +715,16 @@ impl BrowserSettings {
         if status.spawn_error.is_none() {
             status.spawn_error = cookie.spawn_error;
         }
+        let history = self.history.shutdown_status();
+        status.closed &= history.closed;
+        status.unjoined += history.unjoined;
+        status.returned += history.returned;
+        status.panicked += history.panicked;
+        status.unclassified += history.unclassified;
+        status.pending_pickers += history.pending_pickers;
+        if status.spawn_error.is_none() {
+            status.spawn_error = history.spawn_error;
+        }
         status
     }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
@@ -720,6 +734,7 @@ impl BrowserSettings {
         (
             Self {
                 workers: WorkerOwner::default(),
+                history: history_flow::State::default(),
                 cookie_flow: cookie_flow::Flow::default(),
                 form_scroll: ScrollHandle::default(),
                 engine: None,
@@ -758,6 +773,7 @@ impl BrowserSettings {
             return;
         }
         self.engine = Some(engine);
+        self.history.set_binding(None);
         self.generation = self.generation.wrapping_add(1);
         self.epoch.store(self.generation, Ordering::Release);
         self.chosen = None;
@@ -791,7 +807,11 @@ impl BrowserSettings {
         + Send
         + 'static,
     ) {
-        if self.import_busy || self.profile_pending || !self.workers.can_start() {
+        if self.import_busy
+            || self.profile_pending
+            || self.history.busy()
+            || !self.workers.can_start()
+        {
             self.status = "A browser settings action is still finishing.".into();
             cx.notify();
             return;
@@ -872,6 +892,7 @@ impl BrowserSettings {
     }
     pub fn sync_route_context(&mut self, thread: Option<&str>, cx: &mut Context<Self>) {
         if update_route_epoch(&mut self.route, thread, &mut self.generation, &self.epoch) {
+            self.history.set_binding(None);
             self.cookie_flow.route_changed();
             self.snapshot = None;
             self.preview = None;
@@ -915,6 +936,7 @@ impl BrowserSettings {
         cx.notify();
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        self.poll_history(cx);
         self.cookie_flow.poll();
         // Worker completion and cleanup custody can change without any input or
         // profile snapshot change. Publish only actual UI-state transitions.
@@ -980,6 +1002,7 @@ impl BrowserSettings {
         if self.workers.closed()
             || self.import_busy
             || self.profile_pending
+            || self.history.busy()
             || !self.workers.can_start()
         {
             return;
@@ -1002,7 +1025,11 @@ impl BrowserSettings {
         cx.notify();
     }
     fn choose_import(&mut self, cx: &mut Context<Self>) {
-        if self.import_busy || self.profile_pending || !self.workers.begin_picker() {
+        if self.import_busy
+            || self.profile_pending
+            || self.history.busy()
+            || !self.workers.begin_picker()
+        {
             return;
         }
         self.import_busy = true;
@@ -1089,7 +1116,10 @@ impl Drop for BrowserSettings {
 }
 impl Render for BrowserSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.import_busy || self.profile_pending || self.workers.closed();
+        let busy = self.import_busy
+            || self.profile_pending
+            || self.history.busy()
+            || self.workers.closed();
         let mut panel = div()
             .flex()
             .flex_col()
@@ -1254,7 +1284,7 @@ impl Render for BrowserSettings {
                     ),
             );
         }
-        panel.child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.")
+        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.")
     }
 }
 

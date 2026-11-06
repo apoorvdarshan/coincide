@@ -31,6 +31,9 @@ mod background_workers;
 mod bot_engine;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
+#[path = "browser_history_api.rs"]
+mod browser_history_api;
+pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
 #[path = "codex_tool_metadata.rs"]

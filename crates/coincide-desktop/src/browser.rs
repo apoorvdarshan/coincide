@@ -962,6 +962,42 @@ impl BrowserController {
         snapshot.persistent_profiles_available = persistent_profiles_available();
         snapshot
     }
+    pub(crate) fn history_binding(
+        &self,
+        thread: &str,
+    ) -> crate::browser_settings::history_flow::Binding {
+        crate::browser_settings::history_flow::Binding {
+            snapshot: self.profile_snapshot(thread),
+            active: self.active.get(thread).cloned(),
+            tabs: self
+                .tabs
+                .get(thread)
+                .into_iter()
+                .flatten()
+                .map(|tab| (tab.id.clone(), tab.navigation.load(Ordering::Acquire)))
+                .collect(),
+        }
+    }
+    /// One explicit native Open after off-UI saved-row resolution. There is no
+    /// queued gap in which a profile or tab can change before creating the tab.
+    pub(crate) fn open_saved_history(
+        &mut self,
+        binding: &crate::browser_settings::history_flow::Binding,
+        open: coincide_core::api::AdmittedHistoryOpen,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        let (thread, profile, url) = open.into_parts();
+        ensure!(
+            !self.shutdown.callbacks.closed(),
+            "Browser is shutting down"
+        );
+        binding.require_destination(&self.history_binding(&thread), &thread, profile)?;
+        coincide_core::browser_bookmarks::validate_url(&url)?;
+        self.create_tab(&thread, &url, window, cx)?;
+        self.set_thread_visible(Some(&thread), cx);
+        Ok(())
+    }
     /// Apply only requests from the parent's CURRENT selected thread. Never
     /// close tabs implicitly or attach a Swift/imported website store.
     pub fn apply_profile_request(

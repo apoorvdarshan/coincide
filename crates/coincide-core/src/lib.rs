@@ -58,6 +58,7 @@ pub mod composer_context;
 pub mod composer_policy;
 
 pub mod browser_bookmarks;
+pub mod browser_history;
 
 pub mod firefox_cookie_import;
 
