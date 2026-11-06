@@ -1153,6 +1153,7 @@ pub(crate) use accounts::NativeCodexApiContext;
 pub use accounts::{
     NativeAccountRemoval, NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt,
     NativeKeyAccount, NativeKeySave, NativeLoginAccount, PreparedNativeAccountRemoval,
+    native_account_key_choices,
 };
 
 #[path = "provider_setup.rs"]

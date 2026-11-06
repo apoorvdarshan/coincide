@@ -868,6 +868,11 @@ pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmen
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};
+pub fn native_account_key_choices(
+    provider: &str,
+) -> Result<&'static [(&'static str, &'static str)]> {
+    keys::key_choices(provider)
+}
 
 #[cfg(test)]
 mod tests {

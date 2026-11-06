@@ -155,6 +155,86 @@ impl Engine {
         self.revision += 1;
         summary(&account)
     }
+    pub fn rename_native_key_account(
+        &mut self,
+        provider: &str,
+        id: &str,
+        expected: &str,
+        name: &str,
+    ) -> Result<NativeKeyAccount> {
+        self.require_admissions()?;
+        let name = name.trim();
+        ensure!(
+            !name.is_empty() && name.len() <= 120 && !name.chars().any(char::is_control),
+            "Enter a valid account name"
+        );
+        let owner =
+            Private::open(&self.store, false)?.context("Native account authority missing")?;
+        let raw = self.store.native_accounts_payload(provider)?;
+        let mut payload = read(&owner, provider, raw.as_deref())?;
+        let current = account(&payload, provider, id)?;
+        summary(&current)?;
+        ensure!(
+            current.revision == expected,
+            "Account changed; reload before renaming"
+        );
+        payload["accounts"][id]["name"] = json!(name);
+        payload["accounts"][id]["revision"] = json!(Uuid::new_v4().to_string());
+        self.store.save_native_accounts_payload(
+            provider,
+            raw.as_deref(),
+            &encoded(&owner, &payload)?,
+        )?;
+        self.revision += 1;
+        summary(&account(&payload, provider, id)?)
+    }
+    pub fn set_native_provider_account_auth(
+        &mut self,
+        provider: &str,
+        id: &str,
+        expected: &str,
+        auth: &str,
+        variable: Option<&str>,
+    ) -> Result<()> {
+        self.require_admissions()?;
+        let mode = match auth {
+            "login" => {
+                supported(provider)?;
+                Authentication::Login
+            }
+            "apiKey" => Authentication::ApiKey,
+            _ => anyhow::bail!("Choose a supported account authentication method"),
+        };
+        let owner =
+            Private::open(&self.store, false)?.context("Native account authority missing")?;
+        let raw = self.store.native_accounts_payload(provider)?;
+        let mut payload = read(&owner, provider, raw.as_deref())?;
+        let current = account(&payload, provider, id)?;
+        ensure!(
+            current.revision == expected,
+            "Account changed; reload before changing authentication"
+        );
+        let variable = variable
+            .or(current.key_variable.as_deref())
+            .unwrap_or(key_choices(provider)?[0].0);
+        ensure!(
+            key_choices(provider)?
+                .iter()
+                .any(|(key, _)| *key == variable),
+            "Choose a supported key service"
+        );
+        payload["accounts"][id]["authentication"] = serde_json::to_value(mode)?;
+        payload["accounts"][id]["key_variable"] = json!(variable);
+        payload["accounts"][id]["revision"] = json!(Uuid::new_v4().to_string());
+        payload["accounts"][id]["launch_revision"] = json!(Uuid::new_v4().to_string());
+        self.store.save_native_accounts_payload(
+            provider,
+            raw.as_deref(),
+            &encoded(&owner, &payload)?,
+        )?;
+        self.revision += 1;
+        Ok(())
+    }
     pub fn save_native_account_key(
         &mut self,
         provider: &str,
@@ -635,6 +715,51 @@ mod tests {
             );
         }
         assert_ne!(saved2.account.revision, saved.account.revision);
+    }
+    #[test]
+    fn native_authentication_changes_preserve_identity_and_reject_stale_rename() {
+        let (_root, mut engine, _binary) = super::super::super::tests::fixture();
+        let login = engine.create_native_login_account("grok", "Login").unwrap();
+        engine
+            .set_native_provider_account_auth(
+                "grok",
+                &login.id,
+                &login.revision,
+                "apiKey",
+                Some("XAI_API_KEY"),
+            )
+            .unwrap();
+        assert!(engine.native_login_accounts("grok").unwrap().is_empty());
+        let key = engine.native_key_accounts("grok").unwrap().pop().unwrap();
+        assert_eq!(key.id, login.id);
+        assert!(!key.has_key);
+        let renamed = engine
+            .rename_native_key_account("grok", &key.id, &key.revision, "Renamed")
+            .unwrap();
+        assert!(
+            engine
+                .rename_native_key_account("grok", &key.id, &key.revision, "Stale")
+                .is_err()
+        );
+        engine
+            .set_native_provider_account_auth("grok", &key.id, &renamed.revision, "login", None)
+            .unwrap();
+        assert_eq!(
+            engine.native_login_accounts("grok").unwrap()[0].home,
+            login.home
+        );
+        assert!(engine.native_key_accounts("grok").unwrap().is_empty());
+        assert!(
+            engine
+                .set_native_provider_account_auth(
+                    "grok",
+                    &key.id,
+                    &renamed.revision,
+                    "apiKey",
+                    Some("SHELL_COMMAND")
+                )
+                .is_err()
+        );
     }
     #[test]
     fn all_provider_services_are_validated_without_vault_reads_or_json_authority() {
