@@ -1,6 +1,6 @@
 use gpui_kit::{
-    AppContext, Context, FocusHandle, IntoElement, Render, TestAppContext, Window, WindowOptions,
-    div, prelude::*, test::TestWindowExt,
+    AppContext, Context, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Render,
+    TestAppContext, Window, WindowOptions, div, prelude::*,
 };
 use std::sync::atomic::Ordering;
 
@@ -39,12 +39,14 @@ fn headless_settings_close_returns_focus_and_global_quit(cx: &mut TestAppContext
         .unwrap()
     });
     cx.update_window(main, |_, window, cx| {
-        window.render_frame(cx);
+        window.refresh();
+        window.draw(cx).clear(cx);
         window.blur(cx);
     })
     .unwrap();
     cx.update_window(settings, |_, window, cx| {
-        window.render_frame(cx);
+        window.refresh();
+        window.draw(cx).clear(cx);
         settings_view.read(cx).focus.focus(window, cx);
         super::return_focus_to_main(main, main_focus.clone(), cx);
         window.remove_window();
@@ -53,19 +55,28 @@ fn headless_settings_close_returns_focus_and_global_quit(cx: &mut TestAppContext
     cx.run_until_parked();
     assert!(cx.update_window(settings, |_, _, _| {}).is_err());
     cx.update_window(main, |_, window, cx| {
-        window.render_frame(cx);
+        window.refresh();
+        window.draw(cx).clear(cx);
         assert!(
             main_focus.is_focused(window),
             "Closing Settings must restore the main focus tree"
         );
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-q"
-            } else {
-                "ctrl-q"
-            },
+        let key = if cfg!(target_os = "macos") {
+            "cmd-q"
+        } else {
+            "ctrl-q"
+        };
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
             cx,
         );
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
     })
     .unwrap();
     assert!(
@@ -79,8 +90,10 @@ fn headless_settings_close_returns_focus_and_global_quit(cx: &mut TestAppContext
 
 #[::core::prelude::v1::test]
 fn private_settings_close_focus_child() {
-    let fixture = tempfile::tempdir().unwrap();
-    let home = fixture.path().join("private-home");
+    let fixture =
+        std::env::temp_dir().join(format!("coincide-settings-focus-{}", uuid::Uuid::new_v4()));
+    coincide_core::native_file::private_directory(&fixture).unwrap();
+    let home = fixture.join("private-home");
     coincide_core::native_file::private_directory(&home).unwrap();
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
@@ -117,4 +130,5 @@ fn private_settings_close_focus_child() {
         stdout.contains("1 passed"),
         "The actual headless focus/keyboard case must run\n{stdout}\n{stderr}"
     );
+    std::fs::remove_dir_all(&fixture).unwrap();
 }
