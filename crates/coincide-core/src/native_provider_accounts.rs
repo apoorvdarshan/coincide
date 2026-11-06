@@ -538,21 +538,36 @@ impl Engine {
             &self.store.data_directory()?,
             account(&payload, provider, id)?,
         )?;
-        let base = self.provider_launch_configuration(provider)?;
-        let executable = base
+        // Registry and executable configuration share one authority key. Read
+        // both envelopes under this owner rather than reacquiring its lease.
+        let record = read_record(&owner.read()?, provider)?;
+        ensure!(
+            record.is_some()
+                || !self
+                    .store
+                    .requires_native_provider_configuration(provider)?,
+            "Approved provider configuration is missing; save it again in native Settings before running"
+        );
+        if let Some(record) = &record {
+            validate_environment(&record.environment)?;
+        }
+        let executable = record
             .as_ref()
-            .and_then(LaunchConfiguration::approved_executable)
+            .and_then(|record| {
+                record
+                    .executable
+                    .as_ref()
+                    .map(|binary| binary.requested.clone())
+            })
             .or_else(|| default_executable(provider))
             .context("Install this provider or approve its executable in native Settings")?;
-        let mut record = base
-            .map(|configuration| configuration.record)
-            .unwrap_or(Record {
-                revision: "automatic".into(),
-                executable: None,
-                companion: None,
-                custom: false,
-                environment: BTreeMap::new(),
-            });
+        let mut record = record.unwrap_or(Record {
+            revision: "automatic".into(),
+            executable: None,
+            companion: None,
+            custom: false,
+            environment: BTreeMap::new(),
+        });
         record.executable = Some(Binary::capture(&executable)?);
         record.environment.retain(|key, _| {
             !auth_keys(provider)
