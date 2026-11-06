@@ -129,6 +129,11 @@ def main():
 
     def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
         """Target one observed sidebar word; never infer coordinates from layout."""
+        # Xvfb has no desktop window manager to focus a newly mapped window
+        # when its pixels are clicked. Bind native key focus explicitly to the
+        # already-observed owned Settings window before any search typing.
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        assert int(command("xdotool", "getwindowfocus", env=env)) == int(window), "Native input focus must belong to the observed Settings window"
         attempt = 0
         def observed_target():
             nonlocal attempt
@@ -234,7 +239,9 @@ def main():
         # Exercise the real filtered navigation and provider panel, without
         # clicking Check/Install/Login or executing any provider.
         click_rendered_word(settings_window, "settings-search-target", "Search")
+        assert int(command("xdotool", "getwindowfocus", env=env)) == int(settings_window), "Search typing must target the owned Settings window"
         command("xdotool", "type", "--clearmodifiers", "Codex", env=env)
+        capture(settings_window, "settings-provider-filtered", "Results")
         click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80)
         capture(settings_window, "settings-provider-codex", "Executable")
         click_rendered_word(settings_window, "settings-return-general", "General")
