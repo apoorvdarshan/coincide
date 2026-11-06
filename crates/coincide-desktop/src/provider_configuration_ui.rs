@@ -746,6 +746,14 @@ impl Panel {
                         .when_some(report.account.as_ref(), |pane, account| {
                             pane.child(format!("Account: {account}"))
                         })
+                        .when_some(
+                            report.integrations.as_ref(),
+                            |pane, integrations| {
+                                pane.child(format!(
+                                    "Connected integrations reported: {integrations}"
+                                ))
+                            },
+                        )
                     })
                     .when_some(editor.checked, |pane, checked| {
                         pane.child(div().text_xs().child(if checked.elapsed().as_secs() < 60 {

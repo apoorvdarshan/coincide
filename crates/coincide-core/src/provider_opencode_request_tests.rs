@@ -75,6 +75,7 @@ fn aborted_case(stop: bool, startup: bool, panic_worker: bool) {
     let session = Session::fixture_worker(move |commands, events| {
         begin.recv().unwrap();
         let mut runtime = Runtime {
+            cancelled: None,
             commands,
             queued: VecDeque::new(),
             events,
@@ -206,6 +207,7 @@ fn successful_response_delivery_does_not_finish_provider_before_request_tls_dest
     let (join_entered, join_seen) = mpsc::channel();
     let session = Session::fixture_worker(move |commands, events| {
         let mut runtime = Runtime {
+            cancelled: None,
             commands,
             queued: VecDeque::new(),
             events,
@@ -251,6 +253,7 @@ fn ordinary_request_panic_waits_for_tls_join_and_returns_explicit_failure() {
     let (join_entered, join_seen) = mpsc::channel();
     let session = Session::fixture_worker(move |commands, events| {
         let mut runtime = Runtime {
+            cancelled: None,
             commands,
             queued: VecDeque::new(),
             events,
@@ -302,6 +305,7 @@ fn saturated_sse_disconnects_before_server_teardown_and_owned_tls_join() {
     };
     let session = Session::fixture_worker(move |commands, events| {
         let mut runtime = Runtime {
+            cancelled: None,
             commands,
             queued: VecDeque::new(),
             events,
@@ -404,6 +408,7 @@ fn startup_io_case(panic_first: bool) {
     }
     let session = Session::fixture_worker(move |commands, events| {
         let mut runtime = Runtime {
+            cancelled: None,
             commands,
             queued: VecDeque::new(),
             events,

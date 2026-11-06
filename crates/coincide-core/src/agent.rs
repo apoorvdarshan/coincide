@@ -40,6 +40,12 @@ pub mod native_instruction_git;
 mod opencode;
 #[path = "provider_setup_process.rs"]
 pub(crate) mod setup_process;
+pub(crate) fn opencode_installation_metadata(
+    executable: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    opencode::installation_metadata(executable, allowed)
+}
 #[path = "provider_transport.rs"]
 mod transport;
 #[cfg(windows)]

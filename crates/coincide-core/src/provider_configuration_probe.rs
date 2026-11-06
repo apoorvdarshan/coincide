@@ -7,6 +7,7 @@ pub struct ProbeReport {
     pub version: Option<String>,
     pub authenticated: Option<bool>,
     pub account: Option<String>,
+    pub integrations: Option<String>,
     pub models: Vec<Value>,
 }
 pub struct Probe {
@@ -122,7 +123,24 @@ impl Probe {
                     }
                 }
             }
-            "opencode" | "codex" => {}
+            "opencode" => {
+                self.binary.validate()?;
+                if report
+                    .version
+                    .as_deref()
+                    .and_then(|version| version.split('.').next())
+                    .and_then(|major| major.parse::<u64>().ok())
+                    .is_none_or(|major| major >= 2)
+                    && let Ok((models, integrations)) = crate::agent::opencode_installation_metadata(
+                        &self.binary.requested,
+                        allowed,
+                    )
+                {
+                    report.models = models;
+                    report.integrations = integrations;
+                }
+            }
+            "codex" => {}
             _ => bail!("Unsupported provider check"),
         }
         ensure!(allowed(), "Provider check cancelled");
