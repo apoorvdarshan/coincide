@@ -61,6 +61,7 @@ impl std::fmt::Debug for ListState {
 
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
+    completed_layout: Option<CompletedListLayout>,
     last_padding: Option<Edges<Pixels>>,
     items: SumTree<ListItem>,
     scroll_anchor: Option<ScrollAnchor>,
@@ -73,6 +74,42 @@ struct StateInner {
     measuring_behavior: ListMeasuringBehavior,
     item_measurement_ready: Option<Box<dyn Fn(usize, &App) -> bool>>,
     follow_state: FollowState,
+}
+
+/// Exact geometry of items actually prepainted in the final successful pass.
+/// The logical end anchor is intentionally independent from visual geometry.
+struct CompletedListLayout {
+    viewport: Bounds<Pixels>,
+    visible_range: Range<usize>,
+    items: Vec<(usize, Bounds<Pixels>)>,
+}
+impl CompletedListLayout {
+    fn new(viewport: Bounds<Pixels>, items: Vec<(usize, Bounds<Pixels>)>) -> Self {
+        let mut visible = items
+            .iter()
+            .filter(|(_, row)| {
+                viewport.size.width > px(0.)
+                    && viewport.size.height > px(0.)
+                    && row.bottom() > viewport.top()
+                    && row.top() < viewport.bottom()
+                    && row.right() > viewport.left()
+                    && row.left() < viewport.right()
+            })
+            .map(|(index, _)| *index);
+        let visible_range = if let Some(first) = visible.next() {
+            let (start, end) = visible.fold((first, first), |(start, end), index| {
+                (start.min(index), end.max(index))
+            });
+            start..end + 1
+        } else {
+            0..0
+        };
+        Self {
+            viewport,
+            visible_range,
+            items,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -219,6 +256,7 @@ struct ItemLayout {
     index: usize,
     element: AnyElement,
     size: Size<Pixels>,
+    prepaint_bounds: Option<Bounds<Pixels>>,
 }
 
 /// Frame state used by the [List] element after layout.
@@ -314,6 +352,7 @@ impl ListState {
     pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
         let state = Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
+            completed_layout: None,
             last_padding: None,
             items: SumTree::default(),
             scroll_anchor: None,
@@ -334,7 +373,10 @@ impl ListState {
     ///
     /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
     pub fn measure_all(self) -> Self {
-        self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
+        let mut state = self.0.borrow_mut();
+        state.completed_layout = None;
+        state.measuring_behavior = ListMeasuringBehavior::Measure(false);
+        drop(state);
         self
     }
 
@@ -379,6 +421,7 @@ impl ListState {
             height,
         };
         let mut state = self.0.borrow_mut();
+        state.completed_layout = None;
         let new_items = state
             .items
             .iter()
@@ -414,6 +457,7 @@ impl ListState {
 
     fn remeasure_items_with_scroll_anchor(&self, range: Range<usize>, mode: ScrollAnchorMode) {
         let state = &mut *self.0.borrow_mut();
+        state.completed_layout = None;
 
         if let Some(anchor) = state.scroll_anchor.as_mut()
             && range.contains(&anchor.position.item_ix)
@@ -501,6 +545,7 @@ impl ListState {
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
         let state = &mut *self.0.borrow_mut();
+        state.completed_layout = None;
 
         let mut old_items = state.items.cursor::<Count>(());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
@@ -648,7 +693,9 @@ impl ListState {
     /// Measurements reported as `false` remain provisional and are retried on later layouts.
     /// The consumer must request a new frame when measurement becomes ready.
     pub fn set_item_measurement_readiness(&self, ready: impl Fn(usize, &App) -> bool + 'static) {
-        self.0.borrow_mut().item_measurement_ready = Some(Box::new(ready));
+        let mut state = self.0.borrow_mut();
+        state.completed_layout = None;
+        state.item_measurement_ready = Some(Box::new(ready));
     }
 
     /// Returns whether the list is currently actively following the
@@ -706,6 +753,40 @@ impl ListState {
         }
 
         state.set_scroll_anchor(Some(scroll_top));
+    }
+
+    /// Exact viewport from the last completed prepaint pass. Unlike
+    /// `viewport_bounds`, returns None after mutation and before the next layout.
+    pub fn completed_layout_viewport_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0
+            .borrow()
+            .completed_layout
+            .as_ref()
+            .map(|layout| layout.viewport)
+    }
+
+    /// Range enclosing actually intersecting, prepainted rows. A completed
+    /// empty/zero-sized viewport returns Some(0..0); unmeasured state returns None.
+    /// This is visual position, not the logical follow-tail/end anchor.
+    pub fn completed_layout_visible_range(&self) -> Option<Range<usize>> {
+        self.0
+            .borrow()
+            .completed_layout
+            .as_ref()
+            .map(|layout| layout.visible_range.clone())
+    }
+
+    /// Exact window bounds of an item actually prepainted in that same completed
+    /// pass. Offscreen measured/overdraw-only rows do not become visible proof.
+    /// Callers must still intersect these bounds with the completed viewport.
+    pub fn completed_layout_bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.0
+            .borrow()
+            .completed_layout
+            .as_ref()?
+            .items
+            .iter()
+            .find_map(|(index, bounds)| (*index == ix).then_some(*bounds))
     }
 
     /// Get the bounds for the given item in window coordinates, if it's
@@ -958,6 +1039,7 @@ impl StateInner {
     }
 
     fn set_scroll_anchor(&mut self, position: Option<ListOffset>) {
+        self.completed_layout = None;
         let Some(position) = position else {
             self.scroll_anchor = None;
             return;
@@ -1109,6 +1191,7 @@ impl StateInner {
                         index: item_index,
                         element,
                         size: element_size,
+                        prepaint_bounds: None,
                     });
                     if item.contains_focused(window, cx) {
                         rendered_focused_item = true;
@@ -1149,6 +1232,7 @@ impl StateInner {
                         index: item_index,
                         element,
                         size: element_size,
+                        prepaint_bounds: None,
                     });
                     if item.contains_focused(window, cx) {
                         rendered_focused_item = true;
@@ -1253,6 +1337,7 @@ impl StateInner {
                         index: item_index,
                         element,
                         size,
+                        prepaint_bounds: None,
                     });
                     break;
                 }
@@ -1304,6 +1389,7 @@ impl StateInner {
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
                         item.element.prepaint_at(item_origin, window, cx);
                     });
+                    item.prepaint_bounds = Some(Bounds::new(item_origin, item.size));
 
                     if let Some(autoscroll_bounds) = window.take_autoscroll()
                         && autoscroll
@@ -1472,6 +1558,7 @@ impl Element for List {
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
+        self.state.0.borrow_mut().completed_layout = None;
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -1596,6 +1683,14 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
+        state.completed_layout = Some(CompletedListLayout::new(
+            bounds,
+            layout
+                .item_layouts
+                .iter()
+                .filter_map(|item| Some((item.index, item.prepaint_bounds?)))
+                .collect(),
+        ));
         ListPrepaintState { hitbox, layout }
     }
 
@@ -1945,6 +2040,168 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn completed_geometry_short_bottom_uses_actual_visual_row_not_end_anchor(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(1, ListAlignment::Bottom, px(0.)).measure_all();
+        assert!(state.completed_layout_visible_range().is_none());
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert_eq!(state.logical_scroll_top().item_ix, 1);
+        assert_eq!(state.completed_layout_visible_range(), Some(0..1));
+        let viewport = state.completed_layout_viewport_bounds().unwrap();
+        let row = state.completed_layout_bounds_for_item(0).unwrap();
+        assert_eq!(row.top(), viewport.bottom() - px(20.));
+        assert_eq!(row.bottom(), viewport.bottom());
+        assert!(state.completed_layout_bounds_for_item(1).is_none());
+    }
+
+    #[gpui::test]
+    fn completed_geometry_long_bottom_reports_only_actual_prepainted_rows(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(5, ListAlignment::Bottom, px(20.)).measure_all();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(40.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert_eq!(state.logical_scroll_top().item_ix, 5);
+        assert_eq!(state.completed_layout_visible_range(), Some(3..5));
+        let viewport = state.completed_layout_viewport_bounds().unwrap();
+        assert_eq!(
+            state.completed_layout_bounds_for_item(3).unwrap().top(),
+            viewport.top()
+        );
+        assert_eq!(
+            state.completed_layout_bounds_for_item(4).unwrap().bottom(),
+            viewport.bottom()
+        );
+        // Leading overdraw is measured, but never admitted as prepainted proof.
+        assert!(state.completed_layout_bounds_for_item(2).is_none());
+    }
+
+    #[gpui::test]
+    fn completed_geometry_top_manual_scroll_preserves_partial_row_bounds(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(6, ListAlignment::Top, px(20.)).measure_all();
+        state.scroll_to(ListOffset {
+            item_ix: 2,
+            offset_in_item: px(3.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(35.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert_eq!(state.completed_layout_visible_range(), Some(2..4));
+        let viewport = state.completed_layout_viewport_bounds().unwrap();
+        assert_eq!(
+            state.completed_layout_bounds_for_item(2).unwrap().top(),
+            viewport.top() - px(3.)
+        );
+        assert_eq!(
+            state.completed_layout_bounds_for_item(3).unwrap().top(),
+            viewport.top() + px(17.)
+        );
+        assert!(state.completed_layout_bounds_for_item(1).is_none());
+        assert!(state.completed_layout_bounds_for_item(4).is_none());
+    }
+
+    #[gpui::test]
+    fn completed_geometry_is_revoked_by_splice_scroll_remeasure_and_reset(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(6, ListAlignment::Top, px(0.)).measure_all();
+        let mut draw = || {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(40.)), |_, cx| {
+                cx.new(|_| TestListView(state.clone())).into_any_element()
+            })
+        };
+        draw();
+        state.scroll_by(px(0.));
+        assert!(state.completed_layout_viewport_bounds().is_some());
+        state.splice(0..1, 1);
+        assert!(state.completed_layout_visible_range().is_none());
+        assert!(state.completed_layout_bounds_for_item(0).is_none());
+        draw();
+        state.scroll_to(ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        assert!(state.completed_layout_visible_range().is_none());
+        draw();
+        state.remeasure_items(2..3);
+        assert!(state.completed_layout_viewport_bounds().is_none());
+        draw();
+        state.scroll_by(px(5.));
+        assert!(state.completed_layout_visible_range().is_none());
+        draw();
+        state.reset(1);
+        assert!(state.completed_layout_visible_range().is_none());
+        draw();
+        assert_eq!(state.completed_layout_visible_range(), Some(0..1));
+        state.set_item_measurement_readiness(|_, _| true);
+        assert!(state.completed_layout_visible_range().is_none());
+    }
+
+    #[gpui::test]
+    fn completed_geometry_tracks_new_viewport_and_actual_zero_height_layout(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(1, ListAlignment::Bottom, px(0.)).measure_all();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(40.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(80.), px(60.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        let viewport = state.completed_layout_viewport_bounds().unwrap();
+        assert_eq!(viewport.size, size(px(80.), px(60.)));
+        assert_eq!(
+            state.completed_layout_bounds_for_item(0).unwrap().bottom(),
+            viewport.bottom()
+        );
+        cx.draw(point(px(0.), px(0.)), size(px(80.), px(0.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+        assert_eq!(state.completed_layout_visible_range(), Some(0..0));
+        assert!(state.completed_layout_bounds_for_item(0).is_none());
+    }
+
+    #[gpui::test]
+    fn completed_geometry_does_not_change_tail_follow_or_manual_scroll_authority(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(4, ListAlignment::Bottom, px(0.)).measure_all();
+        state.set_follow_mode(FollowMode::Tail);
+        let mut draw = || {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(40.)), |_, cx| {
+                cx.new(|_| TestListView(state.clone())).into_any_element()
+            })
+        };
+        draw();
+        assert!(state.is_following_tail());
+        assert_eq!(state.completed_layout_visible_range(), Some(2..4));
+        state.splice(4..4, 2);
+        assert!(state.completed_layout_visible_range().is_none());
+        draw();
+        assert!(state.is_following_tail());
+        assert_eq!(state.logical_scroll_top().item_ix, 6);
+        assert_eq!(state.completed_layout_visible_range(), Some(4..6));
+        state.scroll_to(ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        draw();
+        assert!(!state.is_following_tail());
+        assert_eq!(state.completed_layout_visible_range(), Some(2..4));
+        state.scroll_to_end();
+        assert!(state.completed_layout_visible_range().is_none());
+        draw();
+        assert!(state.is_following_tail());
+        assert_eq!(state.completed_layout_visible_range(), Some(4..6));
     }
 
     #[gpui::test]

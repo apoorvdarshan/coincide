@@ -320,20 +320,6 @@ impl Coincide {
     ) -> impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static {
         let binding = self.media_layout_binding(cx);
         let list = self.transcript_list.clone();
-        let items = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["items"].as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .enumerate()
-                    .skip(list.logical_scroll_top().item_ix)
-                    .take(200)
-                    .map(|(index, item)| (index, text(item, "id")))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
         let parent = cx.entity().downgrade();
         let sequence = self.media.layout_sequence.clone();
         move |_, _, cx| {
@@ -344,16 +330,20 @@ impl Coincide {
             if let Some(next) = next {
                 sequence.set(next);
             }
-            let viewport = list.viewport_bounds();
-            let visible = items
-                .iter()
-                .filter(|(index, _)| {
-                    list.bounds_for_item(*index)
-                        .is_some_and(|row| row_intersects(row, viewport))
-                })
-                .take(20)
-                .map(|(_, id)| id.clone())
-                .collect::<Vec<_>>();
+            let visible_indices = match (
+                list.completed_layout_visible_range(),
+                list.completed_layout_viewport_bounds(),
+            ) {
+                (Some(range), Some(viewport)) => range
+                    .take(200)
+                    .filter(|index| {
+                        list.completed_layout_bounds_for_item(*index)
+                            .is_some_and(|row| row_intersects(row, viewport))
+                    })
+                    .take(20)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
             let parent = parent.clone();
             cx.defer(move |cx| {
                 let _ = parent.update(cx, |this, cx| {
@@ -362,6 +352,20 @@ impl Coincide {
                     if current.as_ref() != Some(&binding) {
                         return;
                     }
+                    // Resolve only these actually prepainted indices after the
+                    // full source/thread/revision/epoch binding check above.
+                    let visible = this
+                        .selected
+                        .as_ref()
+                        .and_then(|thread| thread["items"].as_array())
+                        .map(|items| {
+                            visible_indices
+                                .iter()
+                                .filter_map(|index| items.get(*index))
+                                .map(|item| text(item, "id"))
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     let changed = if let Some(next) = next {
                         this.media
                             .layout_visibility
@@ -762,8 +766,12 @@ impl Coincide {
             .selected
             .as_ref()
             .and_then(|thread| find_row(thread, &selection.thread, &selection.item))
-            .and_then(|row| self.transcript_list.bounds_for_item(row))
-            .is_some_and(|row| row_intersects(row, self.transcript_list.viewport_bounds()));
+            .and_then(|row| self.transcript_list.completed_layout_bounds_for_item(row))
+            .is_some_and(|row| {
+                self.transcript_list
+                    .completed_layout_viewport_bounds()
+                    .is_some_and(|viewport| row_intersects(row, viewport))
+            });
         let current = visible
             && window.is_window_active()
             && !self.command_palette.read(cx).is_open()
