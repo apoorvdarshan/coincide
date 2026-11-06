@@ -6,6 +6,7 @@ impl Engine {
     /// schedule dispatch. Existing work and persistence must still be polled.
     /// This does not stop workers or establish resource cleanup/quiescence.
     pub fn freeze_admissions(&mut self) {
+        self.cancel_provider_restore();
         self.admissions_frozen = true;
     }
 

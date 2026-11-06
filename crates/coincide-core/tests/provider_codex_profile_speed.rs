@@ -212,6 +212,19 @@ fn choose(e: &mut Engine, id: &str, _root: &Path, model: &str, speed: &str, r: &
     let mut expected = before;
     expected["selection"]["modelID"] = json!(model);
     expected["selection"]["speed"] = json!(speed);
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    if expected["modelPreferences"].is_object()
+        && expected["modelPreferences"].get(&account_key).is_none()
+    {
+        // The first B choice remembers its existing Automatic/Standard defaults
+        // before the explicit override. A's preferences remain fully compared.
+        assert!(expected["selection"]["effort"].is_null());
+        expected["modelPreferences"][&account_key] = json!({"effort":null,"speed":null});
+    }
+    expected["modelPreferences"][&account_key]["speed"] = json!(speed);
     assert_eq!(actual, expected);
     assert_eq!(
         e.store.document("speed-fixture.json").unwrap(),
@@ -352,6 +365,11 @@ fn speed_fixture_child() {
     let chosen = call(&mut e, SELECT, combined);
     let mut expected = speed_only;
     expected["selection"]["effort"] = json!("high");
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["effort"] = json!("high");
     assert_eq!(chosen, expected);
     let caps = call(
         &mut e,
@@ -394,6 +412,11 @@ fn speed_fixture_child() {
     let cleared = call(&mut e, SELECT, clear);
     let mut expected = before;
     expected["selection"]["speed"] = Value::Null;
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["speed"] = Value::Null;
     assert_eq!(cleared, expected);
     assert_eq!(cleared["selection"]["effort"], "high");
     for (ack, expected_tier) in [
@@ -470,6 +493,11 @@ fn speed_fixture_child() {
     let cleared = call(&mut e, SELECT, clear);
     let mut expected = saved;
     expected["selection"]["speed"] = Value::Null;
+    let account_key = format!(
+        "codex/{}",
+        expected["selection"]["accountID"].as_str().unwrap()
+    );
+    expected["modelPreferences"][&account_key]["speed"] = Value::Null;
     assert_eq!(cleared, expected);
     refuse(
         &mut e,

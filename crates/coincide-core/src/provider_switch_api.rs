@@ -1,5 +1,7 @@
-//! Atomic, local provider switching. Catalog availability is not authentication.
+//! Atomic provider switching. Historical preferences never grant execution authority.
 use super::*;
+
+pub(super) use super::provider_restore_api::RestoreIntent;
 
 const EXPECTED_FIELDS: [&str; 7] = [
     "id",
@@ -17,15 +19,38 @@ impl Engine {
             .as_object()
             .context("Provider selection must be an object")?;
         ensure!(
-            fields.len() == 3
-                && fields
-                    .keys()
-                    .all(|key| matches!(key.as_str(), "threadId" | "provider" | "expected")),
+            (3..=6).contains(&fields.len())
+                && fields.keys().all(|key| matches!(
+                    key.as_str(),
+                    "threadId"
+                        | "provider"
+                        | "expected"
+                        | "restoreRequestId"
+                        | "restoreCurrent"
+                        | "accountId"
+                )),
             "Provider selection requires threadId, provider and expected only"
         );
         let id = required(p, "threadId")?;
         let provider = required(p, "provider")?;
+        if let Some(request) = p.get("restoreRequestId") {
+            let request = request.as_str().context("Invalid restore request")?;
+            self.poll_provider_restore();
+            ensure!(
+                self.provider_restore
+                    .as_ref()
+                    .is_some_and(|intent| intent.token == request),
+                "Provider restoration was cancelled or superseded; draft retained"
+            );
+        } else {
+            self.cancel_provider_restore();
+        }
         Provider::from_name(provider)?;
+        ensure!(
+            (p.get("accountId").is_none() && p.get("restoreCurrent").is_none())
+                || provider == "codex",
+            "Explicit account restoration is available only for Codex"
+        );
         ensure!(
             self.active_thread() == Some(id),
             "Active conversation changed; draft retained"
@@ -60,26 +85,59 @@ impl Engine {
         ensure!(
             EXPECTED_FIELDS
                 .iter()
+                .filter(|key| p["restoreCurrent"] != true
+                    || matches!(**key, "id" | "selection" | "accessMode" | "interactionMode"))
                 .all(|key| p["expected"][*key] == current[*key]),
             "Saved composer changed; command draft retained"
         );
         ensure!(
-            current["selection"]["provider"] != provider,
+            current["selection"]["provider"] != provider
+                || (provider == "codex" && p.get("accountId").is_some())
+                || (p.get("restoreCurrent") == Some(&json!(true))
+                    && provider == "codex"
+                    && !crate::composer_selection::default_account(
+                        &current["selection"]["accountID"]
+                    )),
             "This conversation already uses {provider}; command draft retained"
         );
         ensure!(
-            crate::composer_selection::default_account(&current["selection"]["accountID"]),
-            "Choose accounts explicitly in model/account controls; command draft retained"
+            p["restoreCurrent"] == true
+                || crate::message_queue::read(&current)?
+                    .iter()
+                    .all(|message| !matches!(
+                        message.state,
+                        crate::message_queue::State::Pending
+                            | crate::message_queue::State::Dispatching
+                    )),
+            "Finish or remove queued messages before changing provider"
         );
-        ensure!(
-            current["selection"]["effort"].is_null() && current["selection"]["speed"].is_null(),
-            "Clear saved effort/speed explicitly before switching provider; command draft retained"
-        );
-        for key in ["draftContext", "rustDraftImages"] {
-            ensure!(
-                current[key].is_null() || current[key].as_array().is_some_and(Vec::is_empty),
-                "Provider command has attached content; draft retained"
-            );
+        if provider == "codex" {
+            let configuration = crate::codex_login_profiles::configuration(&self.store)?;
+            if p.get("accountId").is_some()
+                || p.get("restoreCurrent").is_some()
+                || remembered_account(&current, provider).is_some()
+                || configuration["accounts"]
+                    .as_object()
+                    .is_some_and(|accounts| !accounts.is_empty())
+            {
+                return self.restore_provider_accounts(current, p);
+            }
+        }
+        self.select_default_provider(current, provider)
+    }
+
+    pub(super) fn select_default_provider(
+        &mut self,
+        current: Value,
+        provider: &str,
+    ) -> Result<Value> {
+        let id = required(&current, "id")?;
+        if current["selection"]["provider"] == "codex"
+            && !crate::composer_selection::default_account(&current["selection"]["accountID"])
+        {
+            crate::codex_login_profiles::validate_model_thread(&current)?;
+        } else {
+            crate::composer_selection::validate_thread_base(&current)?;
         }
         let capabilities = crate::composer_selection::capabilities();
         let target = capabilities["providers"]
@@ -97,6 +155,12 @@ impl Engine {
         // Only the latest private job for this exact default provider/executable
         // can corroborate a historical name. No discovery, credential read,
         // catalog refresh, named proof or provider execution occurs here.
+        ensure!(
+            crate::composer_selection::default_account(&current["selection"]["accountID"])
+                || current["selection"]["provider"] == "codex",
+            "This named account type cannot be switched automatically"
+        );
+
         let restored = historical_default_model(&current, provider).and_then(|model| {
             let executable = self.provider_switch_executable(provider)?;
             self.model_catalog
@@ -104,6 +168,17 @@ impl Engine {
         });
         let model = restored.as_deref().unwrap_or("default");
         let mut selection = json!({"threadId":id,"provider":provider,"model":model,"accountId":null,"effort":null,"speed":null});
+        let preference = &current["rustProviderSelections"][provider];
+        if restored.is_some()
+            && crate::composer_selection::default_account(&preference["accountID"])
+            && preference["modelID"] == model
+        {
+            for key in ["effort", "speed"] {
+                if let Some(value) = preference.get(key) {
+                    selection[key] = value.clone();
+                }
+            }
+        }
         for key in ["accessMode", "interactionMode"] {
             if !current[key].is_null() {
                 selection[key] = current[key].clone();
@@ -111,7 +186,30 @@ impl Engine {
         }
         // Preserve every existing selection/policy guard; this is not a new
         // execution grant and cannot repair or silently clear saved options.
-        let thread = self.execute("agent.select", &selection)?;
+        let mut thread = current.clone();
+        let mut validation = current.clone();
+        // The source is retained in its provider preference; only target syntax
+        // and authority determine whether this atomic replacement is valid.
+        validation["selection"] = json!({"provider":provider,"modelID":"default"});
+        let target_proof = self.composer_target_effort_proof(&selection)?;
+        thread["selection"] = crate::composer_selection::select_with_proofs(
+            &selection,
+            &validation,
+            None,
+            target_proof.as_ref(),
+        )?;
+        crate::composer_selection::apply_modes_with_proof(
+            &selection,
+            &mut thread,
+            target_proof.as_ref(),
+        )?;
+        remember_source(&mut thread, &current)?;
+        self.save_composer_choice(
+            &current,
+            &mut thread,
+            &json!({"rememberComposerChoice":true}),
+        )?;
+        self.revision += 1;
         Ok(
             json!({"thread":thread,"model":model,"restored":restored.is_some(),
             "provenance":if restored.is_some(){"latest_default_catalog"}else{"provider_default"},
@@ -134,6 +232,75 @@ impl Engine {
                 .map(PathBuf::from)
         })
     }
+}
+
+pub(super) fn remember_source(target: &mut Value, source: &Value) -> Result<()> {
+    if target["rustProviderSelections"].is_null() {
+        target["rustProviderSelections"] = json!({});
+    }
+    ensure!(
+        target["rustProviderSelections"].is_object(),
+        "Invalid saved provider preferences; draft retained"
+    );
+    let provider = required(&source["selection"], "provider")?;
+    target["rustProviderSelections"][provider] = source["selection"].clone();
+    if !crate::composer_selection::default_account(&source["selection"]["accountID"]) {
+        if target["rustAccountSelections"].is_null() {
+            target["rustAccountSelections"] = json!({});
+        }
+        ensure!(
+            target["rustAccountSelections"].is_object(),
+            "Invalid saved account selections"
+        );
+        let key = composer_choices_api::account_key(&source["selection"])?;
+        target["rustAccountSelections"][key] = source["selection"].clone();
+    }
+    Ok(())
+}
+
+pub(super) fn remembered_account(thread: &Value, provider: &str) -> Option<String> {
+    let reference = provider_session(thread, provider);
+    let value = reference
+        .and_then(|session| session.get("accountID"))
+        .or_else(|| thread["rustProviderSelections"][provider].get("accountID"))?;
+    (!crate::composer_selection::default_account(value))
+        .then(|| value.as_str().map(str::to_owned))
+        .flatten()
+}
+
+pub(super) fn provider_session<'a>(thread: &'a Value, provider: &str) -> Option<&'a Value> {
+    thread["sessions"]
+        .as_object()
+        .and_then(|rows| rows.get(provider))
+        .or_else(|| {
+            thread["sessions"]
+                .as_array()?
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|pair| pair[0] == provider)
+                .map(|pair| &pair[1])
+        })
+}
+
+pub(super) fn historical_account_model<'a>(
+    thread: &'a Value,
+    provider: &str,
+    account: &Value,
+) -> Option<&'a str> {
+    let item = thread["items"].as_array()?.iter().rev().find(|item| {
+        if item["provider"] != provider || item["modelID"].is_null() {
+            return false;
+        }
+        item.get("accountID")
+            .or_else(|| provider_session(thread, provider)?.get("accountID"))
+            .is_some_and(|value| {
+                value == account
+                    || (crate::composer_selection::default_account(value)
+                        && crate::composer_selection::default_account(account))
+            })
+    })?;
+    item["modelID"].as_str()
 }
 
 fn historical_default_model<'a>(thread: &'a Value, provider: &str) -> Option<&'a str> {

@@ -348,8 +348,10 @@ impl Store {
                 store_document(&tx, RECOVERY, &json!(archives))?;
             }
         }
-        store_document(&tx, "projects.json", &json!(entries))?;
+        let project_scopes = json!(entries);
+        store_document(&tx, "projects.json", &project_scopes)?;
         tx.commit()?;
+        self.note_project_scopes(&project_scopes);
         Ok(
             json!({"project":result,"projectId":id,"archiveId":archive_id,"threadIds":expected.threads.iter().map(|(id,_)|id).collect::<Vec<_>>(),"action":expected.action,"filesUnchanged":true}),
         )

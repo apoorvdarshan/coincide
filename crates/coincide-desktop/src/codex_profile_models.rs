@@ -104,7 +104,7 @@ impl Coincide {
         }) else {
             return;
         };
-        let mut params = json!({"threadId":id,"accountId":thread["selection"]["accountID"],"expectedSelection":selection,"model":model});
+        let mut params = json!({"threadId":id,"accountId":thread["selection"]["accountID"],"expectedSelection":selection,"model":model,"rememberComposerChoice":true});
         if let Some(request) = request {
             params["requestId"] = json!(request);
         }

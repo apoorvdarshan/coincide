@@ -13,6 +13,9 @@ use std::{
 use uuid::Uuid;
 #[path = "browser_history_store.rs"]
 mod browser_history_store;
+#[path = "composer_scope_store.rs"]
+mod composer_scope_store;
+pub(crate) use composer_scope_store::same_scope as same_composer_scope;
 #[path = "composer_file_reference_store.rs"]
 mod composer_file_reference_store;
 #[path = "terminal_context_store.rs"]
@@ -25,6 +28,7 @@ pub(crate) use thread_bulk_store::FlagRow;
 /// original file bytes are retained, including provider/account session identity.
 pub struct Store {
     db: Option<Connection>,
+    selection_scopes: composer_scope_store::Scopes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +50,12 @@ pub struct ImportReport {
 }
 
 impl Store {
+    /// Connection-local monotonic write counter for asynchronous compare-and-set
+    /// intents. Detects a source/target changed and restored between polls.
+    pub(crate) fn mutation_serial(&self) -> Result<u64> {
+        Ok(self.connection()?.total_changes())
+    }
+
     /// Runtime-only durable authority binding. Never exposed as a document or
     /// populated by imports; the journal also binds the live Store inode.
     #[cfg(any(unix, windows))]
@@ -220,7 +230,10 @@ impl Store {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
-        Ok(Self { db: Some(db) })
+        Ok(Self {
+            db: Some(db),
+            selection_scopes: Default::default(),
+        })
     }
 
     /// Import into an empty database only. Repeating this never overwrites Rust edits.
@@ -456,6 +469,21 @@ impl Store {
         document: &Value,
         record: Option<&Value>,
     ) -> Result<()> {
+        self.save_with_usage_and_settings(document, record, None)
+    }
+    pub(crate) fn save_composer_choice(
+        &mut self,
+        document: &Value,
+        settings: Option<&Value>,
+    ) -> Result<()> {
+        self.save_with_usage_and_settings(document, None, settings)
+    }
+    fn save_with_usage_and_settings(
+        &mut self,
+        document: &Value,
+        record: Option<&Value>,
+        settings: Option<&Value>,
+    ) -> Result<()> {
         self.connection()?;
         let id = validate_thread(document)?;
         let existing: Option<String> = self
@@ -534,7 +562,11 @@ impl Store {
             index_thread(&tx, document)?;
         }
         cache_thread(&tx, document, reindex)?;
+        if let Some(settings) = settings {
+            tx.execute("INSERT INTO documents(name,document) VALUES ('settings.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [settings.to_string()])?;
+        }
         tx.commit()?;
+        self.note_selection_scope(document);
         Ok(())
     }
 
@@ -673,7 +705,10 @@ impl Store {
             "Media service database must be writable"
         );
         db.busy_timeout(std::time::Duration::from_secs(5))?;
-        Ok(Self { db: Some(db) })
+        Ok(Self {
+            db: Some(db),
+            selection_scopes: Default::default(),
+        })
     }
 
     /// Atomically compare the complete current thread AND local-only overlay,
@@ -792,6 +827,7 @@ impl Store {
             index_thread(&tx, &value)?;
         }
         tx.commit()?;
+        self.note_selection_scope(&value);
         Ok(value)
     }
 
@@ -876,6 +912,9 @@ impl Store {
         // An unreadable original must never be silently discarded by a save.
         self.document(name)?;
         self.connection()?.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document",params![name,value.to_string()])?;
+        if name == "projects.json" {
+            self.note_project_scopes(value);
+        }
         Ok(())
     }
     /// Compare-and-save only the Rust bot overlay. The original captured file

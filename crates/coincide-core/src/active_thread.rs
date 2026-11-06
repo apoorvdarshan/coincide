@@ -34,6 +34,7 @@ impl Engine {
             self.computer_use_selection_changed(prior);
         }
         if self.active_thread != selected {
+            self.cancel_provider_restore();
             self.active_thread = selected;
             self.revision += 1;
         }
