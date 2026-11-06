@@ -30,7 +30,7 @@ uuid.workspace = true
 gtk = "0.18"
 x11rb = { version = "=0.13.2", features = ["composite"] }
 zbus = "=5.19.0"
-atspi = "=0.29.0"
+atspi = { version = "=0.29.0", default-features = false, features = ["proxies"] }
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
