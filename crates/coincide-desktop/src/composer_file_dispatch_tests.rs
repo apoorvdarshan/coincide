@@ -27,6 +27,7 @@ struct Callback {
     ime: bool,
     modified: bool,
     stored_function: bool,
+    stored_modifiers: Modifiers,
     same_trigger: bool,
     fresh_results: bool,
     revision: u64,
@@ -199,6 +200,7 @@ impl Harness {
             ime,
             modified,
             stored_function: window.modifiers().function,
+            stored_modifiers: window.modifiers(),
             same_trigger: scope.same_trigger,
             fresh_results: scope.fresh_results,
             revision: self.revision.get(),
@@ -296,6 +298,7 @@ fn assert_current_callback(
     assert!(callback.route && callback.focused && callback.editable);
     assert!(!callback.ime && !callback.modified);
     assert_eq!(callback.stored_function, native_fn);
+    assert_eq!(callback.stored_modifiers.function, native_fn);
     assert!(callback.same_trigger && callback.fresh_results);
     assert_eq!(callback.revision, before.revision);
     assert_eq!(callback.ticket_revision, before.revision);
@@ -519,6 +522,107 @@ fn headless_stale_thread_generation_route_and_real_ime_do_not_take_keys(cx: &mut
     }
 }
 
+#[gpui_kit::test]
+#[ignore = "invoked only by actual_textarea_capture_in_private_child with cleared environment"]
+fn headless_event_arrows_are_independent_of_stale_cached_modifiers(cx: &mut TestAppContext) {
+    // A genuinely modified event must retain native Textarea ownership. These
+    // are public input bindings, not synthetic calls to Keys::decide.
+    #[cfg(target_os = "macos")]
+    let modified_keys: &[&str] = &["shift-up", "shift-down", "cmd-up", "cmd-down"];
+    #[cfg(not(target_os = "macos"))]
+    let modified_keys: &[&str] = &["shift-up", "shift-down"];
+    for key in modified_keys {
+        let (view, cx) = setup(cx, true);
+        let before = read(&view, cx);
+        press(cx, key, false);
+        let after = read(&view, cx);
+        eprintln!("actual modified native binding {key}: {before:#?} -> {after:#?}");
+        assert_eq!(after.draft, TEXT);
+        assert_eq!(after.selected, Some(0));
+        assert!(after.activated.is_empty());
+        assert!(
+            after
+                .callbacks
+                .iter()
+                .all(|c| c.decision == keys::Decision::Pass)
+        );
+        assert_ne!(after.selection, before.selection);
+        assert!(after.revision > before.revision && after.ticket_changes > 0);
+        assert_eq!(after.press_enter, 0);
+    }
+
+    // Keep every changed-state observation before asserting the desired
+    // behavior, so the first failing cache condition does not hide the others.
+    let mut observations = Vec::new();
+    for (label, modifiers) in [
+        (
+            "cached-Command",
+            Modifiers {
+                platform: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "cached-Shift",
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        for key in ["up", "down"] {
+            let (view, cx) = setup(cx, true);
+            let before = read(&view, cx);
+            cx.update(|window, cx| {
+                window.dispatch_event(
+                    ModifiersChangedEvent {
+                        modifiers,
+                        capslock: window.capslock(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                render_frame(window, cx);
+            });
+            cx.run_until_parked();
+            let seeded = read(&view, cx);
+            assert_eq!(seeded.draft, before.draft);
+            assert_eq!(seeded.selection, before.selection);
+            assert_eq!(seeded.revision, before.revision);
+            // Deliberately send an unmodified event without a clearing flags
+            // event. The action matcher reads this event; Window retains the
+            // earlier flags, matching the source seam under investigation.
+            press(cx, key, false);
+            let after = read(&view, cx);
+            eprintln!("unmodified {key} with {label}: {before:#?} -> {after:#?}");
+            observations.push((label, key, modifiers, before, after));
+        }
+    }
+    for (label, key, modifiers, before, after) in observations {
+        let (key, decision) = if key == "up" {
+            (keys::Key::Up, keys::Decision::Select(2))
+        } else {
+            (keys::Key::Down, keys::Decision::Select(1))
+        };
+        assert!(
+            after
+                .callbacks
+                .iter()
+                .any(|c| c.source == "bound" && c.key == key && c.stored_modifiers == modifiers),
+            "real cached flags must reach callback: {label} {after:#?}"
+        );
+        assert_current_callback(&after, &before, key, decision, false);
+        assert_eq!(
+            after.selection, before.selection,
+            "plain event must be captured despite {label}"
+        );
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.ticket_changes, 0);
+        assert_eq!(after.draft, TEXT);
+        assert_eq!(after.press_enter, 0);
+    }
+}
+
 #[::core::prelude::v1::test]
 fn actual_textarea_capture_in_private_child() {
     use std::{fs, process::Command};
@@ -561,7 +665,7 @@ fn actual_textarea_capture_in_private_child() {
         "actual headless dispatch child failed\n{stdout}\n{stderr}"
     );
     assert!(
-        stdout.contains("4 passed"),
-        "all four actual-dispatch cases must run\n{stdout}\n{stderr}"
+        stdout.contains("5 passed"),
+        "all five actual-dispatch cases must run\n{stdout}\n{stderr}"
     );
 }
