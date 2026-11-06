@@ -22,6 +22,7 @@ pub(super) struct RestoreIntent {
     request: Option<String>,
     pub(super) token: String,
     serial: u64,
+    scope_generation: Option<u64>,
     requested: String,
     explicit: bool,
     automatic: bool,
@@ -66,18 +67,37 @@ impl Engine {
     }
     fn restore_intent_valid(&self, intent: &RestoreIntent) -> bool {
         let id = intent.source["id"].as_str().unwrap_or("");
-        !self.admissions_frozen()
-            && self.active_thread() == Some(id)
-            && !self.runs.contains_key(id)
-            && !self.unsaved_threads.contains_key(id)
-            && self
-                .store
-                .mutation_serial()
-                .is_ok_and(|serial| serial == intent.serial)
-            && self
-                .store
-                .thread(id)
-                .is_ok_and(|thread| thread == intent.source)
+        if self.admissions_frozen()
+            || self.active_thread() != Some(id)
+            || self.runs.contains_key(id)
+            || self.unsaved_threads.contains_key(id)
+        {
+            return false;
+        }
+        let Ok(current) = self.store.thread(id) else {
+            return false;
+        };
+        if intent.automatic {
+            if self.store.selection_scope_generation(id) != intent.scope_generation
+                || !crate::store::same_composer_scope(&current, &intent.source)
+                || !current["botID"].is_null()
+                || !current["rustBotContext"].is_null()
+                || !self.store.is_imported(id).is_ok_and(|imported| !imported)
+            {
+                return false;
+            }
+            return intent.candidates.len() == 1
+                && match &intent.candidates[0].binding {
+                    Binding::Named(binding) => self
+                        .profile_model_binding(&current)
+                        .is_ok_and(|current| current == *binding),
+                    Binding::Default(_) => false,
+                };
+        }
+        self.store
+            .mutation_serial()
+            .is_ok_and(|serial| serial == intent.serial)
+            && current == intent.source
             && crate::codex_login_profiles::configuration(&self.store)
                 .is_ok_and(|configuration| configuration == intent.configuration)
             && intent
@@ -190,8 +210,9 @@ impl Engine {
                     } else {
                         p["accountId"].as_str()
                     }) == Some(intent.requested.as_str()));
-            let valid =
-                explicit_match && intent.source == current && self.restore_intent_valid(intent);
+            let valid = explicit_match
+                && (intent.automatic || intent.source == current)
+                && self.restore_intent_valid(intent);
             if !valid {
                 self.cancel_provider_restore();
                 bail!(
@@ -292,6 +313,14 @@ impl Engine {
                 Err(_) => {} // A missing/invalid configured account is not ready.
             }
         }
+        let scope_generation = if automatic {
+            Some(
+                self.store
+                    .capture_selection_scope(required(&current, "id")?)?,
+            )
+        } else {
+            None
+        };
         let intent = RestoreIntent {
             source: current,
             configuration,
@@ -300,6 +329,7 @@ impl Engine {
             request: None,
             token: Uuid::new_v4().to_string(),
             serial: self.store.mutation_serial()?,
+            scope_generation,
             requested,
             explicit,
             automatic,
@@ -418,12 +448,13 @@ impl Engine {
                 .request
                 .as_deref()
                 .context("Missing saved account observation")?;
+            let current = self.store.thread(required(&intent.source, "id")?)?;
             let readiness = (|| -> Result<()> {
                 let proof =
                     self.model_catalog
-                        .named_model_proof(&intent.source, binding, Some(request))?;
+                        .named_model_proof(&current, binding, Some(request))?;
                 crate::composer_policy::Policy::parse_named(
-                    &intent.source,
+                    &current,
                     crate::composer_policy::Origin::Ordinary,
                     proof.as_ref(),
                 )?
@@ -433,7 +464,7 @@ impl Engine {
             let reason = readiness.err().map(|error| error.to_string());
             // An ordinary reopen is not a composer choice: no selection,
             // preference, default, draft, session or transcript write occurs.
-            let response = json!({"thread":intent.source,"model":intent.source["selection"]["modelID"],"accountID":candidate.account,
+            let response = json!({"thread":current,"model":current["selection"]["modelID"],"accountID":candidate.account,
                 "selectionUnchanged":true,"executionReady":execution_ready,"reason":reason,"restored":false,"accountRestored":false,"authenticationChecked":true,"provenance":"selected_account_catalog","catalog":status});
             return Ok(intent.receipt(response, &candidate.account));
         }

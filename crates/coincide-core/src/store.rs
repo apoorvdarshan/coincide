@@ -13,6 +13,9 @@ use std::{
 use uuid::Uuid;
 #[path = "browser_history_store.rs"]
 mod browser_history_store;
+#[path = "composer_scope_store.rs"]
+mod composer_scope_store;
+pub(crate) use composer_scope_store::same_scope as same_composer_scope;
 #[path = "composer_file_reference_store.rs"]
 mod composer_file_reference_store;
 #[path = "terminal_context_store.rs"]
@@ -25,6 +28,7 @@ pub(crate) use thread_bulk_store::FlagRow;
 /// original file bytes are retained, including provider/account session identity.
 pub struct Store {
     db: Option<Connection>,
+    selection_scopes: composer_scope_store::Scopes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,7 +230,10 @@ impl Store {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
-        Ok(Self { db: Some(db) })
+        Ok(Self {
+            db: Some(db),
+            selection_scopes: Default::default(),
+        })
     }
 
     /// Import into an empty database only. Repeating this never overwrites Rust edits.
@@ -559,6 +566,7 @@ impl Store {
             tx.execute("INSERT INTO documents(name,document) VALUES ('settings.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [settings.to_string()])?;
         }
         tx.commit()?;
+        self.note_selection_scope(document);
         Ok(())
     }
 
@@ -697,7 +705,10 @@ impl Store {
             "Media service database must be writable"
         );
         db.busy_timeout(std::time::Duration::from_secs(5))?;
-        Ok(Self { db: Some(db) })
+        Ok(Self {
+            db: Some(db),
+            selection_scopes: Default::default(),
+        })
     }
 
     /// Atomically compare the complete current thread AND local-only overlay,
@@ -816,6 +827,7 @@ impl Store {
             index_thread(&tx, &value)?;
         }
         tx.commit()?;
+        self.note_selection_scope(&value);
         Ok(value)
     }
 
@@ -900,6 +912,9 @@ impl Store {
         // An unreadable original must never be silently discarded by a save.
         self.document(name)?;
         self.connection()?.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document",params![name,value.to_string()])?;
+        if name == "projects.json" {
+            self.note_project_scopes(value);
+        }
         Ok(())
     }
     /// Compare-and-save only the Rust bot overlay. The original captured file

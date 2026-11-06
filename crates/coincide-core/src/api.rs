@@ -44,10 +44,10 @@ mod codex_profile_login_api;
 mod codex_profile_models_api;
 #[path = "codex_tool_metadata.rs"]
 mod codex_tool_metadata;
-#[path = "project_management_api.rs"]
-mod project_management_api;
 #[path = "composer_choices_api.rs"]
 mod composer_choices_api;
+#[path = "project_management_api.rs"]
+mod project_management_api;
 #[path = "provider_restore_api.rs"]
 mod provider_restore_api;
 #[path = "provider_switch_api.rs"]

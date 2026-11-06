@@ -533,6 +533,214 @@ fn named_restore_child() {
         drain(&mut f.engine);
     }
 
+    // A pure readiness observation does not own the message draft. Typing,
+    // attachments, title/settings and unrelated-thread writes must not restart
+    // its one authenticated read or overwrite the latest composer on completion.
+    let mut f = fixture(&root, "warmup-typing-progress");
+    f.source["selection"] = json!({"provider":"codex","accountID":f.a,"modelID":"synthetic-a"});
+    f.engine.store.save(&f.source).unwrap();
+    fs::write(f.a_home.join("hold"), "synthetic").unwrap();
+    let original = f.source.clone();
+    let mut start = expected(&original, "codex");
+    start["restoreCurrent"] = json!(true);
+    let pending = call(&mut f.engine, "agent.provider.select", start);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.a_home.join("held").exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    f.engine
+        .store
+        .patch_thread(
+            original["id"].as_str().unwrap(),
+            &json!({"draft":"Typing café 中文","title":"A newer title"}),
+        )
+        .unwrap();
+    let mut latest = f
+        .engine
+        .store
+        .thread(original["id"].as_str().unwrap())
+        .unwrap();
+    latest["draftContext"] = json!([{"future":"new context retained"}]);
+    latest["rustDraftImages"] = json!([{"future":"new image retained"}]);
+    f.engine.store.save(&latest).unwrap();
+    let other = call(
+        &mut f.engine,
+        "threads.create",
+        json!({"projectId":original["projectID"]}),
+    );
+    f.engine
+        .store
+        .patch_thread(
+            other["id"].as_str().unwrap(),
+            &json!({"draft":"Unrelated pending draft"}),
+        )
+        .unwrap();
+    f.engine
+        .store
+        .save_document("settings.json", &json!({"future":"unrelated settings"}))
+        .unwrap();
+    f.engine
+        .store
+        .patch_project(
+            original["projectID"].as_str().unwrap(),
+            &json!({"name":"Renamed without relocating"}),
+        )
+        .unwrap();
+    let mut params = retry(&original, &pending);
+    params["restoreCurrent"] = json!(true);
+    let still_pending = call(&mut f.engine, "agent.provider.select", params.clone());
+    assert_eq!(still_pending["pending"], true);
+    assert_eq!(still_pending["requestId"], pending["requestId"]);
+    assert_eq!(
+        still_pending["catalogRequestId"],
+        pending["catalogRequestId"]
+    );
+    fs::remove_file(f.a_home.join("hold")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let response = call(&mut f.engine, "agent.provider.select", params.clone());
+        if response["pending"] != true {
+            assert_eq!(response["selectionUnchanged"], true);
+            assert_eq!(response["executionReady"], true);
+            assert_eq!(response["thread"], latest);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        f.engine
+            .store
+            .thread(original["id"].as_str().unwrap())
+            .unwrap(),
+        latest
+    );
+    assert_eq!(
+        call(&mut f.engine, "settings.read", json!({})),
+        json!({"future":"unrelated settings"})
+    );
+    assert_eq!(
+        f.engine
+            .store
+            .thread(other["id"].as_str().unwrap())
+            .unwrap()["draft"],
+        "Unrelated pending draft"
+    );
+    drain(&mut f.engine);
+    assert_eq!(
+        f.engine.model_catalog_shutdown_status().unwrap().returned,
+        1,
+        "typing must not repeatedly launch account probes"
+    );
+
+    for change in [
+        "selection-aba",
+        "access-aba",
+        "plan-aba",
+        "project-path-aba",
+        "worktree-aba",
+        "active-aba",
+        "auth",
+        "executable",
+    ] {
+        let mut f = fixture(&root, &format!("warmup-fence-{change}"));
+        f.source["selection"] = json!({"provider":"codex","accountID":f.a,"modelID":"synthetic-a"});
+        f.engine.store.save(&f.source).unwrap();
+        if change == "auth" {
+            fs::write(f.a_home.join("auth.json"), "synthetic initial marker").unwrap();
+            fs::set_permissions(
+                f.a_home.join("auth.json"),
+                fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
+        fs::write(f.a_home.join("hold"), "synthetic").unwrap();
+        let mut start = expected(&f.source, "codex");
+        start["restoreCurrent"] = json!(true);
+        let pending = call(&mut f.engine, "agent.provider.select", start);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !f.a_home.join("held").exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut original_executable = None;
+        match change {
+            "selection-aba" | "access-aba" | "plan-aba" | "worktree-aba" => {
+                let mut changed = f.source.clone();
+                match change {
+                    "selection-aba" => changed["selection"]["modelID"] = json!("another-model"),
+                    "access-aba" => changed["accessMode"] = json!("fullAccess"),
+                    "plan-aba" => changed["interactionMode"] = json!("plan"),
+                    "worktree-aba" => changed["worktreePath"] = json!(root.join("home")),
+                    _ => unreachable!(),
+                }
+                f.engine.store.save(&changed).unwrap();
+                f.engine.store.save(&f.source).unwrap();
+            }
+            "project-path-aba" => {
+                let original = f.engine.store.projects().unwrap();
+                let mut changed = original.clone();
+                let row = changed
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|row| row["id"] == f.source["projectID"])
+                    .unwrap();
+                row["path"] = json!(root.join("home"));
+                f.engine
+                    .store
+                    .save_document("projects.json", &changed)
+                    .unwrap();
+                f.engine
+                    .store
+                    .save_document("projects.json", &original)
+                    .unwrap();
+            }
+            "active-aba" => {
+                f.engine.set_active_thread(None).unwrap();
+                f.engine
+                    .set_active_thread(Some(f.source["id"].as_str().unwrap().into()))
+                    .unwrap();
+            }
+            "auth" => {
+                fs::write(
+                    f.a_home.join("auth.json"),
+                    "synthetic changed authentication stamp only",
+                )
+                .unwrap();
+            }
+            "executable" => {
+                let path = root.join("fake-catalog");
+                let bytes = fs::read(&path).unwrap();
+                let mut altered = bytes.clone();
+                altered.extend_from_slice(b"\n# synthetic changed executable stamp\n");
+                fs::write(&path, altered).unwrap();
+                original_executable = Some(bytes);
+            }
+            _ => unreachable!(),
+        }
+        let mut params = retry(&f.source, &pending);
+        params["restoreCurrent"] = json!(true);
+        refused(&mut f.engine, params);
+        assert_eq!(
+            f.engine
+                .store
+                .thread(f.source["id"].as_str().unwrap())
+                .unwrap(),
+            f.source,
+            "{change}"
+        );
+        drain(&mut f.engine);
+        assert_eq!(
+            f.engine.model_catalog_shutdown_status().unwrap().returned,
+            1
+        );
+        if let Some(bytes) = original_executable {
+            fs::write(root.join("fake-catalog"), bytes).unwrap();
+        }
+    }
+
     // Busy readers are admission pressure, not evidence an account is unready.
     // Wait for the exact ready observation instead of silently falling back.
     let mut f = fixture(&root, "busy-catalog-admission");

@@ -103,7 +103,7 @@ impl Engine {
         result["locked"] = json!(reason.is_some());
         result["lockReason"] = json!(reason);
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
-            "refreshAllowed":base_reason.is_none(),"accountCatalogReady":account_catalog_ready,"sourceGeneration":self.store.mutation_serial().ok(),"reason":base_reason,"authenticationChecked":false,
+            "refreshAllowed":base_reason.is_none(),"accountCatalogReady":account_catalog_ready,"selectionGeneration":thread["id"].as_str().and_then(|id|self.store.selection_scope_generation(id)),"reason":base_reason,"authenticationChecked":false,
             "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":true,"nativeResumeScope":"same_engine_successful_saved_turn_and_owned_worker_join","crossRestartResumeSupported":false,"fullAccessSupported":explicit_model_ready,"planSupported":explicit_model_ready});
         if let Some(codex) = result["providers"]
             .as_array_mut()

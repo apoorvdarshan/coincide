@@ -3166,7 +3166,7 @@ impl Coincide {
             }
         }
         if self.selection_send_blocked() {
-            self.status=self.selected_account_wait_status().into();
+            self.status = self.selected_account_wait_status().into();
             cx.notify();
             return;
         }

@@ -85,6 +85,8 @@ impl Engine {
         ensure!(
             EXPECTED_FIELDS
                 .iter()
+                .filter(|key| p["restoreCurrent"] != true
+                    || matches!(**key, "id" | "selection" | "accessMode" | "interactionMode"))
                 .all(|key| p["expected"][*key] == current[*key]),
             "Saved composer changed; command draft retained"
         );
@@ -99,12 +101,14 @@ impl Engine {
             "This conversation already uses {provider}; command draft retained"
         );
         ensure!(
-            crate::message_queue::read(&current)?
-                .iter()
-                .all(|message| !matches!(
-                    message.state,
-                    crate::message_queue::State::Pending | crate::message_queue::State::Dispatching
-                )),
+            p["restoreCurrent"] == true
+                || crate::message_queue::read(&current)?
+                    .iter()
+                    .all(|message| !matches!(
+                        message.state,
+                        crate::message_queue::State::Pending
+                            | crate::message_queue::State::Dispatching
+                    )),
             "Finish or remove queued messages before changing provider"
         );
         if provider == "codex" {

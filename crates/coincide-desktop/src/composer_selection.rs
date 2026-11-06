@@ -874,6 +874,7 @@ pub(super) struct ComposerSelection {
 struct PickerRestore {
     provider: String,
     account: Option<Value>,
+    observation_only: bool,
     source: crate::composer_commands::Submission,
     ui_draft: String,
 }
@@ -1175,9 +1176,11 @@ impl Coincide {
             )?;
             let mut pending = if let Some(pending) = retry {
                 anyhow::ensure!(
-                    pending.ui_draft == ui_draft
+                    pending.source.thread["id"] == selected["id"]
                         && pending.source.same_selection(selected)
-                        && pending.source.same_content(&current, &pending.source.draft),
+                        && (pending.observation_only
+                            || (pending.ui_draft == ui_draft
+                                && pending.source.same_content(&current, &pending.source.draft))),
                     "Composer changed; provider restoration cancelled"
                 );
                 pending
@@ -1191,6 +1194,12 @@ impl Coincide {
                 PickerRestore {
                     provider: provider.clone(),
                     account: account.clone(),
+                    observation_only: account.is_none()
+                        && provider == "codex"
+                        && current["selection"]["provider"] == "codex"
+                        && !coincide_core::composer_selection::default_account(
+                            &current["selection"]["accountID"],
+                        ),
                     source: crate::composer_commands::Submission::new(
                         &current,
                         current["draft"].as_str().unwrap_or(""),
@@ -1206,13 +1215,7 @@ impl Coincide {
             if let Some(account) = &pending.account {
                 params["accountId"] = account.clone();
             }
-            if pending.account.is_none()
-                && current["selection"]["provider"] == provider
-                && provider == "codex"
-                && !coincide_core::composer_selection::default_account(
-                    &current["selection"]["accountID"],
-                )
-            {
+            if pending.observation_only {
                 params["restoreCurrent"] = json!(true);
             }
             let response = selection_response(&mut engine, "agent.provider.select", params)?;
@@ -1233,7 +1236,9 @@ impl Coincide {
             } else {
                 let ack = &response["thread"];
                 anyhow::ensure!(
-                    pending.source.same_content(ack, &pending.source.draft)
+                    (pending.observation_only
+                        || pending.source.same_content(ack, &pending.source.draft))
+                        && ack["id"] == current["id"]
                         && ack["selection"]["provider"] == provider
                         && ack["selection"]["modelID"] == response["model"]
                         && restore_account_id(&ack["selection"]["accountID"])
@@ -1456,7 +1461,7 @@ impl Coincide {
         {
             return;
         }
-        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"draft":self.composer.read(cx).value().to_string(),"draftContext":thread["draftContext"],"rustDraftImages":thread["rustDraftImages"],"sourceGeneration":named["sourceGeneration"]});
+        let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"projectID":thread["projectID"],"worktreePath":thread["worktreePath"],"selectionGeneration":named["selectionGeneration"]});
         if self.selection_ui.automatic_profile_context.as_ref() == Some(&context) {
             return;
         }
