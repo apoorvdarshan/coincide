@@ -545,7 +545,7 @@ fn provider() {
                 provider_check(
                     &root,
                     false,
-                    PathBuf::from(&value) == root,
+                    std::path::Path::new(&value) == root.as_path(),
                     "default_root_marker",
                 );
             }
@@ -553,7 +553,7 @@ fn provider() {
                 provider_check(
                     &root,
                     false,
-                    PathBuf::from(&value) == std::env::current_exe().unwrap(),
+                    std::path::Path::new(&value) == std::env::current_exe().unwrap().as_path(),
                     "default_executable_marker",
                 );
             }
