@@ -871,8 +871,10 @@ impl Coincide {
                 .child(div().flex().items_center().gap_3()
                     .child(div().flex_1().min_w_0().truncate().child(image.name.clone()))
                     .child(Button::new("historical-image-close").label("Close image").on_click(cx.listener(|this, _, window, cx| this.close_historical_image(window, cx)))))
-                .child(div().flex_1().min_h_0().w_full().overflow_hidden()
-                    .child(img(image.image.clone()).size_full().object_fit(ObjectFit::Contain)
+                // Keep the image out of flex sizing: its intrinsic aspect ratio
+                // must fit the established viewport, not enlarge it and get clipped.
+                .child(div().relative().flex_1().min_h_0().w_full().overflow_hidden()
+                    .child(img(image.image.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Contain)
                         .with_loading(|| div().child("Loading historical image…").into_any_element())
                         .with_fallback(|| div().child("Historical image unavailable. Close this view and inspect again.").into_any_element())))
                 .child(div().text_xs().child("Verified local image · Escape or Close image returns to the conversation.")))
