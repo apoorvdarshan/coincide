@@ -434,6 +434,7 @@ struct Coincide {
     project_path: Entity<InputState>,
     selected: Option<Value>,
     pending_native_selection: Option<Option<String>>,
+    startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
@@ -1174,6 +1175,7 @@ impl Coincide {
             project_path,
             selected: None,
             pending_native_selection: None,
+            startup_selection_pending: true,
             pending_drafts: Default::default(),
             composer,
             model_input,
@@ -1203,25 +1205,53 @@ impl Coincide {
             _subscriptions: subscriptions,
         };
         this.apply_appearance(window, cx);
-        let remembered = match this.engine.lock() {
-            Ok(engine) => match &engine.requested_open {
-                Some(id) => Ok(Some(id.clone())),
-                None => engine.store.native_last_selected_thread(),
-            },
-            Err(_) => Err(anyhow::anyhow!("Conversation owner unavailable")),
-        };
-        let remembered = match remembered {
-            Ok(id) => id.filter(|id| this.threads.iter().any(|thread| &thread.id == id)),
-            Err(error) => {
-                this.status = format!("Saved conversation selection unavailable: {error}");
-                None
-            }
-        };
-        if let Some(id) = remembered.or_else(|| this.threads.first().map(|t| t.id.clone())) {
-            this.select(&id, window, cx);
-        }
+        this.restore_startup_selection(window, cx);
         this.poll_computer_use(cx);
         this
+    }
+    fn restore_startup_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.startup_selection_pending {
+            return;
+        }
+        let snapshot = (|| -> Result<(Vec<ThreadSummary>, Option<String>)> {
+            let mut engine = try_state(&self.engine)?;
+            let requested = engine.requested_open.clone();
+            let remembered = engine.store.native_last_selected_thread()?;
+            let response = engine.dispatch(json!({"method":"threads.list","params":{}}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!(
+                    "{}",
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("Unable to load conversations")
+                );
+            }
+            Ok((
+                serde_json::from_value(response["result"].clone())?,
+                requested.or(remembered),
+            ))
+        })();
+        match snapshot {
+            Ok((threads, remembered)) => {
+                let target = remembered
+                    .filter(|id| threads.iter().any(|thread| &thread.id == id))
+                    .or_else(|| threads.first().map(|thread| thread.id.clone()));
+                self.threads = threads;
+                if let Some(id) = target {
+                    self.select(&id, window, cx);
+                    self.startup_selection_pending = self
+                        .selected
+                        .as_ref()
+                        .is_none_or(|thread| thread["id"] != id);
+                } else {
+                    self.startup_selection_pending = false;
+                }
+            }
+            Err(error) if engine_busy(&error) => {}
+            Err(error) => {
+                self.status = format!("Saved conversation selection unavailable: {error}")
+            }
+        }
     }
     fn poll_computer_use(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -1603,6 +1633,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
         self.dismiss_palette(window, cx);
@@ -2669,6 +2700,7 @@ impl Coincide {
                 self.attachment_root = engine.store.data_directory().ok();
             }
         }
+        self.restore_startup_selection(window, cx);
         self.refresh_awake_status(cx);
         self.apply_appearance(window, cx);
         if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {

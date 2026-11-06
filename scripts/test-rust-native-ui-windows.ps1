@@ -237,6 +237,10 @@ try {
     $Report.passed=$true
 } catch {
     $Report.error=$_.Exception.Message
+    try {
+        $Report.failureActiveThread=(Invoke-Rpc 'app.status').activeThread
+        if($null -ne $main){Capture-Owned $main 'failure-owned-window'}
+    } catch { $Report.failureCaptureError=$_.Exception.Message }
     throw
 } finally {
     if($null -ne $script:OwnedProcess -and -not $script:OwnedProcess.HasExited){
