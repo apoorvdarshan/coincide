@@ -53,8 +53,13 @@ if named:
  account=None if mode=='deny' else {'type':'chatgpt','email':'synthetic@example.invalid','planType':'plus'}
  write({'id':r['id'],'result':{'requiresOpenaiAuth':True,'account':account}})
  r=read()
-assert r['method'] in ['thread/start','thread/resume']
-if named:assert r['method']=='thread/start'
+if r['method']=='model/list':
+ assert named
+ write({'id':r['id'],'result':{'data':[{'model':'reported-default'}],'nextCursor':None}})
+ sys.stdin.readline();sys.exit(0)
+assert r['method']==(home/'expected-method').read_text()
+if r['method']=='thread/resume':assert r['params']['threadId']==(home/'expected-native').read_text()
+else:assert r['method']=='thread/start' and 'threadId' not in r['params']
 serial=int((home/'serial').read_text())+1 if (home/'serial').exists() else 1
 (home/'serial').write_text(str(serial))
 native=(home.name+'-'+str(serial)) if r['method']=='thread/start' else r['params']['threadId']
@@ -123,6 +128,32 @@ fn settle(engine: &mut Engine) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+fn fresh_named_catalog(engine: &mut Engine, id: &str) {
+    let thread = engine.store.thread(id).unwrap();
+    let request = call(
+        engine,
+        "providers.codex.profiles.models.refresh",
+        json!({"threadId":id,"accountId":thread["selection"]["accountID"],"expectedSelection":thread["selection"]}),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = call(
+            engine,
+            "providers.codex.profiles.models.status",
+            json!({"threadId":id,"accountId":thread["selection"]["accountID"],"requestId":request["requestId"]}),
+        );
+        if status["state"] != "loading" {
+            assert_eq!(status["state"], "ready");
+            assert_eq!(status["authenticationChecked"], true);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Private profile readiness did not complete"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
 fn records(root: &Path) -> Vec<Value> {
     fs::read_to_string(root.join("calls.jsonl"))
         .unwrap_or_default()
@@ -161,9 +192,10 @@ fn codex_profile_fixture_child() {
     let data = engine.store.data_directory().unwrap();
     let home_a = data.join("providers/codex").join(a_id);
     let home_b = data.join("providers/codex").join(b_id);
-    // Default then A/B/A then explicit default: each named turn is a fresh
-    // native thread with full context, never a cross-profile resume.
-    let mut previous_a = None;
+    // Each account retains its own native session. Returning A must resume A
+    // after current private admission and replay only the intervening B turn.
+    let mut previous_a: Option<String> = None;
+    let mut previous_default: Option<String> = None;
     for (number, account) in ["default", a_id, b_id, a_id, "default"].iter().enumerate() {
         let prior = engine.store.thread(&id).unwrap();
         call(
@@ -171,6 +203,30 @@ fn codex_profile_fixture_child() {
             "providers.codex.profiles.select",
             json!({"threadId":id,"accountId":account,"expectedSelection":prior["selection"]}),
         );
+        let home = if *account == a_id {
+            home_a.clone()
+        } else if *account == b_id {
+            home_b.clone()
+        } else {
+            root.join("inherited-default")
+        };
+        let expected_method = if number == 3 || number == 4 {
+            "thread/resume"
+        } else {
+            "thread/start"
+        };
+        fs::write(home.join("expected-method"), expected_method).unwrap();
+        if number == 3 {
+            fresh_named_catalog(&mut engine, &id);
+            fs::write(home.join("expected-native"), previous_a.as_ref().unwrap()).unwrap();
+        }
+        if number == 4 {
+            fs::write(
+                home.join("expected-native"),
+                previous_default.as_ref().unwrap(),
+            )
+            .unwrap();
+        }
         call(
             &mut engine,
             "agent.send",
@@ -204,9 +260,19 @@ fn codex_profile_fixture_child() {
         if *account == a_id {
             let native = text(&saved["sessions"]["codex"], "sessionID");
             if let Some(previous) = previous_a {
-                assert_ne!(native, previous);
+                assert_eq!(
+                    native, previous,
+                    "Returning A must resume its own saved joined session"
+                );
             }
             previous_a = Some(native);
+        }
+        if *account == "default" {
+            let native = text(&saved["sessions"]["codex"], "sessionID");
+            if let Some(previous) = &previous_default {
+                assert_eq!(&native, previous);
+            }
+            previous_default = Some(native);
         }
     }
     let saved = engine.store.thread(&id).unwrap();
@@ -234,20 +300,22 @@ fn codex_profile_fixture_child() {
         .iter()
         .rfind(|v| v["home"] == json!(home_a) && v.get("turn").is_some())
         .unwrap();
-    assert!(
-        repeated["turn"]["input"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("synthetic prompt 0")
+    assert_eq!(
+        repeated["turn"]["input"][0]["text"],
+        "Earlier conversation context (historical messages, not a new user request):\n\nuser: synthetic prompt 2\n\nassistant: Synthetic reply\n\nCurrent user request:\nsynthetic prompt 3",
+        "A resume must deliver only the intervening B history once"
     );
     // Rejected authentication cannot fall back or send thread/turn methods.
-    fs::write(home_a.join("fixture-mode"), "deny").unwrap();
     let prior = engine.store.thread(&id).unwrap();
     call(
         &mut engine,
         "providers.codex.profiles.select",
         json!({"threadId":id,"accountId":a_id,"expectedSelection":prior["selection"]}),
     );
+    fresh_named_catalog(&mut engine, &id);
+    // Admission is legitimate; the actual launch must still perform its own
+    // account/read and refuse a subsequently rejected login before any thread.
+    fs::write(home_a.join("fixture-mode"), "deny").unwrap();
     let before = records(&root).len();
     call(
         &mut engine,
@@ -263,6 +331,7 @@ fn codex_profile_fixture_child() {
     // Actual auth-context changes still fail closed after the initial account
     // read, before turn/start; quota notifications cannot grant that authority.
     fs::write(home_a.join("fixture-mode"), "auth-change").unwrap();
+    fs::write(home_a.join("expected-method"), "thread/start").unwrap();
     let before = records(&root).len();
     call(
         &mut engine,
@@ -316,6 +385,20 @@ fn codex_profile_fixture_child() {
     engine.request_provider_stop(&id).unwrap();
     settle(&mut engine);
     assert!(engine.provider_workers_status().returned >= 8);
+    engine.freeze_admissions();
+    engine.request_core_owner_shutdown().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !engine
+        .poll_core_owner_shutdown()
+        .unwrap()
+        .rust_owners_drained()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "Actual native/catalog owners did not drain"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     for record in records(&root)
         .iter()
         .filter(|record| record["pid"].is_number())
