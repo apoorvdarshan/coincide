@@ -249,10 +249,12 @@ impl Coincide {
         }
         self.instruction_quit_prompt_pending = true;
         window.activate_window();
+        let target = self.instructions_panel.read(cx).native_target_label();
+        let detail = format!("File: {target}\nYour changes will be lost if you don't save them.");
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Save changes to global instructions?",
-            Some("Your changes will be lost if you don't save them."),
+            "Save changes to instructions?",
+            Some(&detail),
             &["Save", "Don't Save", "Cancel"],
             cx,
         );

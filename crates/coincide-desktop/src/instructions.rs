@@ -1,7 +1,9 @@
-//! Conventional GLOBAL master editor. Only this component's native human Save
+//! Native instruction editor and reviewed scoped setup. Only this component's native human Save
 //! callback invokes the bound file writer. No API/tool route can submit text.
 #[path = "instructions_file.rs"]
 mod file;
+#[path = "instructions_setup.rs"]
+mod setup;
 use file::EditorFile;
 use gpui_kit::{
     base::Disableable,
@@ -14,6 +16,7 @@ use gpui_kit::{
 };
 
 pub(super) struct InstructionsPanel {
+    setup: setup::Setup,
     source: Option<EditorFile>,
     edit_lease: coincide_core::native_ui_edits::NativeUiEditLease,
     editor: Entity<TextareaState>,
@@ -24,13 +27,14 @@ pub(super) struct InstructionsPanel {
 }
 impl InstructionsPanel {
     pub(super) fn new(
+        engine: coincide_core::api::SharedEngine,
         edit_lease: coincide_core::native_ui_edits::NativeUiEditLease,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Global instructions")
+                .placeholder("Instructions")
                 .submit_on_enter(false)
         });
         let subscription = cx.subscribe(&editor, |this, _, event, cx| {
@@ -41,11 +45,18 @@ impl InstructionsPanel {
                 cx.notify();
             }
         });
-        let (source, status) = match EditorFile::runtime() {
-            Ok(source) => (Some(source), String::new()),
+        let setup = setup::Setup::new(engine);
+        let (source, status) = match setup
+            .scope
+            .as_ref()
+            .map(EditorFile::from_native_scope)
+            .transpose()
+        {
+            Ok(source) => (source, String::new()),
             Err(error) => (None, error.to_string()),
         };
         let mut panel = Self {
+            setup,
             source,
             edit_lease,
             editor,
@@ -56,6 +67,18 @@ impl InstructionsPanel {
         };
         panel.reload(window, cx);
         panel
+    }
+    pub(super) fn native_target_label(&self) -> String {
+        self.source
+            .as_ref()
+            .map(|s| s.path().display().to_string())
+            .or_else(|| {
+                self.setup
+                    .scope
+                    .as_ref()
+                    .map(|s| s.master_path().display().to_string())
+            })
+            .unwrap_or_else(|| "Instructions".into())
     }
     fn dirty(&self, cx: &App) -> bool {
         self.native_edited
@@ -96,7 +119,7 @@ impl InstructionsPanel {
                 Ok(text) => {
                     self.editor
                         .update(cx, |editor, cx| editor.set_value(text, window, cx));
-                    self.status = "Matches the saved global master".into();
+                    self.status = "Matches the saved instruction file".into();
                     self.blocked = false;
                     self.native_edited = false;
                     self.edit_lease.set_dirty(false);
@@ -121,7 +144,7 @@ impl InstructionsPanel {
         if let Some(source) = &mut self.source {
             match source.save(&text) {
                 Ok(()) => {
-                    self.status = "Saved global instructions".into();
+                    self.status = "Saved instruction file".into();
                     self.native_edited = false;
                     self.edit_lease.set_dirty(false);
                     saved = true;
@@ -150,23 +173,83 @@ impl Render for InstructionsPanel {
             .source
             .as_ref()
             .is_some_and(|source| source.baseline().is_some());
-        div().id("global-instructions-editor").flex().flex_col().gap_3().p_4().size_full().min_h_0()
-            .capture_key_down(cx.listener(|this,event:&KeyDownEvent,window,cx|{
-                let modifiers=event.keystroke.modifiers;
-                let primary=if cfg!(target_os="macos"){modifiers.platform && !modifiers.control}else{modifiers.control && !modifiers.platform};
-                if !event.prefer_character_input && event.keystroke.key.eq_ignore_ascii_case("s") && primary && !modifiers.alt && !modifiers.shift && !modifiers.function{
-                    this.human_save(cx);window.prevent_default();cx.stop_propagation();
+        div()
+            .id("global-instructions-editor")
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .size_full()
+            .min_h_0()
+            .overflow_y_scroll()
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                let primary = if cfg!(target_os = "macos") {
+                    modifiers.platform && !modifiers.control
+                } else {
+                    modifiers.control && !modifiers.platform
+                };
+                if !event.prefer_character_input
+                    && event.keystroke.key.eq_ignore_ascii_case("s")
+                    && primary
+                    && !modifiers.alt
+                    && !modifiers.shift
+                    && !modifiers.function
+                {
+                    this.human_save(cx);
+                    window.prevent_default();
+                    cx.stop_propagation();
                 }
             }))
-            .child(div().text_lg().child("Global instructions"))
-            .child("Edit the shared master used by your existing instruction links.")
-            .when_some(self.source.as_ref().map(|source|source.path().display().to_string()),|view,path|view.child(div().text_sm().child(path)))
-            .child(div().flex().gap_2()
-                .child(Button::new("global-instructions-save").label("Save").primary().disabled(!readable || !dirty || self.blocked).on_click(cx.listener(|this,_,_,cx|{this.human_save(cx);})))
-                .child(Button::new("global-instructions-reload").label(if dirty{"Discard edits and reload"}else{"Reload"}).on_click(cx.listener(|this,_,window,cx|this.reload(window,cx)))))
-            .child(if dirty{"Unsaved edits"}else{"Saved text"})
+            .child(self.setup_controls(cx))
+            .child(div().text_lg().child("Instructions"))
+            .child("Changes are written only when you choose Save.")
+            .when_some(
+                self.source
+                    .as_ref()
+                    .map(|source| source.path().display().to_string()),
+                |view, path| view.child(div().text_sm().child(path)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("global-instructions-save")
+                            .label("Save")
+                            .primary()
+                            .disabled(
+                                !readable
+                                    || !dirty
+                                    || self.blocked
+                                    || self.setup.review.is_some()
+                                    || self.setup.picker_pending,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.human_save(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("global-instructions-reload")
+                            .label(if dirty {
+                                "Discard edits and reload"
+                            } else {
+                                "Reload"
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+                    ),
+            )
+            .child(if dirty { "Unsaved edits" } else { "Saved text" })
             .child(div().text_sm().child(self.status.clone()))
-            .child(div().flex_1().min_h_0().font_family("monospace").child(Textarea::new(&self.editor).h_full().disabled(!readable)))
-            .child(div().text_sm().child("This editor opens the conventional global master. Project files, custom master selection, link setup and copy synchronization use your existing setup."))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(180.))
+                    .font_family("monospace")
+                    .child(Textarea::new(&self.editor).h_full().disabled(
+                        !readable || self.setup.review.is_some() || self.setup.picker_pending,
+                    )),
+            )
+            .child(self.setup_review(cx))
     }
 }

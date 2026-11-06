@@ -741,8 +741,14 @@ impl Coincide {
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
-        let instructions_panel =
-            cx.new(|cx| instructions::InstructionsPanel::new(native_editors.editor(), window, cx));
+        let instructions_panel = cx.new(|cx| {
+            instructions::InstructionsPanel::new(
+                engine.clone(),
+                native_editors.editor(),
+                window,
+                cx,
+            )
+        });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));

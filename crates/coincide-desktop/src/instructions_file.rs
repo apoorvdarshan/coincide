@@ -30,15 +30,13 @@ pub(super) struct EditorFile {
     snapshot: Option<Snapshot>,
 }
 impl EditorFile {
-    pub(super) fn runtime() -> Result<Self> {
-        #[cfg(windows)]
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-        #[cfg(not(windows))]
-        let home = std::env::var_os("HOME");
-        let home = PathBuf::from(home.context("Your home directory is unavailable")?);
-        ensure!(home.is_absolute(), "Your home directory is not absolute");
+    /// Only a native-owned scope can bind a writer. Persisted JSON paths and
+    /// arbitrary caller strings cannot construct this editor.
+    pub(super) fn from_native_scope(
+        scope: &super::super::instructions_scope::NativeScope,
+    ) -> Result<Self> {
         Ok(Self {
-            master: home.join(".config/coincide/AGENTS.md"),
+            master: scope.master_path().to_owned(),
             recovery_root: coincide_core::control::data_directory()?.join("instruction-recovery"),
             snapshot: None,
         })
@@ -55,9 +53,9 @@ impl EditorFile {
         &self.master
     }
     pub(super) fn load(&mut self) -> Result<String> {
-        let snapshot=capture(&self.master).context("The global master could not be opened. Existing files are never created or replaced by Reload")?;
-        let text = String::from_utf8(snapshot.bytes.clone())
-            .context("Global instructions must be UTF-8 text")?;
+        let snapshot=capture(&self.master).context("The selected instruction file could not be opened. Existing files are never created or replaced by Reload")?;
+        let text =
+            String::from_utf8(snapshot.bytes.clone()).context("Instructions must be UTF-8 text")?;
         self.snapshot = Some(snapshot);
         Ok(text)
     }
@@ -65,6 +63,18 @@ impl EditorFile {
         self.snapshot
             .as_ref()
             .and_then(|snapshot| std::str::from_utf8(&snapshot.bytes).ok())
+    }
+    pub(super) fn validate_review_source(&self) -> Result<()> {
+        let expected = self
+            .snapshot
+            .as_ref()
+            .context("Load this native source before reviewing it")?;
+        let mut file = native_file::open_regular(&expected.resolved, false)?;
+        ensure!(
+            matches_source(&self.master, expected, &mut file)?,
+            "Reviewed instruction source changed; review it again"
+        );
+        Ok(())
     }
     pub(super) fn save(&mut self, text: &str) -> Result<()> {
         self.save_using(text, |file, bytes| {
@@ -80,10 +90,7 @@ impl EditorFile {
         text: &str,
         write: impl FnOnce(&mut File, &[u8]) -> Result<()>,
     ) -> Result<()> {
-        ensure!(
-            text.len() <= LIMIT,
-            "Global instructions must fit within 1 MiB"
-        );
+        ensure!(text.len() <= LIMIT, "Instructions must fit within 1 MiB");
         let expected = self
             .snapshot
             .as_ref()
@@ -95,11 +102,11 @@ impl EditorFile {
             .context("Another editor is saving this file; retry after it finishes")?;
         ensure!(
             native_file::file_identity(&file)? == expected.identity,
-            "Global master was replaced; keep your edits and reload"
+            "Instruction file was replaced; keep your edits and reload"
         );
         ensure!(
             matches_source(&self.master, expected, &mut file)?,
-            "Global instructions changed on disk; your edits are kept. Review the current file before saving"
+            "Instructions changed on disk; your edits are kept. Review the current file before saving"
         );
         if text.as_bytes() == expected.bytes {
             return Ok(());
@@ -117,7 +124,7 @@ impl EditorFile {
         // write authority merely because an old recovery snapshot exists.
         ensure!(
             matches_source(&self.master, expected, &mut file)?,
-            "Global master changed while preparing recovery; no instruction bytes were written"
+            "Instruction file changed while preparing recovery; no instruction bytes were written"
         );
         if let Err(_error) = write(&mut file, text.as_bytes()) {
             let restored = (|| -> Result<()> {
@@ -189,7 +196,7 @@ impl EditorFile {
             refreshed.identity == expected.identity
                 && refreshed.links == expected.links
                 && refreshed.bytes == text.as_bytes(),
-            "Global master changed after Save; a private recovery copy remains at {}",
+            "Instruction file changed after Save; a private recovery copy remains at {}",
             backup.display()
         );
         self.snapshot = Some(refreshed);
@@ -235,16 +242,16 @@ fn links(path: &Path) -> Result<Vec<LinkState>> {
 fn read_bounded(file: &mut File) -> Result<Vec<u8>> {
     ensure!(
         file.metadata()?.is_file() && file.metadata()?.len() <= LIMIT as u64,
-        "Global instructions must be a regular UTF-8 file of at most 1 MiB"
+        "Instructions must be a regular UTF-8 file of at most 1 MiB"
     );
     file.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();
     file.take(LIMIT as u64 + 1).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() <= LIMIT,
-        "Global instructions exceeded 1 MiB while reading"
+        "Instructions exceeded 1 MiB while reading"
     );
-    std::str::from_utf8(&bytes).context("Global instructions are not UTF-8 text")?;
+    std::str::from_utf8(&bytes).context("Instructions are not UTF-8 text")?;
     Ok(bytes)
 }
 fn capture(master: &Path) -> Result<Snapshot> {
@@ -258,7 +265,7 @@ fn capture(master: &Path) -> Result<Snapshot> {
             && native_file::path_identity(&resolved)? == identity
             && file.metadata()?.modified()? == modified
             && read_bounded(&mut file)? == bytes,
-        "Global instructions changed while reading; reload them"
+        "Instructions changed while reading; reload them"
     );
     Ok(Snapshot {
         resolved,
@@ -309,6 +316,88 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+    #[test]
+    fn typed_project_scope_binds_exact_source_without_adopting_imported_master_paths() {
+        let fixture = Fixture::new();
+        let mut store =
+            coincide_core::store::Store::open(&fixture.root.join("state.sqlite")).unwrap();
+        let project = store
+            .create_project(&fixture.root, Some("Synthetic native project"))
+            .unwrap();
+        store.save_document("instructions.json",&serde_json::json!({"global":{"masterPath":"/untrusted/imported/AGENTS.md","isEnabled":true}})).unwrap();
+        let scope = super::super::super::instructions_scope::NativeScope::project_native(
+            &store,
+            project["id"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut editor = EditorFile::from_native_scope(&scope).unwrap();
+        // Override only the recovery destination in this synthetic fixture; the
+        // production source constructor still accepts the typed scope alone.
+        editor.recovery_root = fixture.recovery.clone();
+        assert_eq!(editor.path(), fixture.master.canonicalize().unwrap());
+        let original = editor.load().unwrap();
+        assert!(original.contains("Private synthetic instructions"));
+        editor
+            .save("Saved to the bound synthetic project only\n")
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&fixture.master).unwrap(),
+            "Saved to the bound synthetic project only\n"
+        );
+        store.close_for_shutdown().unwrap();
+    }
+    #[test]
+    fn retained_review_writer_refuses_same_bytes_replacement_between_plan_check_and_write() {
+        let fixture = Fixture::new();
+        let mut store =
+            coincide_core::store::Store::open(&fixture.root.join("review.sqlite")).unwrap();
+        let project = store
+            .create_project(&fixture.root, Some("Synthetic retained review"))
+            .unwrap();
+        let scope = super::super::super::instructions_scope::NativeScope::project_native(
+            &store,
+            project["id"].as_str().unwrap(),
+        )
+        .unwrap();
+        fs::write(fixture.root.join("CLAUDE.md"), "Synthetic merge source\n").unwrap();
+        let mut writer = EditorFile::from_native_scope(&scope).unwrap();
+        writer.recovery_root = fixture.recovery.clone();
+        let baseline = writer.load().unwrap();
+        let plan = scope.review_native(&store).unwrap();
+        writer.validate_review_source().unwrap();
+        let choices = plan
+            .targets
+            .iter()
+            .map(|t| t.state.default_choice())
+            .collect::<Vec<_>>();
+        let old = fixture.root.join("original-reviewed.md");
+        let error = plan
+            .apply_native(&store, &choices, |path, expected, replacement| {
+                assert_eq!(expected, baseline);
+                fs::rename(path, &old)?;
+                fs::write(path, expected)?;
+                // The path now has the same bytes but a different identity. No
+                // apply-time reload may adopt it into the retained Save capability.
+                writer.save(replacement)
+            })
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("replaced"), "{error}");
+        assert_eq!(fs::read_to_string(&fixture.master).unwrap(), baseline);
+        assert_eq!(fs::read_to_string(&old).unwrap(), baseline);
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("CLAUDE.md")).unwrap(),
+            "Synthetic merge source\n"
+        );
+        assert!(
+            !fs::symlink_metadata(fixture.root.join("CLAUDE.md"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!fixture.recovery.exists());
+        store.close_for_shutdown().unwrap();
     }
     #[test]
     fn explicit_save_preserves_master_file_identity_and_exact_utf8_bytes() {

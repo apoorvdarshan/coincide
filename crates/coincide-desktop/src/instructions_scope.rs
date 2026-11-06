@@ -285,7 +285,7 @@ impl NativeScope {
                 self.validate(store)?;
             }
         }
-        create_exclusive(&self.master, text)
+        create_exclusive(&self.master, text).map(|_| ())
     }
     pub fn discover_native(&self, store: &Store) -> Result<Vec<DiscoveredFile>> {
         self.validate(store)?;
@@ -478,8 +478,34 @@ impl NativeReviewPlan {
     pub fn master_path(&self) -> &Path {
         self.scope.master_path()
     }
-    pub fn master_text(&self) -> &str {
-        &self.seed
+    pub fn has_existing_master(&self) -> bool {
+        self.master.present
+    }
+    pub fn preview_text(&self, choices: &[Choice]) -> Result<String> {
+        ensure!(
+            choices.len() == self.targets.len(),
+            "Review every instruction target"
+        );
+        let mut text = self.seed.clone();
+        for (target, choice) in self.targets.iter().zip(choices) {
+            if *choice == Choice::Merge {
+                ensure!(
+                    target.state == TargetState::Differs,
+                    "Merge requires a separate file with different text"
+                );
+                text = instructions_config::merged(
+                    &text,
+                    target
+                        .observation
+                        .as_ref()
+                        .context("Target cannot be read")?
+                        .text(),
+                    &target.label,
+                );
+            }
+        }
+        ensure!(text.len() <= LIMIT, "Merged instructions exceed 1 MiB");
+        Ok(text)
     }
     /// Native confirmation only. Existing-master writes are delegated to the
     /// retained editor's recovery/CAS writer, never a JSON/path-selected writer.
@@ -508,25 +534,26 @@ impl NativeReviewPlan {
                 o.unchanged()?;
             }
         }
-        let mut text = self.seed.clone();
-        for (target, choice) in self.targets.iter().zip(choices) {
-            if *choice == Choice::Merge && target.state == TargetState::Differs {
-                text = instructions_config::merged(
-                    &text,
-                    target.observation.as_ref().unwrap().text(),
-                    &target.label,
-                );
-            }
-        }
-        ensure!(text.len() <= LIMIT, "Merged instructions exceed 1 MiB");
-        if self.master.present {
+        let text = self.preview_text(choices)?;
+        let saved = if self.master.present {
             if text != self.master.text() {
                 write_existing(&self.master.path, self.master.text(), &text)?;
             }
+            let saved = Observation::capture(&self.master.path)?;
+            ensure!(
+                self.master.resolved == saved.resolved
+                    && self
+                        .master
+                        .chain
+                        .iter()
+                        .map(|p| (&p.path, p.identity, &p.link))
+                        .eq(saved.chain.iter().map(|p| (&p.path, p.identity, &p.link))),
+                "Reviewed master identity changed before link installation"
+            );
+            saved
         } else {
-            create_exclusive(&self.master.path, &text)?;
-        }
-        let saved = Observation::capture(&self.master.path)?;
+            create_exclusive(&self.master.path, &text)?
+        };
         ensure!(
             saved.text() == text,
             "Master save did not match reviewed text"
@@ -672,7 +699,7 @@ fn restore_no_replace(backup: &Path, target: &Path) -> Result<()> {
     fs::remove_file(backup)?;
     Ok(())
 }
-fn create_exclusive(path: &Path, text: &str) -> Result<()> {
+fn create_exclusive(path: &Path, text: &str) -> Result<Observation> {
     let mut file = native_file::create_private_file(path)?;
     let identity = native_file::file_identity(&file)?;
     if let Err(error) = (|| -> Result<()> {
@@ -693,7 +720,7 @@ fn create_exclusive(path: &Path, text: &str) -> Result<()> {
             && native_file::path_identity(path)? == identity,
         "Created instructions need review; file changed during creation"
     );
-    Ok(())
+    Ok(saved)
 }
 fn create_link(master: &Path, target: &Path) -> Result<()> {
     let parent = target
