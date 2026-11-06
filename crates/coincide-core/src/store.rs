@@ -48,6 +48,7 @@ pub struct ImportReport {
 impl Store {
     /// Runtime-only durable authority binding. Never exposed as a document or
     /// populated by imports; the journal also binds the live Store inode.
+    #[cfg(unix)]
     pub(crate) fn resume_source_path(&self) -> Result<std::path::PathBuf> {
         let path = self
             .connection()?

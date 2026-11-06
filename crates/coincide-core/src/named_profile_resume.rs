@@ -139,11 +139,17 @@ struct Receipt {
 impl Receipt {
     fn durable(&self) -> Result<Value> {
         Ok(
-            serde_json::json!({"context":self.context.durable()?,"native":self.native,
+            serde_json::json!({"owner":self.context.owner,"context":self.context.durable()?,"native":self.native,
             "resolved":self.resolved,"items":serde_json::to_value(&self.items)?}),
         )
     }
     fn restore(value: Value, context: &Context) -> Result<Self> {
+        ensure!(
+            value["owner"]
+                .as_str()
+                .is_some_and(|owner| owner != context.owner.to_string()),
+            "Current Engine receipts require their exact in-memory proof"
+        );
         ensure!(
             value["context"] == context.durable()?,
             "Durable continuation context changed"
@@ -363,6 +369,78 @@ impl Write for PrefixDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(unix)]
+    #[test]
+    fn restart_readmission_preserves_mode_presence_and_same_engine_proof_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let account = Uuid::new_v4().to_string();
+        crate::codex_login_profiles::managed_home(&root, &account, true).unwrap();
+        let profile =
+            LaunchContext::capture(&root, &account, &std::env::current_exe().unwrap()).unwrap();
+        let baseline = json!({"id":Uuid::new_v4().to_string(),"selection":{"provider":"codex","accountID":account,"modelID":"default"},"items":[{"kind":"user","text":"owned prefix","future":42}]});
+        let context = |thread: &Value, owner| Context {
+            owner,
+            binding: NamedBinding::capture(profile.clone(), thread["id"].as_str().unwrap(), &root)
+                .unwrap(),
+            selection: thread["selection"].clone(),
+            access: thread.get("accessMode").cloned(),
+            interaction: thread.get("interactionMode").cloned(),
+            policy: Policy::parse_named(thread, crate::composer_policy::Origin::Ordinary, None)
+                .unwrap(),
+        };
+        for field in ["accessMode", "interactionMode"] {
+            for saved in [
+                None,
+                Some(Value::Null),
+                Some(json!(if field == "accessMode" {
+                    "approval"
+                } else {
+                    "build"
+                })),
+            ] {
+                let mut original = baseline.clone();
+                if let Some(value) = &saved {
+                    original[field] = value.clone();
+                }
+                let captured = context(&original, Uuid::new_v4());
+                let receipt = Receipt {
+                    context: captured.clone(),
+                    native: "native-owned".into(),
+                    resolved: "actual-model".into(),
+                    items: Items::capture(&original, None).unwrap(),
+                };
+                let record = receipt.durable().unwrap();
+                assert!(
+                    Receipt::restore(record.clone(), &captured).is_err(),
+                    "Disk cannot bypass a current Engine's Arc proof equality after memory eviction"
+                );
+                assert!(
+                    Receipt::restore(record.clone(), &context(&original, Uuid::new_v4())).is_ok()
+                );
+                for current in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!(if field == "accessMode" {
+                        "approval"
+                    } else {
+                        "build"
+                    })),
+                ] {
+                    let mut changed = baseline.clone();
+                    if let Some(value) = &current {
+                        changed[field] = value.clone();
+                    }
+                    assert_eq!(
+                        Receipt::restore(record.clone(), &context(&changed, Uuid::new_v4()))
+                            .is_ok(),
+                        saved == current,
+                        "Presence-aware durable context must never normalize missing/null/explicit mode shapes"
+                    );
+                }
+            }
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn acknowledgement_requires_the_actual_resolved_model_contract() {

@@ -2,19 +2,20 @@
 //! This authenticates app-minted receipts; it is not a defence against a local
 //! user who can replace both this database and its private authentication key.
 use anyhow::{Context as _, Result, ensure};
-use ring::{
-    hmac,
-    rand::{SecureRandom, SystemRandom},
-};
+use ring::hmac;
+#[cfg(unix)]
+use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    fs::{self, File},
+    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Read};
 const MAX_RECORD: usize = 32 * 1024;
 pub(super) struct Journal {
     db: Connection,
@@ -192,7 +193,7 @@ impl Journal {
         // are still deleted atomically, so restoring old JSON cannot retry one.
         let row: Option<(Vec<u8>, Vec<u8>)> = tx.query_row(
             "SELECT document,mac FROM receipts WHERE id=?1 AND length(document)<=?2 AND length(mac)=32",
-            params![id, MAX_RECORD], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+            params![id, MAX_RECORD as i64], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
         tx.execute("DELETE FROM receipts WHERE id=?1", [id])?;
         tx.commit()?; // Must reach durable commit before any provider launch.
         let Some((document, mac)) = row else {
