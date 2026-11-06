@@ -3,6 +3,7 @@
 use super::*;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
 #[derive(Clone)]
 struct BotDrag(String);
 impl Render for BotDrag {
