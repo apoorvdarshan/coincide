@@ -31,10 +31,10 @@ mod background_workers;
 mod bot_engine;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
-#[path = "codex_tool_metadata.rs"]
-mod codex_tool_metadata;
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
+#[path = "codex_tool_metadata.rs"]
+mod codex_tool_metadata;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]

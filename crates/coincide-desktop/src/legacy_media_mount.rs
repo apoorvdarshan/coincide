@@ -864,7 +864,7 @@ impl Coincide {
             self.media.images.iter().find(|image| {
                 image.item == selection.item && image.candidate == selection.candidate
             })?;
-        Some(div().id("historical-image-viewer").absolute().inset_0().p_6().flex().items_center().justify_center()
+        Some(div().id("historical-image-viewer").role(Role::Dialog).aria_label("Historical image viewer").absolute().inset_0().p_6().flex().items_center().justify_center()
             .bg(rgba(0x000000ee)).track_focus(&self.media.viewer_focus)
             .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| cx.stop_propagation()))
             .child(div().w_full().h_full().max_w(px(1400.)).flex().flex_col().gap_3().min_h_0()

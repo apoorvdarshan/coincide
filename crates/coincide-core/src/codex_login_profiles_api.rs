@@ -136,8 +136,10 @@ impl Engine {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     fn fixture() -> (tempfile::TempDir, Engine, String) {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
         let thread = engine.execute("threads.create", &json!({})).unwrap();
         let id = text(&thread, "id");

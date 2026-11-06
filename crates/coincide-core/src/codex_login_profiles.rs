@@ -270,6 +270,7 @@ mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
     fn fixture() -> (tempfile::TempDir, PathBuf, String, LaunchContext) {
         let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let root = dir.path().canonicalize().unwrap();
         let id = Uuid::new_v4().to_string();
         managed_home(&root, &id, true).unwrap();
