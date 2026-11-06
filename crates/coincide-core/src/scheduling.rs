@@ -407,7 +407,7 @@ fn sidebar_snooze_presets<T: TimeZone>(now: DateTime<T>) -> Vec<(&'static str, f
             .and_then(|local| now.timezone().from_local_datetime(&local).earliest())
     };
     if let Some(evening) = at(0, 18) {
-        if evening.signed_duration_since(now.clone()) > Duration::hours(1) {
+        if evening.clone().signed_duration_since(now.clone()) > Duration::hours(1) {
             result.push(("This Evening", stamp(evening)));
         }
     }
