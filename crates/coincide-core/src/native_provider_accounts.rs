@@ -12,6 +12,15 @@ pub struct NativeLoginAccount {
     pub revision: String,
     pub home: PathBuf,
 }
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+enum Authentication {
+    #[default]
+    Login,
+    ApiKey,
+}
+fn login_mode(mode: &Authentication) -> bool {
+    *mode == Authentication::Login
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Account {
     id: String,
@@ -19,6 +28,12 @@ pub(super) struct Account {
     name: String,
     revision: String,
     launch_revision: String,
+    #[serde(default, skip_serializing_if = "login_mode")]
+    authentication: Authentication,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_variable: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<account_secret_store::SecretSlot>,
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
@@ -40,7 +55,7 @@ fn supported(provider: &str) -> Result<&'static str> {
     }
 }
 fn home(root: &Path, provider: &str, id: &str) -> Result<PathBuf> {
-    supported(provider)?;
+    provider_id(provider)?;
     let canonical = Uuid::parse_str(id)?.to_string();
     ensure!(canonical == id, "Invalid native account identity");
     Ok(root.join("providers").join(provider).join(canonical))
@@ -107,7 +122,7 @@ fn summary(account: &Account) -> NativeLoginAccount {
     }
 }
 fn read(owner: &Private, provider: &str, raw: Option<&str>) -> Result<Value> {
-    supported(provider)?;
+    provider_id(provider)?;
     let Some(raw) = raw else {
         return Ok(
             json!({"source":owner.source,"purpose":PURPOSE,"provider":provider,"accounts":{}}),
@@ -379,7 +394,11 @@ impl Engine {
             .as_object()
             .unwrap()
             .keys()
-            .map(|id| account(&payload, provider, id).map(|account| summary(&account)))
+            .map(|id| account(&payload, provider, id))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|account| account.authentication == Authentication::Login)
+            .map(|account| Ok(summary(&account)))
             .collect()
     }
     pub fn create_native_login_account(
@@ -411,6 +430,9 @@ impl Engine {
             name: name.into(),
             revision: Uuid::new_v4().to_string(),
             launch_revision: Uuid::new_v4().to_string(),
+            authentication: Authentication::Login,
+            key_variable: None,
+            key: None,
             home,
             home_identity,
             guard_identity,
@@ -544,10 +566,12 @@ impl Engine {
             .context("Add this account in native Settings first")?;
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        let profile = LoginHome::capture(
-            &self.store.data_directory()?,
-            account(&payload, provider, id)?,
-        )?;
+        let account = account(&payload, provider, id)?;
+        ensure!(
+            account.authentication == Authentication::Login,
+            "Use this account's native API key workflow"
+        );
+        let profile = LoginHome::capture(&self.store.data_directory()?, account)?;
         // Both native envelopes share this authority lease.
         let record = read_record(&owner.read()?, provider)?;
         ensure!(
@@ -591,14 +615,21 @@ fn build_configuration(
         environment: BTreeMap::new(),
     });
     record.executable = Some(Binary::capture(&executable)?);
+    // Global provider environment is not an account-specific credential grant.
+    // In particular GROK_AUTH and GROK_CONFIG can select credentials outside
+    // GROK_HOME, while Claude supports helper/token and endpoint overrides.
     record.environment.retain(|key, _| {
-        !auth_keys(provider)
-            .iter()
-            .any(|owned| key.eq_ignore_ascii_case(owned))
+        let upper = key.to_ascii_uppercase();
+        !sensitive_for_profile(key)
+            && !upper.contains("AUTH")
+            && !upper.starts_with("GROK_")
+            && !upper.starts_with("CLAUDE_")
+            && !upper.starts_with("ANTHROPIC_")
+            && !upper.starts_with("OPENCODE_")
+            && !auth_keys(provider)
+                .iter()
+                .any(|owned| key.eq_ignore_ascii_case(owned))
     });
-    for key in auth_keys(provider) {
-        record.environment.insert((*key).into(), String::new());
-    }
     record.environment.insert(
         supported(provider)?.into(),
         profile.account.home.to_string_lossy().into_owned(),
@@ -690,6 +721,10 @@ impl Engine {
         let mut payload = read(&owner, provider, raw.as_deref())?;
         let current = account(&payload, provider, id)?;
         ensure!(
+            current.authentication == Authentication::Login,
+            "Use this account's native API key workflow"
+        );
+        ensure!(
             current.revision == expected,
             "Account changed; reload before signing in"
         );
@@ -706,6 +741,10 @@ impl Engine {
         account(&payload, provider, id)
     }
 }
+
+#[path = "native_key_accounts.rs"]
+mod keys;
+pub use keys::{NativeKeyAccount, NativeKeySave};
 
 #[cfg(test)]
 mod tests {
@@ -800,9 +839,61 @@ mod tests {
             env.get("CLAUDE_CONFIG_DIR"),
             Some(&account.home.to_string_lossy().into_owned())
         );
-        assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&String::new()));
-        assert_eq!(effective_var("ANTHROPIC_API_KEY"), Some("".into()));
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(effective_var("ANTHROPIC_API_KEY").is_none());
         assert!(effective_var("ARBITRARY_INHERITED_SECRET").is_none());
+    }
+    #[test]
+    fn global_grok_auth_and_configuration_cannot_override_named_login_home() {
+        let (_root, mut engine, binary) = fixture("grok");
+        let baseline = engine
+            .native_provider_configuration("grok")
+            .unwrap()
+            .baseline;
+        let environment = BTreeMap::from([
+            ("GROK_AUTH".into(), "synthetic-other-principal".into()),
+            (
+                "GROK_AUTH_PROVIDER_COMMAND".into(),
+                "synthetic-never-execute".into(),
+            ),
+            (
+                "GROK_CONFIG_PATH".into(),
+                "synthetic-external-config".into(),
+            ),
+        ]);
+        let plan = engine
+            .prepare_native_provider_configuration("grok", &baseline, Some(&binary), environment)
+            .unwrap();
+        engine.apply_native_provider_configuration(plan).unwrap();
+        let default = engine.provider_launch_configuration("grok").unwrap();
+        {
+            let _scope = enter(default);
+            assert_eq!(
+                effective_var("GROK_AUTH"),
+                Some("synthetic-other-principal".into())
+            );
+        }
+        let account = engine
+            .create_native_login_account("grok", "Own login")
+            .unwrap();
+        let configuration = engine
+            .native_login_launch_configuration("grok", &account.id)
+            .unwrap();
+        let _scope = enter(Some(configuration));
+        let mut child = Command::new(binary);
+        apply_to_child(&mut child, false).unwrap();
+        for key in [
+            "GROK_AUTH",
+            "GROK_AUTH_PROVIDER_COMMAND",
+            "GROK_CONFIG_PATH",
+        ] {
+            assert!(effective_var(key).is_none());
+            assert!(!child.get_envs().any(|(name, _)| name == key));
+        }
+        assert_eq!(
+            effective_var("GROK_HOME"),
+            Some(account.home.into_os_string())
+        );
     }
     #[test]
     fn rename_preserves_launch_identity_unknown_fields_and_rejects_stale_cas() {
