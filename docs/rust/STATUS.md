@@ -177,6 +177,30 @@ native results do not close a full feature row.
   aliases. Malformed inputs are rejected before transport, and stale target
   resolution cannot trigger a mutation. Rich thread creation and other CLI
   behavior remain separate open work.
+- Structured new-thread options now validate the complete provider/model/account
+  and mode tuple before one transactional save. Exact unsent title/draft text is
+  retained; omitted options inherit existing validated defaults. Seven real
+  Engine/Store regressions passed, including rejected input and cache-write
+  rollback with no orphan row or index/revision change. The combined source
+  passed 584 Core units and all integrations (including 12 CLI socket checks),
+  strict feature Core Clippy, 421 desktop units and all four desktop integration
+  targets, formatting and the ordinary desktop build. New-thread Send/Open/Wait
+  behavior remains unsupported in this slice.
+- The shipped CLI now passed an actual owned server/Engine composition regression:
+  exact create-only flags and unsent Unicode API drafts, committed raw rows and
+  search indexes, untouched defaults/originals/unrelated data, atomic rejection,
+  no provider/Open/Wait effect, and normal shutdown. The full three-test headless
+  CLI suite and subsequent strict feature Core Clippy passed as well.
+- The first ordinary b8c32dc file-keyboard native run stopped before popup
+  acceptance: after focus, End and four Left reads retained the original draft,
+  the fifth Left read showed an unexpected synthetic submission. No Send,
+  Enter/Return or Tab action was requested. One denied fake provider attempt and
+  the changed target row/cache are preserved; causal attribution is unproven.
+  Normal foreground Cmd+Q exited zero after 335.53s; earlier background AX Quit
+  actions had no observed outcome. Imported originals, the other target, source,
+  binary, instructions and input files stayed exact, and native control was
+  released. The frozen data checker correctly failed; no restart/replay or
+  overall keyboard pass is claimed. A fresh fixture is being prepared.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
@@ -250,7 +274,7 @@ These narrower results do not close the broad UI/UX row above.
 | Counted bulk selection, Pin/Archive/Restore and scoped Undo | Integrated; full Core/desktop checks passed | V2 passed selection without navigation, review Cancel, exact Pin Undo and Archive/Restore, both normal exits and all preservation guards |
 | Named Codex profile model catalog | Integrated; actual fake protocol integration, combined Core/desktop checks, strict Core Clippy and three owner/cache regressions passed | Fresh V2 passed all 15 native checks, independent restart proof locks, default repair and both exits; V1 failure preserved; real-account verification remains open |
 | Composer project-file path references | Explicit picker and bounded results integrated; six Core and three desktop regressions passed | V2 passed all 13 native checks and both exits with exact preservation; results require inner scrolling; compact-list follow-up pending native visual verification |
-| Automatic caret file completion | Unicode/grapheme, IME-veto and revision regressions passed | Exact native query removal and restart verified with 10 original stages plus a separate restart-owner supplement; original checker failure preserved; keyboard/folder/multi-caret parity remains open |
+| Automatic caret file completion | Unicode/grapheme, IME-veto, revision and scoped key-controller regressions passed | Exact native query removal and restart verified with 10 original stages plus a separate restart-owner supplement; the subsequent keyboard V1 stopped on an unexplained submission before popup validation; keyboard/folder/multi-caret parity remains open |
 | Standalone `/usage-limits` | Four regressions and full desktop suite passed; only current reported default Codex windows are supported | All 11 native checks, one explicit fake refresh, opener without another read, Cmd+, routing and both normal exits passed |
 | Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Ordinary native disclosure, hidden-tail Find, full Copy and one verified Edit branch passed |
 
