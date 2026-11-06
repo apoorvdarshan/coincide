@@ -163,17 +163,27 @@ impl Engine {
                 None
             }
         };
-        let outcome = self.store.apply_project_action(&prepared, value)?;
-        if expected == ProjectAction::Remove
-            && self
+        if expected == ProjectAction::Remove {
+            // Journal revocation can fail: finish it before committing SQL.
+            // Recovering the archived documents never recovers native grants.
+            let ids = prepared
+                .threads
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            self.named_resume.invalidate_threads(&ids, &self.store)?;
+            if self
                 .active_thread
                 .as_ref()
-                .is_some_and(|id| prepared.threads.iter().any(|(thread, _)| thread == id))
-        {
-            // All stored IDs are validated UUIDs; clearing revokes prior native authority.
-            self.set_active_thread(None)?;
-            self.requested_open = None;
+                .is_some_and(|id| ids.contains(id))
+            {
+                // Clear while the transcript still exists, before removal.
+                // A later SQL failure may lose this optional selection only.
+                self.set_active_thread(None)?;
+                self.requested_open = None;
+            }
         }
+        let outcome = self.store.apply_project_action(&prepared, value)?;
         self.revision += 1;
         Ok(outcome)
     }
@@ -259,6 +269,127 @@ mod tests {
             .unwrap();
         e.execute("projects.restore",&json!({"projectId":archive,"ticket":preview["ticket"],"confirmed":true,"confirmedThreadCount":1})).unwrap();
         assert_eq!(e.store.projects().unwrap().as_array().unwrap().len(), 1);
+    }
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn project_remove_consumes_all_private_account_slots_before_restore() {
+        let (dir, mut e, project, id) = fixture();
+        let root = e.store.data_directory().unwrap();
+        let cwd = dir.path().canonicalize().unwrap();
+        let accounts = [Uuid::new_v4().to_string(), Uuid::new_v4().to_string()];
+        let mut profiles = Vec::new();
+        for (index, account) in accounts.iter().enumerate() {
+            crate::codex_login_profiles::managed_home(&root, account, true).unwrap();
+            let profile = crate::codex_login_profiles::LaunchContext::capture(
+                &root,
+                account,
+                &std::env::current_exe().unwrap(),
+            )
+            .unwrap();
+            let mut thread = e.store.thread(&id).unwrap();
+            thread["selection"] =
+                json!({"provider":"codex","modelID":"default","accountID":account});
+            thread["items"] = json!([{"kind":"user","text":"Synthetic owned prefix"}]);
+            let native = format!("private-account-{index}");
+            thread["sessions"] = json!({"codex":{"accountID":account,"sessionID":native}});
+            e.store.save(&thread).unwrap();
+            let policy = crate::composer_policy::Policy::parse_named(
+                &thread,
+                crate::composer_policy::Origin::Ordinary,
+                None,
+            )
+            .unwrap();
+            let authority = e
+                .named_resume
+                .prepare(&thread, profile.clone(), &cwd, policy)
+                .unwrap();
+            let ack = authority
+                .acknowledge(&json!({"thread":{"id":native},"model":"actual-model"}))
+                .unwrap();
+            let worker = agent::WorkerCompletion::observe(std::thread::spawn(|| {}));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while worker.status() == agent::WorkerThreadStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            e.named_resume.persisted(ack, &thread, worker);
+            e.named_resume.poll();
+            profiles.push(profile);
+        }
+        e.set_active_thread(Some(id.clone())).unwrap();
+        let before = e.store.thread(&id).unwrap();
+        let preview = e
+            .execute(
+                "projects.prepare",
+                &json!({"projectId":project,"action":"remove"}),
+            )
+            .unwrap();
+        let removed=e.execute("projects.remove",&json!({"projectId":project,"ticket":preview["ticket"],"confirmed":true,"confirmedThreadCount":1})).unwrap();
+        assert!(e.active_thread().is_none());
+        assert!(e.store.thread(&id).is_err());
+        let archive = &removed["archiveId"];
+        let preview = e
+            .execute(
+                "projects.prepare",
+                &json!({"projectId":archive,"action":"restore"}),
+            )
+            .unwrap();
+        e.execute("projects.restore",&json!({"projectId":archive,"ticket":preview["ticket"],"confirmed":true,"confirmedThreadCount":1})).unwrap();
+        assert_eq!(
+            e.store.thread(&id).unwrap(),
+            before,
+            "Recovery preserves descriptive content exactly"
+        );
+        // A new registry owner must not recover either old private ticket from
+        // disk, even with exact old metadata and fresh authenticated admission.
+        e.named_resume = crate::named_profile_resume::Registry::default();
+        let mut reopened = crate::named_profile_resume::Registry::for_store(&e.store);
+        let mut catalog = crate::model_catalog::ModelCatalog::default();
+        for (index, profile) in profiles.into_iter().enumerate() {
+            let mut thread = before.clone();
+            thread["selection"]["accountID"] = json!(profile.account());
+            thread["sessions"] = json!({"codex":{"accountID":profile.account(),"sessionID":format!("private-account-{index}")}});
+            let binding =
+                crate::model_catalog::NamedBinding::capture(profile.clone(), &id, &cwd).unwrap();
+            catalog.fixture_resume_job(binding.clone(), &format!("fresh-{index}"));
+            let admission = catalog.named_resume_admission(&thread, &binding).unwrap();
+            let policy = crate::composer_policy::Policy::parse_named(
+                &thread,
+                crate::composer_policy::Origin::Ordinary,
+                None,
+            )
+            .unwrap();
+            let fresh = reopened
+                .prepare_admitted(&thread, profile, &cwd, policy, Some(admission))
+                .unwrap();
+            assert!(fresh.session().is_none());
+            assert_eq!(fresh.seen(), 0);
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn project_removal_journal_failure_happens_before_sql_and_preserves_rows() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, mut e, project, id) = fixture();
+        e.set_active_thread(Some(id.clone())).unwrap();
+        let before = e.store.thread(&id).unwrap();
+        let preview = e
+            .execute(
+                "projects.prepare",
+                &json!({"projectId":project,"action":"remove"}),
+            )
+            .unwrap();
+        let journal = e
+            .store
+            .data_directory()
+            .unwrap()
+            .join(".state.sqlite.native-resume-v1/receipts.sqlite");
+        std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(e.execute("projects.remove",&json!({"projectId":project,"ticket":preview["ticket"],"confirmed":true,"confirmedThreadCount":1})).is_err());
+        assert_eq!(e.store.thread(&id).unwrap(), before);
+        assert_eq!(e.store.projects().unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(e.active_thread(), Some(id.as_str()));
+        std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
     #[test]
     fn failed_new_review_expires_previous_target_and_expired_tickets_cannot_commit() {

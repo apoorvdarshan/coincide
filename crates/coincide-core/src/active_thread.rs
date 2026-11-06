@@ -31,11 +31,17 @@ impl Engine {
         if prior != next
             && let Some(prior) = prior
         {
-            if let Some(id) = &self.active_thread {
-                let departing = self.store.thread(id)?;
-                self.park_named_departure(&departing)?;
-            }
             self.computer_use_selection_changed(prior);
+            if let Some(id) = self.store.resolve_thread_id(prior)? {
+                let departing = self.store.thread(&id)?;
+                self.park_named_departure(&departing)?;
+            } else {
+                // Observed absence can revoke, never mint. Closed/ambiguous or
+                // failed Store reads still propagate above rather than being
+                // mistaken for a successfully removed conversation.
+                self.named_resume
+                    .invalidate_threads(&[prior.to_string()], &self.store)?;
+            }
         }
         if prior != next
             && let Some(id) = &selected
@@ -126,5 +132,21 @@ mod tests {
         assert_eq!(e.active_thread(), None);
         assert_eq!(authority.grant(id), Err(Failure::NotGranted));
         assert!(authority.enabled());
+    }
+    #[test]
+    fn closed_store_departure_is_not_treated_as_missing_and_revokes_native_grant() {
+        let (_dir, mut e, a, _b, authority) = fixture();
+        let id = Uuid::parse_str(&a).unwrap();
+        e.store.close_for_shutdown().unwrap();
+        assert!(e.set_active_thread(None).is_err());
+        assert_eq!(e.active_thread(), Some(a.as_str()));
+        assert_eq!(authority.grant(id), Err(Failure::NotGranted));
+    }
+    #[test]
+    fn independently_absent_prior_row_can_clear_without_inventing_departure_context() {
+        let (_dir, mut e, _a, _b, _authority) = fixture();
+        e.active_thread = Some(Uuid::new_v4().to_string());
+        e.set_active_thread(None).unwrap();
+        assert!(e.active_thread().is_none());
     }
 }

@@ -262,7 +262,6 @@ impl Registry {
     }
     /// Deny-only return values for native Delete/Undo. Revoke every parked
     /// account, including private IDs absent from descriptive thread JSON.
-    #[allow(dead_code)] // Native Archive is integrated by the separate UI branch.
     pub(crate) fn invalidate_threads(
         &mut self,
         ids: &[String],
