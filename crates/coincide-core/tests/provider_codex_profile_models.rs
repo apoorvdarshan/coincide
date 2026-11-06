@@ -169,7 +169,19 @@ fn settle(engine: &mut Engine) {
 fn profile_models_fixture_child() {
     let root = PathBuf::from(std::env::var_os("COINCIDE_MODEL_FIXTURE_ROOT").unwrap());
     let mut engine = Engine::new(Store::open(&root.join("state/state.sqlite")).unwrap());
-    let thread = call(&mut engine, "threads.create", json!({"cwd":root}));
+    let project = call(
+        &mut engine,
+        "projects.create",
+        json!({"path":root,"name":"Synthetic model catalog project"}),
+    );
+    let thread = call(
+        &mut engine,
+        "threads.create",
+        json!({"projectId":project["id"]}),
+    );
+    assert_eq!(thread["projectID"], project["id"]);
+    assert_eq!(project["path"], json!(root.canonicalize().unwrap()));
+    assert!(thread["worktreePath"].is_null());
     let id = text(&thread, "id");
     engine.set_active_thread(Some(id.clone())).unwrap();
     call(
