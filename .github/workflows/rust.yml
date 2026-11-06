@@ -144,8 +144,14 @@ jobs:
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
+      - name: Test native microphone PCM conversion without opening a device
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/microphone-pcm-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/microphone-pcm-tests.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly two native PCM conversion tests' }
       - name: Build actual Windows native application and owner-aware control CLI
-        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --locked
+        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone --locked
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
@@ -231,8 +237,13 @@ jobs:
           grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-linux-tests.log"
           cargo test -p coincide-desktop --bin coincide-rust appshots::tests --locked -- --nocapture | tee "$RUNNER_TEMP/appshots-owner-tests.log"
           grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-owner-tests.log"
+      - name: Test native microphone PCM conversion without opening a device
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
       - name: Build actual Linux native application
-        run: cargo build -p coincide-desktop --locked
+        run: cargo build -p coincide-desktop --features native-microphone --locked
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence
