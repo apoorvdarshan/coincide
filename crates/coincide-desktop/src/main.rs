@@ -4091,6 +4091,17 @@ impl Render for Coincide {
                 })
                 .child(self.status.clone())
                 .when_some(cookie_recovery, |view, recovery| view.child(recovery))
+                .when(self.appshots.private_cleanup_pending(), |view| {
+                    view.child(div().text_sm().child(self.appshots.outcome.clone()))
+                        .child(
+                            Button::new("quit-retry-appshot-cleanup")
+                                .label("Retry capture cleanup")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.appshots.retry_private_cleanup();
+                                    cx.notify();
+                                })),
+                        )
+                })
                 .when(!self.pending_drafts.is_empty(), |view| {
                     view.child(Button::new("quit-retry-save").label("Retry save").on_click(
                         cx.listener(|this, _, _, cx| {
