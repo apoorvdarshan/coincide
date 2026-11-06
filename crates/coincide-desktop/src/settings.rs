@@ -450,6 +450,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        quit_shortcut::configure(&self.settings, cx);
         self.sync_provider_configuration_settings(window, cx);
         self.appshots.sync(&self.settings);
         if provider_preferences_changed {
@@ -934,6 +935,14 @@ impl Coincide {
                 "New Thread starts a chat",
                 "newThreadStartsChat",
                 json!(false),
+                vec![("On", json!(true)), ("Off", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "hold quit keyboard command control q double press exit",
+                "Hold Command / Control + Q to quit",
+                "holdToQuit",
+                json!(true),
                 vec![("On", json!(true)), ("Off", json!(false))],
             ),
             (

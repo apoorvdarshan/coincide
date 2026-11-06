@@ -67,6 +67,7 @@ mod provider_settings;
 mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
+mod quit_shortcut;
 mod reply_selection_mount;
 mod scheduling;
 mod session_import;
@@ -787,6 +788,7 @@ impl Coincide {
             .unwrap_or(false)
         });
         let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
+        quit_shortcut::configure(&settings, cx);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("Write a message…")
@@ -2761,6 +2763,7 @@ impl Coincide {
             .as_ref()
             .is_some_and(|guard| guard.take_requested());
         if native_quit {
+            quit_shortcut::cancel(cx);
             self.native_quit_observed = true;
         }
         if (menu_quit || native_quit) && !self.block_provider_configuration_close(window, cx) {
