@@ -429,7 +429,9 @@ struct Coincide {
     sidebar_all_threads: Vec<ThreadSummary>,
     sidebar_preferences: sidebar_preferences::Preferences,
     sidebar_bots: Vec<Value>,
+    sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
+    sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
     projects: Vec<Value>,
     selected_project: Option<String>,
     expanded_sidebar_lists: std::collections::HashSet<String>,
@@ -1046,7 +1048,9 @@ impl Coincide {
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
-        let sidebar_bots = call(&engine, "bots.list", json!({})).ok().and_then(|reply| reply["bots"].as_array().cloned()).unwrap_or_default();
+        let sidebar_bot_reply=call(&engine,"bots.list",json!({})).unwrap_or(Value::Null);
+        let sidebar_bots=sidebar_bot_reply["bots"].as_array().cloned().unwrap_or_default();
+        let sidebar_bot_baseline=text(&sidebar_bot_reply,"baseline");
         let threads: Vec<ThreadSummary> = call(&engine, "threads.list", json!({"includeArchived":sidebar_preferences.flag("showsArchivedThreads")}))
             .and_then(|v| Ok(serde_json::from_value(v)?))
             .unwrap_or_default();
@@ -1180,7 +1184,9 @@ impl Coincide {
             show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
             sidebar_preferences,
             sidebar_bots,
+            sidebar_bot_baseline,
             sidebar_bot_pending: None,
+            sidebar_settle_undo: None,
             threads,
             projects,
             selected_project: None,
@@ -1649,7 +1655,7 @@ impl Coincide {
             Ok(threads) => self.threads = threads,
             Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
         }
-        if let Ok(reply) = call(&self.engine, "bots.list", json!({})) { if let Some(bots) = reply["bots"].as_array() { self.sidebar_bots = bots.clone(); } }
+        if let Ok(reply) = call(&self.engine, "bots.list", json!({})) { if let Some(bots) = reply["bots"].as_array() { self.sidebar_bots = bots.clone(); self.sidebar_bot_baseline=text(&reply,"baseline"); } }
         if self.search.read(cx).value().trim().is_empty() { self.sidebar_all_threads = self.threads.clone(); }
         else if let Ok(rows) = call(&self.engine, "threads.list", json!({"includeArchived":true})).and_then(|reply| Ok(serde_json::from_value(reply)?)) { self.sidebar_all_threads = rows; }
         cx.notify();
@@ -1707,6 +1713,7 @@ impl Coincide {
                 let section = if v["botID"].is_string() { "bots" } else if v["isPinned"] == true { "pinned" } else if text(&v,"projectID").is_empty() || v["projectID"] == navigation::NO_PROJECT_ID { "chats" } else { "projects" };
                 if self.sidebar_preferences.collapsed(section) { self.toggle_sidebar_section(section,cx); }
                 self.selected = Some(v);
+                if self.sidebar_preferences.document["unseen"][id].is_string() { self.sidebar_thread_marker("unseen",id,None,cx); }
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();
                 self.rename_target = None;
@@ -2172,6 +2179,10 @@ impl Coincide {
         cx.notify();
     }
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bot)=self.selected.as_ref().and_then(|thread|thread["botID"].as_str()).map(str::to_owned) {
+            if self.sidebar_bots.iter().any(|saved|saved["id"].as_str().is_some_and(|id|id.eq_ignore_ascii_case(&bot))) { self.sidebar_open_bot(bot,true,window,cx); return; }
+        }
+        if self.settings["newThreadStartsChat"] == true { self.new_thread_in_project(navigation::NO_PROJECT_ID,window,cx); return; }
         let project = self
             .selected_project
             .clone()
@@ -2214,8 +2225,11 @@ impl Coincide {
             json!({"projectId":project,"cwd":cwd}),
         ) {
             Ok(v) => {
+                let created=text(&v,"id");
+                self.created_bot_thread_to_focus=Some(created.clone());
+                self.schedules_open=false; self.workspace_open=false; self.session_import_open=false;
                 self.refresh(cx);
-                self.select(&text(&v, "id"), window, cx);
+                self.select(&created, window, cx);
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -2574,6 +2588,7 @@ impl Coincide {
         );
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_preferences.retry(&self.engine) { self.show_archived=self.sidebar_preferences.flag("showsArchivedThreads"); self.show_snoozed=self.sidebar_preferences.flag("showsSnoozedThreads"); self.refresh(cx); }
         let menu_quit = self
             .quit_requested
             .swap(false, std::sync::atomic::Ordering::AcqRel);
@@ -2680,6 +2695,11 @@ impl Coincide {
         self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
+        // A successful creation is retained by ID until its read succeeds.
+        // Retry navigation only, never the create request or a Send.
+        if let Some(created)=self.created_bot_thread_to_focus.clone() {
+            if self.selected.as_ref().is_none_or(|thread|thread["id"]!=created) { self.select(&created,window,cx); }
+        }
         if self
             .created_bot_thread_to_focus
             .as_deref()
@@ -2688,7 +2708,9 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|thread| thread["id"] == id)
             })
-            && !self.settings_in_main_window()
+            && self.find_context_available()
+            && !self.command_palette.read(cx).is_open()
+            && window.is_window_active()
         {
             self.created_bot_thread_to_focus = None;
             self.composer.read(cx).focus_handle(cx).focus(window, cx);

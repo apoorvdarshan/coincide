@@ -213,6 +213,17 @@ impl Coincide {
         let Some(folder) = self.open_folder() else {
             return;
         };
+        self.open_in_folder(target, folder, cx);
+    }
+    pub(super) fn open_in_folder(
+        &mut self,
+        target: Target,
+        folder: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
         if !folder.is_absolute() || !folder.is_dir() {
             self.status = "The conversation folder is unavailable.".into();
             cx.notify();

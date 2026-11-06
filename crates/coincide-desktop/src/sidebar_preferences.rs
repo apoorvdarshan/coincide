@@ -5,13 +5,41 @@ pub(super) const SECTIONS: [&str; 4] = ["bots", "pinned", "projects", "chats"];
 #[derive(Clone)]
 pub(super) struct Preferences {
     pub document: Value,
+    pub pending: bool,
+    pub error: Option<String>,
 }
 impl Preferences {
     pub fn load(engine: &SharedEngine) -> Self {
-        let document = try_state(engine)
-            .and_then(|engine| Ok(engine.store.document("ui-state.json")?.unwrap_or(json!({}))))
-            .unwrap_or(Value::Null);
-        Self { document }
+        let mut state = Self {
+            document: json!({}),
+            pending: true,
+            error: None,
+        };
+        state.retry(engine);
+        state
+    }
+    pub fn retry(&mut self, engine: &SharedEngine) -> bool {
+        if !self.pending {
+            return false;
+        }
+        let result = try_state(engine)
+            .and_then(|engine| Ok(engine.store.document("ui-state.json")?.unwrap_or(json!({}))));
+        match result {
+            Ok(document) => {
+                self.document = document;
+                self.pending = false;
+                self.error = None;
+                true
+            }
+            Err(error) if engine_busy(&error) => false,
+            Err(error) => {
+                self.pending = false;
+                self.error = Some(format!(
+                    "Saved sidebar preferences could not be read: {error}"
+                ));
+                false
+            }
+        }
     }
     pub fn flag(&self, key: &str) -> bool {
         self.document[key].as_bool().unwrap_or(false)
@@ -98,10 +126,45 @@ impl Coincide {
         match result {
             Ok(document) => {
                 self.sidebar_preferences.document = document;
+                self.sidebar_preferences.pending = false;
+                self.sidebar_preferences.error = None;
                 self.thread_bulk.invalidate();
                 self.expanded_sidebar_lists.clear();
             }
             Err(error) => self.status = format!("Sidebar preference could not be saved: {error}"),
+        }
+        cx.notify();
+    }
+    pub(super) fn sidebar_thread_marker(
+        &mut self,
+        key: &str,
+        id: &str,
+        value: Option<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
+            let current = engine.store.document("ui-state.json")?.unwrap_or(json!({}));
+            anyhow::ensure!(current.is_object(), "Invalid interface preferences");
+            let mut entries = current[key].as_object().cloned().unwrap_or_default();
+            if let Some(value) = value {
+                entries.insert(id.into(), value);
+            } else {
+                entries.remove(id);
+            }
+            let mut patch = json!({});
+            patch[key] = json!(entries);
+            engine.store.patch_document("ui-state.json", &patch)
+        })();
+        match result {
+            Ok(document) => {
+                self.sidebar_preferences.document = document;
+                self.sidebar_preferences.pending = false;
+                self.sidebar_preferences.error = None;
+                self.thread_bulk.invalidate();
+            }
+            Err(error) => self.status = format!("Conversation marker could not be saved: {error}"),
         }
         cx.notify();
     }
@@ -134,5 +197,31 @@ mod tests {
             moved(&saved, "projects", Some("bots")),
             ["chats", "projects", "bots", "pinned", "future"]
         );
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn busy_owner_retains_pending_preferences_and_reloads_saved_values_after_release() {
+        let root = std::env::temp_dir().join(format!("sidebar-readiness-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut store = Store::open(&root.join("ui.sqlite")).unwrap();
+        store.save_document("ui-state.json",&json!({"sidebarSections":["chats","bots"],"collapsedSections":["projects"],"future":{"keep":true}})).unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(store)));
+        let guard = engine.lock().unwrap();
+        let mut preferences = Preferences::load(&engine);
+        assert!(preferences.pending);
+        assert!(!preferences.retry(&engine));
+        drop(guard);
+        assert!(preferences.retry(&engine));
+        assert!(!preferences.pending);
+        assert_eq!(preferences.order(), ["chats", "bots", "pinned", "projects"]);
+        assert!(preferences.collapsed("projects"));
+        assert_eq!(preferences.document["future"]["keep"], true);
+        assert!(!preferences.retry(&engine));
+        drop(engine);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -3,6 +3,13 @@
 use super::*;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+#[derive(Clone)]
+struct BotDrag(String);
+impl Render for BotDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child("Move bot")
+    }
+}
 impl Coincide {
     pub(super) fn sidebar_edit_bot(
         &mut self,
@@ -49,8 +56,19 @@ impl Coincide {
         };
         if let Some(thread) = existing {
             let target = thread.id.clone();
-            self.select(&target, window, cx);
-            return;
+            let reusable = !fresh
+                || (!self.pending_drafts.contains_key(&target)
+                    && call(&self.engine, "threads.read", json!({"threadId":target}))
+                        .ok()
+                        .is_some_and(|saved| {
+                            saved["items"].as_array().is_some_and(Vec::is_empty)
+                                && saved["draft"].as_str().is_none_or(str::is_empty)
+                        }));
+            if reusable {
+                self.created_bot_thread_to_focus = Some(target.clone());
+                self.select(&target, window, cx);
+                return;
+            }
         }
         if !self.sidebar_bots.iter().any(|bot| {
             bot["id"]
@@ -81,7 +99,9 @@ impl Coincide {
                 match result {
                     Ok(reply) => {
                         this.refresh(cx);
-                        this.select(&text(&reply, "threadId"), window, cx);
+                        let created = text(&reply, "threadId");
+                        this.created_bot_thread_to_focus = Some(created.clone());
+                        this.select(&created, window, cx);
                     }
                     Err(error) => {
                         this.status = format!("Bot conversation could not be opened: {error}")
@@ -127,6 +147,9 @@ impl Coincide {
         let mut rows = div().flex().flex_col();
         for bot in bots {
             let id = text(bot, "id");
+            let drag_id = id.clone();
+            let drop_id = id.clone();
+            let baseline = self.sidebar_bot_baseline.clone();
             let click_id = id.clone();
             let menu_id = id.clone();
             let conversations = bot_conversations(&self.sidebar_all_threads, &id);
@@ -177,6 +200,38 @@ impl Coincide {
                                     .child(div().truncate().text_xs().child(preview)),
                             ),
                     )
+                    .on_drag(BotDrag(drag_id), |drag, _, _, cx| cx.new(|_| drag.clone()))
+                    .on_drop(cx.listener(move |this, drag: &BotDrag, _, cx| {
+                        let mut ids: Vec<_> = this
+                            .sidebar_bots
+                            .iter()
+                            .map(|bot| text(bot, "id"))
+                            .collect();
+                        if !ids.iter().any(|id| id.eq_ignore_ascii_case(&drag.0)) {
+                            return;
+                        }
+                        ids.retain(|id| !id.eq_ignore_ascii_case(&drag.0));
+                        let index = ids
+                            .iter()
+                            .position(|id| id.eq_ignore_ascii_case(&drop_id))
+                            .unwrap_or(ids.len());
+                        ids.insert(index, drag.0.clone());
+                        let result = try_state(&this.engine)
+                            .and_then(|mut engine| engine.reorder_native_bots(&ids, &baseline));
+                        match result {
+                            Ok(reply) => {
+                                this.sidebar_bots =
+                                    reply["bots"].as_array().cloned().unwrap_or_default();
+                                this.sidebar_bot_baseline = text(&reply, "baseline");
+                                this.sidebar_preference("choseBotSort", json!(true), cx);
+                                this.sidebar_preference("botSort", json!("manual"), cx);
+                            }
+                            Err(error) => {
+                                this.status = format!("Bots could not be reordered: {error}")
+                            }
+                        }
+                        cx.notify();
+                    }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.sidebar_open_bot(click_id.clone(), false, window, cx)
                     }))

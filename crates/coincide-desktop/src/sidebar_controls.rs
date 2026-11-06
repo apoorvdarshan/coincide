@@ -220,6 +220,10 @@ impl Coincide {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
+        if id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
+            self.toggle_sidebar_section("bots", cx);
+            return;
+        }
         if id == navigation::NO_PROJECT_ID {
             self.toggle_sidebar_section("chats", cx);
             return;

@@ -21,6 +21,14 @@ enum SidebarThreadAction {
     Rename,
     Fork,
     Archive,
+    Schedule,
+    CopyID,
+    CopyPath,
+    Open,
+    Unread,
+    Settle,
+    Snooze(f64),
+    Unsnooze,
 }
 
 pub(super) fn automatic_sidebar_limit(height: f32) -> usize {
@@ -62,7 +70,7 @@ impl Coincide {
             &self.threads,
             projects,
             self.selected_project.as_deref(),
-            self.show_snoozed || searching,
+            true, // Running/approval rows stay visible even while snoozed.
             now,
             searching,
         );
@@ -127,7 +135,12 @@ impl Coincide {
                             .and_then(|meta| meta.updated_at)
                             .unwrap_or(f64::MAX)
                     });
+                let snoozed = thread.snoozed_until.is_some_and(|until| until > now);
                 !represented
+                    && (!snoozed
+                        || self.show_snoozed
+                        || searching
+                        || self.running.contains(&thread.id))
                     && (!settled
                         || searching
                         || self.sidebar_preferences.flag("showsSettledThreads")
@@ -231,7 +244,7 @@ impl Coincide {
         let sections = self.sidebar_sections(now, searching);
         let mut section_index = 0usize;
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
-        if sections.is_empty() {
+        if sections.is_empty() && self.sidebar_bots.is_empty() {
             conversations = conversations.child(
                 div()
                     .p_3()
@@ -307,6 +320,15 @@ impl Coincide {
                 if let Some(group_id) = section.project_id.clone() {
                     let chats = group_id == NO_PROJECT;
                     let target = group_id.clone();
+                    let menu_target = group_id.clone();
+                    let menu_path = self
+                        .projects
+                        .iter()
+                        .find(|project| project["id"] == group_id)
+                        .and_then(|project| project["path"].as_str())
+                        .map(std::path::PathBuf::from);
+                    let parent = cx.entity().downgrade();
+                    let targets = self.open_targets.clone();
                     group = group.child(
                         Button::new(SharedString::from(format!("project-group-{group_id}")))
                             .ghost()
@@ -352,7 +374,88 @@ impl Coincide {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.thread_bulk.invalidate();
                                 this.sidebar_expand_project(&target, collapsed, cx);
-                            })),
+                            }))
+                            .context_menu(move |mut menu, _, _| {
+                                let parent_new = parent.clone();
+                                let id = menu_target.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(if chats {
+                                        "New Chat"
+                                    } else {
+                                        "New Thread"
+                                    })
+                                    .on_click(
+                                        move |_, window, cx| {
+                                            let _ = parent_new.update(cx, |this, cx| {
+                                                this.selected_project = Some(id.clone());
+                                                this.new_thread_in_project(&id, window, cx);
+                                            });
+                                        },
+                                    ),
+                                );
+                                if let Some(path) = menu_path.clone() {
+                                    menu = menu.item(PopupMenuItem::separator());
+                                    for target in &targets {
+                                        let parent = parent.clone();
+                                        let path = path.clone();
+                                        let target = target.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(format!("Open in {}", target.name))
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = parent.update(cx, |this, cx| {
+                                                        this.change_setting(
+                                                            "preferredOpenTarget",
+                                                            json!(target.id),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        this.open_in_folder(
+                                                            target.clone(),
+                                                            path.clone(),
+                                                            cx,
+                                                        );
+                                                    });
+                                                }),
+                                        );
+                                    }
+                                    let copy = path.to_string_lossy().into_owned();
+                                    menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
+                                        move |_, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                copy.clone(),
+                                            ))
+                                        },
+                                    ));
+                                    if !chats {
+                                        menu = menu.item(PopupMenuItem::separator());
+                                        for (label, mode) in [
+                                            ("Locate Folder…", project_management::Mode::Relocate),
+                                            ("Rename…", project_management::Mode::Rename),
+                                            (
+                                                "Remove from Coincide…",
+                                                project_management::Mode::Remove,
+                                            ),
+                                        ] {
+                                            let parent = parent.clone();
+                                            let id = menu_target.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                                move |_, window, cx| {
+                                                    let _ = parent.update(cx, |this, cx| {
+                                                        this.project_picker_open = true;
+                                                        this.open_project_form(
+                                                            mode,
+                                                            Some(id.clone()),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                },
+                                            ));
+                                        }
+                                    }
+                                }
+                                menu
+                            }),
                     );
                 } else {
                     group = group.child(
@@ -404,13 +507,35 @@ impl Coincide {
                         let parent = cx.entity().downgrade();
                         let is_pinned = thread.pinned;
                         let is_archived = thread.archived;
+                        let was_unread =
+                            self.sidebar_preferences.document["unseen"][&thread.id].is_string();
+                        let was_settled = self.sidebar_preferences.document["settledThreads"]
+                            [&thread.id]
+                            .as_f64()
+                            .is_some_and(|date| {
+                                date >= thread
+                                    .navigation
+                                    .as_ref()
+                                    .and_then(|meta| meta.updated_at)
+                                    .unwrap_or(f64::MAX)
+                            });
                         let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
                         let label = format!(
                             "{}{}{}{}",
                             if thread.pinned && !pinned { "★ " } else { "" },
                             if thread.archived { "Archived · " } else { "" },
                             if snoozed { "Snoozed · " } else { "" },
-                            thread.title
+                            format!(
+                                "{}{}",
+                                if self.sidebar_preferences.document["unseen"][&thread.id]
+                                    .is_string()
+                                {
+                                    "● "
+                                } else {
+                                    ""
+                                },
+                                thread.title
+                            )
                         );
                         group = group.child(
                             Button::new(SharedString::from(format!("thread-{id}")))
@@ -452,7 +577,7 @@ impl Coincide {
                                     this.bulk_row_click(&id, selecting, window, cx)
                                 }))
                                 .context_menu(move |mut menu, _, _| {
-                                    for (label, action) in [
+                                    let mut actions = vec![
                                         (
                                             if is_pinned { "Unpin" } else { "Pin" },
                                             SidebarThreadAction::Pin,
@@ -463,7 +588,10 @@ impl Coincide {
                                             if is_archived { "Restore" } else { "Archive…" },
                                             SidebarThreadAction::Archive,
                                         ),
-                                    ] {
+                                    ];
+                                    actions.extend([("Schedule…",SidebarThreadAction::Schedule),("Open In",SidebarThreadAction::Open),("Copy Path",SidebarThreadAction::CopyPath),("Copy Thread ID",SidebarThreadAction::CopyID),(if was_unread { "Mark as Read" } else { "Mark as Unread" },SidebarThreadAction::Unread),(if was_settled { "Unsettle" } else { "Settle" },SidebarThreadAction::Settle)]);
+                                    if snoozed { actions.push(("Unsnooze",SidebarThreadAction::Unsnooze)); } else { actions.extend(coincide_core::scheduling::native_snooze_presets().into_iter().map(|(label,date)|(label,SidebarThreadAction::Snooze(date)))); }
+                                    for (label,action) in actions {
                                         let parent = parent.clone();
                                         let id = menu_id.clone();
                                         menu = menu.item(PopupMenuItem::new(label).on_click(
@@ -494,8 +622,21 @@ impl Coincide {
                                                             this.fork(window, cx)
                                                         }
                                                         SidebarThreadAction::Archive => {
-                                                            this.request_archive(cx)
+                                                            if !this.running.contains(&id) { this.request_archive(cx); } else { this.status="Stop this conversation before archiving it.".into(); cx.notify(); }
                                                         }
+                                                        SidebarThreadAction::Schedule => { this.open_conversation_schedules(cx); this.open_schedule_editor(None,window,cx); }
+                                                        SidebarThreadAction::CopyID => cx.write_to_clipboard(ClipboardItem::new_string(id.clone())),
+                                                        SidebarThreadAction::CopyPath => { if let Some(path)=this.open_folder() { cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned())); } }
+                                                        SidebarThreadAction::Open => { if let Some(target)=open_targets::preferred(&this.open_targets,&this.settings).cloned() { this.open_in_target(target,false,window,cx); } }
+                                                        SidebarThreadAction::Unread => { this.sidebar_thread_marker("unseen",&id,(!was_unread).then(||json!("completed")),cx); }
+                                                        SidebarThreadAction::Settle => {
+                                                            let settled=was_settled;
+                                                            let pending=call(&this.engine,"agent.pending",json!({"threadId":id}));
+                                                            if settled || (!this.running.contains(&id) && pending.as_ref().is_ok_and(|rows|rows.as_array().is_some_and(Vec::is_empty))) { let before=this.sidebar_preferences.document["settledThreads"].get(&id).cloned(); let after=(!settled).then(||json!(coincide_core::store::swift_timestamp())); this.sidebar_thread_marker("settledThreads",&id,after.clone(),cx); if this.sidebar_preferences.document["settledThreads"].get(&id)==after.as_ref() { this.sidebar_settle_undo=Some((id.clone(),before,after)); } }
+                                                            else { this.status="Finish this conversation's work and approvals before settling it.".into(); cx.notify(); }
+                                                        }
+                                                        SidebarThreadAction::Snooze(date) => { this.patch_navigation(&id,json!({"snoozedUntil":date}),"Conversation snoozed.",cx); }
+                                                        SidebarThreadAction::Unsnooze => this.snooze_selected(None,cx),
                                                     }
                                                 });
                                             },
@@ -839,6 +980,32 @@ impl Coincide {
                 |view| view.child(self.bulk_controls(cx)),
             )
             .child(conversations)
+            .when_some(self.sidebar_preferences.error.as_ref(), |view, error| {
+                view.child(div().text_xs().child(error.clone()))
+            })
+            .when(self.sidebar_settle_undo.is_some(), |view| {
+                view.child(
+                    Button::new("sidebar-undo-settle")
+                        .ghost()
+                        .compact()
+                        .label("Undo Settle")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some((id, before, after)) = this.sidebar_settle_undo.take() {
+                                if this.sidebar_preferences.document["settledThreads"].get(&id)
+                                    == after.as_ref()
+                                    && (before.is_none() || !this.running.contains(&id))
+                                {
+                                    this.sidebar_thread_marker("settledThreads", &id, before, cx);
+                                } else {
+                                    this.status =
+                                        "Conversation state changed; settle Undo was not applied."
+                                            .into();
+                                    cx.notify();
+                                }
+                            }
+                        })),
+                )
+            })
             .when_some(self.sidebar_resize.error(), |view, error| {
                 view.child(div().text_xs().child(error))
             })

@@ -205,3 +205,47 @@ fn methods_are_registered_once_in_public_capabilities() {
     let response = engine.dispatch(json!({"method":"bots.list","params":{}}));
     assert_eq!(response["result"]["bots"], json!([]));
 }
+
+#[test]
+fn native_bot_reorder_is_a_baseline_checked_permutation_preserving_every_record_and_envelope_field()
+{
+    let (_root, mut engine) = fixture();
+    const OTHER: &str = "00000000-0000-4000-8000-000000000002";
+    let mut original = envelope();
+    let mut second = original["bots"][0].clone();
+    second["id"] = json!(OTHER);
+    second["name"] = json!("Second");
+    original["bots"]
+        .as_array_mut()
+        .unwrap()
+        .push(second.clone());
+    engine.store.save_document(DOCUMENT, &original).unwrap();
+    let listed = engine.execute("bots.list", &json!({})).unwrap();
+    let baseline = listed["baseline"].as_str().unwrap();
+    let revision = engine.revision;
+    assert!(
+        engine
+            .reorder_native_bots(&[ID.into(), ID.into()], baseline)
+            .is_err()
+    );
+    assert!(engine.reorder_native_bots(&[ID.into()], baseline).is_err());
+    assert_eq!(engine.revision, revision);
+    assert_eq!(
+        engine.store.document(DOCUMENT).unwrap(),
+        Some(original.clone())
+    );
+    let result = engine
+        .reorder_native_bots(&[OTHER.into(), ID.into()], baseline)
+        .unwrap();
+    assert_eq!(result["bots"][0], second);
+    assert_eq!(result["bots"][1], original["bots"][0]);
+    let reordered = engine.store.document(DOCUMENT).unwrap().unwrap();
+    assert_eq!(reordered["futureEnvelope"], original["futureEnvelope"]);
+    assert_eq!(reordered["starterLineup"], original["starterLineup"]);
+    assert!(
+        engine
+            .reorder_native_bots(&[ID.into(), OTHER.into()], baseline)
+            .is_err()
+    );
+    assert_eq!(engine.store.document(DOCUMENT).unwrap(), Some(reordered));
+}
