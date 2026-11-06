@@ -630,6 +630,8 @@ impl Coincide {
                             .into_any_element()
                     })
                     .into_any_element()
+        } else if self.settings_section == SettingsSection::Appshots {
+            self.appshots_settings_panel(cx)
         } else if self.computer_use_settings_visible() {
             self.computer_use_settings_pane(cx)
         } else if self.media_settings_visible() {
@@ -1099,7 +1101,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.record_appshot_shortcut(event, window, cx) { return; }
+        if self.record_appshot_shortcut(event, window, cx) {
+            return;
+        }
         self.record_appshot_interaction();
         if self.record_shortcut_event(event, window, cx) {
             return;

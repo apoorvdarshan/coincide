@@ -166,6 +166,9 @@ impl Coincide {
             (1, "Grant Screen Recording access"),
             (2, "Grant Accessibility access"),
         ] {
+            if action != 0 && !cfg!(target_os = "macos") {
+                continue;
+            }
             pane = pane.child(
                 Button::new(("appshots-permission", action as usize))
                     .label(label)

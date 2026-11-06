@@ -63,6 +63,7 @@ fn section_icon(section: Section) -> (gpui_kit::assets::IconName, u32) {
         Section::Voice => (I::Mic, 0xc74444),
         Section::Browser => (I::Globe, 0x1c8caa),
         Section::ComputerUse => (I::Monitor, 0x347cc4),
+        Section::Appshots => (I::Camera, 0x386dc2),
         Section::Media => (I::GalleryVerticalEnd, 0xb77927),
         Section::Accounts => (I::LayoutDashboard, 0x5d64bb),
         Section::Provider(_) => (I::Cpu, 0x717782),
@@ -157,6 +158,9 @@ fn search_matches(section: Section, query: &str) -> bool {
         Section::Voice => "dictation speech microphone transcription",
         Section::Browser => "web passwords profile cookies",
         Section::ComputerUse => "screen accessibility permissions control",
+        Section::Appshots => {
+            "screenshot app window image capture shortcut permissions sound accessibility text"
+        }
         Section::Media => "historical images attachments media",
         Section::Accounts => "providers overview agents accounts login",
         Section::Provider(_) => "provider accounts login models executable",
@@ -168,12 +172,19 @@ fn search_matches(section: Section, query: &str) -> bool {
 }
 
 impl Coincide {
-    fn navigate_settings_section(
+    pub(super) fn navigate_settings_section(
         &mut self,
         section: Section,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if section != Section::Appshots && self.appshots.recording {
+            self.appshots.recording = false;
+            self.appshots.invalidate();
+        }
+        if section == Section::Appshots {
+            self.appshots.permissions = appshots_platform::permissions(0);
+        }
         self.archive_settings.close_review();
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
@@ -263,6 +274,7 @@ impl Coincide {
             Section::Voice,
             Section::Browser,
             Section::ComputerUse,
+            Section::Appshots,
             Section::Media,
         ] {
             navigation =
@@ -308,6 +320,7 @@ impl Coincide {
                 Section::Voice,
                 Section::Browser,
                 Section::ComputerUse,
+                Section::Appshots,
                 Section::Media,
                 Section::Accounts,
                 Section::About,

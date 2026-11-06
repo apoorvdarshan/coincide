@@ -44,6 +44,7 @@ icon_assets!(
         Bot,
         Building2,
         Calendar,
+        Camera,
         CaseSensitive,
         ChartPie,
         ChartNoAxesColumn,
@@ -165,6 +166,7 @@ mod tests {
             "icons/ellipsis.svg",
             "icons/loader-circle.svg",
             // Composer actions already reference these non-default icons.
+            "icons/camera.svg",
             "icons/brain.svg",
             "icons/zap.svg",
             "icons/lock.svg",

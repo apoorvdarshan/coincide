@@ -167,6 +167,13 @@ impl Coincide {
         if !appshots_platform::triggered() {
             return;
         }
+        self.appshots.permissions = appshots_platform::permissions(0);
+        if !self.appshots.permissions.screen {
+            self.settings_open = true;
+            self.navigate_settings_section(settings::SettingsSection::Appshots, window, cx);
+            self.show_settings_window(cx);
+            return;
+        }
         if !self.appshots.workers.can_start() {
             self.appshots.outcome = "An appshot is already being captured".into();
             return;

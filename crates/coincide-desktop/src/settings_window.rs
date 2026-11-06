@@ -88,7 +88,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.record_appshot_shortcut(event, window, cx) { return; }
+        if self.record_appshot_shortcut(event, window, cx) {
+            return;
+        }
         if self.record_shortcut_event(event, window, cx) {
             return;
         }
@@ -169,6 +171,10 @@ impl Coincide {
         self.settings_window_pending = false;
         self.settings_open = false;
         self.cancel_settings_shortcut();
+        if self.appshots.recording {
+            self.appshots.recording = false;
+            self.appshots.invalidate();
+        }
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
         self.sync_transcription_binding(cx);
