@@ -69,8 +69,21 @@ fn compile_computer_use() {
 
 #[cfg(target_os = "macos")]
 fn compile_appshots() {
-    cc::Build::new().file("src/appshots_macos.m").flag("-fobjc-arc").flag("-fblocks").flag("-std=gnu11").compile("coincide_appshots");
-    for framework in ["Foundation", "AppKit", "ApplicationServices", "CoreGraphics", "Carbon", "ScreenCaptureKit", "AudioToolbox"] {
+    cc::Build::new()
+        .file("src/appshots_macos.m")
+        .flag("-fobjc-arc")
+        .flag("-fblocks")
+        .flag("-std=gnu11")
+        .compile("coincide_appshots");
+    for framework in [
+        "Foundation",
+        "AppKit",
+        "ApplicationServices",
+        "CoreGraphics",
+        "Carbon",
+        "ScreenCaptureKit",
+        "AudioToolbox",
+    ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }
