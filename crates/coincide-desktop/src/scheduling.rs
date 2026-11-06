@@ -926,7 +926,7 @@ fn schedule_timing(recurrence: &Value) -> String {
 #[cfg(test)]
 mod global_schedule_tests {
     use super::*;
-    #[test]
+    #[::core::prelude::v1::test]
     fn global_api_read_keeps_targets_and_native_cas_rejects_revision_or_target_changes() {
         let root = std::env::temp_dir().join(format!(
             "coincide-global-schedules-{}",
