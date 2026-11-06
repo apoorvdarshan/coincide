@@ -260,7 +260,7 @@ mod tests {
             args: vec![],
         }
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn saved_installed_choice_wins_and_missing_choice_falls_back_without_rewriting_settings() {
         let targets = vec![target("editor"), target("files")];
         let settings = json!({"preferredOpenTarget":"files", "unrelated":true});

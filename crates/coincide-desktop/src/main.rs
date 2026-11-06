@@ -44,6 +44,9 @@ mod microphone;
 mod microphone_settings;
 mod models_settings;
 mod native_quit;
+mod sidebar_preferences;
+mod sidebar_controls;
+mod sidebar_bots;
 mod navigation;
 mod navigation_rail;
 mod open_targets;
@@ -423,6 +426,10 @@ struct Coincide {
     transcript_count: usize,
     expanded: std::collections::HashSet<usize>,
     threads: Vec<ThreadSummary>,
+    sidebar_all_threads: Vec<ThreadSummary>,
+    sidebar_preferences: sidebar_preferences::Preferences,
+    sidebar_bots: Vec<Value>,
+    sidebar_bot_pending: Option<String>,
     projects: Vec<Value>,
     selected_project: Option<String>,
     expanded_sidebar_lists: std::collections::HashSet<String>,
@@ -1038,7 +1045,9 @@ impl Coincide {
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
-        let threads = call(&engine, "threads.list", json!({}))
+        let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
+        let sidebar_bots = call(&engine, "bots.list", json!({})).ok().and_then(|reply| reply["bots"].as_array().cloned()).unwrap_or_default();
+        let threads: Vec<ThreadSummary> = call(&engine, "threads.list", json!({"includeArchived":sidebar_preferences.flag("showsArchivedThreads")}))
             .and_then(|v| Ok(serde_json::from_value(v)?))
             .unwrap_or_default();
         let projects = call(&engine, "projects.list", json!({}))
@@ -1062,6 +1071,7 @@ impl Coincide {
                 }
             }
         });
+        let collapsed_projects = projects.iter().filter(|project| project["isExpanded"] == false).map(|project| text(project,"id")).collect();
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
         let mut this = Self {
@@ -1165,12 +1175,17 @@ impl Coincide {
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
             expanded: Default::default(),
+            sidebar_all_threads: threads.clone(),
+            show_archived: sidebar_preferences.flag("showsArchivedThreads"),
+            show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
+            sidebar_preferences,
+            sidebar_bots,
+            sidebar_bot_pending: None,
             threads,
             projects,
             selected_project: None,
             expanded_sidebar_lists: std::collections::HashSet::new(),
-            collapsed_projects: Default::default(),
-            show_snoozed: false,
+            collapsed_projects,
             navigation_last_clock: Instant::now(),
             rename_target: None,
             rename_input,
@@ -1200,7 +1215,6 @@ impl Coincide {
             image_asset_order: Default::default(),
             search,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
-            show_archived: false,
             browser,
             browser_address,
             browser_address_page: None,
@@ -1627,6 +1641,7 @@ impl Coincide {
         }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
+            self.collapsed_projects = self.projects.iter().filter(|project| project["isExpanded"] == false).map(|project| text(project,"id")).collect();
         } else {
             complete = false;
         }
@@ -1634,6 +1649,9 @@ impl Coincide {
             Ok(threads) => self.threads = threads,
             Err(e) => { complete = false; self.status = format!("Unable to load conversations: {e}"); },
         }
+        if let Ok(reply) = call(&self.engine, "bots.list", json!({})) { if let Some(bots) = reply["bots"].as_array() { self.sidebar_bots = bots.clone(); } }
+        if self.search.read(cx).value().trim().is_empty() { self.sidebar_all_threads = self.threads.clone(); }
+        else if let Ok(rows) = call(&self.engine, "threads.list", json!({"includeArchived":true})).and_then(|reply| Ok(serde_json::from_value(reply)?)) { self.sidebar_all_threads = rows; }
         cx.notify();
         complete
     }
@@ -1686,6 +1704,8 @@ impl Coincide {
                 if !self.schedule_editor.all_conversations && self.schedule_editor.thread_id != id {
                     self.schedule_editor.open = false;
                 }
+                let section = if v["botID"].is_string() { "bots" } else if v["isPinned"] == true { "pinned" } else if text(&v,"projectID").is_empty() || v["projectID"] == navigation::NO_PROJECT_ID { "chats" } else { "projects" };
+                if self.sidebar_preferences.collapsed(section) { self.toggle_sidebar_section(section,cx); }
                 self.selected = Some(v);
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();

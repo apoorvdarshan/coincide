@@ -162,7 +162,7 @@ pub(super) fn visible_rows<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
+    #[::core::prelude::v1::test]
     fn cut_retains_selected_row_and_search_and_expansion_reveal_every_match() {
         let all: Vec<_> = (0..15).map(|i| row(&format!("t{i}"), "p", false)).collect();
         let refs: Vec<_> = all.iter().collect();
@@ -187,6 +187,7 @@ mod tests {
             archived: false,
             pinned,
             snoozed_until: None,
+            navigation: None,
         }
     }
     fn ids(sections: &[Section<'_>]) -> Vec<String> {
@@ -195,7 +196,7 @@ mod tests {
             .flat_map(|section| section.threads.iter().map(|thread| thread.id.clone()))
             .collect()
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn pinned_threads_appear_once_above_projects_and_chats_in_input_order() {
         let rows = vec![
             row("chat-pin", "", true),
@@ -221,7 +222,7 @@ mod tests {
         );
         assert_eq!(sections.last().unwrap().name, "Chats");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn project_and_snooze_filters_apply_before_pinned_projection() {
         let mut snoozed = row("hidden-pin", "p", true);
         snoozed.snoozed_until = Some(20.);
@@ -245,7 +246,7 @@ mod tests {
         );
         assert!(project(&rows, vec![], Some(NO_PROJECT), true, 10.).is_empty());
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn upstream_search_archive_subset_is_not_resurrected_and_selected_identity_is_unchanged() {
         let mut archived = row("visible-archived-pin", "missing", true);
         archived.archived = true;
@@ -263,7 +264,7 @@ mod tests {
             ["selected"]
         );
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn empty_and_unknown_projects_and_bots_never_lose_or_duplicate_rows() {
         let rows = vec![
             row("empty", "", false),
@@ -285,7 +286,7 @@ mod tests {
         );
         assert_eq!(rows[0].project_id, "");
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn declared_project_order_is_stable_and_duplicate_project_metadata_does_not_duplicate_ids() {
         let rows = vec![row("a", "first", false), row("b", "second", false)];
         let sections = project(
@@ -302,7 +303,7 @@ mod tests {
         assert_eq!(ids(&sections), ["b", "a"]);
         assert_eq!(sections.len(), 2);
     }
-    #[test]
+    #[::core::prelude::v1::test]
     fn display_groups_bots_folders_chats_and_shows_empty_configured_folders_only_outside_search() {
         let rows = vec![
             row("project", "p", false),

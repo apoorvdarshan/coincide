@@ -230,7 +230,7 @@ fn community_links(height: f32) -> Vec<CommunityLink> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
+    #[::core::prelude::v1::test]
     fn short_rail_preserves_community_priority_without_reordering_survivors() {
         let labels = |height| {
             community_links(height)
