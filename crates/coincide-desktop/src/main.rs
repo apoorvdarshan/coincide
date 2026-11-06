@@ -73,6 +73,7 @@ mod scheduling;
 mod session_import;
 mod settings;
 mod settings_navigation;
+mod settings_scroll;
 mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
@@ -391,6 +392,7 @@ struct Coincide {
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
     settings_section: settings::SettingsSection,
+    settings_scroll: settings_scroll::State,
     settings_window: Option<gpui_kit::AnyWindowHandle>,
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
@@ -1197,6 +1199,7 @@ impl Coincide {
             settings_search,
             settings_navigation: Default::default(),
             settings_section: Default::default(),
+            settings_scroll: Default::default(),
             instructions_panel,
             provider_configuration_panel,
             provider_enable_prompt: None,

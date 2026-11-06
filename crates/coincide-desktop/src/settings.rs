@@ -615,6 +615,7 @@ impl Coincide {
                             .child(self.bot_panel.clone())
                             .into_any_element()
                     } else if self.notifications_open {
+                        self.settings_scroll.frame("notifications",
                         div()
                             .id("notification-settings-scroll")
                             .flex_1()
@@ -622,8 +623,10 @@ impl Coincide {
                             .overflow_y_scroll()
                             .child(self.notification_panel.clone())
                             .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
+                        )
                             .into_any_element()
                     } else {
+                        self.settings_scroll.frame("voice",
                         div()
                             .id("transcription-settings-scroll")
                             .flex_1()
@@ -633,6 +636,7 @@ impl Coincide {
                             .child(self.microphone_panel.clone())
                             .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
                             .child(div().p_3().text_sm().child(self.status.clone()))
+                        )
                             .into_any_element()
                     })
                     .into_any_element()
@@ -1106,13 +1110,16 @@ impl Coincide {
                     )),
             )
             .child(
-                div()
-                    .id("settings-results")
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(content),
+                self.settings_scroll.frame(
+                    filtering.id(),
+                    div()
+                        .id("settings-results")
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(content),
+                ),
             )
             .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
