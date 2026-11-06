@@ -56,6 +56,16 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- UI parity is now the active priority. A private native comparison confirmed
+  the missing persistent rail, oversized wrapping header and obscured composer
+  controls. The first presentation batch adds a 60px navigation rail using real
+  existing actions, an independently collapsible list with focus handoff, a 44px
+  icon toolbar with explicit secondary actions, and enlarged verified historical
+  images with Escape/Close and freshness revocation. The exact combined source
+  b493885 passed 364 desktop unit tests and all four integration targets
+  (19, 10, 14, 11). Native acceptance is pending. This is partial UI parity;
+  sidebar ordering/resize, all Swift destinations and full composer matching
+  remain open. No core authority, arbitrary image path or updater gate changed.
 - Work resumed on 2026-11-06 at 04:18 UTC after an inactive gap; the overnight
   work was not continuous. The broad acceptance checklist remains incomplete.
 - The new explicit default-runtime Codex limits reader and separate Usage panel
@@ -67,7 +77,8 @@ Latest verification and current gates:
   live limits acceptance passed on ab1b8e4: one visible Refresh showed actual
   timestamped provider windows/plan/reset/credits, missing fields stayed unknown,
   and normal native Quit exited zero with isolated data and Swift preserved.
-  This batch's remote CI remains pending.
+  Exact 9724e58 then passed all six Rust jobs (42162788718), packaging validation
+  (42162788723), and general CI (42162788714).
 - e88132a passed all six Rust CI jobs (42128919172), packaging validation
   (42128919100) and general CI (42128919184), verified on the exact pushed SHA.
   Local outcome-diagnostic and cookie-notification changes passed 511 core unit
