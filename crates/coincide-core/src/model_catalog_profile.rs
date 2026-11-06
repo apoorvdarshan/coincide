@@ -214,6 +214,25 @@ impl ModelCatalog {
             discover_named(&work_binding, cancelled).map_err(|error| error.to_string())
         })
     }
+    /// Ordinary restoration observes an existing authenticated result after
+    /// polling, without racing a loading-to-ready transition into a new job.
+    /// Private parked-session fences can require a wholly new actor instead.
+    pub(crate) fn refresh_named_restore(
+        &mut self,
+        binding: NamedBinding,
+        force_fresh: bool,
+    ) -> Result<Value> {
+        binding.validate()?;
+        let work_binding = binding.clone();
+        let reuse = if force_fresh {
+            RefreshReuse::Never
+        } else {
+            RefreshReuse::AuthenticatedReadyOrLoading
+        };
+        self.refresh_scoped_reusing("codex", None, Some(binding), reuse, move |cancelled| {
+            discover_named(&work_binding, cancelled).map_err(|error| error.to_string())
+        })
+    }
     pub(crate) fn named_status(&self, id: &str, binding: &NamedBinding) -> Result<Value> {
         binding.validate()?;
         let job = self

@@ -347,23 +347,24 @@ impl Engine {
         }
         while intent.index < intent.candidates.len() {
             let candidate = intent.candidates[intent.index].clone();
+            // The private parked fence is a deny-only generation watermark.
+            // It applies to loading actors as well as ready ones; public JSON
+            // cannot force/reuse a continuation actor.
+            let force_fresh = match &candidate.binding {
+                Binding::Named(binding) => self
+                    .model_catalog
+                    .named_catalog_fence(binding)
+                    .as_ref()
+                    .map(|latest| self.named_resume.catalog_refresh_required(binding, latest))
+                    .transpose()?
+                    .unwrap_or(false),
+                Binding::Default(_) => false,
+            };
             let ready = match &candidate.binding {
-                Binding::Named(binding) => match self.model_catalog.ready_named_restore(binding) {
-                    Some(ready) => {
-                        let admission = self
-                            .model_catalog
-                            .named_resume_admission(&candidate.thread, binding)?;
-                        if self
-                            .named_resume
-                            .catalog_refresh_required(binding, &admission)?
-                        {
-                            None
-                        } else {
-                            Some(ready)
-                        }
-                    }
-                    None => None,
-                },
+                Binding::Named(binding) if !force_fresh => {
+                    self.model_catalog.ready_named_restore(binding)
+                }
+                Binding::Named(_) => None,
                 Binding::Default(binding) => self.model_catalog.ready_default_restore(binding),
             };
             let status = if let Some(request) = &intent.request {
@@ -396,7 +397,9 @@ impl Engine {
                     return Ok(response);
                 }
                 let response = match &candidate.binding {
-                    Binding::Named(binding) => self.model_catalog.refresh_named(binding.clone()),
+                    Binding::Named(binding) => self
+                        .model_catalog
+                        .refresh_named_restore(binding.clone(), force_fresh),
                     Binding::Default(binding) => {
                         self.model_catalog.refresh_default_restore(binding.clone())
                     }

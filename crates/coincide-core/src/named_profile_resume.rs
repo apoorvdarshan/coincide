@@ -379,14 +379,14 @@ impl Registry {
     pub(crate) fn catalog_refresh_required(
         &self,
         binding: &NamedBinding,
-        admission: &NamedResumeAdmission,
+        latest: &NamedCatalogFence,
     ) -> Result<bool> {
         let key = slot(binding.thread(), binding.account())?;
         Ok(self
             .parked
             .get(&key)
             .and_then(|parked| parked.fence.as_ref())
-            .is_some_and(|fence| admission.is_actor(fence)))
+            .is_some_and(|fence| latest.is_actor(fence)))
     }
     /// Explicit departure is the only same-owner projection into a dormant
     /// capability. Capture it before cancelling the account's catalog owner.
@@ -716,7 +716,11 @@ mod tests {
         registry
             .park_departure(&threads[0], catalog.named_catalog_fence(&binding))
             .unwrap();
-        assert!(registry.catalog_refresh_required(&binding, &old).unwrap());
+        assert!(
+            registry
+                .catalog_refresh_required(&binding, &catalog.named_catalog_fence(&binding).unwrap())
+                .unwrap()
+        );
         let policy = || {
             Policy::parse_named(&threads[0], crate::composer_policy::Origin::Ordinary, None)
                 .unwrap()
@@ -740,7 +744,11 @@ mod tests {
         let fresh = catalog
             .named_resume_admission(&threads[0], &binding)
             .unwrap();
-        assert!(!registry.catalog_refresh_required(&binding, &fresh).unwrap());
+        assert!(
+            !registry
+                .catalog_refresh_required(&binding, &catalog.named_catalog_fence(&binding).unwrap())
+                .unwrap()
+        );
         let resumed = registry
             .prepare_admitted(
                 &threads[0],
