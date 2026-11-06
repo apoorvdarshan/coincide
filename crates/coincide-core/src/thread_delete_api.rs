@@ -9,242 +9,6 @@ pub struct PreparedThreadDeletion {
     rows: Vec<DeleteRow>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn fixture() -> (tempfile::TempDir, Engine, String) {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(&dir.path().join("data/state.sqlite")).unwrap();
-        let mut thread = store.new_thread("").unwrap();
-        thread["isArchived"] = json!(true);
-        thread["title"] = json!("Synthetic native archive");
-        thread["sessions"] = json!({"codex":{"sessionID":"old-default-native"}});
-        store.save(&thread).unwrap();
-        (dir, Engine::fixture(store), text(&thread, "id"))
-    }
-    #[test]
-    fn human_confirmed_delete_and_undo_are_owner_bound_and_preserve_native_denials() {
-        let (dir, mut engine, id) = fixture();
-        let before = engine.store.thread(&id).unwrap();
-        engine.set_active_thread(Some(id.clone())).unwrap();
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        let undo = engine.apply_native_thread_deletion(plan).unwrap();
-        assert!(engine.store.thread(&id).is_err());
-        assert!(engine.active_thread().is_none());
-        assert!(
-            engine.store.save(&before).is_err(),
-            "Ordinary saves cannot recreate a deleted UUID"
-        );
-        let mut other =
-            Engine::fixture(Store::open(&dir.path().join("data/state.sqlite")).unwrap());
-        assert!(
-            other.undo_native_thread_deletion(&undo).is_err(),
-            "Another Engine cannot adopt a retained or imported Undo receipt"
-        );
-        drop(other);
-        engine.undo_native_thread_deletion(&undo).unwrap();
-        assert_eq!(engine.store.thread(&id).unwrap(), before);
-        assert!(
-            engine
-                .store
-                .is_native_session_revoked(&id, "old-default-native")
-                .unwrap()
-        );
-        assert!(
-            !engine
-                .store
-                .is_native_session_revoked(&id, "new-native")
-                .unwrap()
-        );
-        assert!(engine.undo_native_thread_deletion(&undo).is_err());
-    }
-    #[test]
-    fn frozen_closing_persistence_and_draft_import_states_refuse_without_deletion() {
-        let (_dir, mut engine, id) = fixture();
-        let before = engine.store.thread(&id).unwrap();
-        engine.shutdown = true;
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        engine.shutdown = false;
-        engine.unsaved_threads.insert(id.clone(), before.clone());
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        engine.unsaved_threads.clear();
-        engine.attachment_operations.insert(id.clone());
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        engine.attachment_operations.clear();
-        engine
-            .workspace_pending
-            .insert("synthetic-import".into(), (id.clone(), Instant::now()));
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        engine.workspace_pending.clear();
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        engine.freeze_admissions();
-        assert!(engine.apply_native_thread_deletion(plan).is_err());
-        assert_eq!(engine.store.thread(&id).unwrap(), before);
-    }
-    #[test]
-    fn semantic_finished_never_allows_delete_before_actual_owned_worker_join() {
-        let (_dir, mut engine, id) = fixture();
-        let (release, held) = std::sync::mpsc::channel();
-        let session = Session::fixture_worker(move |_, events| {
-            events.send(Event::Finished).unwrap();
-            held.recv().unwrap();
-        });
-        assert!(matches!(
-            session
-                .events
-                .recv_timeout(Duration::from_secs(10))
-                .unwrap(),
-            Event::Finished
-        ));
-        let worker = session.worker_completion();
-        engine.provider_workers.push(worker.clone());
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        release.send(()).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while worker.status() == agent::WorkerThreadStatus::Running {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        assert_eq!(plan.count(), 1);
-    }
-    #[test]
-    fn stale_confirmation_and_targeted_schedules_refuse_but_unrelated_data_stays_exact() {
-        let (_dir, mut engine, id) = fixture();
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        engine
-            .store
-            .patch_thread(&id, &json!({"title":"Changed after review"}))
-            .unwrap();
-        assert!(engine.apply_native_thread_deletion(plan).is_err());
-        let tasks = json!({"tasks":[{"id":Uuid::new_v4(),"threadID":id,"isPaused":true,"future":42},{"id":Uuid::new_v4(),"threadID":Uuid::new_v4(),"future":43}]});
-        engine
-            .store
-            .save_document("scheduled-tasks.json", &tasks)
-            .unwrap();
-        assert!(
-            engine
-                .prepare_native_thread_deletion(std::slice::from_ref(&id))
-                .is_err()
-        );
-        assert_eq!(
-            engine.store.document("scheduled-tasks.json").unwrap(),
-            Some(tasks)
-        );
-        let unrelated =
-            json!({"tasks":[{"id":Uuid::new_v4(),"threadID":Uuid::new_v4(),"future":43}]});
-        engine
-            .store
-            .save_document("scheduled-tasks.json", &unrelated)
-            .unwrap();
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        let _undo = engine.apply_native_thread_deletion(plan).unwrap();
-        assert_eq!(
-            engine.store.document("scheduled-tasks.json").unwrap(),
-            Some(unrelated)
-        );
-    }
-    #[test]
-    fn delete_has_no_json_dispatch_or_imported_confirmation_backdoor() {
-        let (_dir, mut engine, id) = fixture();
-        let before = engine.store.thread(&id).unwrap();
-        for method in [
-            "threads.delete",
-            "threads.delete-all",
-            "archive.delete",
-            "threadDeletion.apply",
-        ] {
-            assert!(engine.dispatch(json!({"method":method,"params":{"threadId":id,"confirmed":true,"owner":Uuid::new_v4(),"rows":[before]}})).get("error").is_some());
-        }
-        assert_eq!(engine.store.thread(&id).unwrap(), before);
-    }
-    #[test]
-    fn undo_denies_each_old_provider_account_session_and_store_errors_fail_closed() {
-        let (_dir, mut engine, id) = fixture();
-        let providers = [
-            "codex",
-            "claude",
-            "cursor",
-            "grok",
-            "opencode",
-            "antigravity",
-        ];
-        let mut thread = engine.store.thread(&id).unwrap();
-        for provider in providers {
-            thread["sessions"][provider] =
-                json!({"sessionID":format!("old-{provider}"),"seenItemCount":3});
-        }
-        thread["accountSessions"] =
-            json!({"codex/named-account":{"sessionID":"old-named","seenItemCount":3}});
-        engine.store.save(&thread).unwrap();
-        let plan = engine
-            .prepare_native_thread_deletion(std::slice::from_ref(&id))
-            .unwrap();
-        let undo = engine.apply_native_thread_deletion(plan).unwrap();
-        engine.undo_native_thread_deletion(&undo).unwrap();
-        for provider in providers {
-            let mut selected = engine.store.thread(&id).unwrap();
-            selected["selection"] =
-                json!({"provider":provider,"accountID":"default","modelID":"default"});
-            assert!(agent::provider_session(&selected, provider).is_some());
-            assert_eq!(
-                engine
-                    .unrevoked_provider_session(&selected, provider)
-                    .unwrap(),
-                None
-            );
-        }
-        let mut selected = engine.store.thread(&id).unwrap();
-        selected["selection"] =
-            json!({"provider":"codex","accountID":"named-account","modelID":"default"});
-        assert_eq!(
-            agent::provider_session(&selected, "codex").as_deref(),
-            Some("old-named")
-        );
-        assert_eq!(
-            engine
-                .unrevoked_provider_session(&selected, "codex")
-                .unwrap(),
-            None
-        );
-        engine.store.close_for_shutdown().unwrap();
-        assert!(
-            engine
-                .unrevoked_provider_session(&selected, "codex")
-                .is_err()
-        );
-    }
-}
 impl PreparedThreadDeletion {
     pub fn count(&self) -> usize {
         self.rows.len()
@@ -485,5 +249,242 @@ impl Engine {
         self.store.restore_deleted_rows(&undo.rows, &undo.token)?;
         self.revision += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (tempfile::TempDir, Engine, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("data/state.sqlite")).unwrap();
+        let mut thread = store.new_thread("").unwrap();
+        thread["isArchived"] = json!(true);
+        thread["title"] = json!("Synthetic native archive");
+        thread["sessions"] = json!({"codex":{"sessionID":"old-default-native"}});
+        store.save(&thread).unwrap();
+        (dir, Engine::fixture(store), text(&thread, "id"))
+    }
+    #[test]
+    fn human_confirmed_delete_and_undo_are_owner_bound_and_preserve_native_denials() {
+        let (dir, mut engine, id) = fixture();
+        let before = engine.store.thread(&id).unwrap();
+        engine.set_active_thread(Some(id.clone())).unwrap();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let undo = engine.apply_native_thread_deletion(plan).unwrap();
+        assert!(engine.store.thread(&id).is_err());
+        assert!(engine.active_thread().is_none());
+        assert!(
+            engine.store.save(&before).is_err(),
+            "Ordinary saves cannot recreate a deleted UUID"
+        );
+        let mut other =
+            Engine::fixture(Store::open(&dir.path().join("data/state.sqlite")).unwrap());
+        assert!(
+            other.undo_native_thread_deletion(&undo).is_err(),
+            "Another Engine cannot adopt a retained or imported Undo receipt"
+        );
+        drop(other);
+        engine.undo_native_thread_deletion(&undo).unwrap();
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+        assert!(
+            engine
+                .store
+                .is_native_session_revoked(&id, "old-default-native")
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .store
+                .is_native_session_revoked(&id, "new-native")
+                .unwrap()
+        );
+        assert!(engine.undo_native_thread_deletion(&undo).is_err());
+    }
+    #[test]
+    fn frozen_closing_persistence_and_draft_import_states_refuse_without_deletion() {
+        let (_dir, mut engine, id) = fixture();
+        let before = engine.store.thread(&id).unwrap();
+        engine.shutdown = true;
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        engine.shutdown = false;
+        engine.unsaved_threads.insert(id.clone(), before.clone());
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        engine.unsaved_threads.clear();
+        engine.attachment_operations.insert(id.clone());
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        engine.attachment_operations.clear();
+        engine
+            .workspace_pending
+            .insert("synthetic-import".into(), (id.clone(), Instant::now()));
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        engine.workspace_pending.clear();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        engine.freeze_admissions();
+        assert!(engine.apply_native_thread_deletion(plan).is_err());
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+    }
+    #[test]
+    fn semantic_finished_never_allows_delete_before_actual_owned_worker_join() {
+        let (_dir, mut engine, id) = fixture();
+        let (release, held) = std::sync::mpsc::channel();
+        let session = Session::fixture_worker(move |_, events| {
+            events.send(Event::Finished).unwrap();
+            held.recv().unwrap();
+        });
+        assert!(matches!(
+            session
+                .events
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap(),
+            Event::Finished
+        ));
+        let worker = session.worker_completion();
+        engine.provider_workers.push(worker.clone());
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while worker.status() == agent::WorkerThreadStatus::Running {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        assert_eq!(plan.count(), 1);
+    }
+    #[test]
+    fn stale_confirmation_and_targeted_schedules_refuse_but_unrelated_data_stays_exact() {
+        let (_dir, mut engine, id) = fixture();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        engine
+            .store
+            .patch_thread(&id, &json!({"title":"Changed after review"}))
+            .unwrap();
+        assert!(engine.apply_native_thread_deletion(plan).is_err());
+        let tasks = json!({"tasks":[{"id":Uuid::new_v4(),"threadID":id,"isPaused":true,"future":42},{"id":Uuid::new_v4(),"threadID":Uuid::new_v4(),"future":43}]});
+        engine
+            .store
+            .save_document("scheduled-tasks.json", &tasks)
+            .unwrap();
+        assert!(
+            engine
+                .prepare_native_thread_deletion(std::slice::from_ref(&id))
+                .is_err()
+        );
+        assert_eq!(
+            engine.store.document("scheduled-tasks.json").unwrap(),
+            Some(tasks)
+        );
+        let unrelated =
+            json!({"tasks":[{"id":Uuid::new_v4(),"threadID":Uuid::new_v4(),"future":43}]});
+        engine
+            .store
+            .save_document("scheduled-tasks.json", &unrelated)
+            .unwrap();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let _undo = engine.apply_native_thread_deletion(plan).unwrap();
+        assert_eq!(
+            engine.store.document("scheduled-tasks.json").unwrap(),
+            Some(unrelated)
+        );
+    }
+    #[test]
+    fn delete_has_no_json_dispatch_or_imported_confirmation_backdoor() {
+        let (_dir, mut engine, id) = fixture();
+        let before = engine.store.thread(&id).unwrap();
+        for method in [
+            "threads.delete",
+            "threads.delete-all",
+            "archive.delete",
+            "threadDeletion.apply",
+        ] {
+            assert!(engine.dispatch(json!({"method":method,"params":{"threadId":id,"confirmed":true,"owner":Uuid::new_v4(),"rows":[before]}})).get("error").is_some());
+        }
+        assert_eq!(engine.store.thread(&id).unwrap(), before);
+    }
+    #[test]
+    fn undo_denies_each_old_provider_account_session_and_store_errors_fail_closed() {
+        let (_dir, mut engine, id) = fixture();
+        let providers = [
+            "codex",
+            "claude",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ];
+        let mut thread = engine.store.thread(&id).unwrap();
+        for provider in providers {
+            thread["sessions"][provider] =
+                json!({"sessionID":format!("old-{provider}"),"seenItemCount":3});
+        }
+        thread["accountSessions"] =
+            json!({"codex/named-account":{"sessionID":"old-named","seenItemCount":3}});
+        engine.store.save(&thread).unwrap();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let undo = engine.apply_native_thread_deletion(plan).unwrap();
+        engine.undo_native_thread_deletion(&undo).unwrap();
+        for provider in providers {
+            let mut selected = engine.store.thread(&id).unwrap();
+            selected["selection"] =
+                json!({"provider":provider,"accountID":"default","modelID":"default"});
+            assert!(agent::provider_session(&selected, provider).is_some());
+            assert_eq!(
+                engine
+                    .unrevoked_provider_session(&selected, provider)
+                    .unwrap(),
+                None
+            );
+        }
+        let mut selected = engine.store.thread(&id).unwrap();
+        selected["selection"] =
+            json!({"provider":"codex","accountID":"named-account","modelID":"default"});
+        assert_eq!(
+            agent::provider_session(&selected, "codex").as_deref(),
+            Some("old-named")
+        );
+        assert_eq!(
+            engine
+                .unrevoked_provider_session(&selected, "codex")
+                .unwrap(),
+            None
+        );
+        engine.store.close_for_shutdown().unwrap();
+        assert!(
+            engine
+                .unrevoked_provider_session(&selected, "codex")
+                .is_err()
+        );
     }
 }
