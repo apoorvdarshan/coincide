@@ -72,7 +72,7 @@ public static class NativeUiSmoke {
         uint owner;GetWindowThreadProcessId(window,out owner);
         if(window==IntPtr.Zero || owner!=process || !IsWindowVisible(window))throw new Exception("Input/capture target is not the retained process's visible window");
     }
-    public static bool Focus(IntPtr window,uint process) {Owned(window,process);ShowWindow(window,9);SetForegroundWindow(window);return GetForegroundWindow()==window;}
+    public static bool Focus(IntPtr window,uint process) {Owned(window,process);if(GetForegroundWindow()==window)return true;ShowWindow(window,9);SetForegroundWindow(window);return GetForegroundWindow()==window;}
     public static string[] Diagnose(IntPtr window,uint process) {
         Owned(window,process);UIntPtr result;
         bool responsive=SendMessageTimeout(window,0,UIntPtr.Zero,IntPtr.Zero,2,1000,out result)!=IntPtr.Zero;
