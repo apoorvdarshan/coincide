@@ -21,6 +21,8 @@ pub use appshots_api::{AppshotTicket, PreparedAppshot};
 mod follow_up_api;
 #[path = "project_defaults.rs"]
 pub mod project_defaults;
+#[path = "queue_edit_api.rs"]
+mod queue_edit_api;
 pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
@@ -131,6 +133,9 @@ mod thread_delete_api;
 pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
 
 pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
+#[path = "thread_idle_api.rs"]
+mod thread_idle_api;
+pub use thread_idle_api::NativeNewThread;
 #[path = "thread_defaults.rs"]
 mod thread_defaults;
 #[path = "thread_resolution.rs"]

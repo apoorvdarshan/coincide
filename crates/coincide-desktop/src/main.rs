@@ -2349,11 +2349,18 @@ impl Coincide {
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::current_dir().ok());
-        match call(
-            &self.engine,
-            "threads.create",
-            json!({"projectId":project,"cwd":cwd}),
-        ) {
+        if !self.flush_pending_drafts() {
+            self.status = "Save pending drafts before opening a new conversation.".into();
+            cx.notify();
+            return;
+        }
+        let result = (|| -> Result<Value> {
+            let mut engine = try_state(&self.engine)?;
+            let intent =
+                engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
+            engine.apply_native_new_thread(intent)
+        })();
+        match result {
             Ok(v) => {
                 let created = text(&v, "id");
                 self.created_bot_thread_to_focus = Some(created.clone());
@@ -2880,6 +2887,11 @@ impl Coincide {
                     Err(error) => {
                         self.status = format!("Unable to remember conversation selection: {error}");
                     }
+                }
+            }
+            if !self.media.close_requested && !self.media.shutdown_requested {
+                if let Err(error) = engine.native_wake_due_snoozes() {
+                    self.status = format!("Snoozed conversations could not wake: {error}");
                 }
             }
             engine.ui_available = self.browser.is_some();
@@ -4109,6 +4121,17 @@ impl Render for Coincide {
                 })
                 .child(self.status.clone())
                 .when_some(cookie_recovery, |view, recovery| view.child(recovery))
+                .when(self.appshots.private_cleanup_pending(), |view| {
+                    view.child(div().text_sm().child(self.appshots.outcome.clone()))
+                        .child(
+                            Button::new("quit-retry-appshot-cleanup")
+                                .label("Retry capture cleanup")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.appshots.retry_private_cleanup();
+                                    cx.notify();
+                                })),
+                        )
+                })
                 .when(!self.pending_drafts.is_empty(), |view| {
                     view.child(Button::new("quit-retry-save").label("Retry save").on_click(
                         cx.listener(|this, _, _, cx| {

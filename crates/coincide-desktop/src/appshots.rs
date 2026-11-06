@@ -11,6 +11,38 @@ use std::sync::{
     mpsc::{self, Receiver, SyncSender},
 };
 
+#[derive(Default)]
+struct CaptureCleanup {
+    pending: Vec<PreparedAppshot>,
+    error: Option<String>,
+}
+impl CaptureCleanup {
+    fn discard(&mut self, mut capture: PreparedAppshot) {
+        if let Err(error) = capture.try_discard() {
+            self.error = Some(error.to_string());
+            self.pending.push(capture);
+        }
+    }
+    fn retry(&mut self) {
+        self.error = None;
+        for capture in std::mem::take(&mut self.pending) {
+            self.discard(capture);
+        }
+    }
+    fn ready(&self) -> bool {
+        self.pending.is_empty() && self.error.is_none()
+    }
+}
+fn discard_completed<T>(
+    rx: &Receiver<(u64, T, Result<PreparedAppshot>)>,
+    cleanup: &mut CaptureCleanup,
+) {
+    while let Ok((_, _, result)) = rx.try_recv() {
+        if let Ok(capture) = result {
+            cleanup.discard(capture);
+        }
+    }
+}
 pub(super) struct State {
     applied: Option<Settings>,
     pub permissions: appshots_platform::Permissions,
@@ -23,6 +55,7 @@ pub(super) struct State {
     workers: worker_owner::WorkerOwner,
     tx: SyncSender<(u64, AppshotTicket, Result<PreparedAppshot>)>,
     rx: Receiver<(u64, AppshotTicket, Result<PreparedAppshot>)>,
+    cleanup: CaptureCleanup,
     closed: bool,
 }
 impl State {
@@ -40,6 +73,7 @@ impl State {
             workers: Default::default(),
             tx,
             rx,
+            cleanup: Default::default(),
             closed: false,
         }
     }
@@ -100,10 +134,40 @@ impl State {
             appshots_platform::stop();
             self.workers.close();
         }
+        discard_completed(&self.rx, &mut self.cleanup);
+        self.cleanup.retry();
+        if let Some(error) = &self.cleanup.error {
+            self.outcome = format!("Private Appshot cleanup is waiting: {error}");
+        }
     }
     pub fn drained(&mut self) -> bool {
+        if !self.closed {
+            return false;
+        }
         let status = self.workers.status();
-        self.closed && status.unjoined == 0 && status.panicked == 0 && status.unclassified == 0
+        // A worker may publish just after close invalidated its generation.
+        // Drain after observing the actual join, before advertising readiness.
+        discard_completed(&self.rx, &mut self.cleanup);
+        self.cleanup.retry();
+        if let Some(error) = &self.cleanup.error {
+            self.outcome = format!("Private Appshot cleanup is waiting: {error}");
+        }
+        self.closed
+            && status.unjoined == 0
+            && status.panicked == 0
+            && status.unclassified == 0
+            && self.cleanup.ready()
+    }
+    pub(super) fn private_cleanup_pending(&self) -> bool {
+        !self.cleanup.ready()
+    }
+    pub(super) fn retry_private_cleanup(&mut self) {
+        self.cleanup.retry();
+        if self.cleanup.ready() {
+            self.outcome = "Private Appshot cleanup completed.".into();
+        } else if let Some(error) = &self.cleanup.error {
+            self.outcome = format!("Private Appshot cleanup is waiting: {error}");
+        }
     }
 }
 impl Drop for State {
@@ -134,11 +198,28 @@ impl Coincide {
             if generation != self.appshots.generation.load(Ordering::Acquire)
                 || self.appshots.closed
             {
+                if let Ok(capture) = result {
+                    self.appshots.cleanup.discard(capture);
+                    if let Some(error) = &self.appshots.cleanup.error {
+                        self.appshots.outcome =
+                            format!("Private Appshot cleanup is waiting: {error}");
+                        cx.notify();
+                    }
+                }
                 continue;
             }
-            let result = result.and_then(|prepared| {
-                try_state(&self.engine)?.native_appshot_deliver(ticket, prepared)
-            });
+            let result = match result {
+                Ok(mut prepared) => {
+                    let delivery = (|| {
+                        try_state(&self.engine)?.native_appshot_deliver_owned(ticket, &mut prepared)
+                    })();
+                    if delivery.is_err() {
+                        self.appshots.cleanup.discard(prepared);
+                    }
+                    delivery
+                }
+                Err(error) => Err(error),
+            };
             match result {
                 Ok(thread) => {
                     let id = text(&thread, "id");
@@ -165,6 +246,14 @@ impl Coincide {
         }
         self.appshots.sync(&self.settings);
         if !appshots_platform::triggered() {
+            return;
+        }
+        if !self.appshots.cleanup.ready() {
+            self.appshots.outcome =
+                "Finish private Appshot cleanup in Settings before taking another capture.".into();
+            self.settings_open = true;
+            self.navigate_settings_section(settings::SettingsSection::Appshots, window, cx);
+            self.show_settings_window(cx);
             return;
         }
         self.appshots.permissions = appshots_platform::permissions(0);
@@ -208,8 +297,15 @@ impl Coincide {
                     if read_text { capture.text } else { None },
                 )
             });
-            if let Some(result) = result {
-                let _ = tx.try_send((generation, ticket, result));
+            if let Some((_admitted, result)) = result {
+                // Even a revoked capture remains owned until the parent has an
+                // explicit discard receipt. Bounded publication retains join
+                // custody while the parent drains during ordinary shutdown.
+                if let Err(error) = tx.send((generation, ticket, result)) {
+                    if let Ok(mut capture) = error.0.2 {
+                        let _ = capture.try_discard();
+                    }
+                }
             }
         });
         cx.notify();
@@ -223,13 +319,13 @@ fn admitted_capture<T>(
     generation: u64,
     stamp: &AtomicU64,
     capture: impl FnOnce(&dyn Fn() -> bool) -> Result<T>,
-) -> Option<Result<T>> {
+) -> Option<(bool, Result<T>)> {
     let allowed = || admission.allowed() && generation == stamp.load(Ordering::Acquire);
     if !allowed() {
         return None;
     }
     let result = capture(&allowed);
-    allowed().then_some(result)
+    Some((allowed(), result))
 }
 #[cfg(test)]
 mod tests {
@@ -269,7 +365,11 @@ mod tests {
                 Ok(7)
             });
             result_tx
-                .send(result.map(|result| result.unwrap()))
+                .send(
+                    result
+                        .map(|(admitted, result)| admitted.then_some(result.unwrap()))
+                        .flatten(),
+                )
                 .unwrap();
         }));
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -310,7 +410,12 @@ mod tests {
                 assert!(allowed());
                 Ok(9)
             });
-            tx.send(result.map(|value| value.unwrap())).unwrap();
+            tx.send(
+                result
+                    .map(|(admitted, value)| admitted.then_some(value.unwrap()))
+                    .flatten(),
+            )
+            .unwrap();
         }));
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(9));
         owner.close();
@@ -319,5 +424,99 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
+    }
+    fn private_capture() -> (std::path::PathBuf, std::path::PathBuf, PreparedAppshot) {
+        let root = std::env::temp_dir().join(format!(
+            "coincide-appshot-cleanup-fixture-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = coincide_core::store::Store::open(&root.join("state.sqlite")).unwrap();
+        let data = store.data_directory().unwrap();
+        let png = coincide_core::appshots::encode_rgba(2, 2, vec![0; 16]).unwrap();
+        let capture =
+            PreparedAppshot::prepare(&data, &png, "Private Fixture".into(), None, None).unwrap();
+        let directory = std::fs::read_dir(data.join("attachments"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        drop(store);
+        (root, directory, capture)
+    }
+    #[::core::prelude::v1::test]
+    fn late_revoked_channel_result_is_explicitly_discarded_after_actual_join() {
+        let (root, directory, capture) = private_capture();
+        let mut owner = worker_owner::WorkerOwner::default();
+        let stamp = Arc::new(AtomicU64::new(1));
+        let worker_stamp = stamp.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let (join_tx, join_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
+        assert!(owner.spawn(move |admission| {
+            EXIT.with(|slot| {
+                *slot.borrow_mut() = Some(ExitGate {
+                    entered: exit_tx,
+                    release: join_rx,
+                })
+            });
+            let result = admitted_capture(&admission, 1, &worker_stamp, |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(capture)
+            })
+            .unwrap();
+            assert!(
+                !result.0,
+                "revocation must reject delivery while retaining cleanup ownership"
+            );
+            tx.send((1, (), result.1)).ok().unwrap();
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        owner.close();
+        stamp.fetch_add(1, Ordering::AcqRel);
+        release_tx.send(()).unwrap();
+        exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(owner.status().unjoined, 1);
+        assert!(directory.exists());
+        join_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owner.status().unjoined != 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let mut cleanup = CaptureCleanup::default();
+        discard_completed(&rx, &mut cleanup);
+        assert!(cleanup.ready());
+        assert!(
+            !directory.exists(),
+            "receipt must verify generated files removed before readiness"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[::core::prelude::v1::test]
+    fn replaced_private_directory_retains_cleanup_custody_until_exact_identity_returns() {
+        let (root, directory, capture) = private_capture();
+        let moved = directory.with_extension("held-original");
+        std::fs::rename(&directory, &moved).unwrap();
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("unrelated"), b"keep").unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send((1, (), Ok(capture))).ok().unwrap();
+        let mut cleanup = CaptureCleanup::default();
+        discard_completed(&rx, &mut cleanup);
+        assert!(!cleanup.ready());
+        assert_eq!(cleanup.pending.len(), 1);
+        assert!(cleanup.error.is_some());
+        assert_eq!(std::fs::read(directory.join("unrelated")).unwrap(), b"keep");
+        std::fs::remove_file(directory.join("unrelated")).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+        std::fs::rename(moved, &directory).unwrap();
+        cleanup.retry();
+        assert!(cleanup.ready());
+        assert!(!directory.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

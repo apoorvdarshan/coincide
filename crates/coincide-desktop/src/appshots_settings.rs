@@ -197,6 +197,7 @@ impl Coincide {
             .child(div().text_lg().child("Privacy"))
             .child("Appshots never send on their own. The picture waits in the composer. A writable chat used in the last minute receives it; otherwise a new projectless chat is created.")
             .child("Only the frontmost eligible window is captured, never the whole screen. Coincide’s windows, protected windows and detected password entry are skipped. Captures stay with local attachments until you send. OS privacy and text availability differ by platform.")
+            .when(self.appshots.private_cleanup_pending(),|pane|pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
             .child(format!("Last appshot: {}",self.appshots.outcome)).into_any_element()
     }
 }

@@ -700,6 +700,7 @@ fn inspect_accessibility(
                 else {
                     continue;
                 };
+                drop(component);
                 if [
                     bounds.0.abs_diff(frame.0),
                     bounds.1.abs_diff(frame.1),
