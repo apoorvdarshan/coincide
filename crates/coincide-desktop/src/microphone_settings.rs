@@ -1,5 +1,5 @@
-//! Native-only microphone controls. Parent's acceptance gate is false until
-//! separately authorized live TCC/capture acceptance; it is not a user toggle.
+//! Explicit native capture controls. Compiled capability enables actions;
+//! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
         CaptureBinding, CaptureError, CaptureEvent, CapturedAudio, Microphone, Permission,
@@ -80,7 +80,7 @@ struct Snapshot {
     message: &'static str,
 }
 struct Shared {
-    accepted: AtomicBool,
+    enabled: AtomicBool,
     generation: AtomicU64,
     alive: AtomicBool,
     controller_constructed: AtomicBool,
@@ -162,7 +162,7 @@ struct Owner {
 impl Owner {
     fn current(&self) -> bool {
         self.shared.alive.load(Ordering::Acquire)
-            && self.shared.accepted.load(Ordering::Acquire)
+            && self.shared.enabled.load(Ordering::Acquire)
             && self.shared.generation.load(Ordering::Acquire) == self.generation
     }
     fn publish(&self, message: &'static str) {
@@ -186,7 +186,7 @@ impl Owner {
     }
     fn command(&mut self, command: Command) {
         if !self.shared.alive.load(Ordering::Acquire)
-            || !self.shared.accepted.load(Ordering::Acquire)
+            || !self.shared.enabled.load(Ordering::Acquire)
             || self.shared.generation.load(Ordering::Acquire) != command.generation
         {
             return;
@@ -250,7 +250,9 @@ impl Owner {
                     self.publish("Configure the local executable and model before recording.");
                     return;
                 };
-                if self.permission != Permission::Authorized || target.binding.is_none() {
+                if !matches!(self.permission, Permission::Authorized | Permission::Ready)
+                    || target.binding.is_none()
+                {
                     self.publish("Use Enable Microphone first and select a composer target.");
                     return;
                 }
@@ -316,7 +318,11 @@ impl Owner {
                     self.permission = permission;
                     self.permission_target = self.target.clone();
                     self.phase = Phase::Idle;
-                    self.publish(if permission == Permission::Authorized { "Microphone permission granted. Press Record to begin; nothing is recording." } else { "Microphone is not authorized. Nothing is recording." });
+                    self.publish(match permission {
+                        Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
+                        Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
+                        _ => "Microphone is not authorized. Nothing is recording.",
+                    });
                 }
                 CaptureEvent::Started(session) => {
                     if self.session != Some(session) {
@@ -450,7 +456,7 @@ struct Connection {
 }
 impl Connection {
     fn request_shutdown(&self) {
-        self.shared.accepted.store(false, Ordering::Release);
+        self.shared.enabled.store(false, Ordering::Release);
         if self.shared.alive.swap(false, Ordering::AcqRel) {
             self.shared.generation.fetch_add(1, Ordering::AcqRel);
         }
@@ -485,7 +491,7 @@ impl Connection {
 }
 fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
     let shared = Arc::new(Shared {
-        accepted: AtomicBool::new(false),
+        enabled: AtomicBool::new(false),
         generation: AtomicU64::new(0),
         alive: AtomicBool::new(true),
         controller_constructed: AtomicBool::new(false),
@@ -497,7 +503,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
     let worker = std::thread::Builder::new()
         .name("coincide-microphone-owner".into())
         .spawn(move || {
-            // Factory is invoked lazily on THIS thread, only after acceptance and an
+            // Factory is invoked lazily on THIS thread, only with a compiled backend and an
             // explicit native action. Non-Send AVAudioEngine owner never crosses threads.
             let mut owner = Owner {
                 factory: Some(factory),
@@ -526,7 +532,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
     let (completion, spawn_error) = match worker {
         Ok(worker) => (Some(WorkerCompletion::observe(worker)), None),
         Err(error) => {
-            shared.accepted.store(false, Ordering::Release);
+            shared.enabled.store(false, Ordering::Release);
             shared.alive.store(false, Ordering::Release);
             (None, Some(error.to_string().chars().take(1024).collect()))
         }
@@ -548,14 +554,14 @@ impl Drop for Connection {
     }
 }
 
-/// Parent supplies the existing local-model configuration snapshot. No settings
-/// are discovered, persisted, or interpreted as approval. native_accepted must
-/// remain FALSE until separately authorized real TCC/mic acceptance succeeds.
+/// Parent supplies the existing local-model snapshot and compiled capability.
+/// Neither a capability nor settings grant OS permission or start recording.
+/// Only explicit native actions can request access, capture or transcribe.
 pub struct MicrophoneSettings {
     connection: Connection,
     target: Target,
     generation: u64,
-    native_accepted: bool,
+    backend_enabled: bool,
     phase: Phase,
     permission: Permission,
     status: String,
@@ -565,14 +571,14 @@ impl MicrophoneSettings {
         let (connection, events) = spawn_owner(Box::new(|| {
             (Box::new(Microphone::new()), Box::new(LocalInference))
         }));
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, native_accepted: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "Native microphone acceptance is pending. Permission, recording and inference controls are disabled.".into() }, events)
+        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into() }, events)
     }
     pub fn set_target(
         &mut self,
         binding: Option<ComposerBinding>,
         settings_revision: u64,
         configuration: Option<LocalRecordingConfig>,
-        native_accepted: bool,
+        backend_enabled: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.connection.shared.alive.load(Ordering::Acquire) {
@@ -583,10 +589,10 @@ impl MicrophoneSettings {
             settings_revision,
             config: configuration,
         };
-        if self.target != target || self.native_accepted != native_accepted {
+        if self.target != target || self.backend_enabled != backend_enabled {
             self.connection
                 .shared
-                .accepted
+                .enabled
                 .store(false, Ordering::Release);
             self.generation = self
                 .connection
@@ -595,21 +601,21 @@ impl MicrophoneSettings {
                 .fetch_add(1, Ordering::AcqRel)
                 .wrapping_add(1);
             self.target = target;
-            self.native_accepted = native_accepted;
+            self.backend_enabled = backend_enabled;
             self.phase = Phase::Idle;
             self.permission = Permission::Unavailable;
             self.connection
                 .shared
-                .accepted
-                .store(native_accepted, Ordering::Release);
-            self.status = if native_accepted { "Target/configuration changed. Previous recording/results are discarded. Use Enable Microphone before Record." } else { "Native microphone acceptance is pending. Permission, recording and inference controls are disabled." }.into();
+                .enabled
+                .store(backend_enabled, Ordering::Release);
+            self.status = if backend_enabled { "Target/configuration changed. Previous recording/results are discarded. Use Enable Microphone before Record." } else { "This build has no native microphone backend. File transcription remains available." }.into();
             cx.notify();
         }
     }
     pub fn request_shutdown(&mut self) {
         self.connection.request_shutdown();
         self.generation = self.connection.shared.generation.load(Ordering::Acquire);
-        self.native_accepted = false;
+        self.backend_enabled = false;
         self.target.binding = None;
         self.target.config = None;
         self.phase = Phase::Idle;
@@ -634,7 +640,7 @@ impl MicrophoneSettings {
         cx.notify();
     }
     pub fn accepts_text(&self, event: &TextReady, live: &ComposerBinding) -> bool {
-        self.native_accepted
+        self.backend_enabled
             && self.connection.shared.alive.load(Ordering::Acquire)
             && event.generation == self.generation
             && event.binding == *live
@@ -646,7 +652,7 @@ impl MicrophoneSettings {
             return;
         }
         while let Ok(snapshot) = self.connection.snapshots.try_recv() {
-            if snapshot.generation == self.generation && self.native_accepted {
+            if snapshot.generation == self.generation && self.backend_enabled {
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
                 self.status = snapshot.message.into();
@@ -655,7 +661,7 @@ impl MicrophoneSettings {
         }
     }
     fn action(&mut self, action: Action, cx: &mut Context<Self>) {
-        if !self.native_accepted || !self.connection.shared.alive.load(Ordering::Acquire) {
+        if !self.backend_enabled || !self.connection.shared.alive.load(Ordering::Acquire) {
             return;
         }
         // Beginning a new explicit request invalidates any older queued text.
@@ -685,11 +691,11 @@ impl MicrophoneSettings {
 }
 impl Render for MicrophoneSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let gated = !self.native_accepted;
+        let gated = !self.backend_enabled;
         div().flex().flex_col().gap_2().p_4().child("Microphone → local transcription")
             .child("Enable permission, Record, Stop, then Transcribe Recording. Permission grants never start capture. Nothing is sent automatically.")
             .child(Button::new("microphone-enable").label("Enable Microphone").disabled(gated || !matches!(self.phase, Phase::Idle | Phase::Failed)).on_click(cx.listener(|this, _, _, cx| this.action(Action::Enable, cx))))
-            .child(Button::new("microphone-record").label("Record").disabled(gated || self.permission != Permission::Authorized || !matches!(self.phase, Phase::Idle | Phase::Captured | Phase::Failed) || self.target.binding.is_none() || self.target.config.is_none()).on_click(cx.listener(|this, _, _, cx| this.action(Action::Record, cx))))
+            .child(Button::new("microphone-record").label("Record").disabled(gated || !matches!(self.permission, Permission::Authorized | Permission::Ready) || !matches!(self.phase, Phase::Idle | Phase::Captured | Phase::Failed) || self.target.binding.is_none() || self.target.config.is_none()).on_click(cx.listener(|this, _, _, cx| this.action(Action::Record, cx))))
             .child(Button::new("microphone-stop").label("Stop").disabled(gated || self.phase != Phase::Recording).on_click(cx.listener(|this, _, _, cx| this.action(Action::Stop, cx))))
             .child(Button::new("microphone-cancel").label("Cancel").disabled(gated && self.phase == Phase::Idle).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
             .child(Button::new("microphone-transcribe").label("Transcribe Recording").disabled(gated || self.phase != Phase::Captured).on_click(cx.listener(|this, _, _, cx| this.action(Action::Transcribe, cx))))
@@ -713,6 +719,7 @@ mod tests {
         stops: usize,
         cancels: usize,
         inference: usize,
+        ready_permission: bool,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
         drop_gate: Option<Receiver<()>>,
@@ -737,7 +744,11 @@ mod tests {
             trace.requests += 1;
             trace.threads.push(thread::current().id());
             self.events
-                .push_back(CaptureEvent::PermissionChanged(Permission::Authorized));
+                .push_back(CaptureEvent::PermissionChanged(if trace.ready_permission {
+                    Permission::Ready
+                } else {
+                    Permission::Authorized
+                }));
             Ok(())
         }
         fn start(&mut self, _: usize) -> Result<Uuid, CaptureError> {
@@ -855,7 +866,7 @@ mod tests {
         revoke_on_inference: bool,
     ) -> (Owner, Receiver<TextReady>, Arc<Mutex<Trace>>) {
         let shared = Arc::new(Shared {
-            accepted: AtomicBool::new(accepted),
+            enabled: AtomicBool::new(accepted),
             generation: AtomicU64::new(1),
             alive: AtomicBool::new(true),
             controller_constructed: AtomicBool::new(false),
@@ -930,6 +941,27 @@ mod tests {
         assert!(events.try_recv().is_err());
     }
     #[::core::prelude::v1::test]
+    fn desktop_preparation_is_distinct_from_os_permission_and_never_starts_capture() {
+        let (mut owner, events, trace) = setup(true, false);
+        trace.lock().unwrap().ready_permission = true;
+        action(&mut owner, Action::Record);
+        assert_eq!(trace.lock().unwrap().starts, 0);
+        action(&mut owner, Action::Enable);
+        assert_eq!(owner.permission, Permission::Ready);
+        assert_ne!(owner.permission, Permission::Authorized);
+        assert_eq!(trace.lock().unwrap().starts, 0);
+        action(&mut owner, Action::Record);
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        action(&mut owner, Action::Stop);
+        assert!(events.try_recv().is_err());
+        action(&mut owner, Action::Transcribe);
+        assert_eq!(
+            events.try_recv().unwrap().text,
+            "synthetic recorded transcript"
+        );
+        assert!(events.try_recv().is_err());
+    }
+    #[::core::prelude::v1::test]
     fn target_generation_change_cancels_and_discards_stopped_audio() {
         let (mut owner, events, trace) = setup(true, false);
         record_and_stop(&mut owner);
@@ -971,7 +1003,7 @@ mod tests {
         let (connection, _events) = spawn_owner(factory(trace.clone(), None));
         let caller = thread::current().id();
         connection.shared.generation.store(1, Ordering::Release);
-        connection.shared.accepted.store(true, Ordering::Release);
+        connection.shared.enabled.store(true, Ordering::Release);
         connection
             .commands
             .try_send(Command {
@@ -1054,7 +1086,7 @@ mod tests {
     }
     fn enable(connection: &Connection) {
         connection.shared.generation.store(1, Ordering::Release);
-        connection.shared.accepted.store(true, Ordering::Release);
+        connection.shared.enabled.store(true, Ordering::Release);
         queued(connection, Action::Enable);
         until_snapshot(connection, |snapshot| {
             snapshot.permission == Permission::Authorized
@@ -1069,7 +1101,7 @@ mod tests {
             connection,
             target: target(),
             generation: 0,
-            native_accepted: true,
+            backend_enabled: true,
             phase: Phase::Idle,
             permission: Permission::Unavailable,
             status: String::new(),
@@ -1085,7 +1117,7 @@ mod tests {
         let generation = panel.generation;
         panel.request_shutdown();
         assert_eq!(panel.generation, generation);
-        assert!(!panel.native_accepted);
+        assert!(!panel.backend_enabled);
         assert!(!panel.accepts_text(&stale, &binding));
         assert!(panel.target.binding.is_none());
         assert!(panel.target.config.is_none());
@@ -1094,7 +1126,7 @@ mod tests {
         assert_eq!(status.worker, WorkerThreadStatus::Returned);
         assert_eq!(status.native_callbacks, CallbackShutdown::NeverConstructed);
         assert!(events.try_recv().is_err());
-        assert!(!panel.connection.shared.accepted.load(Ordering::Acquire));
+        assert!(!panel.connection.shared.enabled.load(Ordering::Acquire));
     }
     #[::core::prelude::v1::test]
     fn owner_shutdown_waits_for_controller_drop_and_actual_tls_join() {
@@ -1224,7 +1256,7 @@ mod tests {
         let (connection, events) =
             spawn_owner(Box::new(|| panic!("synthetic microphone factory failure")));
         connection.shared.generation.store(1, Ordering::Release);
-        connection.shared.accepted.store(true, Ordering::Release);
+        connection.shared.enabled.store(true, Ordering::Release);
         queued(&connection, Action::Enable);
         let status = wait_join(&connection);
         assert_eq!(status.worker, WorkerThreadStatus::Panicked);
