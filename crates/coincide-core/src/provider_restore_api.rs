@@ -384,13 +384,9 @@ impl Engine {
                         self.model_catalog.refresh_default_restore(binding.clone())
                     }
                 };
-                match response {
-                    Ok(response) => {
-                        intent.request = Some(required(&response, "requestId")?.to_owned());
-                        response
-                    }
-                    Err(error) => return Err(error),
-                }
+                let response = response?;
+                intent.request = Some(required(&response, "requestId")?.to_owned());
+                response
             };
             if status["state"] == "loading" {
                 let response = intent.pending();
@@ -404,10 +400,10 @@ impl Engine {
                     .context("Invalid account model observation")?;
                 if intent.automatic || rows.iter().any(|row| row["id"] != "default") {
                     let result = self.commit_restored_candidate(&intent, candidate, &status);
-                    if result.is_err() {
-                        if let Some(request) = &intent.request {
-                            self.model_catalog.cancel_named_restore(request);
-                        }
+                    if result.is_err()
+                        && let Some(request) = &intent.request
+                    {
+                        self.model_catalog.cancel_named_restore(request);
                     }
                     return result;
                 }
