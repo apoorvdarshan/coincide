@@ -343,7 +343,9 @@ fn provider_acknowledgement_must_match_target_before_command_clear() {
             match method {
                 "threads.read" => Ok(thread.clone()),
                 "agent.selection.capabilities" => Ok(caps.clone()),
-                "agent.select" => Ok(thread.clone()),
+                "agent.provider.select" => Ok(
+                    json!({"thread":thread,"model":"default","restored":false,"provenance":"provider_default","authenticationChecked":false,"accountRestored":false}),
+                ),
                 _ => panic!("must not clear, send or refresh after wrong acknowledgement"),
             }
         },
@@ -354,7 +356,54 @@ fn provider_acknowledgement_must_match_target_before_command_clear() {
         vec![
             "threads.read",
             "agent.selection.capabilities",
-            "agent.select"
+            "agent.provider.select"
         ]
     );
+}
+
+#[::core::prelude::v1::test]
+fn restored_model_receipt_must_match_saved_selection_before_draft_clear() {
+    for mismatched in [false, true] {
+        let mut thread = json!({"id":"synthetic","draft":"/codex","selection":{"provider":"claude","modelID":"default"},"accessMode":"approval","interactionMode":"build"});
+        let pending = Submission::new(&thread, "/codex");
+        let caps = coincide_core::composer_selection::capabilities();
+        let mut calls = Vec::new();
+        let result = command_transaction(
+            &pending,
+            Command::Provider("codex"),
+            false,
+            None,
+            |method, p| {
+                calls.push(method.to_owned());
+                match method {
+                    "threads.read" => Ok(thread.clone()),
+                    "agent.selection.capabilities" => Ok(caps.clone()),
+                    "agent.provider.select" => {
+                        assert_eq!(p["expected"], pending.thread);
+                        thread["selection"]["provider"] = json!("codex");
+                        thread["selection"]["modelID"] = json!("reported-history-model");
+                        Ok(
+                            json!({"thread":thread,"model":if mismatched { "wrong-model" }else{ "reported-history-model" },"restored":true,"provenance":"latest_default_catalog","authenticationChecked":false,"accountRestored":false}),
+                        )
+                    }
+                    "threads.patch" => {
+                        assert!(!mismatched, "a mismatched receipt must retain the draft");
+                        assert_eq!(p["patch"], json!({"draft":""}));
+                        thread["draft"] = json!("");
+                        Ok(thread.clone())
+                    }
+                    _ => panic!("provider switch must not refresh, send or queue"),
+                }
+            },
+        );
+        assert_eq!(result.is_ok(), !mismatched);
+        assert_eq!(thread["draft"], if mismatched { "/codex" } else { "" });
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|method| *method == "threads.patch")
+                .count(),
+            usize::from(!mismatched)
+        );
+    }
 }

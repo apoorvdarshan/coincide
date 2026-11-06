@@ -16,6 +16,8 @@ use std::{
 
 #[path = "model_catalog_effort.rs"]
 mod effort;
+#[path = "model_catalog_restore.rs"]
+mod restore;
 use effort::EffortExecutable;
 pub(crate) use effort::{CodexEffortProof, astra_default_needed};
 
