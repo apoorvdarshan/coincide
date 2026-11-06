@@ -58,9 +58,10 @@ These narrower results do not close the broad UI/UX row above.
 | Saved-selection composer footer | Integrated; guarded selection flow retained | Scoped pass for footer/disclosure |
 | Pinned and Chats sections | Integrated and tested in the combined suite | Grouping/search/snooze/archive observed; strict fixture failed its zero-executable guard on two denied fake Git probes, leaving no pre-Pin raw baseline |
 | Assistant body-first layout and compact signature/actions | Integrated and tested in the combined suite | Scoped ordinary-build pass |
-| Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | Preview, Enlarge, Escape/Close and rebinding passed; enlarged containment failed, corrected layout awaiting V5 native result; exact focused-element proof remains unverified |
+| Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | V5 passed full-image containment at wide/minimum/widened sizes, Escape/Close, normal Quit and exact preservation; focused-element proof remains unverified |
 | Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Foreground min/max, narrow/wide behavior and restart preservation passed; content geometry measured approximately from screenshots |
-| User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Native follow-up in progress; user bubble not yet separately exercised |
+| User bubble/actions, project/branch subtitle and left-aligned sidebar labels | Follow-up passed 382 desktop tests and every integration target | Header/subtitle, sidebar alignment and compact image action observed in V5; user bubble native check queued |
+| Tool/reasoning work-card header and disclosure | Explicit known status/title/category metadata only; 385 desktop tests plus every integration target pass | Fresh native Copy/Edit/disclosure/Find fixture prepared and seeded through actual Store APIs; pending |
 
 ## Overnight checkpoint (2026-11-05)
 
@@ -70,6 +71,24 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- V5 ordinary-build containment passed at wide, minimum-clamped 820px native
+  width and widened sizes: all four image borders remain visible without aspect
+  distortion, and Close/help remain reachable. Escape/Close and normal Quit while
+  open passed with actual exit zero, exact raw source rows/files/backup and every
+  frozen V1–V4 artifact unchanged. Two denied fake Git probes, zero provider/vault
+  calls. Header subtitle, left-aligned sidebar and compact Enlarge were observed.
+  Focus remains unproven because native readback reports AXWindow. Earlier failed
+  containment evidence remains preserved.
+- Exact 71ef2c8 passed all six Rust CI jobs and packaging. Exact 0773e1a also
+  ultimately passed all six jobs; its completed log confirms Azure archive
+  downloads took 14m52s and full provisioning 15m09s. The first main-archive
+  experiment completed provisioning in 47s and passed Linux compilation/tests;
+  its second timing sample remains pending. All packages and checks are retained.
+- The work-card follow-up passed 385 desktop unit tests and every integration
+  target (19, 10, 14, 11), including explicit-status/neutral-unknown/Unicode-title
+  cases. Thinking/Thought labels require explicit stored status; raw tool text
+  never becomes metadata or authority. The real disclosure action and Find/text
+  controllers are preserved, including the reasoning provider label.
 - Native ordinary 0773e1a acceptance displayed the approved historical image and
   assistant body/footer, exercised Enlarge/Escape/Close and thread rebinding, and
   quit normally with exact synthetic rows/files and earlier failure artifacts

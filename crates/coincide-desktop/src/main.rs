@@ -3124,10 +3124,18 @@ impl Coincide {
         let label = match kind.as_str() {
             "user" => "You".to_owned(),
             "assistant" => presentation::provider_name(&provider).to_owned(),
-            "reasoning" | "tool" => work_header
+            "reasoning" => format!(
+                "{} · {}",
+                presentation::provider_name(&provider),
+                work_header
+                    .as_ref()
+                    .map(|header| header.title.as_str())
+                    .unwrap_or("Reasoning")
+            ),
+            "tool" => work_header
                 .as_ref()
                 .map(|header| header.title.clone())
-                .unwrap_or_default(),
+                .unwrap_or_else(|| "Tool activity".into()),
             "error" => "Error".to_owned(),
             "system" => "Conversation update".to_owned(),
             _ => kind.clone(),
