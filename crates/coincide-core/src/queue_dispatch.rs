@@ -13,6 +13,12 @@ impl QueueClaim {
     pub(super) fn text(&self) -> &str {
         &self.message.text
     }
+    pub(super) fn context(&self) -> &Value {
+        &self.message.context
+    }
+    pub(super) fn images(&self) -> &[crate::attachments::StoredImage] {
+        &self.message.images
+    }
     pub(super) fn id(&self) -> &str {
         &self.message.id
     }

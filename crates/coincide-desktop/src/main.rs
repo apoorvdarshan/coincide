@@ -3519,13 +3519,6 @@ impl Coincide {
                 cx.notify();
                 return;
             }
-            if self.running.contains(&text(thread, "id"))
-                && coincide_core::composer_context::has_context(context)
-            {
-                self.status = "Follow-up messages currently support text only. Keep the attached references for a direct send after the current turn.".into();
-                cx.notify();
-                return;
-            }
         }
         if self.selection_send_blocked() {
             self.retry_selected_account_readiness();

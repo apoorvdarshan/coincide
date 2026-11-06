@@ -547,3 +547,189 @@ fn queued_interrupt_waits_for_owned_worker_and_rejects_changed_execution_context
     assert!(engine.runs.is_empty());
     engine.collect_native_follow_up(ticket).unwrap();
 }
+
+fn private_image(engine: &Engine, directory: &std::path::Path) -> crate::attachments::StoredImage {
+    let path = directory.join("synthetic-follow-up.png");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([12, 34, 56]))
+        .save(&path)
+        .unwrap();
+    crate::attachments::ingest_image(&engine.store.data_directory().unwrap(), &path).unwrap()
+}
+#[test]
+fn native_image_and_reference_steering_delivers_exact_payload_before_cas_cleanup() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let image = private_image(&engine, _dir.path());
+    let context = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"Synthetic quoted café 👩🏽‍💻", "future":{"keep":7}}]);
+    let mut source = engine.store.thread(&id).unwrap();
+    source["draft"] = json!("");
+    source["draftContext"] = context.clone();
+    source["rustDraftImages"] = json!([image]);
+    engine.store.save(&source).unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    let request = server.next_request().unwrap();
+    assert!(
+        request["params"]["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Synthetic quoted café 👩🏽‍💻")
+    );
+    assert_eq!(request["params"]["input"][1]["type"], "localImage");
+    assert_eq!(
+        request["params"]["input"][1]["path"],
+        source["rustDraftImages"][0]["path"]
+    );
+    engine.poll();
+    assert_eq!(engine.store.thread(&id).unwrap()["draftContext"], context);
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: true
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert!(saved["draftContext"].is_null());
+    assert_eq!(saved["rustDraftImages"], json!([]));
+    let user = saved["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["steered"] == true)
+        .unwrap();
+    assert_eq!(user["context"], context);
+    assert_eq!(user["rustImages"], source["rustDraftImages"]);
+    assert_eq!(user["text"], "");
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+#[test]
+fn invalid_follow_up_image_is_rejected_before_stop_or_steer() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        control,
+        ..
+    } = fixture();
+    let mut image = private_image(&engine, _dir.path());
+    image.path = _dir
+        .path()
+        .join("unrelated-outside-private-image-directory.png");
+    let mut source = engine.store.thread(&id).unwrap();
+    source["rustDraftImages"] = json!([image]);
+    engine.store.save(&source).unwrap();
+    let source = engine
+        .choose_native_follow_up(&source, Behavior::Interrupt)
+        .unwrap();
+    assert!(engine.send_native_follow_up(&source, false).is_err());
+    assert!(control.try_recv().is_err());
+    assert!(server.next_request().is_none());
+    assert!(!engine.runs[&id].cancelled);
+    assert_eq!(engine.store.thread(&id).unwrap(), source);
+    finish_fake(&mut engine, &id, release);
+}
+#[test]
+fn native_queue_atomically_transfers_full_payload_and_preserves_neighbor_unknowns() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        server: _server,
+        release,
+        ..
+    } = fixture();
+    let image = private_image(&engine, _dir.path());
+    let mut source = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut source, "existing queued neighbor").unwrap();
+    source["rustMessageQueue"][0]["future"] = json!({"keep":8});
+    source["draftContext"] = json!([{"id":Uuid::new_v4(),"kind":"file","path":"/synthetic/missing-reference-never-opened"}]);
+    source["rustDraftImages"] = json!([image]);
+    engine.store.save(&source).unwrap();
+    let source = engine
+        .choose_native_follow_up(&source, Behavior::Queue)
+        .unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Queue,
+            draft_cleared: true
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["rustMessageQueue"][0], source["rustMessageQueue"][0]);
+    assert_eq!(
+        saved["rustMessageQueue"][1]["context"],
+        source["draftContext"]
+    );
+    assert_eq!(
+        saved["rustMessageQueue"][1]["rustImages"],
+        source["rustDraftImages"]
+    );
+    assert!(saved["draftContext"].is_null());
+    assert_eq!(saved["rustDraftImages"], json!([]));
+    engine.collect_native_follow_up(ticket).unwrap();
+    engine.enabled_queues.remove(&id);
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn accepted_payload_preserves_a_newer_composer_and_rejects_only_identical_resubmission() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let mut source = engine.store.thread(&id).unwrap();
+    source["draftContext"] = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"First reference"}]);
+    engine.store.save(&source).unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    let request = server.next_request().unwrap();
+    let mut newer = engine.store.thread(&id).unwrap();
+    newer["draftContext"][0]["text"] = json!("Newer reference typed during ACK");
+    engine.store.save(&newer).unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: false
+        }
+    );
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draftContext"],
+        newer["draftContext"]
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    // Text is unchanged; an actually changed native payload is a new message.
+    let new_ticket = engine.send_native_follow_up(&newer, false).unwrap();
+    let new_request = server.next_request().unwrap();
+    assert!(
+        new_request["params"]["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Newer reference typed during ACK")
+    );
+    server.response(&json!({"id":new_request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    engine.collect_native_follow_up(new_ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}

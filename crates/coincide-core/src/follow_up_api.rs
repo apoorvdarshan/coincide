@@ -32,7 +32,7 @@ struct Operation {
 pub(super) struct State {
     owner: Uuid,
     operations: HashMap<Uuid, Operation>,
-    blocked: HashMap<String, String>,
+    blocked: HashMap<String, Value>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -199,26 +199,69 @@ impl Engine {
             required(&current, "draft")?.to_owned()
         };
         ensure!(
-            !text.trim().is_empty() && text.len() <= 1024 * 1024,
-            "Follow-up text must be nonempty and fit within 1 MiB"
+            text.len() <= 1024 * 1024
+                && (!text.trim().is_empty()
+                    || (!is_queue
+                        && (crate::composer_context::has_context(&current["draftContext"])
+                            || current["rustDraftImages"]
+                                .as_array()
+                                .is_some_and(|images| !images.is_empty())))
+                    || queue
+                        .as_ref()
+                        .is_some_and(|claim| crate::composer_context::has_context(
+                            claim.context()
+                        ) || !claim.images().is_empty())),
+            "Add text, images or references; text must fit within 1 MiB"
         );
         if !is_queue {
             ensure!(
-                self.native_follow_up.blocked.get(&id) != Some(&text),
-                "This text was already submitted; edit it before submitting again"
+                self.native_follow_up.blocked.get(&id) != Some(&scope(&current)),
+                "This message was already submitted; edit it before submitting again"
             );
             self.native_follow_up.blocked.remove(&id);
             let store = &self.store;
             self.native_follow_up.blocked.retain(|thread, submitted| {
                 store
                     .thread(thread)
-                    .is_ok_and(|value| value["draft"].as_str() == Some(submitted.as_str()))
+                    .is_ok_and(|value| scope(&value) == *submitted)
             });
             ensure!(
                 self.native_follow_up.blocked.len() < 32,
                 "Edit or collect retained follow-up drafts before sending more"
             );
         }
+        // Validate and prepare the exact payload before any Stop, denial or
+        // transport submission. A saved path never grants arbitrary file IO.
+        let context = queue.as_ref().map_or_else(
+            || current["draftContext"].clone(),
+            |claim| claim.context().clone(),
+        );
+        crate::composer_context::validate(&context)?;
+        let images: Vec<crate::attachments::StoredImage> = if let Some(claim) = queue.as_ref() {
+            claim.images().to_vec()
+        } else if current["rustDraftImages"].is_null() {
+            Vec::new()
+        } else {
+            serde_json::from_value(current["rustDraftImages"].clone())
+                .context("Invalid follow-up images")?
+        };
+        ensure!(
+            images.len() <= 20
+                && images
+                    .iter()
+                    .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
+                    .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
+            "Follow-up images exceed safe limits"
+        );
+        let data = self.store.data_directory()?;
+        let prepared = images
+            .iter()
+            .map(|image| image.prepare_in(&data))
+            .collect::<Result<Vec<_>>>()?;
+        agent::validate_images(
+            &Provider::from_name(&crate::store::text(&current["selection"], "provider"))?,
+            &prepared,
+        )?;
         let run = self
             .runs
             .get(&id)
@@ -234,13 +277,7 @@ impl Engine {
             "Stored selection or project differs from the running turn"
         );
         if !is_queue {
-            for field in ["draftContext", "rustDraftImages"] {
-                ensure!(
-                    current[field].is_null()
-                        || current[field].as_array().is_some_and(Vec::is_empty),
-                    "Follow-ups currently support text only; attached material remains in the draft"
-                );
-            }
+            crate::composer_context::validate(&current["draftContext"])?;
             ensure!(
                 !self.attachment_operations.iter().any(|operation| self
                     .workspace_pending
@@ -337,7 +374,7 @@ impl Engine {
                 let result = if let Some(claim) = &op.queue {
                     self.steer_owned_queue(&id, claim)?
                 } else {
-                    self.steer_command("agent.steer", &json!({"threadId":id,"text":text}))?
+                    self.steer_native_composer(&current)?
                 };
                 op.delivery = Some(Delivery::Steering(required(&result, "operationId")?.into()));
             }
@@ -377,7 +414,7 @@ impl Engine {
                 }
             )
         {
-            self.native_follow_up.blocked.insert(id, text);
+            self.native_follow_up.blocked.insert(id, scope(&current));
         }
         self.native_follow_up.operations.insert(ticket.id, op);
         self.revision += 1;

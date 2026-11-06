@@ -255,6 +255,8 @@ impl Coincide {
                     let id = text(message, "id");
                     let state = text(message, "state");
                     let full_text = text(message, "text");
+                    let image_count = message["rustImages"].as_array().map_or(0, Vec::len);
+                    let context_count = message["context"].as_array().map_or(0, Vec::len);
                     let edit_message = message.clone();
                     let send_message = message.clone();
                     let source = self.selected.clone();
@@ -276,6 +278,7 @@ impl Coincide {
                                     text(&message["selection"], "provider")
                                 )))
                                 .child(div().truncate().child(preview))
+                                .when(image_count + context_count > 0, |row| row.child(div().text_sm().child(format!("{image_count} images · {context_count} references"))))
                                 .when_some(message["error"].as_str(), |row, error| {
                                     row.child(div().text_sm().child(error.to_owned()))
                                 }),
