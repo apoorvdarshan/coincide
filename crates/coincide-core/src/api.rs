@@ -56,6 +56,11 @@ mod composer_astra_api_tests;
 mod composer_context_api;
 #[path = "composer_file_reference.rs"]
 mod composer_file_reference;
+#[path = "terminal_context_api.rs"]
+mod terminal_context_api;
+#[cfg(test)]
+#[path = "terminal_context_tests.rs"]
+mod terminal_context_tests;
 pub use composer_file_reference::{
     AttachedFileReference, FileReference, FileReferenceList, FileReferenceScope,
 };
@@ -546,6 +551,7 @@ impl Engine {
                 methods.extend_from_slice(workspace_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
+                methods.push("composer.context.attachTerminalSelection");
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
@@ -762,6 +768,7 @@ impl Engine {
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "composer.context.edit" => self.edit_composer_context(p),
+            "composer.context.attachTerminalSelection" => self.attach_terminal_selection(p),
             "agent.send" => self.send_turn(p,false),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
