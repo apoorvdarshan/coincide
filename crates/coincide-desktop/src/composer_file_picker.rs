@@ -397,14 +397,20 @@ impl Coincide {
         let state = &self.composer_files;
         let generation = state.epoch.load(Ordering::Acquire);
         let busy = state.busy();
-        let mut pane=div().id("composer-file-picker").flex().flex_col().gap_2()
-            .child(div().flex().items_center().gap_2().child(div().flex_1().child("Project file references"))
-                .child(Button::new("composer-file-close").label("Close").compact().on_click(cx.listener(|this,_,window,cx|this.close_composer_file_picker(window,cx)))))
-            .child("Choose a file to attach its path as reference material. Message text stays as written; file contents are not read.")
-            .child(div().flex().gap_2().child(Input::new(&state.query)).child(Button::new("composer-file-search").label("Search").disabled(busy).on_click(cx.listener(|this,_,window,cx|this.search_composer_files(window,cx)))))
+        let mut results = div()
+            .id("composer-file-results")
+            .role(Role::List)
+            .aria_label("Matching project file references")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child("Choose a path reference. Message text and file contents stay unchanged.")
             .child(div().text_xs().child(state.status.clone()));
         if !state.directory.is_empty() {
-            pane = pane.child(
+            results = results.child(
                 div()
                     .text_xs()
                     .truncate()
@@ -412,12 +418,56 @@ impl Coincide {
             );
         }
         if state.truncated || state.skipped > 0 {
-            pane=pane.child(div().text_xs().child(format!("{} eligible files shown from {} matching Git paths; {} unavailable or unsupported entries skipped. Refine the search for more.",state.files.len(),state.total,state.skipped)));
+            results=results.child(div().text_xs().child(format!("{} eligible files shown from {} matching Git paths; {} unavailable or unsupported entries skipped. Refine the search for more.",state.files.len(),state.total,state.skipped)));
         }
+        let pane = div()
+            .id("composer-file-picker")
+            .role(Role::Group)
+            .aria_label("Project file reference picker")
+            .h(px(150.))
+            .min_h_0()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().child("Project file references"))
+                    .child(
+                        Button::new("composer-file-close")
+                            .label("Close")
+                            .compact()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_composer_file_picker(window, cx)
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .gap_2()
+                    .child(Input::new(&state.query))
+                    .child(
+                        Button::new("composer-file-search")
+                            .label("Search")
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.search_composer_files(window, cx)
+                            })),
+                    ),
+            );
         for (index, file) in state.files.iter().enumerate() {
             let candidate = file.clone();
-            pane = pane.child(
+            results = results.child(
                 div()
+                    .role(Role::ListItem)
+                    .aria_label(format!("Project file {}", file.path()))
                     .flex()
                     .items_center()
                     .gap_2()
@@ -431,6 +481,10 @@ impl Coincide {
                     .child(
                         Button::new(("composer-file-attach", index))
                             .label("Attach")
+                            .accessibility_label(format!(
+                                "Attach project file reference {}",
+                                file.path()
+                            ))
                             .compact()
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -439,7 +493,7 @@ impl Coincide {
                     ),
             );
         }
-        Some(pane.into_any_element())
+        Some(pane.child(results).into_any_element())
     }
 }
 
