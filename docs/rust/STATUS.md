@@ -87,8 +87,10 @@ native results do not close a full feature row.
   feature Core Clippy passed. Desktop passed 406 units and all four integration
   targets (19, 10, 14, 11). A follow-up bounds the file results while keeping
   Close/Search reachable and adds file-specific accessibility labels; its final
-  full desktop check passed. Fresh native acceptance is in progress. Automatic caret
-  suggestions and broader named-profile options remain open.
+  full desktop check passed. Fresh native acceptance is in progress. A follow-up
+  adds focused-caret file suggestions and guarded native @query completion;
+  its combined tests and native acceptance are pending. Broader named-profile
+  options remain open.
 - The first ordinary 58609d3 file-picker native run found clipped controls when
   existing reference cards occupied the composer accessory. One real scroll
   confirmed the layout defect; an offscreen Search action did not establish an
@@ -98,6 +100,12 @@ native results do not close a full feature row.
   preserved. The follow-up gives the open picker the primary accessory viewport,
   temporarily compacts the draft and hides competing footer/status content;
   stored draft/context/selection are retained. Fresh native verification is pending.
+- Automatic file completion uses the existing editor's explicit UTF-16 range
+  edit only after current draft/context/caret/IME and grapheme-boundary checks.
+  Context attaches first; changed input afterward keeps its newer text and the
+  committed reference. Surrounding bytes are preserved. Secondary carets follow
+  the editor's collapse behavior; folder completion, keyboard result selection
+  and exact Swift popup placement remain open.
 - Frozen ordinary 6b9645a passed the combined native project/history V2 run:
   real directory-picker duplicate Add, Rename, Locate path field, duplicate
   refusal, counted Remove Cancel/confirm and raw Restore; history picker/review,
