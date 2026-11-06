@@ -213,7 +213,8 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn persistence_changes_only_list_width_and_malformed_state_is_never_replaced() {
-        let root = std::env::temp_dir().join(format!("coincide-sidebar-width-{}", Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("coincide-sidebar-width-{}", uuid::Uuid::new_v4()));
         let mut store = Store::open(&root.join("coincide.sqlite")).unwrap();
         let original = json!({"listWidth":288,"opaque":{"keep":[1,2]},"threadPanels":{"thread":"preview"},"sidebarWidth":333});
         store.save_document("ui-state.json", &original).unwrap();

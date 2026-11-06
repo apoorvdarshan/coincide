@@ -48,6 +48,19 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 - [ ] Real-account acceptance, full test parity and data cutover rehearsal.
 - [ ] Remove superseded Swift/C++ desktop implementation and build tooling.
 
+## Current UI parity slices
+
+These narrower results do not close the broad UI/UX row above.
+
+| Slice | Source / automated checks | Native acceptance |
+| --- | --- | --- |
+| Persistent rail, collapsible list, compact toolbar | Integrated and tested | Scoped pass, including focus/draft preservation and minimum-width reachability |
+| Saved-selection composer footer | Integrated; guarded selection flow retained | Scoped pass for footer/disclosure |
+| Pinned and Chats sections | Integrated and tested in the combined suite | Fresh separate fixture prepared; pending |
+| Assistant body-first layout and compact signature/actions | Integrated and tested in the combined suite | Pending ordinary combined build |
+| Historical image preview and enlarged viewer | Actual completed-geometry fix and paint/rollback token guard integrated; all 43 List tests pass, including seven new regressions | Earlier preview failed; new uninstrumented run pending |
+| Sidebar drag resizing | Integrated using verified Swift dimensions; four bounds, gesture and Store-preservation fixtures pass | Fresh separate fixture being prepared; pending |
+
 ## Overnight checkpoint (2026-11-05)
 
 Work is coordinated in this conversation with built-in subagents. The earlier
@@ -56,11 +69,34 @@ Swift app and user data remain untouched. No ASUS or SSH validation is used.
 
 Latest verification and current gates:
 
+- The combined UI source passed 379 desktop unit tests with all notification,
+  microphone, Computer Use and helper adapters enabled, plus every desktop
+  integration target (19, 10, 14, 11). All 43 vendored List tests passed, including
+  seven completed-geometry regressions and actual aborted-prepaint/deferred-effect
+  rejection. CI now explicitly runs all seven new tests and rejects a zero-test
+  result. Source review also verified the native sidebar drag/release lifecycle;
+  native display, drag and relaunch acceptance remain pending. One completed-drag
+  preference save retains the existing Store SQLite busy timeout of five seconds;
+  drag motion itself stays in memory.
+- The latest local core run passed 529 unit tests and every integration target,
+  including the finite output-overflow/actual-reaping regression. Strict feature
+  Clippy passes after removing an obsolete EOF flag. The Mac CI output-overflow
+  failure is addressed by pipe-readiness polling, retaining the existing byte
+  caps, absolute deadlines and process-group cleanup. New exact-head CI is pending.
+- Native uninstrumented e7d72f8 acceptance passed the saved-selection footer and
+  disclosure, but the historical image preview still failed. A separate V3
+  diagnostic-only build isolated the cause: the bottom-aligned List returned
+  its end anchor (item 1 of 1) instead of the actual visible first row (item 0),
+  yielding no image candidates or load attempts. A read-only core diagnostic
+  returned the verified image successfully. Correct completed-layout geometry
+  and a new uninstrumented native acceptance run remain in progress. All exact
+  synthetic thread/documents and source/managed image bytes were preserved;
+  both native runs quit normally with zero provider/vault calls.
 - Follow-up e7d72f8 passed 370 desktop unit tests with all notification,
   microphone, Computer Use and helper adapters enabled, plus all four integration
   targets (19, 10, 14, 11). The new saved selection footer remains an explicit
-  disclosure to the unchanged guarded Apply/Discard flow. Native footer testing
-  and native retesting of the image-display fix are pending.
+  disclosure to the unchanged guarded Apply/Discard flow. The native footer
+  passed subsequently; the image-display fix did not, as recorded above.
 - Native b493885 rail/header checks passed: persistent rail, list hide/show with
   exact focused-search/query/draft preservation, real palette/Escape, idle Usage
   and Accounts routes, More/Snooze reachability, and an observed 820px minimum
@@ -72,14 +108,18 @@ Latest verification and current gates:
   normal Quit exited zero; four denied fake-git invocations prevented its strict
   zero-executable assertion passing. An actual read-only core render diagnostic
   returned one verified image, zero failures and an actual worker-return receipt.
-  The candidate UI fix records completed list layouts instead of treating
+  The first candidate UI fix records completed list layouts instead of treating
   splice-invalidated measurements as an empty visible list. Native restart
-  validation must pass before the image viewer is accepted.
+  validation failed; actual bottom-aligned List geometry must also be corrected
+  before the image viewer is accepted.
 - Exact 1f03785 Rust CI passed five jobs, but its macOS desktop test exposed an
   existing synthetic regrant fixture assuming an immediately drained request.
   Its test-only correction waits for the actual drain boundary under the same
   original deadline and retains Revoked/zero-backend-call assertions. The exact
-  all-adapter local suite above passes; the next pushed CI result remains pending.
+  all-adapter local suite above passes. Exact 4f030ee subsequently passed its
+  macOS desktop job and the other four non-Mac-core Rust jobs; Mac core failed
+  the credentials overflow fixture addressed above. Packaging and general CI
+  passed. No rerun is counted as a correction without a source-backed fix.
 - UI parity is now the active priority. A private native comparison confirmed
   the missing persistent rail, oversized wrapping header and obscured composer
   controls. The first presentation batch adds a 60px navigation rail using real
