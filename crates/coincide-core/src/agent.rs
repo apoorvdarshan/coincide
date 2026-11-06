@@ -395,6 +395,7 @@ impl Session {
     pub(crate) fn steer(&self, text: &str) -> Result<codex_steering::Ticket> {
         self.steer_exact(text, &self.steering_identity()?)
     }
+    #[cfg(test)]
     pub(crate) fn steer_exact(
         &self,
         text: &str,
