@@ -205,9 +205,17 @@ pub(crate) fn validate_model_thread(thread: &Value) -> Result<()> {
             && thread["selection"]["speed"].is_null()
             && thread["rustBotContext"].is_null()
             && thread["botID"].is_null()
-            && (thread["accessMode"].is_null() || thread["accessMode"] == "approval")
+            && (thread["accessMode"].is_null()
+                || matches!(
+                    thread["accessMode"].as_str(),
+                    Some("approval" | "fullAccess")
+                ))
             && (thread["interactionMode"].is_null() || thread["interactionMode"] == "build"),
-        "Named Codex login profiles require ordinary approval/build and no effort/speed"
+        "Named Codex login profiles require ordinary build mode and no effort/speed"
+    );
+    ensure!(
+        thread["accessMode"] != "fullAccess" || model != "default",
+        "Named Codex full access requires an explicit profile-catalog model"
     );
     Ok(())
 }
