@@ -32,6 +32,22 @@ impl Engine {
             && let Some(prior) = prior
         {
             self.computer_use_selection_changed(prior);
+            if let Some(id) = self.store.resolve_thread_id(prior)? {
+                let departing = self.store.thread(&id)?;
+                self.park_named_departure(&departing)?;
+            } else {
+                // Observed absence can revoke, never mint. Closed/ambiguous or
+                // failed Store reads still propagate above rather than being
+                // mistaken for a successfully removed conversation.
+                self.named_resume
+                    .invalidate_threads(&[prior.to_string()], &self.store)?;
+            }
+        }
+        if prior != next
+            && let Some(id) = &selected
+        {
+            let arriving = self.store.thread(id)?;
+            self.park_named_departure(&arriving)?;
         }
         if self.active_thread != selected {
             self.cancel_provider_restore();
@@ -47,7 +63,20 @@ mod tests {
     use crate::computer_use::{Authority, Failure};
     fn fixture() -> (tempfile::TempDir, Engine, String, String, Authority) {
         let dir = tempfile::tempdir().unwrap();
-        let mut e = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let data = dir.path().join("private-data");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&data)
+                .unwrap();
+        }
+        #[cfg(windows)]
+        crate::private_fs::windows::create_directory(&data).unwrap();
+        #[cfg(not(any(unix, windows)))]
+        std::fs::create_dir(&data).unwrap();
+        let mut e = Engine::fixture(Store::open(&data.join("state.sqlite")).unwrap());
         let a = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
         let b = text(&e.execute("threads.create", &json!({})).unwrap(), "id");
         e.set_active_thread(Some(a.clone())).unwrap();
@@ -117,5 +146,21 @@ mod tests {
         assert_eq!(e.active_thread(), None);
         assert_eq!(authority.grant(id), Err(Failure::NotGranted));
         assert!(authority.enabled());
+    }
+    #[test]
+    fn closed_store_departure_is_not_treated_as_missing_and_revokes_native_grant() {
+        let (_dir, mut e, a, _b, authority) = fixture();
+        let id = Uuid::parse_str(&a).unwrap();
+        e.store.close_for_shutdown().unwrap();
+        assert!(e.set_active_thread(None).is_err());
+        assert_eq!(e.active_thread(), Some(a.as_str()));
+        assert_eq!(authority.grant(id), Err(Failure::NotGranted));
+    }
+    #[test]
+    fn independently_absent_prior_row_can_clear_without_inventing_departure_context() {
+        let (_dir, mut e, _a, _b, _authority) = fixture();
+        e.active_thread = Some(Uuid::new_v4().to_string());
+        e.set_active_thread(None).unwrap();
+        assert!(e.active_thread().is_none());
     }
 }

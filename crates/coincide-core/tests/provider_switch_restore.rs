@@ -168,6 +168,7 @@ fn selected(engine: &mut Engine, original: &Value, model: &str) {
     assert_eq!(result["accountRestored"], false);
     let mut expected = original.clone();
     expected["rustProviderSelections"] = json!({"claude": original["selection"]});
+    expected["rustAccountSelections"]["claude/default"] = original["selection"].clone();
     expected["selection"]["provider"] = json!("codex");
     expected["selection"]["modelID"] = json!(model);
     expected["selection"]

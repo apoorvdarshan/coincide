@@ -33,6 +33,8 @@ mod bot_engine;
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
 mod browser_history_api;
+#[path = "named_profile_departure_api.rs"]
+mod named_profile_departure;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
@@ -761,6 +763,8 @@ impl Engine {
                 if selection["provider"] == "antigravity" {
                     self.antigravity_selection(&selection)?;
                 }
+                if v["selection"]["provider"] != selection["provider"]
+                    || v["selection"]["accountID"] != selection["accountID"] { self.park_named_departure(&v)?; }
                 v["selection"] = selection;
                 crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
                 self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
@@ -986,7 +990,7 @@ impl Engine {
         // and authenticated restart journal require a saved owned worker join.
         let named_resume = if let Some(profile) = &codex_profile {
             Some(
-                self.named_resume.prepare(
+                self.named_resume.prepare_admitted(
                     &v,
                     profile.clone(),
                     &cwd,
@@ -994,6 +998,16 @@ impl Engine {
                         .as_ref()
                         .context("Missing named policy")?
                         .clone(),
+                    self.model_catalog
+                        .named_resume_admission(
+                            &v,
+                            &crate::model_catalog::NamedBinding::capture(
+                                profile.clone(),
+                                &id,
+                                &cwd,
+                            )?,
+                        )
+                        .ok(),
                 )?,
             )
         } else {

@@ -743,10 +743,11 @@ fn durable_restart_child() {
         "allow",
         "approval",
     );
+    // Both explicit and Provider-default cold receipts wait for current private
+    // account/catalog admission without consuming the saved ticket or history.
+    refuse(&mut e, &root, &id);
+    let catalog = refresh(&mut e, &id);
     if stage == "explicit" {
-        // Persisted selections do not silently recreate private model proofs.
-        refuse(&mut e, &root, &id);
-        let catalog = refresh(&mut e, &id);
         select(&mut e, &id, selected, Some(&catalog), "approval");
     }
     let prompt = format!("only new prompt after process restart {stage}");

@@ -42,8 +42,6 @@ impl Engine {
                     .is_some_and(|intent| intent.token == request),
                 "Provider restoration was cancelled or superseded; draft retained"
             );
-        } else {
-            self.cancel_provider_restore();
         }
         Provider::from_name(provider)?;
         ensure!(
@@ -111,6 +109,25 @@ impl Engine {
                     )),
             "Finish or remove queued messages before changing provider"
         );
+        if p.get("restoreRequestId").is_none() {
+            let changes_provider = current["selection"]["provider"] != provider;
+            let changes_account = provider == "codex"
+                && p.get("accountId").is_some_and(|account| {
+                    if crate::composer_selection::default_account(account) {
+                        !crate::composer_selection::default_account(
+                            &current["selection"]["accountID"],
+                        )
+                    } else {
+                        &current["selection"]["accountID"] != account
+                    }
+                });
+            if changes_provider || changes_account {
+                // Capture completed resident authority before cancelling its
+                // catalog actor. A pure same-account warmup cannot park it.
+                self.park_named_departure(&current)?;
+            }
+            self.cancel_provider_restore();
+        }
         if provider == "codex" {
             let configuration = crate::codex_login_profiles::configuration(&self.store)?;
             if p.get("accountId").is_some()
@@ -244,17 +261,18 @@ pub(super) fn remember_source(target: &mut Value, source: &Value) -> Result<()> 
     );
     let provider = required(&source["selection"], "provider")?;
     target["rustProviderSelections"][provider] = source["selection"].clone();
-    if !crate::composer_selection::default_account(&source["selection"]["accountID"]) {
-        if target["rustAccountSelections"].is_null() {
-            target["rustAccountSelections"] = json!({});
-        }
-        ensure!(
-            target["rustAccountSelections"].is_object(),
-            "Invalid saved account selections"
-        );
-        let key = composer_choices_api::account_key(&source["selection"])?;
-        target["rustAccountSelections"][key] = source["selection"].clone();
+    // The default account is an independent preference slot too. Otherwise a
+    // named A -> B visit overwrites the provider's only copy of its saved tuple
+    // before the default account has produced any historical turn.
+    if target["rustAccountSelections"].is_null() {
+        target["rustAccountSelections"] = json!({});
     }
+    ensure!(
+        target["rustAccountSelections"].is_object(),
+        "Invalid saved account selections"
+    );
+    let key = composer_choices_api::account_key(&source["selection"])?;
+    target["rustAccountSelections"][key] = source["selection"].clone();
     Ok(())
 }
 
@@ -351,6 +369,47 @@ fn historical_default_model<'a>(thread: &'a Value, provider: &str) -> Option<&'a
 mod tests {
     use super::*;
 
+    #[test]
+    fn default_account_tuple_survives_named_visits_before_any_default_turn_exists() {
+        let a = Uuid::new_v4().to_string();
+        let b = Uuid::new_v4().to_string();
+        for default in [
+            json!({"provider":"codex","modelID":"default"}),
+            json!({"provider":"codex","modelID":"default","accountID":null,"effort":null,"speed":null}),
+            json!({"provider":"codex","modelID":"default","accountID":"default","effort":null}),
+        ] {
+            let mut target = json!({"items":[],"draft":"Retained draft","future":{"opaque":7}});
+            let source = json!({"selection":default});
+            remember_source(&mut target, &source).unwrap();
+            for (account, model) in [(&a, "synthetic-a"), (&b, "synthetic-b")] {
+                let source = json!({"selection":{"provider":"codex","modelID":model,"accountID":account,"effort":null,"speed":null}});
+                remember_source(&mut target, &source).unwrap();
+                assert_eq!(
+                    target["rustAccountSelections"][format!("codex/{account}")],
+                    source["selection"]
+                );
+            }
+            assert_eq!(
+                target["rustAccountSelections"]["codex/default"], default,
+                "Missing/null/explicit default and option shapes are preserved exactly"
+            );
+            assert_eq!(target["rustProviderSelections"]["codex"]["accountID"], b);
+            assert_eq!(
+                target["rustProviderSelections"]["codex"]["modelID"],
+                "synthetic-b"
+            );
+            assert_eq!(target["items"], json!([]));
+            assert_eq!(target["draft"], "Retained draft");
+            assert_eq!(target["future"], json!({"opaque":7}));
+        }
+        let source = json!({"selection":{"provider":"codex","modelID":"default"}});
+        let mut malformed = json!({"rustAccountSelections":"opaque-invalid-metadata"});
+        assert!(remember_source(&mut malformed, &source).is_err());
+        assert_eq!(
+            malformed["rustAccountSelections"],
+            "opaque-invalid-metadata"
+        );
+    }
     #[test]
     fn newly_appended_items_remember_selected_model_and_account_without_rewriting_history() {
         let previous = json!({"id":Uuid::new_v4(),"kind":"assistant","provider":"claude","text":"Retained","future":{"keep":true}});
