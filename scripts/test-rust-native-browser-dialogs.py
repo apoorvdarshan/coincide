@@ -66,13 +66,18 @@ def exercise_dialogs(rpc, thread_id):
         return wait_for('exact native JavaScript continuation result',
                         lambda: browser('read', tab=tab, selector='#result').get('text') == expected)
 
-    class BoundedServer(http.server.HTTPServer):
+    class BoundedServer(http.server.ThreadingHTTPServer):
+        # Concurrent requests: one idle or speculative WebView connection must
+        # not stall the page until its socket timeout. Non-daemon request
+        # threads are joined by server_close(), so none outlive the fixture.
+        daemon_threads = False
+        block_on_close = True
+
         def get_request(self):
             connection, address = super().get_request()
             connection.settimeout(2)
             return connection, address
 
-    # One owned request/serve thread, no daemon request workers to outlive it.
     server = BoundedServer(('127.0.0.1', 0), Handler)
     worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.1))
     worker.start()
