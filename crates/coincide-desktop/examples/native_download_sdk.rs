@@ -440,6 +440,13 @@ impl Fixture {
             }
             if let Some(failure) = &self.failure {
                 eprintln!("synthetic native download failure: {failure}");
+                // Owned synthetic rows only: states, names, runner paths, errors.
+                for tab in &self.tabs {
+                    eprintln!(
+                        "synthetic native download rows: {}",
+                        self.registry.borrow().list(&self.thread, Some(&tab.id))
+                    );
+                }
                 for tab in &self.tabs {
                     tab.owner.close();
                 }
