@@ -317,7 +317,7 @@ jobs:
         run: |
           cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/pr-panel-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($name in 'availability_reads_each_swift_state_from_the_engine', 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head') {
+          foreach ($name in 'repository_input_is_explicit_and_not_a_url_or_shell_fragment', 'state_and_list_bounds_reject_unsupported_or_incomplete_data') {
             if (-not (Select-String -Path "$env:RUNNER_TEMP/pr-panel-tests.log" -SimpleMatch "$name ... ok")) { throw "Expected $name to pass" }
           }
       - name: Test transcript link routing, plan card, changed files and rewind logic
@@ -564,8 +564,8 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/pr-panel-tests.log"
-          grep -F 'availability_reads_each_swift_state_from_the_engine ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
-          grep -F 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'repository_input_is_explicit_and_not_a_url_or_shell_fragment ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'state_and_list_bounds_reject_unsupported_or_incomplete_data ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
