@@ -25,7 +25,10 @@ use uuid::Uuid;
 const WINDOW: usize = 8;
 const CONTROLS: usize = 16;
 fn native_compiled() -> bool {
-    cfg!(all(target_os = "macos", feature = "native-notifications"))
+    cfg!(all(
+        any(target_os = "macos", target_os = "linux"),
+        feature = "native-notifications"
+    ))
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {

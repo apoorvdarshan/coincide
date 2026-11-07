@@ -149,7 +149,14 @@ impl NotificationRuntime {
         {
             Self::spawn(crate::notifications::macos::NativeBackend, 32)
         }
-        #[cfg(not(all(target_os = "macos", feature = "native-notifications")))]
+        #[cfg(all(target_os = "linux", feature = "native-notifications"))]
+        {
+            Self::spawn(crate::notifications::linux::backend(), 32)
+        }
+        #[cfg(not(all(
+            any(target_os = "macos", target_os = "linux"),
+            feature = "native-notifications"
+        )))]
         {
             Self::spawn(crate::notifications::UnsupportedBackend, 32)
         }

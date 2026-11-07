@@ -61,6 +61,8 @@ mod navigation;
 mod navigation_rail;
 mod navigation_resize;
 mod notification_runtime;
+#[cfg(any(test, all(target_os = "linux", feature = "native-notifications")))]
+mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
