@@ -4,7 +4,6 @@
 //! https://github.com/zed-industries/zed/blob/main/crates/gpui/examples/input.rs
 #[path = "native_preview.rs"]
 mod native_preview;
-pub use native_preview::{NativeTextRevision, TransientEditError, TransientReplacement};
 use gpui::TextAlign;
 use gpui::{
     Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
@@ -15,6 +14,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration};
+pub use native_preview::{NativeTextRevision, TransientEditError, TransientReplacement};
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -451,6 +451,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) replaying_history: bool,
     pub(super) validated_token_edit: bool,
     pub(super) document_revision: u64,
+    native_transient: Option<Box<native_preview::NativeTransient>>,
     pub(super) token_presentation: super::InlineTokenPresentation,
     pub(super) token_layout_cache: Option<Box<super::token_presentation::TokenLayoutCache>>,
     /// Real per-frame bounds of the placed token elements, keyed by token
@@ -992,6 +993,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             replaying_history: false,
             validated_token_edit: false,
             document_revision: 0,
+            native_transient: None,
             token_presentation: Default::default(),
             token_bounds: Default::default(),
             hovered_token: None,
@@ -1264,6 +1266,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let content = value.into();
         self.inline_tokens = None;
         self.undo_manager.set_ignoring(true);
@@ -1297,6 +1301,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         self.replace_text(text, window, cx);
         self.reset_selection();
         self.reset_lsp_state();
@@ -1325,6 +1331,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let text: SharedString = text.into();
         self.with_edits_allowed(|this| {
             this.undo_manager.set_pending_intent(EditIntent::Atomic);
@@ -1344,6 +1352,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let text: SharedString = text.into();
         self.with_edits_allowed(|this| {
             this.undo_manager.set_pending_intent(EditIntent::Atomic);
@@ -1359,6 +1369,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let text: SharedString = text.into();
         self.with_edits_allowed(|this| {
             this.undo_manager.set_pending_intent(EditIntent::Atomic);
@@ -1409,6 +1421,10 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if disabled != self.disabled {
+            self.restore_native_transient(cx);
+        }
+
         if self.disabled == disabled {
             return;
         }
@@ -1435,6 +1451,10 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub fn set_readonly(&mut self, readonly: bool, cx: &mut Context<Self>) {
+        if readonly != self.readonly {
+            self.restore_native_transient(cx);
+        }
+
         if self.readonly == readonly {
             return;
         }
@@ -1700,6 +1720,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let position: Position = position.into();
         let offset = self.text.position_to_offset(&position);
 
@@ -2063,6 +2085,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         if !self.is_editable() {
             return;
         }
@@ -2216,6 +2240,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         // Nothing to delete at the start of the text. Propagate so an ancestor
         // (e.g. a command palette navigating back a level) can act on it.
         // This is harmless when nothing upstream is bound to backspace. With multiple
@@ -2269,6 +2295,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         self.delete_selections(
             false,
             EditIntent::DeleteForward,
@@ -2351,6 +2379,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         if M::handle_context_menu_action(self, Box::new(action.clone()), window, cx) {
             return;
         }
@@ -2593,6 +2623,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// the first/last display row) or that would duplicate an existing cursor
     /// are skipped.
     fn add_cursor_vertical(&mut self, move_lines: isize, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         if !self.is_multi_line() {
             return;
         }
@@ -2641,6 +2673,9 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Rejected when `offset` lands inside an existing selection or exactly on
     /// an existing cursor.
     pub(super) fn add_cursor_at(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let restored = self.restore_native_transient(cx);
+        let offset = restored.map_or(offset, |source| source.map_range(offset..offset).start);
+
         if !self.is_multi_line() {
             return;
         }
@@ -2773,6 +2808,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         self.selecting = true;
         let (offset, line_end_affinity, columns_past_line_end) =
             self.resolve_mouse_position(event.position);
+        let restored = self.restore_native_transient(cx);
+        let offset = restored.map_or(offset, |source| source.map_range(offset..offset).start);
 
         if M::on_click(self, event, offset, window, cx) {
             return;
@@ -3180,6 +3217,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         if !self.is_copyable() {
             return;
         }
@@ -3193,6 +3232,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         if !self.is_editable() {
             return;
         }
@@ -3251,6 +3292,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         let Some(mut new_text) = clipboard.text().filter(|text| !text.is_empty()) else {
             return;
         };
@@ -3385,10 +3428,14 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         self.replay_history(true, window, cx);
     }
 
     pub(super) fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         self.replay_history(false, window, cx);
     }
 
@@ -3553,6 +3600,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub fn select_all(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.restore_native_transient(cx);
+
         self.undo_manager.break_transaction_coalescing();
         self.selections.remove_all_but_active();
         self.set_selection(0, self.text.len());
@@ -3579,6 +3628,11 @@ impl<M: InputModeKind> InputBaseState<M> {
         reversed: bool,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let range = restored
+            .as_ref()
+            .map_or(range.clone(), |source| source.map_range(range));
+
         let range = self.normalize_token_range(range);
         let end_bias = if range.start == range.end {
             Bias::Left
@@ -3606,6 +3660,11 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// replaces the selection instead.
     /// The view scrolls to the new selection.
     pub fn add_selection(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let restored = self.restore_native_transient(cx);
+        let range = restored
+            .as_ref()
+            .map_or(range.clone(), |source| source.map_range(range));
+
         if !self.is_multi_line() {
             self.set_selected_range(range, cx);
             return;
@@ -3816,6 +3875,9 @@ impl<M: InputModeKind> InputBaseState<M> {
         line_end_affinity: bool,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let offset = restored.map_or(offset, |source| source.map_range(offset..offset).start);
+
         M::clear_inline_completion(self, cx);
 
         self.cursor_line_end_affinity = line_end_affinity;
@@ -3849,6 +3911,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         preserve_column: bool,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         self.pause_blink_cursor(cx);
         self.undo_manager.break_transaction_coalescing();
         M::clear_inline_completion(self, cx);
@@ -4261,6 +4325,13 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let range_utf16 = range_utf16.map(|range| {
+            restored
+                .as_ref()
+                .map_or(range.clone(), |source| source.map_utf16(range))
+        });
+
         self.silent_replace_text = true;
         self.replace_text_in_range(range_utf16, new_text, window, cx);
         self.silent_replace_text = false;
@@ -4276,6 +4347,15 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let mapped = restored.map(|source| {
+            edits
+                .iter()
+                .map(|(range, text)| (source.map_range(range.clone()), text.clone()))
+                .collect::<Vec<_>>()
+        });
+        let edits = mapped.as_deref().unwrap_or(edits);
+
         if !self.is_editable() || edits.is_empty() {
             return;
         }
@@ -4618,6 +4698,13 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let range_utf16 = range_utf16.map(|range| {
+            restored
+                .as_ref()
+                .map_or(range.clone(), |source| source.map_utf16(range))
+        });
+
         let requested_intent = self.undo_manager.take_pending_intent();
         if !self.is_editable() {
             return;
@@ -4875,6 +4962,13 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let range_utf16 = range_utf16.map(|range| {
+            restored
+                .as_ref()
+                .map_or(range.clone(), |source| source.map_utf16(range))
+        });
+
         let requested_intent = self.undo_manager.take_pending_intent();
         if !self.is_editable() {
             return;

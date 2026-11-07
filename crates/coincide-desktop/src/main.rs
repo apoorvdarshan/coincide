@@ -4,6 +4,9 @@ mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
 #[cfg(test)]
+#[path = "dictation_preview_ui_tests.rs"]
+mod dictation_preview_ui_tests;
+#[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
 mod usage_history_mount;

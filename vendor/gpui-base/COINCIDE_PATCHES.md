@@ -21,3 +21,14 @@ Local source changes:
 
 The application must restore the exact original source before a final ordinary
 edit or user edit/undo. This patch does not add an agent or JSON authority API.
+
+The native API additionally retains a private original/expected rope snapshot.
+Normal edit, paste, IME, undo/redo, Enter and selection entry points restore it
+before applying the ordinary action, with byte/UTF-16 offset translation. A
+changed document revision or text drops custody without modifying new content.
+The native transient scope skips its own restoration hook. This adds only one
+optional boxed snapshot to shared state; only TextareaState can create it.
+`movement.rs` carries the matching pre-selection hook. Feature `test-support`
+exposes a fixed caught-unwind probe (no callback or authority input) so private
+Desktop TestPlatform fixtures can verify RAII and real normal-edit histories
+without pulling upstream optional dev backends into this workspace.

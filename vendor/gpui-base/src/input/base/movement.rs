@@ -82,6 +82,9 @@ impl<M: InputModeKind> InputBaseState<M> {
         line_end_affinity: bool,
         cx: &mut Context<Self>,
     ) {
+        let restored = self.restore_native_transient(cx);
+        let offset = restored.map_or(offset, |source| source.map_range(offset..offset).start);
+
         self.undo_manager.break_transaction_coalescing();
         self.selections.remove_all_but_active();
         let offset = self.cursor_boundary(offset, Bias::Left);
@@ -210,6 +213,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_native_transient(cx);
+
         self.undo_manager.break_transaction_coalescing();
         let mut active_affinity = false;
         let new_selections: Vec<CursorSelection> = self
