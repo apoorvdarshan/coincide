@@ -15,7 +15,9 @@ use std::{
 use uuid::Uuid;
 use windows::{
     Data::Xml::Dom::XmlDocument,
-    UI::Notifications::{NotificationSetting, ToastNotification, ToastNotificationManager},
+    UI::Notifications::{
+        NotificationSetting, ToastNotification, ToastNotificationManager, ToastNotifier,
+    },
     Win32::{
         Foundation::PROPERTYKEY,
         Storage::FileSystem::MoveFileW,
@@ -34,7 +36,7 @@ use windows::{
             SHGetKnownFolderPath, SHStrDupW, ShellLink,
         },
     },
-    core::{BSTR, GUID, HSTRING, Interface, PCWSTR},
+    core::{BSTR, GUID, HRESULT, HSTRING, Interface, PCWSTR},
 };
 
 const APP_ID: &str = "com.apoorvdarshan.coincide.rust";
@@ -144,20 +146,36 @@ fn status(exe: &Path, shortcut: &Path, app_id: &str) -> Result<Permission> {
         ),
     }
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))
-        .map_err(|_| anyhow::anyhow!("Windows notification service unavailable"))?;
-    Ok(
-        match notifier
-            .Setting()
-            .map_err(|_| anyhow::anyhow!("Windows notification permission unavailable"))?
-        {
-            NotificationSetting::Enabled => Permission::Authorized,
-            NotificationSetting::DisabledForApplication
-            | NotificationSetting::DisabledForUser
-            | NotificationSetting::DisabledByGroupPolicy
-            | NotificationSetting::DisabledByManifest => Permission::Denied,
-            _ => Permission::Unknown,
-        },
-    )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Windows notification service unavailable ({:?})",
+                error.code()
+            )
+        })?;
+    notifier_permission(&notifier)
+}
+/// An unpackaged app has no per-app notification settings entry until its
+/// first toast, and Setting reports ERROR_NOT_FOUND until then. Callers have
+/// already verified the owned shortcut, so no app, user or policy block is
+/// recorded and the first Show may proceed; later reads return the setting.
+const SETTING_NOT_RECORDED: HRESULT = HRESULT(0x8007_0490_u32 as i32);
+fn notifier_permission(notifier: &ToastNotifier) -> Result<Permission> {
+    let setting = match notifier.Setting() {
+        Ok(setting) => setting,
+        Err(error) if error.code() == SETTING_NOT_RECORDED => return Ok(Permission::Authorized),
+        Err(error) => bail!(
+            "Windows notification permission unavailable ({:?})",
+            error.code()
+        ),
+    };
+    Ok(match setting {
+        NotificationSetting::Enabled => Permission::Authorized,
+        NotificationSetting::DisabledForApplication
+        | NotificationSetting::DisabledForUser
+        | NotificationSetting::DisabledByGroupPolicy
+        | NotificationSetting::DisabledByManifest => Permission::Denied,
+        _ => Permission::Unknown,
+    })
 }
 fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
     if fs::symlink_metadata(shortcut).is_ok() {
@@ -258,7 +276,7 @@ fn post(app_id: &str, payload: &Payload, suppress_popup: bool) -> Delivery {
         toast.SetTag(&HSTRING::from(&Uuid::new_v4().simple().to_string()[..16]))?;
         let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?;
         ensure!(
-            notifier.Setting()? == NotificationSetting::Enabled,
+            notifier_permission(&notifier)? == Permission::Authorized,
             "Notifications disabled"
         );
         Ok((notifier, toast))
