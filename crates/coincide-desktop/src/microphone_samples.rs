@@ -15,6 +15,7 @@ pub(super) struct Samples {
     maximum: usize,
     output: Vec<f32>,
     limited: bool,
+    peak: f32,
 }
 
 impl Samples {
@@ -35,6 +36,7 @@ impl Samples {
             maximum,
             output: Vec::with_capacity(maximum),
             limited: false,
+            peak: 0.0,
         })
     }
 
@@ -46,6 +48,7 @@ impl Samples {
         if !input.len().is_multiple_of(self.channels) {
             return Err(CaptureError::Conversion);
         }
+        let previous = self.output.len();
         for frame in input.chunks_exact(self.channels) {
             let mut mono = 0.0;
             for sample in frame {
@@ -62,7 +65,14 @@ impl Samples {
                 break;
             }
         }
+        self.peak = self.output[previous..]
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
         Ok(self.limited)
+    }
+
+    pub(super) fn progress(&self) -> (usize, f32) {
+        (self.output.len(), self.peak)
     }
 
     fn frame(&mut self, sample: f32) {
@@ -171,7 +181,10 @@ mod tests {
     #[::core::prelude::v1::test]
     fn capture_limit_invalid_audio_and_silent_cancellation_are_bounded() {
         let mut samples = Samples::new(48_000, 2, 16).unwrap();
+        assert_eq!(samples.progress(), (0, 0.0));
         assert!(samples.push(&[0.5; 256], |sample| sample).unwrap());
+        assert_eq!(samples.progress().0, 16);
+        assert!(samples.progress().1 > 0.4 && samples.progress().1 <= 1.0);
         let (output, limited) = samples.finish();
         assert_eq!(output.len(), 16);
         assert!(limited);
@@ -189,5 +202,16 @@ mod tests {
         assert!(Samples::new(48_000, 2, usize::MAX).is_err());
         let samples = Samples::new(48_000, 2, 100).unwrap();
         assert!(samples.finish().0.is_empty());
+        let mut samples = Samples::new(48_000, 2, 16_000).unwrap();
+        samples.push(&[0.5; 960], |sample| sample).unwrap();
+        assert!((150..=160).contains(&samples.progress().0));
+        assert!(samples.progress().1 > 0.4);
+        samples.push(&[0.0; 960], |sample| sample).unwrap();
+        samples.push(&[0.0; 960], |sample| sample).unwrap();
+        assert_eq!(
+            samples.progress().1,
+            0.0,
+            "actual silent buffers clear the displayed peak"
+        );
     }
 }
