@@ -92,6 +92,8 @@ impl Engine {
                 payload["accounts"].as_object().unwrap().len() < 32,
                 "Native account limit reached"
             );
+            let order = codex_order(&payload, legacy)?;
+            payload["codex_order"] = json!(order);
             append_order(&mut payload, &plan.account.id)?;
             payload["accounts"][&plan.account.id] = serde_json::to_value(&plan.account)?;
             // Preserve legacy unknown fields as data, never as native authority.
@@ -179,6 +181,51 @@ mod tests {
         let (root, mut engine, binary) = super::super::super::super::tests::fixture();
         super::super::super::super::tests::save(&mut engine, "codex", &binary, "synthetic-only");
         (root, engine, binary)
+    }
+    #[test]
+    fn mixed_creation_order_survives_legacy_conversion_and_account_removal() {
+        let (_root, mut engine, _) = fixture();
+        let first = engine
+            .create_native_key_account("codex", "First API", "OPENAI_API_KEY")
+            .unwrap();
+        let legacy = engine
+            .execute(
+                "providers.codex.profiles.create",
+                &json!({"name":"Second subscription"}),
+            )
+            .unwrap();
+        let id = legacy["id"].as_str().unwrap();
+        let third = engine
+            .create_native_key_account("codex", "Third API", "OPENAI_API_KEY")
+            .unwrap();
+        let expected = vec![first.id.clone(), id.to_owned(), third.id.clone()];
+        assert_eq!(engine.native_codex_account_order().unwrap(), expected);
+        let row = engine.native_legacy_codex_accounts().unwrap().remove(0);
+        let plan = engine
+            .prepare_native_codex_auth_change(id, &row.revision, false, true)
+            .unwrap();
+        engine.apply_native_codex_auth_change(plan).unwrap();
+        assert_eq!(engine.native_codex_account_order().unwrap(), expected);
+        assert_eq!(
+            engine
+                .native_provider_accounts("codex")
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let plan = engine
+            .prepare_native_provider_account_removal("codex", &first.id, &first.revision)
+            .unwrap();
+        engine.apply_native_provider_account_removal(plan).unwrap();
+        let fourth = engine
+            .create_native_key_account("codex", "Fourth API", "OPENAI_API_KEY")
+            .unwrap();
+        assert_eq!(
+            engine.native_codex_account_order().unwrap(),
+            vec![id.to_owned(), third.id, fourth.id]
+        );
     }
     #[test]
     fn peer_draft_edit_rejects_review_without_rotating_owner_or_minting_grants() {

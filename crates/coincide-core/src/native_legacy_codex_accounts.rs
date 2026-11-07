@@ -216,6 +216,63 @@ impl Engine {
     }
 }
 
+pub(super) fn codex_order(payload: &Value, legacy: &Value) -> Result<Vec<String>> {
+    let mut live = legacy::ordered_accounts(legacy)?;
+    for id in ordered_ids(payload)? {
+        if !live.contains(&id) {
+            live.push(id);
+        }
+    }
+    let mut result = Vec::new();
+    if let Some(order) = payload.get("codex_order") {
+        let order = order.as_array().context("Codex account order is invalid")?;
+        ensure!(order.len() <= 256, "Codex account order exceeds its bound");
+        let mut seen = std::collections::HashSet::new();
+        for id in order {
+            let id = id
+                .as_str()
+                .context("Codex account order identity is invalid")?;
+            ensure!(
+                Uuid::parse_str(id)?.to_string() == id && seen.insert(id),
+                "Codex account order is duplicated or invalid"
+            );
+            if live.iter().any(|live| live == id) {
+                result.push(id.to_owned());
+            }
+        }
+    }
+    for id in live {
+        if !result.contains(&id) {
+            result.push(id);
+        }
+    }
+    Ok(result)
+}
+pub(super) fn note_creation_order(store: &Store, payload: &mut Value, id: &str) -> Result<()> {
+    let mut order = codex_order(payload, &legacy::configuration(store)?)?;
+    ensure!(
+        !order.iter().any(|existing| existing == id),
+        "Codex account already exists"
+    );
+    order.push(id.into());
+    payload["codex_order"] = json!(order);
+    Ok(())
+}
+impl Engine {
+    pub fn native_codex_account_order(&self) -> Result<Vec<String>> {
+        let payload = if let Some(owner) = Private::open(&self.store, false)? {
+            read(
+                &owner,
+                "codex",
+                self.store.native_accounts_payload("codex")?.as_deref(),
+            )?
+        } else {
+            json!({"accounts":{}})
+        };
+        codex_order(&payload, &legacy::configuration(&self.store)?)
+    }
+}
+
 #[path = "native_codex_auth_method.rs"]
 mod auth_method;
 pub use auth_method::PreparedCodexAuthChange;

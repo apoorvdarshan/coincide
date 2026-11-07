@@ -575,7 +575,7 @@ impl Engine {
         };
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        ordered_ids(&payload)?
+        let mut rows = ordered_ids(&payload)?
             .iter()
             .map(|id| {
                 let row = account(&payload, provider, id)?;
@@ -610,7 +610,20 @@ impl Engine {
                     has_admin_key: row.admin_key.is_some(),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if provider == "codex" {
+            let order = legacy_codex_accounts::codex_order(
+                &payload,
+                &crate::codex_login_profiles::configuration(&self.store)?,
+            )?;
+            rows.sort_by_key(|row| {
+                order
+                    .iter()
+                    .position(|id| id == &row.id)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        Ok(rows)
     }
     pub fn native_login_accounts(&self, provider: &str) -> Result<Vec<NativeLoginAccount>> {
         supported(provider)?;
@@ -649,6 +662,9 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        if provider == "codex" {
+            legacy_codex_accounts::note_creation_order(&self.store, &mut payload, &id)?;
+        }
         append_order(&mut payload, &id)?;
         let root = self.store.data_directory()?;
         let (home, home_identity, guard_identity) = create_home(&root, provider, &id)?;

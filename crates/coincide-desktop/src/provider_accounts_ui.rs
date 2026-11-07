@@ -201,6 +201,13 @@ fn snapshot(engine: &SharedEngine, provider: &str) -> Result<Snapshot> {
             })
             .collect::<Vec<_>>();
         combined.append(&mut rows);
+        let order = owner.native_codex_account_order()?;
+        combined.sort_by_key(|row| {
+            order
+                .iter()
+                .position(|id| id == &row.id)
+                .unwrap_or(usize::MAX)
+        });
         rows = combined;
     }
     Ok(Snapshot {
