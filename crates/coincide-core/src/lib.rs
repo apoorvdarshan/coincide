@@ -83,3 +83,6 @@ pub mod appshots;
 pub mod reply_selection;
 
 pub mod voice;
+
+/// Bounded native-WebView screenshot data; this module grants no browser authority.
+pub mod browser_screenshot;
