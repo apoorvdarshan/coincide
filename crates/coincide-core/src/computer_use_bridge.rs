@@ -3,13 +3,14 @@
 //! private curl config, and the instructions added to that thread's messages.
 //! Requests enter the Engine only through `dispatch_scoped` with the thread the
 //! capability belongs to; the payload can never name another thread.
+use crate::agent::{WorkerCompletion, WorkerThreadStatus};
 use crate::api::{Engine, SharedEngine};
 use crate::computer_use::Failure;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, Weak,
@@ -81,12 +82,28 @@ struct Grant {
 }
 struct Listener {
     port: u16,
-    stop: Arc<AtomicBool>,
-    worker: JoinHandle<()>,
+    control: Arc<Connections>,
+    worker: WorkerCompletion,
+}
+#[derive(Default)]
+struct Connections {
+    stop: AtomicBool,
+    sockets: Mutex<HashMap<Uuid, TcpStream>>,
+}
+impl Connections {
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        if let Ok(sockets) = self.sockets.lock() {
+            for socket in sockets.values() {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+        }
+    }
 }
 #[derive(Default)]
 struct State {
     listener: Option<Listener>,
+    retired: Vec<Listener>,
     grants: HashMap<Uuid, Grant>,
     /// Private parent folder, created with the first grant.
     directory: Option<PathBuf>,
@@ -180,14 +197,29 @@ impl Bridge {
             return;
         };
         state.grants.clear();
+        state
+            .retired
+            .retain(|listener| listener.worker.status() != WorkerThreadStatus::Returned);
         if let Some(listener) = state.listener.take() {
-            listener.stop.store(true, Ordering::Release);
-            // Never joined here: the worker exits within one accept poll.
-            drop(listener.worker);
+            listener.control.stop();
+            state.retired.push(listener);
         }
         if let Some(directory) = state.directory.take() {
             let _ = std::fs::remove_dir_all(directory);
         }
+    }
+    /// True only after the accept worker has joined every request worker and
+    /// the independent observer has joined the accept worker, including TLS.
+    pub fn shutdown_ready(&self) -> bool {
+        let Ok(mut state) = self.inner.state.try_lock() else {
+            return false;
+        };
+        state
+            .retired
+            .retain(|listener| listener.worker.status() != WorkerThreadStatus::Returned);
+        state.listener.is_none()
+            && state.retired.is_empty()
+            && self.inner.connections.load(Ordering::Acquire) == 0
     }
     /// Threads holding a capability, for the Settings activity list.
     pub fn threads(&self) -> Vec<Uuid> {
@@ -218,12 +250,23 @@ fn listen(inner: Arc<Inner>) -> std::io::Result<Listener> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
     listener.set_nonblocking(true)?;
     let port = listener.local_addr()?.port();
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopping = stop.clone();
+    let control = Arc::new(Connections::default());
+    let owned = control.clone();
     let worker = thread::Builder::new()
         .name("coincide-computer-use-bridge".into())
         .spawn(move || {
-            while !stopping.load(Ordering::Acquire) {
+            let mut workers: Vec<JoinHandle<()>> = Vec::new();
+            let mut panicked = false;
+            while !owned.stop.load(Ordering::Acquire) {
+                let mut pending = Vec::new();
+                for worker in workers.drain(..) {
+                    if worker.is_finished() {
+                        panicked |= worker.join().is_err();
+                    } else {
+                        pending.push(worker);
+                    }
+                }
+                workers = pending;
                 match listener.accept() {
                     Ok((stream, peer)) => {
                         // Bound to 127.0.0.1; at most 16 connections at once.
@@ -234,16 +277,43 @@ fn listen(inner: Arc<Inner>) -> std::io::Result<Listener> {
                             inner.connections.fetch_sub(1, Ordering::AcqRel);
                             continue;
                         }
+                        let id = Uuid::new_v4();
+                        let cloned = match stream.try_clone() {
+                            Ok(socket) => socket,
+                            Err(_) => {
+                                inner.connections.fetch_sub(1, Ordering::AcqRel);
+                                continue;
+                            }
+                        };
+                        let Ok(mut sockets) = owned.sockets.lock() else {
+                            inner.connections.fetch_sub(1, Ordering::AcqRel);
+                            continue;
+                        };
+                        if owned.stop.load(Ordering::Acquire) {
+                            inner.connections.fetch_sub(1, Ordering::AcqRel);
+                            continue;
+                        }
+                        sockets.insert(id, cloned);
+                        drop(sockets);
                         let request = inner.clone();
-                        let stopping = stopping.clone();
+                        let stopping = owned.clone();
                         let spawned = thread::Builder::new()
                             .name("coincide-computer-use-request".into())
                             .spawn(move || {
-                                serve(&request, stream, port, &stopping);
+                                serve(&request, stream, port, &stopping.stop);
+                                if let Ok(mut sockets) = stopping.sockets.lock() {
+                                    sockets.remove(&id);
+                                }
                                 request.connections.fetch_sub(1, Ordering::AcqRel);
                             });
-                        if spawned.is_err() {
-                            inner.connections.fetch_sub(1, Ordering::AcqRel);
+                        match spawned {
+                            Ok(worker) => workers.push(worker),
+                            Err(_) => {
+                                if let Ok(mut sockets) = owned.sockets.lock() {
+                                    sockets.remove(&id);
+                                }
+                                inner.connections.fetch_sub(1, Ordering::AcqRel);
+                            }
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -252,18 +322,29 @@ fn listen(inner: Arc<Inner>) -> std::io::Result<Listener> {
                     Err(_) => thread::sleep(Duration::from_millis(25)),
                 }
             }
+            owned.stop();
+            for worker in workers {
+                panicked |= worker.join().is_err();
+            }
+            assert!(!panicked, "Computer Use request worker panicked");
         })?;
-    Ok(Listener { port, stop, worker })
+    Ok(Listener {
+        port,
+        control,
+        worker: WorkerCompletion::observe(worker),
+    })
 }
 
 fn serve(inner: &Inner, mut stream: TcpStream, port: u16, stopping: &AtomicBool) {
     if stream.set_nonblocking(false).is_err()
-        || stream.set_read_timeout(Some(READ_TIMEOUT)).is_err()
+        || stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .is_err()
         || stream.set_write_timeout(Some(READ_TIMEOUT)).is_err()
     {
         return;
     }
-    let request = match read_request(&mut stream) {
+    let request = match read_request(&mut stream, stopping) {
         Ok(request) => request,
         Err(()) => {
             reply(&mut stream, 400, &error(Failure::InvalidRequest));
@@ -305,9 +386,24 @@ fn run(inner: &Inner, thread: Uuid, body: Value, stopping: &AtomicBool) -> (u16,
     let Some(engine) = inner.engine.upgrade() else {
         return (400, error(Failure::Off));
     };
+    let deadline = Instant::now() + RESULT_TIMEOUT;
     let dispatch = |method: &str, params: Value| -> Option<Value> {
-        let mut engine = engine.lock().ok()?;
-        Some(engine.dispatch_scoped(json!({"method":method,"params":params}), thread))
+        loop {
+            if stopping.load(Ordering::Acquire) || Instant::now() >= deadline {
+                return None;
+            }
+            match engine.try_lock() {
+                Ok(mut engine) => {
+                    return Some(
+                        engine.dispatch_scoped(json!({"method":method,"params":params}), thread),
+                    );
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    thread::sleep(Duration::from_millis(10))
+                }
+                Err(_) => return None,
+            }
+        }
     };
     let Some(accepted) = dispatch(
         "computer_use.request",
@@ -324,7 +420,6 @@ fn run(inner: &Inner, thread: Uuid, body: Value, stopping: &AtomicBool) -> (u16,
     else {
         return (400, error(Failure::Native));
     };
-    let deadline = Instant::now() + RESULT_TIMEOUT;
     while Instant::now() < deadline && !stopping.load(Ordering::Acquire) {
         thread::sleep(Duration::from_millis(20));
         let Some(collected) = dispatch(
@@ -399,14 +494,35 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, ()> {
+fn read_request(stream: &mut TcpStream, stopping: &AtomicBool) -> Result<HttpRequest, ()> {
+    read_request_until(stream, stopping, Instant::now() + READ_TIMEOUT)
+}
+fn read_request_until(
+    stream: &mut TcpStream,
+    stopping: &AtomicBool,
+    deadline: Instant,
+) -> Result<HttpRequest, ()> {
     let mut data = Vec::new();
     let mut chunk = [0u8; 65_536];
     loop {
+        if stopping.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(());
+        }
         if let Some(request) = parse(&data)? {
             return Ok(request);
         }
-        let read = stream.read(&mut chunk).map_err(|_| ())?;
+        let read = match stream.read(&mut chunk) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => return Err(()),
+        };
         if read == 0 {
             return Err(());
         }
@@ -741,5 +857,98 @@ mod tests {
         bridge.stop();
         assert!(!parent.exists());
         assert!(bridge.threads().is_empty());
+        await_drained(&bridge);
+    }
+    fn await_drained(bridge: &Bridge) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !bridge.shutdown_ready() {
+            assert!(
+                Instant::now() < deadline,
+                "owned bridge workers did not return"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn stop_interrupts_and_joins_a_client_with_incomplete_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::fixture(
+            Store::open(&dir.path().join("state.sqlite")).unwrap(),
+        )));
+        let bridge = Bridge::new(&engine);
+        let (port, _, _) = config(&bridge.access(Uuid::new_v4()).unwrap());
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        client.write_all(b"POST / HTTP/1.1\r\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while bridge.inner.connections.load(Ordering::Acquire) == 0 {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        let engine_guard = engine.lock().unwrap();
+        let started = Instant::now();
+        bridge.stop();
+        assert!(started.elapsed() < Duration::from_millis(500));
+        await_drained(&bridge);
+        assert_eq!(bridge.inner.connections.load(Ordering::Acquire), 0);
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
+        drop(engine_guard);
+    }
+
+    #[test]
+    fn cancellation_does_not_wait_for_a_held_engine_mutex() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::fixture(
+            Store::open(&dir.path().join("state.sqlite")).unwrap(),
+        )));
+        let bridge = Bridge::new(&engine);
+        let inner = bridge.inner.clone();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let signal = stopping.clone();
+        let guard = engine.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            tx.send(run(
+                &inner,
+                Uuid::new_v4(),
+                json!({"action":"status"}),
+                &signal,
+            ))
+            .unwrap();
+        });
+        stopping.store(true, Ordering::Release);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap().0, 400);
+        worker.join().unwrap();
+        drop(guard);
+    }
+
+    #[test]
+    fn a_dripping_http_client_cannot_extend_the_total_read_deadline() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        let sender = thread::spawn(move || {
+            for _ in 0..30 {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let started = Instant::now();
+        assert!(
+            read_request_until(
+                &mut stream,
+                &AtomicBool::new(false),
+                started + Duration::from_millis(80)
+            )
+            .is_err()
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        drop(stream);
+        sender.join().unwrap();
     }
 }

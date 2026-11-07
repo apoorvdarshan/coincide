@@ -174,7 +174,7 @@ impl Handoff {
         if self.closing {
             gateway.shutdown();
             gateway.unbind();
-            if let Some(bridge) = self.bridge.take() {
+            if let Some(bridge) = &self.bridge {
                 bridge.stop();
             }
             self.bound = false;
@@ -263,6 +263,9 @@ impl Handoff {
         debug_assert!(self.flights.len() <= LIMIT && self.completions.len() <= LIMIT);
     }
     fn stop(&mut self) {
+        if let Some(bridge) = &self.bridge {
+            bridge.stop();
+        }
         self.runtime.request_shutdown();
         self.closing = true;
     }
@@ -278,6 +281,7 @@ pub struct Mount {
 }
 pub struct MountShutdownStatus {
     pub engine_accounted: bool,
+    pub bridge_drained: bool,
     pub retained_flights: usize,
     pub retained_completions: usize,
     pub runtime: crate::computer_use::ShutdownStatus,
@@ -285,6 +289,7 @@ pub struct MountShutdownStatus {
 impl MountShutdownStatus {
     pub fn ready(&self) -> bool {
         self.engine_accounted
+            && self.bridge_drained
             && self.retained_flights == 0
             && self.retained_completions == 0
             && self.runtime.requested
@@ -324,6 +329,11 @@ impl Mount {
     pub fn shutdown_status(&mut self) -> MountShutdownStatus {
         MountShutdownStatus {
             engine_accounted: self.handoff.accounted,
+            bridge_drained: self
+                .handoff
+                .bridge
+                .as_ref()
+                .is_none_or(|bridge| bridge.shutdown_ready()),
             retained_flights: self.handoff.flights.len(),
             retained_completions: self.handoff.completions.len(),
             runtime: self.handoff.runtime.shutdown_status(),
