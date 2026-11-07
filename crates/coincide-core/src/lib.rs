@@ -19,8 +19,11 @@ pub mod workspace_diff;
 
 pub mod inspector_preferences;
 pub mod message_queue;
+pub mod palette_search;
+pub mod schedule_presentation;
 pub mod thread_history;
 
+pub mod cli_session_discovery;
 pub mod cli_session_import;
 pub mod credentials;
 pub mod dictation;
@@ -28,6 +31,7 @@ pub mod local_usage;
 pub mod organization;
 pub mod platform_host;
 pub mod remote;
+pub mod turn_checkpoints;
 pub mod usage_history;
 pub mod usage_limits;
 pub mod usage_presentation;
@@ -37,6 +41,7 @@ pub mod workspace_git;
 pub mod workspace_github;
 
 pub mod github_api;
+pub mod github_checkout;
 
 pub mod bot_runtime;
 

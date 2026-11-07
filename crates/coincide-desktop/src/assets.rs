@@ -62,6 +62,11 @@ icon_assets!(
         SquareArrowOutUpRight,
         Clock,
         FolderPlus,
+        // Missing project folder, the toolbar's Diff and Pull Requests, and approvals.
+        FolderX,
+        Diff,
+        GitPullRequest,
+        ShieldAlert,
         Check,
         ChevronDown,
         ChevronLeft,
@@ -202,12 +207,13 @@ mod tests {
             "icons/settings.svg",
             "icons/bug.svg",
             "icons/square-play.svg",
-            // The Diff inspector's empty states.
-            "icons/diff.svg",
+            // Empty states shared by sidebar chrome and Diff inspector.
             "icons/folder-x.svg",
+            "icons/diff.svg",
+            "icons/git-pull-request.svg",
+            "icons/shield-alert.svg",
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
-            "icons/git-pull-request.svg",
             "icons/git-pull-request-draft.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
