@@ -49,7 +49,8 @@ Coordinator validation requested:
 
 Native approval accessibility/keyboard acceptance remains pending. Actual macOS, WebKitGTK and WebView2 filling passed the linked synthetic
 acceptance; supported private browser sinks are enabled. Windows vault CLI
-execution remains a separate platform limitation. This is not real-account or complete workflow acceptance.
+execution has a separate owned-process transport and synthetic helper gates, documented
+in [WINDOWS_VAULT_CLI.md](WINDOWS_VAULT_CLI.md). This is not real-account or complete workflow acceptance.
 
 ## Native manager/account panel
 

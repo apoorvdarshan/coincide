@@ -45,16 +45,55 @@ impl CredentialSource {
 /// Filesystem-only CLI discovery. This does not read a vault or verify login.
 /// Explicit executable selection can instead be supplied through CredentialSource.
 pub fn installed_sources() -> Vec<CredentialSource> {
+    #[cfg(windows)]
+    let roots = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .filter(|root| root.is_absolute())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    #[cfg(not(windows))]
+    let roots = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+        .map(PathBuf::from)
+        .to_vec();
+    installed_sources_in(&roots)
+}
+fn installed_sources_in(roots: &[PathBuf]) -> Vec<CredentialSource> {
     [(Manager::Bitwarden, "bw"), (Manager::OnePassword, "op")]
         .into_iter()
         .filter_map(|(manager, name)| {
-            ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-                .into_iter()
-                .find_map(|root| {
-                    CredentialSource::new(manager, PathBuf::from(root).join(name)).ok()
-                })
+            let name = if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.to_owned()
+            };
+            roots
+                .iter()
+                .filter(|root| root.is_absolute())
+                .find_map(|root| CredentialSource::new(manager, root.join(&name)).ok())
         })
         .collect()
+}
+#[cfg(all(test, windows))]
+mod windows_discovery_tests {
+    use super::*;
+    #[test]
+    fn only_absolute_native_executable_candidates_are_discovered_without_running_them() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("bw.cmd"), b"synthetic shell shim").unwrap();
+        assert!(
+            installed_sources_in(&[root.path().to_owned(), PathBuf::from("relative")]).is_empty()
+        );
+        std::fs::write(
+            root.path().join("bw.exe"),
+            b"synthetic metadata-only fixture",
+        )
+        .unwrap();
+        let sources = installed_sources_in(&[PathBuf::from("relative"), root.path().to_owned()]);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].label(), "Bitwarden");
+    }
 }
 /// The browser's Bitwarden passkeys, through the same discovered `bw` as
 /// password filling. Nothing runs until a page asks for a passkey.

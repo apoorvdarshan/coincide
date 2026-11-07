@@ -1,6 +1,9 @@
 //! Trusted native boundary. Never expose this module's sink or CLI output through
 //! agent JSON APIs. Approval must originate in native UI, not page content.
 use serde_json::Value;
+#[cfg(windows)]
+#[path = "credentials_windows.rs"]
+mod windows_capture;
 #[cfg(unix)]
 use std::{
     io::Read,
@@ -117,7 +120,15 @@ pub struct CliCommand {
 }
 impl CliCommand {
     pub fn new(executable: PathBuf) -> Result<Self, Failure> {
-        if !executable.is_absolute() || !executable.is_file() {
+        if !executable.is_absolute()
+            || !executable.is_file()
+            || (cfg!(windows)
+                && !executable.extension().is_some_and(|extension| {
+                    extension
+                        .to_str()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+                }))
+        {
             return Err(Failure::Unavailable);
         }
         Ok(Self { executable })
@@ -132,12 +143,25 @@ impl VaultCommand for CliCommand {
     }
 }
 impl CliCommand {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn capture(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>, Failure> {
+        windows_capture::capture(self, args, None, timeout)
+    }
+    #[cfg(windows)]
+    fn capture_with_input(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, Failure> {
+        windows_capture::capture(self, args, input, timeout)
+    }
+    #[cfg(not(any(unix, windows)))]
     fn capture(&self, _args: &[&str], _timeout: Duration) -> Result<Vec<u8>, Failure> {
-        // Windows needs Job Object ownership and cancellable pipe I/O first.
+        // Other hosts need an owned, bounded subprocess transport first.
         Err(Failure::Unavailable)
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn capture_with_input(
         &self,
         _args: &[&str],
@@ -784,7 +808,7 @@ mod tests {
             Ok(b"done".to_vec())
         );
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn unsupported_process_capture_fails_closed() {
         let cli = CliCommand::new(std::env::current_exe().unwrap()).unwrap();
