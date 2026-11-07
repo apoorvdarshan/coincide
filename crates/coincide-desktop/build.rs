@@ -119,13 +119,35 @@ fn compile_apple_speech() {
             .to_owned()
     }
     let sdk = output(&["--sdk", "macosx", "--show-sdk-path"]);
+    // Rust's cc linker and Swift must resolve the same SDK frameworks. The
+    // host CLT default can differ from the active Xcode SDK used above.
+    println!("cargo:rustc-link-arg=-isysroot");
+    println!("cargo:rustc-link-arg={sdk}");
+    println!("cargo:rustc-link-search=framework={sdk}/System/Library/Frameworks");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    let requested = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "14.0".into());
+    let parts = requested.split('.').collect::<Vec<_>>();
+    assert!(
+        (2..=3).contains(&parts.len())
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())),
+        "Invalid native Voice deployment target"
+    );
+    let minimum = if parts[0].parse::<u32>().expect("Deployment major version") >= 14 {
+        requested
+    } else {
+        "14.0".into()
+    };
+    println!("cargo:rustc-link-arg=-mmacosx-version-min={minimum}");
+
     let swift = PathBuf::from(output(&["--find", "swiftc"]));
     let architecture = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("aarch64") => "arm64",
         Ok("x86_64") => "x86_64",
         _ => panic!("Unsupported Apple Speech architecture"),
     };
-    let target = format!("{architecture}-apple-macosx14.0");
+    let target = format!("{architecture}-apple-macosx{minimum}");
     let directory = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"));
     let object = directory.join("voice_speech_macos.o");
     let result = Command::new(&swift)
