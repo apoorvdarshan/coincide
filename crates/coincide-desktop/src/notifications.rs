@@ -555,3 +555,7 @@ mod tests {
         assert!(adapter.request_permission_from_user_action().is_err());
     }
 }
+
+#[cfg(all(target_os = "linux", feature = "native-notifications"))]
+#[path = "notifications_linux.rs"]
+pub(crate) mod linux;
