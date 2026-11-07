@@ -393,14 +393,12 @@ impl Panel {
             editor.catalog = None;
             editor.checked = None;
         }
-        editor.notice = match &request {
-            Request::Load => "Loading saved settings…",
-            Request::Accounts(_) => "Updating provider accounts…",
-            Request::Save { .. } => "Saving settings…",
-            Request::Check => "Checking provider…",
-            Request::Setup { .. } => "Opening setup in a separate terminal…",
+        // Account operations own their own notice. In particular, the automatic
+        // metadata-only account load must not replace the configuration load
+        // acknowledgement (or an imported-values/unsaved-changes warning).
+        if let Some(notice) = configuration_request_notice(&request) {
+            editor.notice = notice.into();
         }
-        .into();
         let custody = matches!(&request, Request::Setup { .. } | Request::Accounts(_))
             .then(|| editor.lease.pending_native_action());
         let engine = self.engine.clone();
@@ -490,8 +488,13 @@ impl Panel {
                 }
             }
             self.pending = Some(selected);
-        } else if let Some(editor) = self.editors.get_mut(&selected) {
-            editor.notice = "Settings worker could not start; nothing was changed.".into();
+        } else {
+            let error = anyhow::anyhow!("Settings worker could not start; nothing was changed.");
+            if accounts {
+                self.account_error(&selected, &error);
+            } else if let Some(editor) = self.editors.get_mut(&selected) {
+                editor.notice = error.to_string();
+            }
         }
         cx.notify();
     }
@@ -585,8 +588,7 @@ impl Panel {
                 Err(error) => {
                     if reply.accounts {
                         self.account_error(&reply.provider, &error);
-                    }
-                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                    } else if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.load_requested = !editor.loaded && engine_busy(&error);
                         editor.notice = error.to_string();
                     }
@@ -1106,5 +1108,17 @@ fn setup_website(provider: &str) -> &'static str {
         "grok" => "https://x.ai/cli",
         "opencode" => "https://opencode.ai",
         _ => "https://antigravity.google",
+    }
+}
+
+// Returning None keeps account replies/errors in the account editor and leaves
+// the independently source-bound configuration acknowledgement intact.
+fn configuration_request_notice(request: &Request) -> Option<&'static str> {
+    match request {
+        Request::Accounts(_) => None,
+        Request::Load => Some("Loading saved settings…"),
+        Request::Save { .. } => Some("Saving settings…"),
+        Request::Check => Some("Checking provider…"),
+        Request::Setup { .. } => Some("Opening setup in a separate terminal…"),
     }
 }
