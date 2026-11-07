@@ -259,6 +259,11 @@ sys.stdin.readline()
             )
             .unwrap();
         assert_eq!(engine.runs[&id].provider, "codex");
+        assert_eq!(
+            engine.execute("app.status", &json!({})).unwrap()["starting"],
+            json!([id]),
+            "no provider event has arrived yet"
+        );
         // Test concurrent saved-selection changes without changing the provider
         // captured for this already admitted, actually running fake session.
         let mut changed = engine.store.thread(&id).unwrap();
@@ -294,7 +299,22 @@ sys.stdin.readline()
                 .clone()
         }
         barrier(&mut engine, &id, "100");
+        assert_eq!(
+            engine.execute("app.status", &json!({})).unwrap()["starting"],
+            json!([])
+        );
+        let pending = engine
+            .execute("agent.pending", &json!({"threadId":id}))
+            .unwrap();
+        assert_eq!(
+            pending[0]["provider"], "codex",
+            "the run's provider, not the selection"
+        );
         let first = current(&engine, &id);
+        assert!(
+            first.get("completedAt").is_none(),
+            "started calls are unfinished"
+        );
         assert_ne!(first["id"], historic["id"]);
         assert_eq!(first["text"], expected[0].to_string());
         assert_eq!(first["title"], "printf '設定 🦀'");
@@ -315,6 +335,7 @@ sys.stdin.readline()
         barrier(&mut engine, &id, "101");
         let completed = current(&engine, &id);
         assert_eq!(completed["id"], first["id"]);
+        assert!(completed["completedAt"].as_f64().is_some());
         assert_eq!(completed["text"], expected[1].to_string());
         assert_eq!(
             completed["status"], "completed",
@@ -337,10 +358,21 @@ sys.stdin.readline()
                 .is_err()
         );
         assert!(engine.runs[&id].pending.contains_key("101"));
+        assert!(
+            engine
+                .execute(
+                    "agent.respond",
+                    &json!({"threadId":id,"requestId":"101","decision":"decline","text":"note"})
+                )
+                .is_err(),
+            "only Claude reads a note with an approval"
+        );
+        assert!(engine.runs[&id].pending.contains_key("101"));
+        // A blank note is no note; the reply below carries only the decision.
         engine
             .execute(
                 "agent.respond",
-                &json!({"threadId":id,"requestId":"101","decision":"decline"}),
+                &json!({"threadId":id,"requestId":"101","decision":"decline","text":" "}),
             )
             .unwrap();
 

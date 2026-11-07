@@ -82,6 +82,9 @@ icon_assets!(
         FolderX,
         Folder,
         Frame,
+        Gauge,
+        GitPullRequest,
+        GitPullRequestDraft,
         GalleryVerticalEnd,
         GitBranch,
         Github,
@@ -185,6 +188,10 @@ mod tests {
             // The Diff inspector's empty states.
             "icons/diff.svg",
             "icons/folder-x.svg",
+            // Composer `/` and `#` suggestion rows.
+            "icons/gauge.svg",
+            "icons/git-pull-request.svg",
+            "icons/git-pull-request-draft.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

@@ -12,6 +12,6 @@ mod appshots_platform;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../coincide-desktop/src/notification_activity.rs"]
 mod notification_activity;
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 #[path = "../../coincide-desktop/src/notifications.rs"]
 mod notifications;
