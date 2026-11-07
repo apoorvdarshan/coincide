@@ -604,10 +604,8 @@ fn is_timeout(error: &tungstenite::Error) -> bool {
 fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
     let started = Instant::now();
     let setup = || -> std::io::Result<()> {
-        stream.set_nonblocking(false)?;
+        stream.set_nonblocking(true)?;
         stream.set_nodelay(true)?;
-        stream.set_read_timeout(Some(super::session::AUTHENTICATION_TIMEOUT))?;
-        stream.set_write_timeout(Some(Duration::from_secs(30)))?;
         let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(30));
         socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)
     };
@@ -621,12 +619,25 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let Ok(mut socket) = tungstenite::accept_with_config(tls, Some(config)) else {
-        return;
+    // Resume the exact TLS/WebSocket handshake on WouldBlock. A shutdown on a
+    // cloned Winsock handle need not interrupt an already blocked recv, so no
+    // connection worker performs blocking socket I/O, including before auth.
+    let mut handshake = tungstenite::accept_with_config(tls, Some(config));
+    let mut socket = loop {
+        if shared.stop.load(Ordering::Relaxed)
+            || started.elapsed() >= super::session::AUTHENTICATION_TIMEOUT
+        {
+            return;
+        }
+        match handshake {
+            Ok(socket) => break socket,
+            Err(tungstenite::HandshakeError::Interrupted(pending)) => {
+                std::thread::sleep(POLL);
+                handshake = pending.handshake();
+            }
+            Err(_) => return,
+        }
     };
-    if socket.get_ref().sock.set_read_timeout(Some(POLL)).is_err() {
-        return;
-    }
     let mut session = Session::new(peer.to_string());
     // The handshake counts toward the time a phone has to authenticate.
     session.start_clock(started);
@@ -643,7 +654,10 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
                 Ok(Message::Binary(data)) => Some(Ok(data.to_vec())),
                 Ok(Message::Close(_)) => Some(Err(())),
                 Ok(_) => Some(Ok(Vec::new())),
-                Err(error) if is_timeout(&error) => Some(Ok(Vec::new())),
+                Err(error) if is_timeout(&error) => {
+                    std::thread::sleep(POLL);
+                    Some(Ok(Vec::new()))
+                }
                 Err(_) => Some(Err(())),
             }
         };
@@ -678,7 +692,11 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
         }
         let mut failed = false;
         for message in outgoing {
-            if socket.send(Message::text(message.to_string())).is_err() {
+            if !send_bounded(
+                &mut socket,
+                Message::text(message.to_string()),
+                &shared.stop,
+            ) {
                 failed = true;
                 break;
             }
@@ -701,6 +719,30 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
     }
     if let Ok(mut connected) = shared.connected.lock() {
         connected.remove(&id);
+    }
+}
+
+/// `send` queues the message once. On WouldBlock, flush that same queue rather
+/// than sending it again; cancellation and one total write deadline remain live.
+fn send_bounded(
+    socket: &mut tungstenite::WebSocket<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>,
+    message: Message,
+    stopping: &AtomicBool,
+) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut outcome = socket.send(message);
+    loop {
+        if stopping.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            return false;
+        }
+        match outcome {
+            Ok(()) => return true,
+            Err(ref error) if is_timeout(error) => {
+                std::thread::sleep(POLL);
+                outcome = socket.flush();
+            }
+            Err(_) => return false,
+        }
     }
 }
 

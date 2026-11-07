@@ -61,6 +61,10 @@ impl ServerCertVerifier for Pinned {
 type Client = tungstenite::WebSocket<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>;
 
 fn connect(port: u16, fingerprint: &str) -> Result<Client, String> {
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(|e| e.to_string())?;
+    connect_stream(port, fingerprint, stream)
+}
+fn connect_stream(port: u16, fingerprint: &str, stream: TcpStream) -> Result<Client, String> {
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -74,7 +78,6 @@ fn connect(port: u16, fingerprint: &str) -> Result<Client, String> {
         ServerName::IpAddress(Ipv4Addr::LOCALHOST.into()),
     )
     .unwrap();
-    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -507,5 +510,27 @@ fn explicit_reset_recovers_malformed_devices_without_startup_overwrite() {
     fixture.server.set_enabled(false);
     fixture.server.set_enabled(true);
     assert!(matches!(fixture.server.status(), Status::Running { .. }));
+    fixture.server.stop();
+}
+
+#[test]
+fn interrupted_handshake_resumes_the_same_connection_before_authentication_deadline() {
+    let mut fixture = fixture();
+    fixture.server.set_enabled(true);
+    let payload = fixture.server.begin_pairing().unwrap();
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, payload.port)).unwrap();
+    // The server has to observe WouldBlock more than once before TLS begins.
+    std::thread::sleep(POLL * 3);
+    let mut client = connect_stream(payload.port, &payload.fingerprint, stream).unwrap();
+    request(
+        &mut client,
+        "delayed",
+        "pair",
+        Some(json!({"secret":payload.secret,"deviceName":"Delayed fixture"})),
+    );
+    let response = reply(&mut client, "delayed");
+    assert_eq!(response["kind"], "response");
+    assert_eq!(response["type"], "paired");
+    assert_eq!(fixture.server.snapshot().devices.len(), 1);
     fixture.server.stop();
 }
