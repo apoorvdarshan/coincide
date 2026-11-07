@@ -40,7 +40,7 @@ mod native {
         fn cc_voice_speech_cancel(raw: *mut c_void);
         fn cc_voice_speech_release(raw: *mut c_void);
     }
-    pub(super) struct Session {
+    pub(crate) struct Session {
         raw: NonNull<c_void>,
     }
     impl Session {
