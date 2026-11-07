@@ -43,9 +43,9 @@ impl TerminalsShutdownStatus {
     }
 }
 impl Engine {
-    /// Restarting replaces a shell but retains its complete retired owner in
+    /// Closing or restarting retains the complete retired shell owner in
     /// the same collector that whole-app shutdown checks.
-    pub(super) fn retain_restarted_terminal(
+    pub(super) fn retain_terminal_owner(
         &mut self,
         terminal_id: String,
         thread_id: String,
