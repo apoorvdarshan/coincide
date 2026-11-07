@@ -351,6 +351,10 @@ impl LegacyMediaSettingsPanel {
         self.set_thread(thread_id, cx);
         self.source_revision = source_revision;
         if edited {
+            let had_review = self.flow.phase != Phase::Empty
+                || self.plan.is_some()
+                || self.preview.is_some()
+                || self.pending.is_some();
             self.revision = self.revision.wrapping_add(1);
             if let Some(pending) = &self.pending {
                 self.service.cancel(pending.id);
@@ -358,9 +362,12 @@ impl LegacyMediaSettingsPanel {
             self.plan = None;
             self.preview = None;
             self.flow.clear();
-            self.flow.notice =
-                "Conversation snapshot changed. Inspect and preview again; no automatic rebase."
-                    .into();
+            self.flow.notice = if had_review {
+                "The conversation changed. Inspect the images again before copying."
+            } else {
+                "Choose a source folder, then approve the mapping to inspect its images."
+            }
+            .into();
             self.render_revision = self.render_revision.wrapping_add(1);
             self.render_dirty = true;
         }
@@ -763,12 +770,12 @@ impl Render for LegacyMediaSettingsPanel {
             .child("Restore selected historical images into a local display overlay. Source files, conversation originals and unsent drafts stay unchanged. Nothing is sent to a provider.")
             .child(Input::new(&self.prefix))
             .child(format!("Selected source folder: {}",self.folder.as_ref().map(|p|short(&p.to_string_lossy(),500)).unwrap_or_else(||"Choose with the native folder picker".into())))
-            .child(div().flex().gap_2()
+            .child(div().min_w_0().flex().flex_wrap().gap_2()
                 .child(Button::new("legacy-media-folder").label("Choose source folder…").disabled(busy||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.choose(cx))))
                 .child(Button::new("legacy-media-relative").label(if self.relative {"Relative paths: use this folder"}else{"Relative paths: unresolved"}).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.relative = !this.relative;this.mapping_changed(cx);}))))
             .child(Button::new("legacy-media-approve").label("Approve exact mapping and inspect").disabled(busy||self.folder.is_none()||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.approve_and_inspect(cx))))
             .child(div().text_sm().child(short(&self.flow.notice,1500)))
-            .child(div().flex().gap_2()
+            .child(div().min_w_0().flex().flex_wrap().gap_2()
                 .child(Button::new("legacy-media-validate").label("Validate selected references").disabled(busy||self.flow.ids(Phase::Inspected).is_none()).on_click(cx.listener(|this,_,_,cx|this.validate(cx))))
                 .child(Button::new("legacy-media-confirm").label("Confirm copying selected Ready images").primary().disabled(busy||self.flow.ids(Phase::Preview).is_none()||self.receipts.len()>=8).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
                 .child(Button::new("legacy-media-cancel").label("Cancel operation").disabled(self.pending.is_none()).on_click(cx.listener(|this,_,_,cx|this.cancel(cx)))))

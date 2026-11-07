@@ -573,6 +573,12 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let context = match self.settings_section {
+            Section::Provider(provider) => Some(provider_key(provider)),
+            _ => None,
+        };
+        self.provider_configuration_panel
+            .update(cx, |panel, _| panel.set_account_context(context));
         if let Some(account) = self
             .provider_configuration_panel
             .update(cx, |panel, _| panel.take_legacy_codex_sign_in())
@@ -649,8 +655,7 @@ impl Coincide {
             .p_5()
             .flex()
             .flex_col()
-            .gap_3()
-            .child(div().text_xl().child("Providers"));
+            .gap_3();
         for descriptor in coincide_core::provider_catalog::PROVIDERS {
             let provider = descriptor.id;
             let section = Section::Provider(provider);
@@ -705,31 +710,41 @@ impl Coincide {
                     ),
             );
         }
-        pane.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(panel.last_checked())
-                .child(
-                    Button::new("providers-check-all")
-                        .label("Check All Again")
-                        .disabled(panel.checking_all())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let providers = coincide_core::provider_catalog::PROVIDERS
-                                .iter()
-                                .filter(|descriptor| {
-                                    provider_enabled(&this.settings, descriptor.id)
-                                })
-                                .map(|descriptor| provider_key(descriptor.id).to_owned())
-                                .collect::<Vec<_>>();
-                            this.provider_configuration_panel
-                                .update(cx, |panel, cx| panel.check_all(&providers, window, cx));
-                        })),
-                ),
-        )
-        .child(div().text_sm().child(self.settings_status.clone()))
-        .into_any_element()
+        let content = pane
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(panel.last_checked())
+                    .child(
+                        Button::new("providers-check-all")
+                            .label("Check All Again")
+                            .disabled(panel.checking_all())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let providers = coincide_core::provider_catalog::PROVIDERS
+                                    .iter()
+                                    .filter(|descriptor| {
+                                        provider_enabled(&this.settings, descriptor.id)
+                                    })
+                                    .map(|descriptor| provider_key(descriptor.id).to_owned())
+                                    .collect::<Vec<_>>();
+                                this.provider_configuration_panel.update(cx, |panel, cx| {
+                                    panel.check_all(&providers, window, cx)
+                                });
+                            })),
+                    ),
+            )
+            .child(div().text_sm().child(self.settings_status.clone()));
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(self.settings_subpage_header("Providers", "providers-overview-done", cx))
+            .child(self.settings_scroll.frame("providers-overview", content))
+            .into_any_element()
     }
 
     pub(super) fn provider_preferences_pane(
@@ -758,6 +773,22 @@ impl Coincide {
             std::array::from_fn(|_| div().child("Loading provider settings…").into_any_element())
         };
         let [status, executable, environment, setup, accounts] = parts;
+        let header = div()
+            .flex_none()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap_3()
+            .p_4()
+            .child(icon_tile(section, 44.))
+            .child(div().flex_1().min_w_0().text_xl().child(section.label()))
+            .child(
+                Button::new("provider-preferences-done")
+                    .label("Done")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.close_settings_panel(window, cx)),
+                    ),
+            );
         let mut pane = div()
             .id("provider-preferences")
             .flex_1()
@@ -768,21 +799,6 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(icon_tile(section, 44.))
-                    .child(div().flex_1().text_xl().child(section.label()))
-                    .child(
-                        Button::new("provider-preferences-done")
-                            .label("Done")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.close_settings_panel(window, cx)
-                            })),
-                    ),
-            )
             .child(status)
             .child(
                 div()
@@ -831,14 +847,23 @@ impl Coincide {
         }
         let mut catalogs = self.provider_configuration_panel.read(cx).catalogs();
         catalogs.push(self.selection_ui.catalog.clone());
-        self.settings_scroll.frame(
+        let content = self.settings_scroll.frame(
             provider_key(provider),
             pane.child(executable)
                 .child(self.models_settings_panel(&catalogs, cx))
                 .child(environment)
                 .child(setup)
                 .child(div().text_sm().child(self.settings_status.clone())),
-        )
+        );
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(content)
+            .into_any_element()
     }
 }
 
