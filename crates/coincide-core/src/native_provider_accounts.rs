@@ -1044,9 +1044,6 @@ pub fn native_account_key_choices(
     keys::key_choices(provider)
 }
 
-#[path = "native_provider_setup_source.rs"]
-mod setup_source;
-
 #[cfg(test)]
 mod tests {
     use super::*;
