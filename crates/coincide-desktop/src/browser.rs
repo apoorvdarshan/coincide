@@ -2126,9 +2126,20 @@ impl BrowserController {
     }
     /// The fixed viewport of the thread's active tab, if an agent set one.
     pub fn active_viewport(&self, thread: &str) -> Option<(u32, u32)> {
-        let id = self.active.get(thread)?;
+        let id = self.active.get(thread).or_else(|| {
+            self.active
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                .map(|(_, id)| id)
+        })?;
         self.tabs
-            .get(thread)?
+            .get(thread)
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                    .map(|(_, tabs)| tabs)
+            })?
             .iter()
             .find(|tab| &tab.id == id)?
             .viewport
