@@ -627,7 +627,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
+                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status", "usage.claudeLimits.refresh", "usage.claudeLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -662,7 +662,7 @@ impl Engine {
             "projects.create"=>{let v=self.store.create_project(std::path::Path::new(required(p,"path")?),p["name"].as_str())?;self.revision+=1;Ok(v)}
             "projects.patch"=>{let v=self.store.patch_project(required(p,"projectId")?,&p["patch"])?;self.revision+=1;Ok(v)}
             "settings.read"=>Ok(provider_configuration::public_settings(self.store.document("settings.json")?.unwrap_or(json!({})))),
-            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
+            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));ensure!(p["patch"].get(crate::computer_use::SETTING).is_none_or(|value|current.get(crate::computer_use::SETTING)==Some(value)),"Computer Use can only be turned on or off in Settings › Computer Use");let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
             "threads.list" => Ok(serde_json::to_value(self.store.summaries(
                 p["query"].as_str().unwrap_or(""),
                 p["includeArchived"].as_bool().unwrap_or(false),
@@ -718,6 +718,25 @@ impl Engine {
                 let result = self.model_catalog.refresh_limits(executable)?;
                 self.revision += 1;
                 Ok(result)
+            }
+            "usage.claudeLimits.refresh" => {
+                crate::model_catalog::claude_limits::validate_refresh(p)?;
+                self.require_provider_enabled("claude")?;
+                let executable = std::env::var_os("COINCIDE_CLAUDE_EXECUTABLE")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
+                            .find(|entry| entry["provider"] == "claude")?["executable"].as_str().map(PathBuf::from)
+                    })
+                    .map(provider_configuration::current_executable);
+                let result = self.model_catalog.refresh_claude_limits(executable)?;
+                self.revision += 1;
+                Ok(result)
+            }
+            "usage.claudeLimits.status" => {
+                let id = crate::model_catalog::status_id(p)?;
+                if self.model_catalog.poll() { self.revision += 1; }
+                self.model_catalog.claude_limits_status(id)
             }
             "usage.codexLimits.status" => {
                 let id = crate::model_catalog::status_id(p)?;
@@ -1003,7 +1022,16 @@ impl Engine {
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
-        let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        let mut runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        // Per-thread capabilities valid only for this running app; never saved
+        // as user text (Swift ThreadRunner.ephemeralRuntimeContexts).
+        if let Some(capability) = Uuid::parse_str(&id)
+            .ok()
+            .and_then(|thread| self.computer_use_runtime_context(thread))
+        {
+            runtime_prompt.push_str("\n\n");
+            runtime_prompt.push_str(&capability);
+        }
         let codex_profile = self.codex_login_context(&v)?;
         if let Some(configuration) = provider_configuration::current() {
             configuration.validate_named_profile(

@@ -113,6 +113,8 @@ impl Coincide {
             .update(cx, |panel, _| panel.request_shutdown());
         self.workspace_panel
             .update(cx, |panel, _| panel.request_shutdown());
+        self.diff_panel
+            .update(cx, |panel, _| panel.request_shutdown());
         self.browser_settings_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.github_panel
@@ -158,6 +160,8 @@ impl Coincide {
             self.bot_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.workspace_panel
+                .update(cx, |panel, _| panel.shutdown_status()),
+            self.diff_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.browser_settings_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
