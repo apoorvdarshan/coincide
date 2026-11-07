@@ -9,7 +9,7 @@ use super::updater_lifecycle::{
 };
 use anyhow::{Result, bail, ensure};
 use coincide_core::{
-    api::{SharedEngine, call},
+    api::SharedEngine,
     store::swift_timestamp,
     updater::{Operation, SignatureStatus, State, Updater},
 };
@@ -143,10 +143,10 @@ impl UpdaterSettings {
     pub fn take_normal_quit_permission(&mut self) -> Option<NormalQuitPermit> {
         self.lifecycle.as_mut()?.take_normal_quit_permission()
     }
-    /// Swift's `automaticCheck`: checks when the daily check is due, unless an
-    /// update is already being checked, downloaded, ready or armed.
-    pub fn automatic_check(&mut self, enabled: bool, last: Option<f64>, now: f64) -> bool {
-        let idle = matches!(
+    /// Whether nothing stands in the way of an automatic check: no update is
+    /// being checked, downloaded, ready or armed (Swift's `automaticCheck` guard).
+    fn can_check_automatically(&self) -> bool {
+        matches!(
             self.updater.state(),
             State::Idle
                 | State::Current
@@ -155,15 +155,15 @@ impl UpdaterSettings {
                 | State::Cancelled
                 | State::TimedOut
                 | State::Failed(_)
-        );
-        if !automatic_check_due(enabled, last, now)
-            || !idle
-            || self.operation.is_some()
-            || self.lifecycle.is_some()
-        {
-            return false;
-        }
-        self.check().is_ok()
+        ) && self.operation.is_none()
+            && self.lifecycle.is_none()
+    }
+    /// Swift's `automaticCheck`: checks when the daily check is due and nothing
+    /// stands in its way.
+    pub fn automatic_check(&mut self, enabled: bool, last: Option<f64>, now: f64) -> bool {
+        automatic_check_due(enabled, last, now)
+            && self.can_check_automatically()
+            && self.check().is_ok()
     }
     fn busy(&self) -> bool {
         self.operation.is_some()
@@ -292,7 +292,7 @@ impl UpdaterSettingsView {
     /// Reads the preferences until it succeeds; a busy Engine is retried next poll.
     fn preferences(&mut self) -> Option<(bool, Option<f64>)> {
         if self.preferences.is_none()
-            && let Ok(settings) = call(&self.engine, "settings.read", json!({}))
+            && let Ok(settings) = crate::call(&self.engine, "settings.read", json!({}))
         {
             self.preferences = Some((
                 settings["checksForAppUpdates"].as_bool().unwrap_or(true),
@@ -304,7 +304,8 @@ impl UpdaterSettingsView {
     fn save_preference(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
         let mut patch = json!({});
         patch[key] = value;
-        call(&self.engine, "settings.patch", json!({"patch":patch}))?;
+        // Never waits for a background worker holding the Engine.
+        crate::call(&self.engine, "settings.patch", json!({"patch":patch}))?;
         Ok(())
     }
     fn set_daily(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -312,30 +313,37 @@ impl UpdaterSettingsView {
             Ok(()) => {
                 let last = self.preferences.and_then(|(_, last)| last);
                 self.preferences = Some((enabled, last));
-                self.automatic_check();
+                if self.automatic_check() {
+                    self.looked = Some(Instant::now());
+                }
             }
             Err(error) => self.model.error = Some(format!("The preference wasn't saved: {error}")),
         }
         cx.notify();
     }
     /// Swift records the check's time before it starts, so a failing check is
-    /// not retried until the next day.
-    fn automatic_check(&mut self) {
+    /// not retried until the next day. False while the Engine is busy, so the
+    /// next poll tries again.
+    fn automatic_check(&mut self) -> bool {
         if matches!(self.model.state(), State::Disabled) {
-            return;
+            return true;
         }
         let Some((enabled, last)) = self.preferences() else {
-            return;
+            return false;
         };
         let now = swift_timestamp();
-        if automatic_check_due(enabled, last, now)
-            && self
-                .save_preference("lastAppUpdateCheck", json!(now))
-                .is_ok()
-        {
-            self.preferences = Some((enabled, Some(now)));
-            self.checking = self.model.automatic_check(enabled, last, now);
+        if !automatic_check_due(enabled, last, now) || !self.model.can_check_automatically() {
+            return true;
         }
+        if self
+            .save_preference("lastAppUpdateCheck", json!(now))
+            .is_err()
+        {
+            return false;
+        }
+        self.preferences = Some((enabled, Some(now)));
+        self.checking = self.model.automatic_check(enabled, last, now);
+        true
     }
     fn check(&mut self) {
         let result = self.model.check();
@@ -364,9 +372,9 @@ impl UpdaterSettingsView {
         if self
             .looked
             .is_none_or(|looked| looked.elapsed() >= AUTOMATIC_LOOK)
+            && self.automatic_check()
         {
             self.looked = Some(Instant::now());
-            self.automatic_check();
         }
         if before != (self.model.state(), self.model.lifecycle().cloned()) {
             cx.notify();
