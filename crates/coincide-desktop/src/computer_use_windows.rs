@@ -984,3 +984,7 @@ mod tests {
         assert!(backend.observed.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "computer_use_windows_native_tests.rs"]
+mod native_tests;
