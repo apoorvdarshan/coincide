@@ -292,3 +292,30 @@ fn completed_browser_reply_survives_until_later_parent_operation_registration() 
         assert_eq!(reply["result"]["tab"], "synthetic");
     }
 }
+
+#[test]
+fn native_current_page_toggle_persists_and_stale_removal_does_not_write() {
+    let (dir, mut engine, _) = fixture();
+    let candidate = browser_bookmarks::Candidate {
+        url: "https://example.com/page".into(),
+        title: "Current page".into(),
+        folder: None,
+    };
+    let saved = engine
+        .toggle_browser_bookmark(0, candidate.clone())
+        .unwrap();
+    assert_eq!(saved.bookmarks.len(), 1);
+    assert!(
+        engine
+            .toggle_browser_bookmark(0, candidate.clone())
+            .is_err()
+    );
+    assert_eq!(engine.saved_browser_bookmarks().unwrap(), saved);
+    drop(engine);
+    let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+    let removed = engine.toggle_browser_bookmark(1, candidate).unwrap();
+    assert_eq!(removed.revision, 2);
+    assert!(removed.bookmarks.is_empty());
+    assert_eq!(engine.saved_browser_bookmarks().unwrap(), removed);
+    assert!(engine.browser_requests.is_empty());
+}

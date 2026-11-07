@@ -372,6 +372,36 @@ impl BrowserController {
             self.contexts.len() + self.private_profiles.owned_contexts(),
         )
     }
+    /// Native user revocation invalidates staged work without pretending that
+    /// already-dispatched renderer actions or callbacks have been undone/drained.
+    pub(super) fn revoke_agent_control(&mut self, thread: &str) {
+        if let Some(finished) = self
+            .user_turns
+            .finish(thread, user_turn::Outcome::Cancelled)
+        {
+            self.finish_user_turn(finished);
+        }
+        if let Some(tabs) = self.tabs.get_mut(thread) {
+            for tab in tabs {
+                tab.navigation.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        for (id, wait) in std::mem::take(&mut self.waits) {
+            if wait.request.thread_id == thread {
+                self.finish_wait(wait, json!({"error":"Agent Control was turned off"}));
+            } else {
+                self.waits.insert(id, wait);
+            }
+        }
+        for (id, upload) in std::mem::take(&mut self.uploads) {
+            if upload.request.thread_id == thread {
+                self.replies.push_back(BrowserReply { id: upload.request.id.clone(), thread_id: thread.into(), result: json!({"error":"Agent Control was turned off; upload completion is unconfirmed"}) });
+                // Drop cancels the owned upload worker; its real custody remains tracked.
+            } else {
+                self.uploads.insert(id, upload);
+            }
+        }
+    }
     pub fn execute(&mut self, request: BrowserRequest, window: &mut Window, cx: &mut App) {
         if self.shutdown.callbacks.closed() {
             return;

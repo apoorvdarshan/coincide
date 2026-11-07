@@ -33,6 +33,7 @@ mod bot_avatar;
 mod bot_settings;
 mod browser;
 mod browser_address_bar;
+mod browser_controls;
 mod browser_dialog_ui;
 mod browser_login_mount;
 mod browser_settings;
@@ -561,6 +562,8 @@ struct Coincide {
     /// The page area's bounds from the last layout, for fixed test viewports.
     browser_page_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     browser_panels: std::collections::HashSet<String>,
+    browser_library_thread: Option<String>,
+    browser_control: Value,
     browser_ui_operations: std::collections::HashMap<String, String>,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
     link_menu: Option<transcript_links::LinkMenu>,
@@ -636,13 +639,37 @@ impl Coincide {
         self.sync_git_controls(cx);
     }
     fn sync_browser_settings_route(&mut self, cx: &mut Context<Self>) {
-        let thread = (self.browser_settings_visible() && !self.command_palette.read(cx).is_open())
-            .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
+        if self
+            .browser_library_thread
+            .as_deref()
+            .is_some_and(|thread| {
+                self.selected
+                    .as_ref()
+                    .and_then(|selected| selected["id"].as_str())
+                    != Some(thread)
+            })
+            || self.settings_open
+            || !self.chat_visible()
+        {
+            self.browser_library_thread = None;
+        }
+        let route = (!self.command_palette.read(cx).is_open())
+            .then(|| {
+                let thread = self.selected.as_ref().map(|thread| text(thread, "id"))?;
+                if self.browser_settings_visible() {
+                    Some(format!("settings:{thread}"))
+                } else if self.browser_pane_controls_visible() {
+                    Some(format!("pane:{}:{thread}", self.browser_library_visible()))
+                } else {
+                    None
+                }
+            })
             .flatten();
         self.browser_settings_panel.update(cx, |panel, cx| {
-            panel.sync_route_context(thread.as_deref(), cx);
+            panel.sync_route_context(route.as_deref(), cx);
         });
     }
+
     fn sync_transcription_binding(
         &mut self,
         cx: &mut Context<Self>,
@@ -1455,6 +1482,10 @@ impl Coincide {
                 .ok()
                 .and_then(|engine| window_chrome::saved_frame(&engine.store)),
         );
+        let browser_control = engine
+            .try_lock()
+            .map(|engine| engine.browser_agent_control_settings())
+            .unwrap_or(json!({"agentControlByDefault":false}));
         let mut this = Self {
             engine,
             quit_requested,
@@ -1645,6 +1676,8 @@ impl Coincide {
             browser_completion: Default::default(),
             browser_page_bounds: Default::default(),
             browser_panels: Default::default(),
+            browser_library_thread: None,
+            browser_control,
             browser_ui_operations: Default::default(),
             browser_replies: Vec::new(),
             link_menu: None,
@@ -1899,6 +1932,19 @@ impl Coincide {
             .iter()
             .any(|r| matches!(r.action, BrowserAction::FillLogin { .. }));
         for request in requests {
+            if !browser_controls::agent_request_allowed(
+                &self.browser_control,
+                &request.thread_id,
+                self.browser_ui_operations.contains_key(&request.id),
+            ) {
+                self.browser_replies
+                    .push(coincide_core::browser_protocol::BrowserReply {
+                        id: request.id,
+                        thread_id: request.thread_id,
+                        result: json!({"error":"Agent Control is off for this conversation"}),
+                    });
+                continue;
+            }
             if matches!(request.action, BrowserAction::FillLogin { .. }) {
                 self.request_browser_login(request, window, cx);
             } else {
@@ -2093,6 +2139,10 @@ impl Coincide {
             })
             .collect::<Vec<_>>();
         let active_id = active.as_ref().map(|tab| text(tab, "id"));
+        let pane_controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
+        let library_popup = self
+            .browser_library_visible()
+            .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
         let page = self.browser_page(&thread, webview, cx);
@@ -2191,6 +2241,8 @@ impl Coincide {
                         .text_xs()
                         .child(url),
                 )
+                .child(pane_controls)
+                .children(library_popup)
                 .children(dialog_banner)
                 .children(user_turn_banner)
                 .child(page)
@@ -2198,6 +2250,9 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Ok(engine) = self.engine.try_lock() {
+            self.browser_control = engine.browser_agent_control_settings();
+        }
         let mut complete = true;
         self.refresh_queue(cx);
         if self.schedules_open {
@@ -3017,10 +3072,15 @@ impl Coincide {
     }
     fn sync_browser_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_browser_settings_route(cx);
-        let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
+        let pane_library = self.browser_library_visible();
+        let pane_visible = self.browser_pane_controls_visible();
+        let settings_visible =
+            self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
+        let visible =
+            (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         for request in self.browser_profile_requests.try_iter().take(8) {
-            let result = if visible {
+            let result = if settings_visible {
                 selected_thread
                     .as_deref()
                     .ok_or_else(|| "No selected thread".to_owned())
@@ -3050,7 +3110,7 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let history_binding = if visible {
+        let history_binding = if settings_visible {
             selected_thread.as_deref().and_then(|thread| {
                 self.browser
                     .as_ref()
@@ -3062,9 +3122,13 @@ impl Coincide {
         let (bookmark, reservation, prepared, history) =
             self.browser_settings_panel.update(cx, |panel, cx| {
                 // Idempotent injection: only the first binding initializes context.
+                panel.pane_mode = !settings_visible;
                 panel.set_library_engine(engine);
                 panel.set_snapshot(snapshot, cx);
                 panel.set_history_binding(history_binding, cx);
+                if pane_visible {
+                    panel.ensure_pane_library(cx);
+                }
                 panel.poll(cx);
                 (
                     panel.take_bookmark_open(),
@@ -3120,7 +3184,7 @@ impl Coincide {
         if let Some(history) = history {
             let result = (|| -> Result<()> {
                 anyhow::ensure!(
-                    visible
+                    settings_visible
                         && !self.media.shutdown_requested
                         && !self.media.close_requested
                         && !self.historical_image_is_open()
@@ -3161,6 +3225,7 @@ impl Coincide {
         }
         if let Some(bookmark) = bookmark
             && visible
+            && (settings_visible || pane_library)
             && selected_thread.as_deref() == Some(bookmark.thread.as_str())
         {
             // Preparation read the saved library off UI. Admission is memory-only
@@ -3184,6 +3249,7 @@ impl Coincide {
                         .insert(queued.show_operation, queued.thread);
                     self.browser_settings_open = false;
                     self.settings_open = false;
+                    self.browser_library_thread = None;
                     self.sync_browser_settings_route(cx);
                     cx.notify();
                 }
