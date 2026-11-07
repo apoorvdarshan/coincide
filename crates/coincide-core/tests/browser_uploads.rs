@@ -5,7 +5,6 @@ use std::fs;
 fn request(files: Value) -> BrowserRequest {
     serde_json::from_value(json!({"id":"upload-test","threadId":uuid::Uuid::new_v4().to_string(),"action":"upload","selector":"#file","files":files})).unwrap()
 }
-#[cfg(not(windows))]
 fn payload(source: &str) -> Value {
     serde_json::from_str(
         source
@@ -19,7 +18,6 @@ fn payload(source: &str) -> Value {
     .unwrap()
 }
 
-#[cfg(not(windows))]
 #[test]
 fn upload_encodes_exact_bytes_and_filename_without_parent_path() {
     let dir = tempfile::tempdir().unwrap();
@@ -60,7 +58,6 @@ fn upload_validation_does_not_read_files_and_rejects_invalid_paths_or_counts() {
     }
 }
 
-#[cfg(not(windows))]
 #[test]
 fn upload_rejects_directories_and_total_size_overflow_but_accepts_empty_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -157,12 +154,20 @@ fn cancelled_stalled_workers_keep_their_slots_until_they_exit() {
 
 #[cfg(windows)]
 #[test]
-fn windows_uploads_fail_closed_before_opening_paths() {
+fn windows_uploads_refuse_unc_device_and_stream_paths_before_opening() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("file.txt");
     fs::write(&file, b"fixture").unwrap();
-    let error = script_for_request(&request(json!([file])))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Windows uploads await native filesystem SDK acceptance"));
+    let stream = format!("{}:secret", file.display());
+    for path in [
+        r"\\127.0.0.1\c$\Windows\win.ini",
+        r"\\.\pipe\owned",
+        stream.as_str(),
+    ] {
+        assert!(
+            script_for_request(&request(json!([path]))).is_err(),
+            "{path}"
+        );
+    }
+    assert_eq!(fs::read(file).unwrap(), b"fixture");
 }

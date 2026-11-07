@@ -20,8 +20,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Flip only after the exact Windows SDK filesystem fixture passes on a fresh runner.
-const WINDOWS_UPLOAD_SDK_VALIDATED: bool = false;
+// Enabled after the six owned Windows SDK filesystem tests (junction and file
+// symlink refusal, rename denial, held documents, cancellation, limits) passed on
+// a fresh GitHub-hosted runner; Core (windows-latest) reruns them on every change.
+// Set false to fail closed again before any path is opened.
+const WINDOWS_UPLOAD_SDK_VALIDATED: bool = true;
 pub fn available() -> bool {
     !cfg!(windows) || WINDOWS_UPLOAD_SDK_VALIDATED
 }
