@@ -2,7 +2,7 @@
 use gpui_base::input::{NativeTextRevision, TransientEditError, TransientReplacement};
 use gpui_kit::{
     App, AppContext, Context, Entity, EntityInputHandler, Focusable, IntoElement, ParentElement,
-    Render, Subscription, TestAppContext, Window,
+    Render, Styled, Subscription, TestAppContext, Window,
     component::input::{InputEvent, Paste, Redo, Textarea, TextareaState, Undo},
     div, px,
 };
@@ -23,7 +23,7 @@ fn setup(
     cx: &mut TestAppContext,
 ) -> (
     Entity<Harness>,
-    gpui_kit::VisualTestContext,
+    &mut gpui_kit::VisualTestContext,
     Rc<Cell<usize>>,
 ) {
     assert_eq!(std::env::var(CHILD).as_deref(), Ok("1"));
@@ -91,7 +91,7 @@ fn preview(
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_final_single_undo_and_panic_keep_prior_history(cx: &mut TestAppContext) {
-    let (view, mut vcx, changes) = setup(cx);
+    let (view, vcx, changes) = setup(cx);
     vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         let mut receipt = preview(&input, "合成 café", window, cx);
@@ -141,12 +141,12 @@ fn headless_native_preview_final_single_undo_and_panic_keep_prior_history(cx: &m
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_restores_before_real_paste_and_undo(cx: &mut TestAppContext) {
-    let (view, mut vcx, _) = setup(cx);
+    let (view, vcx, _) = setup(cx);
     vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         preview(&input, "partial", window, cx);
         draw(window, cx);
-        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("pasted 🍎"));
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("pasted 🍎".to_owned()));
         window.dispatch_action(Box::new(Paste), cx);
         assert_eq!(
             input.read(cx).value().as_ref(),
@@ -175,7 +175,7 @@ fn headless_native_preview_restores_before_real_paste_and_undo(cx: &mut TestAppC
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_restores_before_ime_and_selection(cx: &mut TestAppContext) {
-    let (view, mut vcx, _) = setup(cx);
+    let (view, vcx, _) = setup(cx);
     vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         preview(&input, "途中の音声", window, cx);
@@ -215,7 +215,7 @@ fn headless_native_preview_restores_before_ime_and_selection(cx: &mut TestAppCon
 fn headless_native_preview_rejects_stale_source_ime_readonly_tokens_and_bad_graphemes(
     cx: &mut TestAppContext,
 ) {
-    let (view, mut vcx, _) = setup(cx);
+    let (view, vcx, _) = setup(cx);
     vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         input.update(cx, |state, cx| {
