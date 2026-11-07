@@ -43,7 +43,7 @@ impl Coincide {
         label: String,
         choices: Vec<(String, bool, Edit)>,
         cx: &Context<Self>,
-    ) -> Button {
+    ) -> AnyElement {
         let parent = cx.entity().downgrade();
         let expected = self.settings.get("voice").cloned();
         Button::new(id).label(label).dropdown_caret(true).dropdown_menu(move|mut menu,_,_|{
@@ -56,7 +56,7 @@ impl Coincide {
                     });
                 }));
             }menu
-        })
+        }).into_any_element()
     }
     pub(super) fn voice_preferences(&self, cx: &mut Context<Self>) -> AnyElement {
         let voice = Settings::decode(&self.settings);

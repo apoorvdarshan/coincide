@@ -2,8 +2,8 @@
 //! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
-        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, Microphone,
-        Permission,
+        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, InputDevice,
+        Microphone, Permission,
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
