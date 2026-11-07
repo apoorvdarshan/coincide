@@ -26,8 +26,21 @@ use windows_capture::{
     window::Window,
 };
 type R<T> = Result<T, Failure>;
+#[track_caller]
 fn native<T>(value: ::windows::core::Result<T>) -> R<T> {
-    value.map_err(|_| Failure::Native)
+    #[cfg(test)]
+    let caller = std::panic::Location::caller();
+    value.map_err(|_| {
+        #[cfg(test)]
+        {
+            eprintln!(
+                "CU native boundary failed at {}:{}",
+                caller.file(),
+                caller.line()
+            );
+        }
+        Failure::Native
+    })
 }
 fn checked(permit: &Permit, deadline: Instant) -> R<()> {
     permit.check()?;
