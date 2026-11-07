@@ -542,6 +542,7 @@ impl Engine {
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
                 ensure!(self.browser_pending.len()<128,"Too many browser requests; collect completed results first");
+                crate::browser_protocol::validate_screenshot_parameters(p)?;
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
                 let request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
