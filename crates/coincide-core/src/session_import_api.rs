@@ -242,9 +242,11 @@ pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
     let source_key = source_key(&parsed);
     // A second import opens the conversation that already holds this source.
     if let Some(existing) = store.imported_thread_for_source(&source_key)? {
-        return Ok(json!({"threadId":existing,"sourceKey":source_key,"existing":true,
+        return Ok(
+            json!({"threadId":existing,"sourceKey":source_key,"existing":true,
             "messageCount":parsed.messages.len(),"omittedRecords":parsed.omitted_records,
-            "shortenedText":parsed.shortened_text,"executable":false}));
+            "shortenedText":parsed.shortened_text,"executable":false}),
+        );
     }
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();

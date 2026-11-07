@@ -99,6 +99,14 @@ impl Coincide {
         let measured = area.get();
         let scale = viewport.map_or(1., |size| viewport_scale(size, measured));
         let zoom = f64::from(scale);
+        // WebKitGTK does not apply a page zoom, so a fixed viewport is laid out
+        // at its exact size and clipped by the panel instead of scaled.
+        #[cfg(target_os = "linux")]
+        let (zoom, dimensions) = (
+            1.0,
+            viewport.map(|(width, height)| (width as f32, height as f32)),
+        );
+        #[cfg(not(target_os = "linux"))]
         let dimensions =
             viewport.map(|(width, height)| (width as f32 * scale, height as f32 * scale));
         #[cfg(target_os = "windows")]

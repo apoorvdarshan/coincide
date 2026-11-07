@@ -391,17 +391,32 @@ impl Adapter {
     }
 
     fn document(&self, thread: Uuid) -> Result<(String, Value), RemoteError> {
+        // A desktop save can hold Engine briefly. Retry a busy read instead of
+        // telling the phone the thread is gone.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut resolved = self.call("threads.resolve_id", json!({"threadId":thread.to_string()}));
+        while let Err(error) = &resolved {
+            if !error.message.contains("busy") || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            resolved = self.call("threads.resolve_id", json!({"threadId":thread.to_string()}));
+        }
         // The stored id keeps its own spelling; the phone's may differ in case.
-        let resolved = self
-            .call("threads.resolve_id", json!({"threadId":thread.to_string()}))
-            .map_err(|_| RemoteError::thread_not_found())?;
+        let resolved = resolved.map_err(|_| RemoteError::thread_not_found())?;
         let id = resolved["threadId"]
             .as_str()
             .ok_or_else(RemoteError::thread_not_found)?
             .to_owned();
-        let document = self
-            .call("threads.read", json!({"threadId":id}))
-            .map_err(|_| RemoteError::thread_not_found())?;
+        let mut document = self.call("threads.read", json!({"threadId":id}));
+        while let Err(error) = &document {
+            if !error.message.contains("busy") || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            document = self.call("threads.read", json!({"threadId":id}));
+        }
+        let document = document.map_err(|_| RemoteError::thread_not_found())?;
         Ok((id, document))
     }
 

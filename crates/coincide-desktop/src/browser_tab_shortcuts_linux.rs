@@ -129,7 +129,33 @@ pub(super) fn focus(view: &wry::WebView) -> Result<()> {
     let window = widget
         .window()
         .ok_or_else(|| anyhow::anyhow!("Native browser focus window unavailable"))?;
-    window.focus(gdk::ffi::GDK_CURRENT_TIME as u32);
-    widget.display().sync();
-    Ok(())
+    // A bare Xvfb has no window manager to apply Gdk's request, and a freshly
+    // built view may not be viewable yet. Set X input focus on our own view and
+    // retry briefly until the server agrees.
+    use gtk::glib::translate::ToGlibPtr;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        window.focus(gdk::ffi::GDK_CURRENT_TIME as u32);
+        let xid = unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) };
+        if let Ok(owned) = u32::try_from(xid)
+            && owned > 1
+            && let Ok((connection, _)) = x11rb::connect(None)
+        {
+            use x11rb::connection::Connection;
+            use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
+            let _ = connection.set_input_focus(InputFocus::PARENT, owned, x11rb::CURRENT_TIME);
+            let _ = connection.flush();
+        }
+        widget.display().sync();
+        if owns_input_focus(&widget) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }

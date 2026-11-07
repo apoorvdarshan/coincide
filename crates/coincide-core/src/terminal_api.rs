@@ -2,8 +2,10 @@
 //! each tab shows and restarting an exited shell (Swift ThreadTerminals,
 //! TerminalLaunch and TerminalSession).
 use super::*;
+#[cfg(test)]
+use crate::terminal::Terminal;
 use crate::terminal::{
-    Palette, Terminal,
+    Palette,
     launch::{self, StartDirectory},
 };
 
@@ -66,6 +68,7 @@ impl Engine {
         Ok(StartDirectory::resolve(preferred, project, launch::home()))
     }
     /// The lowest number no other terminal of the thread uses.
+    #[cfg(test)]
     fn next_terminal_number(&self, thread: &str) -> u32 {
         let used: HashSet<u32> = self
             .terminals
@@ -76,6 +79,7 @@ impl Engine {
         (1..).find(|number| !used.contains(number)).unwrap_or(1)
     }
     /// A new numbered shell for `thread_id`, in its start folder.
+    #[cfg(test)]
     pub(super) fn spawn_thread_terminal(
         &self,
         thread_id: &str,

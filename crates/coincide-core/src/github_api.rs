@@ -196,8 +196,7 @@ impl Drop for ProcessGroup {
 
 // Share native error interpretation with the Windows credential process owner.
 #[cfg(any(windows, test))]
-#[path = "credentials_process_custody.rs"]
-mod process_custody;
+pub(crate) use crate::credentials::process_custody;
 #[cfg(any(windows, test))]
 #[path = "github_process_members.rs"]
 mod process_members;
