@@ -42,7 +42,7 @@ impl std::fmt::Display for CaptureFailure {
 }
 impl std::error::Error for CaptureFailure {}
 /// A native `[x, y, width, height]` frame, when it is four finite numbers.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn frame(value: &serde_json::Value) -> Option<[f64; 4]> {
     let parts = value.as_array()?;
     let mut frame = [0.; 4];
@@ -191,14 +191,7 @@ mod backend {
             coincide_appshots_sound();
         }
     }
-    pub(super) fn bring_forward(window: &gpui_kit::Window) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        // GPUI's activate_window only orders the window front; AppKit also
-        // needs the unhide, deminiaturize and activation Swift performs.
-        let view = match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
-            _ => std::ptr::null_mut(),
-        };
+    pub(super) fn bring_forward(view: *mut c_void) {
         unsafe { coincide_appshots_bring_forward(view) }
     }
     pub(super) fn hud(message: &str, symbol: &str, alert: bool, frame: Option<[f64; 4]>) {
@@ -233,12 +226,11 @@ pub fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Capture> {
 pub fn sound() {
     backend::sound()
 }
-/// Brings Coincide forward with this window in front, after an appshot.
-pub fn bring_forward(window: &mut gpui_kit::Window) {
-    #[cfg(target_os = "macos")]
-    backend::bring_forward(window);
-    #[cfg(not(target_os = "macos"))]
-    window.activate_window();
+/// Swift's AppForegrounder, for the window whose AppKit `NSView` this is
+/// (null for none): unhide, deminiaturize, order front and activate.
+#[cfg(target_os = "macos")]
+pub fn bring_forward(view: *mut std::ffi::c_void) {
+    backend::bring_forward(view);
 }
 /// Swift's AppshotHUD on macOS, around `frame` when known. Swift has no HUD
 /// on other platforms; there the outcome shows in Settings and the status.

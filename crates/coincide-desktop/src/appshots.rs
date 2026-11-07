@@ -312,7 +312,7 @@ impl Coincide {
                     }
                     self.appshots.outcome =
                         "Appshot added to the draft. It has not been sent.".into();
-                    appshots_platform::bring_forward(window);
+                    bring_forward(window);
                     self.composer.read(cx).focus_handle(cx).focus(window, cx);
                     let (app, frame) =
                         shown.map_or((String::from("the app"), None), |s| (s.app, s.frame));
@@ -352,7 +352,7 @@ impl Coincide {
             let outcome = Outcome::ScreenRecordingNeeded;
             self.appshots.outcome = outcome.message();
             outcome.show(None);
-            appshots_platform::bring_forward(window);
+            bring_forward(window);
             self.settings_open = true;
             self.navigate_settings_section(settings::SettingsSection::Appshots, window, cx);
             self.show_settings_window(cx);
@@ -412,6 +412,22 @@ impl Coincide {
     }
 }
 
+/// Brings Coincide forward with this window in front, after an appshot.
+/// GPUI's activate_window only orders the window front on macOS; AppKit also
+/// needs the unhide, deminiaturize and activation Swift performs.
+fn bring_forward(window: &mut Window) {
+    #[cfg(target_os = "macos")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let view = match HasWindowHandle::window_handle(&*window).map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
+            _ => std::ptr::null_mut(),
+        };
+        appshots_platform::bring_forward(view);
+    }
+    #[cfg(not(target_os = "macos"))]
+    window.activate_window();
+}
 fn permissions_changed(
     old: &appshots_platform::Permissions,
     new: &appshots_platform::Permissions,
