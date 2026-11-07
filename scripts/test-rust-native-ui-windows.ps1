@@ -214,10 +214,22 @@ function Capture-Owned([IntPtr]$Window,[string]$Name) {
     Start-Sleep -Milliseconds 500
     [NativeUiSmoke]::Capture($Window,[uint32]$script:OwnedProcess.Id,(Join-Path $Artifacts "$Name.png"))
 }
-function Quit-Owned([IntPtr]$Window) {
+function Quit-Owned([IntPtr]$Window,[bool]$Guarded=$false) {
     if((Invoke-Rpc 'app.status').running.Count -ne 0){throw 'Provider work unexpectedly started'}
     Wait-Condition 'owned Quit foreground' {[NativeUiSmoke]::Focus($Window,[uint32]$script:OwnedProcess.Id)} | Out-Null
+    $first=[Diagnostics.Stopwatch]::StartNew()
     [NativeUiSmoke]::Chord($Window,[uint32]$script:OwnedProcess.Id,0x51)
+    if($Guarded){
+        Start-Sleep -Milliseconds 200
+        if($script:OwnedProcess.HasExited){throw 'Hold-to-Quit accepted the first brief native Ctrl+Q'}
+        # Normal Quit freezes Engine JSON entry points; live PID alone could
+        # merely mean an already-admitted slow drain.
+        if((Invoke-Rpc 'app.status').running.Count -ne 0){throw 'First Quit press did not retain ordinary idle admissions'}
+        if($first.Elapsed.TotalSeconds -ge 1.5){throw 'Second native Quit press missed the product double-press interval'}
+        $Report.guardedQuitFirstPressAlive=$true
+        $Report.guardedQuitSecondPressSeconds=$first.Elapsed.TotalSeconds
+        [NativeUiSmoke]::Chord($Window,[uint32]$script:OwnedProcess.Id,0x51)
+    }
     if(-not $script:OwnedProcess.WaitForExit(30000)){
         # Diagnostics never issue another key or substitute API Quit for the
         # required native action. Preserve the actual failure and owner.
@@ -230,6 +242,7 @@ function Quit-Owned([IntPtr]$Window) {
 }
 try {
     $main=Start-Owned 'initial'
+    Invoke-Rpc 'settings.patch' @{patch=@{holdToQuit=$false}} | Out-Null
     $project=Invoke-Rpc 'projects.create' @{path=$Project;name='Windows native smoke'}
     $thread=Invoke-Rpc 'threads.create' @{projectId=$project.id}
     $threadId=$thread.id
@@ -265,12 +278,14 @@ try {
     Capture-Owned $main 'older-selected-before-quit'
     Quit-Owned $main
     $main=Start-Owned 'restart'
+    Invoke-Rpc 'settings.patch' @{patch=@{holdToQuit=$true}} | Out-Null
     Wait-Condition 'last selected older conversation restored automatically' {(Invoke-Rpc 'app.status').activeThread -eq $threadId} | Out-Null
     if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Normal Quit/reopen lost native draft'}
     Capture-Owned $main 'reopened-draft'
     $Report.persistedDraftVerified=((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -eq $draft)
     $Report.checks+='Normal Ctrl+Q exited zero and reopening preserved private Store draft with rendered native client'
-    Quit-Owned $main
+    Quit-Owned $main $true
+    $Report.checks+='Native Hold-to-Quit refused first brief Ctrl+Q and accepted second within 1.5 seconds, with ordinary zero-exit drain'
     $Report.passed=$true
 } catch {
     $Report.error=$_.Exception.Message

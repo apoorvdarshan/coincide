@@ -450,6 +450,7 @@ impl Coincide {
     ) {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
+        quit_shortcut::configure(&self.settings, cx);
         self.sync_provider_configuration_settings(window, cx);
         self.appshots.sync(&self.settings);
         if provider_preferences_changed {
@@ -459,6 +460,10 @@ impl Coincide {
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
         self.apply_appearance(window, cx);
+        if self.terminal_open {
+            self.ensure_terminal_space(window);
+        }
+        self.sync_terminal_resize(window);
         // Virtualized rows cache their measured height and presentation.
         self.transcript_list
             .splice(0..self.transcript_count, self.transcript_count);
@@ -857,6 +862,17 @@ impl Coincide {
         for (section, terms, label, key, fallback, choices) in [
             (
                 S::Appearance,
+                "terminal placement bottom right panel drawer inspector",
+                "Terminal",
+                "terminalPlacement",
+                json!("bottom"),
+                vec![
+                    ("Bottom panel", json!("bottom")),
+                    ("Right panel", json!("right")),
+                ],
+            ),
+            (
+                S::Appearance,
                 "reply font serif system typeface",
                 "Reply font",
                 "replyTypeface",
@@ -907,7 +923,9 @@ impl Coincide {
                 "new threads default access approval full commands edit files",
                 "Access for new threads",
                 "defaultAccessMode",
-                json!("fullAccess"),
+                // Match the actual new-thread/Project Defaults fallback when
+                // no preference was saved; rendering never grants more access.
+                json!("approval"),
                 vec![
                     ("Ask before changes", json!("approval")),
                     ("Full access", json!("fullAccess")),
@@ -919,6 +937,14 @@ impl Coincide {
                 "New Thread starts a chat",
                 "newThreadStartsChat",
                 json!(false),
+                vec![("On", json!(true)), ("Off", json!(false))],
+            ),
+            (
+                S::Conversation,
+                "hold quit keyboard command control q double press exit",
+                "Hold Command / Control + Q to quit",
+                "holdToQuit",
+                json!(true),
                 vec![("On", json!(true)), ("Off", json!(false))],
             ),
             (

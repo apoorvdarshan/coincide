@@ -1770,6 +1770,67 @@ mod tests {
     }
 
     #[crate::test]
+    fn test_interceptor_receives_actual_repeat_before_binding_dispatch(cx: &mut TestAppContext) {
+        let (cx, action_count, _) = setup_pending_input_test(
+            cx,
+            [KeyBinding::new("ctrl-q", TestAction, Some("Terminal"))],
+        );
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let consume = Rc::new(Cell::new(true));
+        let _subscription = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let observed = observed.clone();
+                let consume = consume.clone();
+                move |event, _, cx| {
+                    observed.borrow_mut().push(event.is_held);
+                    assert!(
+                        event.action.is_none(),
+                        "interceptor precedes action resolution"
+                    );
+                    if consume.get() {
+                        cx.stop_propagation();
+                    }
+                }
+            })
+        });
+        for is_held in [false, true] {
+            let result = cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke::parse("ctrl-q").unwrap(),
+                        is_held,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                )
+            });
+            assert!(!result.propagate);
+        }
+        assert_eq!(observed.borrow().as_slice(), &[Some(false), Some(true)]);
+        assert_eq!(
+            action_count.get(),
+            0,
+            "neither initial nor repeated consumed input reaches its binding"
+        );
+        consume.set(false);
+        cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke::parse("ctrl-q").unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            )
+        });
+        assert_eq!(
+            action_count.get(),
+            1,
+            "propagated input keeps the original action behavior"
+        );
+    }
+
+    #[crate::test]
     fn test_consumed_modifier_preserves_pending_input(cx: &mut TestAppContext) {
         let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
         test.update_in(cx, |test, window, cx| {
