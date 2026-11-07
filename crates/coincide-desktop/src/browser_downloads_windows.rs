@@ -17,8 +17,8 @@ use std::{
     },
 };
 use webview2_com::{
-    DownloadStartingEventHandler, Microsoft::Web::WebView2::Win32::*, StateChangedEventHandler,
-    take_pwstr,
+    DownloadStartingEventHandler, Microsoft::Web::WebView2::Win32::*,
+    PermissionRequestedEventHandler, StateChangedEventHandler, take_pwstr,
 };
 use windows::core::{HSTRING, Interface, PWSTR};
 use wry::WebViewExtWindows;
@@ -60,9 +60,8 @@ impl Owner {
         _navigation: Arc<AtomicU64>,
         changed: impl Fn() + 'static,
     ) -> Result<Rc<Self>> {
-        let events: ICoreWebView2_4 = view
-            .raw()
-            .webview()
+        let native = view.raw().webview();
+        let events: ICoreWebView2_4 = native
             .cast()
             .context("Native download events require WebView2 1.0.902 or later")?;
         let shared = Rc::new(Shared {
@@ -91,6 +90,31 @@ impl Owner {
         // Deliberately never removed: after this owner drains, a late start on
         // a still-live view is cancelled instead of reaching WebView2's own UI.
         unsafe { events.add_DownloadStarting(&handler, &mut token)? };
+        // Agent clicks are script clicks, not user gestures. Chromium would ask
+        // before every later download from one page, and nobody can answer that
+        // prompt here; Swift's WebKit has no such limit. Every start is still
+        // admitted individually above, within the registry's bounds.
+        let weak = Rc::downgrade(&shared);
+        let block = shared.callbacks.lifetimes().block();
+        let permission = PermissionRequestedEventHandler::create(Box::new(move |_, args| {
+            let _held = &block;
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+            unsafe { args.PermissionKind(&mut kind)? };
+            if kind != COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS {
+                return Ok(());
+            }
+            let allowed = weak.upgrade().is_some_and(|shared| shared.admitting());
+            unsafe {
+                args.SetState(if allowed {
+                    COREWEBVIEW2_PERMISSION_STATE_ALLOW
+                } else {
+                    COREWEBVIEW2_PERMISSION_STATE_DENY
+                })
+            }
+        }));
+        let mut token = 0;
+        unsafe { native.add_PermissionRequested(&permission, &mut token)? };
         Ok(Rc::new(Self { shared }))
     }
     pub(super) fn is_tab(&self, thread: &str, tab: &str) -> bool {
@@ -176,10 +200,20 @@ impl Shared {
         let Some(source) = self.source() else {
             return Ok(None);
         };
-        if !self.admitting()
-            || self.active.borrow().len() >= 128
-            || validate_native_download(&address, &source).is_err()
-        {
+        if !self.admitting() {
+            return Ok(None);
+        }
+        if self.active.borrow().len() >= 128 {
+            self.registry
+                .borrow_mut()
+                .refuse(&self.thread, "Too many native downloads are still running");
+            return Ok(None);
+        }
+        if validate_native_download(&address, &source).is_err() {
+            self.registry.borrow_mut().refuse(
+                &self.thread,
+                "Download refused: only HTTP(S) addresses or blobs from this page can be saved",
+            );
             return Ok(None);
         }
         let Ok(receipt) = self.registry.borrow_mut().start_native(
