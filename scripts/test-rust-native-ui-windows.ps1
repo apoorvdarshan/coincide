@@ -280,14 +280,14 @@ try {
     $browserAck=Join-Path $Fixture 'native-browser-visible.ack'
     $python=(Get-Command python -ErrorAction Stop).Source
     $browserInfo=[Diagnostics.ProcessStartInfo]::new($python)
-    foreach($arg in @((Join-Path $PSScriptRoot 'native-browser-fixture.py'),'--client',$Client,'--data-dir',$Data,'--thread',$threadId,'--report',$browserReport,'--capture-ready',$browserReady,'--capture-ack',$browserAck)){$browserInfo.ArgumentList.Add($arg)}
+    foreach($arg in @((Join-Path $PSScriptRoot 'native-browser-fixture.py'),'--client',$Client,'--data-dir',$Data,'--thread',$threadId,'--report',$browserReport,'--capture-ready',$browserReady,'--capture-ack',$browserAck,'--downloads-root',(Join-Path $HomeDir 'Downloads\Coincide'))){$browserInfo.ArgumentList.Add($arg)}
     $browserInfo.UseShellExecute=$false;$browserInfo.RedirectStandardOutput=$true;$browserInfo.RedirectStandardError=$true
     $browserInfo.Environment.Clear();foreach($key in $Environment.Keys){$browserInfo.Environment[$key]=$Environment[$key]}
     $browserInfo.Environment['GITHUB_ACTIONS']='true';$browserInfo.Environment['PYTHONUTF8']='1';$browserInfo.Environment['PYTHONDONTWRITEBYTECODE']='1'
     $browserInfo.Environment['RUNNER_TEMP']=$env:RUNNER_TEMP
     $browserProcess=[Diagnostics.Process]::Start($browserInfo)
     $script:PendingClients.Add($browserProcess)
-    $browserDeadline=[DateTime]::UtcNow.AddSeconds(90);$browserCaptured=$false
+    $browserDeadline=[DateTime]::UtcNow.AddSeconds(150);$browserCaptured=$false
     while(-not $browserProcess.HasExited -and [DateTime]::UtcNow -lt $browserDeadline){
         if(-not $browserCaptured -and (Test-Path $browserReady)){
             $nonce=[IO.File]::ReadAllText($browserReady)

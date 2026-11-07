@@ -1044,7 +1044,9 @@ impl Coincide {
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
-        let (browser, browser_error) = match BrowserController::new(profile_dir) {
+        let (browser, browser_error) = match control::download_directory()
+            .and_then(|downloads| BrowserController::new(profile_dir, downloads))
+        {
             Ok(browser) => (Some(browser), None),
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
