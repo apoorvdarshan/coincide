@@ -612,6 +612,7 @@ impl NativeBackend {
                 {
                     return Err(Failure::PermissionDenied);
                 }
+                let source_nodes = nodes.clone();
                 let mut elements = BTreeMap::new();
                 let mut exposed = vec![];
                 for entry in nodes.into_iter().take(limit.min(MAX_NODES)) {
@@ -639,6 +640,9 @@ impl NativeBackend {
                     let (after, post) = tree(&bus, &window, permit, deadline)?;
                     if after != accessible || post.iter().any(|e| e.secure) {
                         return Err(Failure::PermissionDenied);
+                    }
+                    if post != source_nodes {
+                        return Err(Failure::StaleObservation);
                     }
                     Some(Image {
                         png_base64: base64::engine::general_purpose::STANDARD.encode(png),
@@ -847,6 +851,7 @@ impl NativeBackend {
                         ))
                         .check());
                         pointer_target(&connection, observed)?;
+                        recheck_element(&bus, entry)?;
                         input_pair(
                             &connection,
                             observed,
@@ -1000,3 +1005,7 @@ impl Backend for NativeBackend {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "computer_use_linux_native_tests.rs"]
+mod native_tests;
