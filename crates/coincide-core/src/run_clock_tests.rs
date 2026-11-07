@@ -50,6 +50,10 @@ fn a_run_connects_on_its_first_provider_event_and_its_clock_ends_with_it() {
     };
     let clock = status(&mut engine)[&id].clone();
     assert_eq!(clock["connecting"], true);
+    assert_eq!(
+        engine.dispatch(json!({"method":"app.status","params":{}}))["result"]["starting"],
+        json!([id.clone()])
+    );
     assert!(clock["startedAt"].as_f64().unwrap() >= before);
     send_tx
         .send(Event::Session("synthetic-session".into()))
@@ -60,6 +64,10 @@ fn a_run_connects_on_its_first_provider_event_and_its_clock_ends_with_it() {
         assert!(Instant::now() < deadline, "first event was not observed");
         engine.poll();
     }
+    assert_eq!(
+        engine.dispatch(json!({"method":"app.status","params":{}}))["result"]["starting"],
+        json!([])
+    );
     send_tx.send(Event::Finished).unwrap();
     sent_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     while engine.runs.contains_key(&id) {
