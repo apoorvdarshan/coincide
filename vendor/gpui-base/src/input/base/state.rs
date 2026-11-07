@@ -452,6 +452,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) validated_token_edit: bool,
     pub(super) document_revision: u64,
     native_transient: Option<Box<native_preview::NativeTransient>>,
+    native_owner: gpui::EntityId,
     pub(super) token_presentation: super::InlineTokenPresentation,
     pub(super) token_layout_cache: Option<Box<super::token_presentation::TokenLayoutCache>>,
     /// Real per-frame bounds of the placed token elements, keyed by token
@@ -994,6 +995,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             validated_token_edit: false,
             document_revision: 0,
             native_transient: None,
+            native_owner: cx.entity_id(),
             token_presentation: Default::default(),
             token_bounds: Default::default(),
             hovered_token: None,

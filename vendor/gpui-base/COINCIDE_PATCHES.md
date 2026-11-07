@@ -32,3 +32,8 @@ optional boxed snapshot to shared state; only TextareaState can create it.
 exposes a fixed caught-unwind probe (no callback or authority input) so private
 Desktop TestPlatform fixtures can verify RAII and real normal-edit histories
 without pulling upstream optional dev backends into this workspace.
+
+Read-only revision matching is bound to the actual retained EntityId stored at
+construction, in addition to source revision and selection. Coincide uses this
+only to project the committed draft while its closed native producer owns a
+transient preview; mutating methods still validate the actual Context owner.

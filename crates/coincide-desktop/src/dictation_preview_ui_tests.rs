@@ -2,7 +2,7 @@
 use gpui_base::input::{NativeTextRevision, TransientEditError, TransientReplacement};
 use gpui_kit::{
     App, AppContext, Context, Entity, EntityInputHandler, Focusable, IntoElement, ParentElement,
-    Render, Subscription, TestAppContext, Window,
+    Render, Styled, Subscription, TestAppContext, Window,
     component::input::{InputEvent, Paste, Redo, Textarea, TextareaState, Undo},
     div, px,
 };
@@ -23,7 +23,7 @@ fn setup(
     cx: &mut TestAppContext,
 ) -> (
     Entity<Harness>,
-    gpui_kit::VisualTestContext,
+    &mut gpui_kit::VisualTestContext,
     Rc<Cell<usize>>,
 ) {
     assert_eq!(std::env::var(CHILD).as_deref(), Ok("1"));
@@ -88,11 +88,25 @@ fn preview(
             .unwrap()
     })
 }
+fn dispatch_and_expect(
+    vcx: &mut gpui_kit::VisualTestContext,
+    input: &Entity<TextareaState>,
+    action: impl gpui_kit::Action,
+    expected: &str,
+) {
+    vcx.dispatch_action(action);
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        draw(window, cx);
+        assert_eq!(input.read(cx).value().as_ref(), expected);
+        assert!(input.read(cx).focus_handle(cx).is_focused(window));
+    });
+}
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_final_single_undo_and_panic_keep_prior_history(cx: &mut TestAppContext) {
-    let (view, mut vcx, changes) = setup(cx);
-    vcx.update(|window, cx| {
+    let (view, vcx, changes) = setup(cx);
+    let input = vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         let mut receipt = preview(&input, "合成 café", window, cx);
         input.update(cx, |state, cx| {
@@ -121,17 +135,12 @@ fn headless_native_preview_final_single_undo_and_panic_keep_prior_history(cx: &m
         });
         draw(window, cx);
         assert!(input.read(cx).focus_handle(cx).is_focused(window));
-        window.dispatch_action(Box::new(Undo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
-        window.dispatch_action(Box::new(Undo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "old");
-        window.dispatch_action(Box::new(Redo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
-        window.dispatch_action(Box::new(Redo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before final 👩🏽‍💻 after");
-        draw(window, cx);
-        assert!(input.read(cx).focus_handle(cx).is_focused(window));
+        input
     });
+    dispatch_and_expect(vcx, &input, Undo, "before 🦀 after");
+    dispatch_and_expect(vcx, &input, Undo, "old");
+    dispatch_and_expect(vcx, &input, Redo, "before 🦀 after");
+    dispatch_and_expect(vcx, &input, Redo, "before final 👩🏽‍💻 after");
     assert_eq!(
         changes.get(),
         6,
@@ -141,42 +150,29 @@ fn headless_native_preview_final_single_undo_and_panic_keep_prior_history(cx: &m
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_restores_before_real_paste_and_undo(cx: &mut TestAppContext) {
-    let (view, mut vcx, _) = setup(cx);
-    vcx.update(|window, cx| {
+    let (view, vcx, _) = setup(cx);
+    let input = vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         preview(&input, "partial", window, cx);
         draw(window, cx);
-        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("pasted 🍎"));
-        window.dispatch_action(Box::new(Paste), cx);
-        assert_eq!(
-            input.read(cx).value().as_ref(),
-            "before pasted 🍎 after",
-            "paste must apply to original selection, never partial text"
-        );
-        window.dispatch_action(Box::new(Undo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
-        preview(&input, "another partial", window, cx);
-        window.dispatch_action(Box::new(Undo), cx);
-        assert_eq!(
-            input.read(cx).value().as_ref(),
-            "old",
-            "undo restores original source before replaying previous history"
-        );
-        window.dispatch_action(Box::new(Redo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
-        window.dispatch_action(Box::new(Redo), cx);
-        assert_eq!(
-            input.read(cx).value().as_ref(),
-            "before pasted 🍎 after",
-            "the pre-existing redo entry survives transient text and cancellation"
-        );
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("pasted 🍎".to_owned()));
+        input
     });
+    dispatch_and_expect(vcx, &input, Paste, "before pasted 🍎 after");
+    dispatch_and_expect(vcx, &input, Undo, "before 🦀 after");
+    vcx.update(|window, cx| {
+        preview(&input, "another partial", window, cx);
+        draw(window, cx);
+    });
+    dispatch_and_expect(vcx, &input, Undo, "old");
+    dispatch_and_expect(vcx, &input, Redo, "before 🦀 after");
 }
+
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
 fn headless_native_preview_restores_before_ime_and_selection(cx: &mut TestAppContext) {
-    let (view, mut vcx, _) = setup(cx);
-    vcx.update(|window, cx| {
+    let (view, vcx, _) = setup(cx);
+    let input = vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         preview(&input, "途中の音声", window, cx);
         input.update(cx, |state, cx| {
@@ -196,8 +192,11 @@ fn headless_native_preview_restores_before_ime_and_selection(cx: &mut TestAppCon
             EntityInputHandler::replace_text_in_range(state, None, "愛", window, cx);
             assert_eq!(state.value(), "before 愛 after");
         });
-        window.dispatch_action(Box::new(Undo), cx);
-        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
+        draw(window, cx);
+        input
+    });
+    dispatch_and_expect(vcx, &input, Undo, "before 🦀 after");
+    vcx.update(|window, cx| {
         input.update(cx, |state, cx| state.set_selected_range(7..11, cx));
         let receipt = preview(&input, "new partial", window, cx);
         input.update(cx, |state, cx| {
@@ -215,7 +214,7 @@ fn headless_native_preview_restores_before_ime_and_selection(cx: &mut TestAppCon
 fn headless_native_preview_rejects_stale_source_ime_readonly_tokens_and_bad_graphemes(
     cx: &mut TestAppContext,
 ) {
-    let (view, mut vcx, _) = setup(cx);
+    let (view, vcx, _) = setup(cx);
     vcx.update(|window, cx| {
         let input = seed(&view, window, cx);
         input.update(cx, |state, cx| {
@@ -360,9 +359,76 @@ fn private_actual_dictation_preview_history_child() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success() && stdout.contains("4 passed"),
+        output.status.success() && stdout.contains("5 passed"),
         "actual native preview fixtures failed; retained {}\n{stdout}\n{stderr}",
         root.display()
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui_kit::test]
+#[ignore = "private-child wrapper only"]
+fn headless_production_preview_controller_uses_native_source_and_exact_producer(
+    cx: &mut TestAppContext,
+) {
+    use crate::{
+        dictation_preview::{Applied, Preview},
+        transcription_composer::ComposerTarget,
+        transcription_settings::TextReady,
+    };
+    let (view, vcx, _) = setup(cx);
+    vcx.update(|window, cx| {
+        let input = seed(&view, window, cx);
+        let mut target = ComposerTarget::default();
+        let binding = target
+            .bind(
+                Some("synthetic-thread"),
+                input.read(cx).value().as_ref(),
+                input.read(cx).selected_range(),
+                false,
+            )
+            .unwrap();
+        let mut owner = Preview::capture(&input, binding.clone(), 7, cx);
+        assert!(matches!(
+            owner.apply(&input, "合成", window, cx),
+            Applied::Updated
+        ));
+        draw(window, cx);
+        assert_eq!(input.read(cx).value().as_ref(), "before 合成 after");
+        assert!(input.read(cx).focus_handle(cx).is_focused(window));
+        let mut event = TextReady {
+            _model_lease: None,
+            generation: 7,
+            binding: binding.clone(),
+            text: "final".into(),
+        };
+        assert!(owner.matches_event(&event));
+        event.generation = 8;
+        assert!(!owner.matches_event(&event));
+        event.generation = 7;
+        event.binding.thread_id = "different-thread".into();
+        assert!(!owner.matches_event(&event));
+        assert!(owner.restore(&input, cx).0);
+        assert_eq!(input.read(cx).value().as_ref(), "before 🦀 after");
+        assert!(
+            !owner.current(&input, cx),
+            "restored native receipt cannot authorize another preview"
+        );
+        let mut owner = Preview::capture(&input, binding, 9, cx);
+        assert!(matches!(
+            owner.apply(&input, "second", window, cx),
+            Applied::Updated
+        ));
+        input.update(cx, |state, cx| {
+            EntityInputHandler::replace_text_in_range(state, None, "typed 🍎", window, cx)
+        });
+        assert_eq!(input.read(cx).value().as_ref(), "before typed 🍎 after");
+        assert!(!owner.current(&input, cx));
+        assert!(!owner.restore(&input, cx).0);
+        assert_eq!(
+            input.read(cx).value().as_ref(),
+            "before typed 🍎 after",
+            "stale native ownership never overwrites the newer user edit"
+        );
+    });
 }

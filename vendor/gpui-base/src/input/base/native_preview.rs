@@ -205,8 +205,25 @@ impl InputBaseState<TextareaMode> {
     pub fn restore_native_preview(&mut self, cx: &mut Context<Self>) -> bool {
         self.restore_native_transient(cx).is_some()
     }
+    /// Read-only native metadata for retained render/context owners. No OS API
+    /// or mutable edit is performed, and no revision value can be constructed.
+    pub fn has_native_preview_revision(
+        &self,
+        receipt: &NativeTextRevision,
+        owner: EntityId,
+    ) -> bool {
+        self.native_transient.is_some() && self.is_native_text_revision(receipt, owner)
+    }
+    pub fn is_native_text_revision(&self, receipt: &NativeTextRevision, owner: EntityId) -> bool {
+        owner == self.native_owner
+            && receipt.owner == self.native_owner
+            && receipt.revision == self.document_revision
+            && receipt.selection == self.selected_range()
+            && receipt.reversed == self.is_selection_reversed()
+    }
     pub fn has_native_preview(&self, receipt: &NativeTextRevision, cx: &Context<Self>) -> bool {
-        self.native_transient.is_some() && self.matches_native_text_revision(receipt, cx)
+        self.native_owner == cx.entity_id()
+            && self.has_native_preview_revision(receipt, cx.entity_id())
     }
     /// Fixed synthetic unwind probe for private TestPlatform fixtures only.
     /// No callback or source/authority constructor is exposed.
@@ -218,7 +235,7 @@ impl InputBaseState<TextareaMode> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let scope = TransientScope::new(self);
             assert!(scope.undo_manager.is_ignoring());
-            assert!(!scope.emit_events);
+            assert!(!scope.state.emit_events);
             panic!("synthetic native transient unwind");
         }));
         result.is_err()
@@ -229,8 +246,13 @@ impl InputBaseState<TextareaMode> {
     /// Native text/selection identity, bound to this actual entity. An edit away
     /// and back invalidates it even when the resulting string is identical.
     pub fn native_text_revision(&self, cx: &Context<Self>) -> NativeTextRevision {
+        assert_eq!(
+            self.native_owner,
+            cx.entity_id(),
+            "Native textarea belongs to another entity"
+        );
         NativeTextRevision {
-            owner: cx.entity_id(),
+            owner: self.native_owner,
             revision: self.document_revision,
             selection: self.selected_range(),
             reversed: self.is_selection_reversed(),
@@ -241,7 +263,8 @@ impl InputBaseState<TextareaMode> {
         revision: &NativeTextRevision,
         cx: &Context<Self>,
     ) -> bool {
-        self.native_text_revision(cx) == *revision
+        self.native_owner == cx.entity_id()
+            && self.is_native_text_revision(revision, cx.entity_id())
     }
     /// Apply a source-checked native preview without recording history or
     /// emitting user `Change`/`InputEditsEvent`. Layout observers are notified.

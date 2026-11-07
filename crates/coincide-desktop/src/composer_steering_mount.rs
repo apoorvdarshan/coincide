@@ -10,7 +10,7 @@ impl Coincide {
         if !(running && provider == "codex") && message.is_none() {
             return None;
         }
-        let draft = self.composer.read(cx).value().to_string();
+        let draft = self.committed_composer_draft(cx);
         let build_mode =
             thread["interactionMode"].is_null() || thread["interactionMode"] == "build";
         let has_attachments = ["draftContext", "rustDraftImages"].iter().any(|key| {
@@ -24,6 +24,7 @@ impl Coincide {
                 .icon(gpui_kit::assets::IconName::CornerUpRight).w(px(28.)).h(px(28.)).rounded(px(14.)).p_0()
                 .accessibility_label("Steer active turn").tooltip("Steer active turn")
                 .disabled(!enabled).on_click(cx.listener(|this,_,_,cx| {
+                    if this.voice.preview.is_some(){this.cancel_composer_dictation(cx);}
                     let Some(thread) = this.selected.as_ref() else { return; };
                     let id = text(thread,"id");
                     let provider = text(&thread["selection"],"provider");

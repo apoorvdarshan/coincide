@@ -387,11 +387,7 @@ impl Coincide {
                 pane.child(
                     Button::new("composer-dictation-cancel")
                         .label("Cancel dictation")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.voice.ticket = None;
-                            this.microphone_panel
-                                .update(cx, |panel, cx| panel.cancel(cx))
-                        })),
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_composer_dictation(cx))),
                 )
                 .child(self.microphone_panel.read(cx).status_text())
                 .when_some(
@@ -409,7 +405,16 @@ impl Coincide {
                 )
             })
             .when_some(
-                self.microphone_panel.read(cx).partial_preview(),
+                self.microphone_panel
+                    .read(cx)
+                    .partial_preview()
+                    .filter(|_| {
+                        !self
+                            .voice
+                            .preview
+                            .as_ref()
+                            .is_some_and(|preview| preview.inline)
+                    }),
                 |pane, text| {
                     pane.child(
                         div()

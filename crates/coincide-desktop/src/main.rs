@@ -45,6 +45,7 @@ mod context_details_mount;
 mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
+mod dictation_preview;
 mod draft_close;
 mod github_actions;
 mod github_review;
@@ -598,13 +599,18 @@ impl Coincide {
         } else {
             None
         };
+        let preview_source = self.dictation_original_source(cx);
         let composer = self.composer.read(cx);
-        let binding = self.transcription_target.bind(
-            thread.as_deref(),
-            composer.value().as_ref(),
-            composer.selected_range(),
-            composer.is_selection_reversed(),
-        );
+        let (source, selection, reversed) = preview_source.unwrap_or_else(|| {
+            (
+                composer.value().to_string(),
+                composer.selected_range(),
+                composer.is_selection_reversed(),
+            )
+        });
+        let binding =
+            self.transcription_target
+                .bind(thread.as_deref(), &source, selection, reversed);
         self.transcription_panel.update(cx, |panel, cx| {
             panel.set_binding(
                 if voice_settings {
@@ -734,6 +740,7 @@ impl Coincide {
                 Err(error) => self.status = error.to_string(),
             }
         }
+        self.poll_dictation_preview(window, cx);
         let events = self
             .transcription_events
             .try_iter()
@@ -747,6 +754,19 @@ impl Coincide {
             )
             .collect::<Vec<_>>();
         for (from_microphone, event) in events {
+            if !self.prepare_dictation_final_source(from_microphone, &event, cx) {
+                continue;
+            }
+            let editable = self.composer.update(cx, |composer, cx| {
+                composer.is_editable() && composer.marked_text_range(window, cx).is_none()
+            });
+            if !editable {
+                if from_microphone {
+                    self.cancel_composer_dictation(cx);
+                }
+                self.status="Transcript retained no insertion: the composer has editing restrictions or an active composition.".into();
+                continue;
+            }
             // Re-read text/range and ownership immediately before insertion,
             // independent of whether GPUI has delivered pending observations.
             let Some(binding) = self.sync_transcription_binding(cx) else {
@@ -1080,17 +1100,18 @@ impl Coincide {
             }),
             cx.observe(&workspace_panel, |this, _, cx| this.sync_github_context(cx)),
             cx.observe(&composer, move |this, _, cx| {
+                let native_preview=this.owns_dictation_preview_notification(cx);
+                if !native_preview && this.voice.preview.is_some(){this.cancel_composer_dictation(cx);}
                 let composer = this.composer.read(cx);
-                this.composer_files.observe_composer(
+                if !native_preview {this.composer_files.observe_composer(
                     composer.value().to_string(),
                     composer.selected_range(),
                     composer.is_selection_reversed(),
-                );
+                );}
                 // Selection has no dedicated InputEvent in gpui-base 0.9.0.
                 // Invalidate on every notification, including a coalesced
                 // caret-away/back sequence; hidden unfocused composer is stable.
-                this.transcription_target.changed();
-                this.sync_transcription_binding(cx);
+                if !native_preview {this.transcription_target.changed();this.sync_transcription_binding(cx);}
                 // Cursor/selection notifications do not change composer height.
                 // Only a changed native wrapped-text measurement refits it.
                 {
@@ -3141,8 +3162,8 @@ impl Coincide {
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
-            self.steering
-                .observe_draft(&text(thread, "id"), self.composer.read(cx).value().as_ref());
+            let draft = self.committed_composer_draft(cx);
+            self.steering.observe_draft(&text(thread, "id"), &draft);
         }
         if self.steering.poll() {
             cx.notify();
@@ -3721,6 +3742,9 @@ impl Coincide {
         self.send_selected(false, window, cx);
     }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
         // A hidden composer may retain focus after opening the Git pane.
         if !self.chat_visible() {
             return;
@@ -4429,7 +4453,7 @@ impl Render for Coincide {
         }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
-            if self.composer.read(cx).value().as_ref() != draft {
+            if self.committed_composer_draft(cx) != draft {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }

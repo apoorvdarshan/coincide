@@ -345,7 +345,7 @@ impl Coincide {
         }
         Some(Binding {
             thread: id,
-            draft: self.composer.read(cx).value().to_string(),
+            draft: self.committed_composer_draft(cx),
             context: ExpectedContext::from_thread(thread),
             project: thread["projectID"].clone(),
             worktree: thread["worktreePath"].clone(),
@@ -434,7 +434,7 @@ impl Coincide {
                                 cx,
                             )
                         });
-                        if self.composer.read(cx).value().as_ref() == expected {
+                        if self.committed_composer_draft(cx) == expected {
                             self.composer_files.status="Project path reference attached and its @query completed. Other message text is unchanged.".into();
                             self.composer_files.opened = false;
                             self.composer_files.automatic = false;
@@ -459,6 +459,10 @@ impl Coincide {
         }
     }
     fn open_composer_file_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+
         self.sync_composer_file_picker(window, cx);
         if self.composer_files.binding.is_none() {
             self.status =
@@ -475,9 +479,8 @@ impl Coincide {
         self.composer_files.opened = true;
         self.composer_files.automatic = false;
         self.composer_files.trigger = None;
-        let composer = self.composer.read(cx);
-        let query = query_at_caret(composer.value().as_ref(), composer.selected_range())
-            .unwrap_or_default();
+        let (draft, selection, _) = self.committed_composer_source(cx);
+        let query = query_at_caret(&draft, selection).unwrap_or_default();
         self.composer_files
             .query
             .update(cx, |input, cx| input.set_value(query, window, cx));
@@ -490,7 +493,11 @@ impl Coincide {
             "Search lists Git project paths only. No file body is read or attached.".into();
         cx.notify();
     }
-    fn close_composer_file_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_composer_file_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.composer_files.opened = false;
         let dismissed = self
             .composer_files
@@ -537,6 +544,10 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+
         self.sync_composer_file_picker(window, cx);
         if !self.composer_files.opened
             || self.composer_files.binding.is_none()
@@ -581,6 +592,10 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+
         if !fresh || self.composer_files.binding.is_none() {
             self.composer_files.status = "The folder choice changed; newer text was kept.".into();
             return;
@@ -668,6 +683,15 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .voice
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.inline)
+        {
+            return;
+        }
+
         if self.composer_files.opened && !self.composer_files.automatic {
             return;
         }

@@ -1286,7 +1286,7 @@ impl Coincide {
                 !self.running.contains(&id) && !self.attachment_import_threads.contains(&id),
                 "Finish the current turn or attachment import before switching provider"
             );
-            let ui_draft = self.composer.read(cx).value().to_string();
+            let ui_draft = self.committed_composer_draft(cx);
             let mut engine = try_state(&self.engine)?;
             let current = selection_response(
                 &mut engine,
@@ -1490,7 +1490,7 @@ impl Coincide {
                         text(&thread["selection"], "modelID")
                     )
                 };
-                let current = self.composer.read(cx).value().to_string();
+                let current = self.committed_composer_draft(cx);
                 if self
                     .selected
                     .as_ref()
@@ -1602,7 +1602,7 @@ impl Coincide {
             self.switch_provider_from_history(pending.provider.clone(), Some(pending), cx);
         }
         if let Some((command, submission)) = self.selection_ui.pending_provider.take() {
-            let current = self.composer.read(cx).value().to_string();
+            let current = self.committed_composer_draft(cx);
             if self.selected.as_ref().is_some_and(|thread| {
                 submission.same_content(thread, &current) && submission.same_selection(thread)
             }) {

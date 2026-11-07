@@ -212,7 +212,7 @@ fn native_transient_scope_restores_history_and_event_flags_on_unwind(cx: &mut Te
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let scope = TransientScope::new(state);
                     assert!(scope.undo_manager.is_ignoring());
-                    assert!(!scope.emit_events);
+                    assert!(!scope.state.emit_events);
                     panic!("synthetic transient unwind");
                 }));
                 assert!(result.is_err());
