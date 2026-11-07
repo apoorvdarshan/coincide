@@ -8,6 +8,7 @@ use crate::github_api::{GhRunner, GithubService};
 use std::{ffi::OsStr, path::Path};
 
 pub(super) const METHODS: &[&str] = &[
+    "github.pr.availability",
     "github.pr.list",
     "github.pr.read",
     "github.repo.merge-methods",
@@ -162,6 +163,26 @@ impl Engine {
             .executable()?
             .to_owned())
     }
+    /// Swift's first two states need no Git and finish at once: a thread without
+    /// a folder, and a folder that is gone. Otherwise a worker decides the rest.
+    fn github_availability(&mut self, thread_id: &str, thread: &Value) -> Result<Value> {
+        let finished = |result: Value| Ok(json!({"ready":true,"result":result}));
+        let Ok(root) = self.working_directory(thread) else {
+            return finished(
+                json!({"kind":"availability","threadId":thread_id,"state":"noFolder"}),
+            );
+        };
+        if !root.is_dir() {
+            return finished(json!({"kind":"availability","threadId":thread_id,
+                "state":"folderNotFound","path":root.to_string_lossy()}));
+        }
+        let activity = self.idle_sleep.background_job();
+        self.github
+            .service
+            .as_mut()
+            .context(self.github.error.clone())?
+            .start_availability(thread_id, &root, activity)
+    }
     pub(super) fn github_command(&mut self, method: &str, params: &Value) -> Result<Value> {
         ensure!(
             cfg!(any(unix, windows)),
@@ -169,6 +190,7 @@ impl Engine {
         );
         ensure!(!self.shutdown, "Application is shutting down");
         let keys: &[&str] = match method {
+            "github.pr.availability" => &["threadId"],
             "github.pr.list" => &[
                 "threadId",
                 "expectedRoot",
@@ -198,6 +220,9 @@ impl Engine {
         let thread_id = required(params, "threadId")?;
         Uuid::parse_str(thread_id).context("Invalid thread ID")?;
         let thread = self.store.thread(thread_id)?;
+        if method == "github.pr.availability" {
+            return self.github_availability(thread_id, &thread);
+        }
         let root = self.working_directory(&thread)?;
         let service = self
             .github

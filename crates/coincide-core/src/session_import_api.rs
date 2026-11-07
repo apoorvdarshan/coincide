@@ -194,6 +194,8 @@ pub fn preview(store: &Store, params: &Value) -> Result<Value> {
     Ok(
         json!({"provider":provider_name(parsed.provider),"sessionId":parsed.session_id.to_string(),
         "existingThreadId":existing,
+        // Imported CLI sessions continue their provider session in the new thread.
+        "continuesSession":true,
         "sourceKey":source_key(&parsed),"sha256":fingerprint(&bytes),"bytes":bytes.len(),
         "title":title(&parsed),"directory":parsed.directory,"model":parsed.model,
         "messageCount":parsed.messages.len(),"omittedRecords":parsed.omitted_records,
@@ -238,6 +240,12 @@ pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
     }
     let provider = provider_name(parsed.provider);
     let source_key = source_key(&parsed);
+    // A second import opens the conversation that already holds this source.
+    if let Some(existing) = store.imported_thread_for_source(&source_key)? {
+        return Ok(json!({"threadId":existing,"sourceKey":source_key,"existing":true,
+            "messageCount":parsed.messages.len(),"omittedRecords":parsed.omitted_records,
+            "shortenedText":parsed.shortened_text,"executable":false}));
+    }
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();
     let items = parsed.messages.iter().map(|message| json!({
@@ -348,7 +356,10 @@ mod tests {
         );
         fs::write(&path, bytes).unwrap();
         let imported = import(&mut store, &params).unwrap();
-        assert!(import(&mut store, &params).is_err());
+        // A repeat import opens the thread that already holds the source.
+        let again = import(&mut store, &params).unwrap();
+        assert_eq!(again["existing"], true);
+        assert_eq!(again["threadId"], imported["threadId"]);
         assert_eq!(store.summaries("", true).unwrap().len(), 1);
         assert!(
             store

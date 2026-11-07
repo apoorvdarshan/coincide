@@ -73,7 +73,8 @@ fn public_import_changes_revision_once_preserves_source_and_continues_the_sessio
     assert!(imported["error"].is_null(), "{imported}");
     assert_eq!(engine.revision, revision + 1);
     let id = imported["result"]["threadId"].as_str().unwrap().to_owned();
-    assert!(!engine.store.is_imported(&id).unwrap());
+    // The merged import locks its thread so provider changes require a fork.
+    assert!(engine.store.is_imported(&id).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
     // A second import opens the first instead of copying the session again.
     let again = call(&mut engine, "cli.sessions.import", params);
@@ -90,9 +91,8 @@ fn public_import_changes_revision_once_preserves_source_and_continues_the_sessio
     );
     drop(engine);
     let store = Store::open(&database).unwrap();
-    assert!(!store.is_imported(&id).unwrap());
-    assert_eq!(
-        store.thread(&id).unwrap()["sessions"],
-        json!({"codex":{"sessionID":"00000000-0000-4000-8000-000000000001","seenItemCount":1}})
-    );
+    assert!(store.is_imported(&id).unwrap());
+    // Imported threads are read-only; the source session is never resumed
+    // until the user forks the thread.
+    assert_eq!(store.thread(&id).unwrap()["sessions"], json!({}));
 }
