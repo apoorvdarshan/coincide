@@ -291,18 +291,19 @@ fn another_thread_cannot_consume_a_finished_git_result() {
 fn elapsed_time_does_not_release_an_unfinished_git_mutation() {
     let (_dir, mut engine, owner, _, _) = fixture();
     let id = Uuid::new_v4().to_string();
+    let started = Instant::now();
     engine.git_actions.mutating.insert(owner.clone());
     engine.git_actions.pending.insert(
         id.clone(),
         Pending {
             thread: owner.clone(),
-            started: Instant::now() - OPERATION_LIFETIME - Duration::from_secs(1),
+            started,
             progress: Arc::new(Mutex::new(String::new())),
             completion: Completion::None,
             mutation: true,
         },
     );
-    engine.poll_git_actions();
+    engine.poll_git_actions_at(started + OPERATION_LIFETIME + Duration::from_secs(1));
     assert!(engine.git_actions.pending.contains_key(&id));
     assert!(engine.git_actions.mutating.contains(&owner));
     engine

@@ -582,7 +582,10 @@ impl Engine {
 
     /// Collects worker reports and applies their thread changes on the engine.
     pub(super) fn poll_git_actions(&mut self) {
-        let now = Instant::now();
+        self.poll_git_actions_at(Instant::now());
+    }
+
+    fn poll_git_actions_at(&mut self, now: Instant) {
         let mut finished = Vec::new();
         for (id, result) in self.git_actions.rx.try_iter() {
             finished.push((id, result));
@@ -613,7 +616,8 @@ impl Engine {
             .pending
             .iter()
             .filter(|(_, pending)| {
-                !pending.mutation && pending.started.elapsed() > OPERATION_LIFETIME
+                !pending.mutation
+                    && now.saturating_duration_since(pending.started) > OPERATION_LIFETIME
             })
             .map(|(id, _)| id.clone())
             .collect();
