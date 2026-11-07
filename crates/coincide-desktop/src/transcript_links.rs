@@ -60,7 +60,10 @@ fn scheme(text: &str) -> Option<&str> {
 /// other schemes and web addresses without a host.
 pub(super) fn web_url(link: &str) -> Option<String> {
     let text = link.trim();
-    let url = if text.len() > 4 && text[..4].eq_ignore_ascii_case("www.") {
+    let url = if text
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("www."))
+    {
         format!("https://{text}")
     } else {
         text.to_owned()
@@ -402,6 +405,18 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn unicode_file_links_are_classified_without_byte_boundary_slicing() {
+        for reference in ["你好.rs", "🦀/main.rs", "é中.md", "src/日本語.rs:12"] {
+            assert_eq!(web_url(reference), None);
+            assert_eq!(classify(reference), Link::File(reference.into()));
+        }
+        assert_eq!(
+            web_url("WWW.example.com"),
+            Some("https://WWW.example.com".into())
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn web_links_need_a_host_and_www_gets_https() {
