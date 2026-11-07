@@ -62,6 +62,11 @@ jobs:
       - name: Lint preview updater helper feature
         if: runner.os != 'Windows'
         run: cargo clippy -p coincide-core --all-targets --locked --features preview-updater-helper -- -D warnings
+      - name: Test one owned Windows idle-sleep request
+        if: runner.os == 'Windows'
+        env:
+          COINCIDE_WINDOWS_POWER_CI: owned-native-request
+        run: cargo test -p coincide-core --lib --locked platform_host::inhibitor::windows::tests::owned_kernel_round_trip -- --ignored --exact
   desktop:
     name: macOS GPUI build
     runs-on: macos-latest
