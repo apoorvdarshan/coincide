@@ -69,6 +69,7 @@ icon_assets!(
         Cpu,
         Dash,
         Delete,
+        Diff,
         EllipsisVertical,
         Ellipsis,
         ExternalLink,
@@ -78,6 +79,7 @@ icon_assets!(
         File,
         FolderClosed,
         FolderOpen,
+        FolderX,
         Folder,
         Frame,
         GalleryVerticalEnd,
@@ -180,6 +182,9 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            // The Diff inspector's empty states.
+            "icons/diff.svg",
+            "icons/folder-x.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

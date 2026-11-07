@@ -14,6 +14,7 @@ pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
 pub mod workspace;
+pub mod workspace_diff;
 
 pub mod inspector_preferences;
 pub mod message_queue;
