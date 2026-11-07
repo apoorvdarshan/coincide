@@ -475,6 +475,10 @@ impl Coincide {
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }
+        self.general_settings.sync(&self.settings, window, cx);
+        let prefix = general_settings::branch_prefix(&self.settings);
+        self.workspace_panel
+            .update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
@@ -762,8 +766,8 @@ impl Coincide {
         }
         if matches(S::Models, "models favorite hidden custom providers catalog") {
             count += 1;
-            content =
-                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
+            let catalogs = self.model_catalogs(cx);
+            content = content.child(self.models_settings_panel(&catalogs, cx));
         }
         if matches(
             S::About,
@@ -1022,29 +1026,28 @@ impl Coincide {
                     choices,
                     cx,
                 ));
+                if key == "followUpBehavior" {
+                    content = content.child(self.follow_up_settings_caption());
+                }
             }
         }
         if matches(
             S::Conversation,
-            "open links default browser web click command control preview",
+            "open links default browser preview web command control click",
         ) {
             count += 1;
-            let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
-            content = content
-                .child(self.setting_choices(
-                    "Open links in your default browser",
-                    "opensLinksInDefaultBrowser",
-                    json!(default_browser),
-                    vec![("On", json!(true)), ("Off", json!(false))],
-                    cx,
-                ))
-                .child(
-                    div()
-                        .px_3()
-                        .text_xs()
-                        .text_color(self.color(0xe4e9f2).opacity(0.6))
-                        .child(link_routing_caption(default_browser)),
-                );
+            content = content.child(self.link_settings(cx));
+        }
+        if matches(
+            S::Conversation,
+            "new threads default model reasoning effort provider",
+        ) {
+            count += 1;
+            content = content.child(self.default_model_settings(cx));
+        }
+        if matches(S::Conversation, "git worktree branch prefix name") {
+            count += 1;
+            content = content.child(self.branch_prefix_settings(cx));
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
@@ -1060,6 +1063,13 @@ impl Coincide {
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
             content = content.child(self.awake_settings(cx));
+        }
+        if matches(
+            S::Automation,
+            "remote coincide remote iphone ipad phone pair pairing qr code tailscale devices certificate",
+        ) {
+            count += 1;
+            content = content.child(self.remote_panel.clone());
         }
         for (section, id, label, terms) in [
             (
