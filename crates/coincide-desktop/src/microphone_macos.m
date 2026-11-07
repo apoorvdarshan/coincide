@@ -98,6 +98,8 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
     atomic_bool producing;
     atomic_size_t head;
     atomic_size_t tail;
+    atomic_size_t progressSamples;
+    atomic_uint progressLevel;
     float *samples;
     size_t maximum;
     size_t sampleCount;
@@ -116,8 +118,18 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
 }
 - (void)consume;
 - (void)finishCancelled:(BOOL)cancelled;
+- (void)publishProgressFrom:(size_t)previous;
 @end
 @implementation CCMicrophone
+- (void)publishProgressFrom:(size_t)previous {
+    float peak = 0;
+    for (size_t index = previous; index < sampleCount; index++) peak = fmaxf(peak, fabsf(samples[index]));
+    peak = fminf(1, peak);
+    uint32_t bits = 0;
+    memcpy(&bits, &peak, sizeof(bits));
+    atomic_store_explicit(&progressSamples, sampleCount, memory_order_release);
+    atomic_store_explicit(&progressLevel, bits, memory_order_release);
+}
 - (void)consume {
     if (atomic_load_explicit(&state, memory_order_acquire) != 1) return;
     if (atomic_load(&fault)) { [self finishCancelled:YES]; return; }
@@ -125,7 +137,9 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
     size_t first = atomic_load_explicit(&head, memory_order_relaxed);
     size_t last = atomic_load_explicit(&tail, memory_order_acquire);
     while (first != last) {
+        size_t previous = sampleCount;
         int result = CCConvert(converter, slots[first % CC_SLOTS], NO, converted, samples, maximum, &sampleCount);
+        [self publishProgressFrom:previous];
         atomic_store_explicit(&head, ++first, memory_order_release);
         if (result != 0) {
             if (result < 0) atomic_store(&fault, result);
@@ -213,6 +227,7 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
         atomic_init(&capture->state, 1); atomic_init(&capture->fault, 0);
         atomic_init(&capture->accepting, false); atomic_init(&capture->callbacks, 0);
         atomic_init(&capture->producing, false); atomic_init(&capture->head, 0); atomic_init(&capture->tail, 0);
+        atomic_init(&capture->progressSamples, 0); atomic_init(&capture->progressLevel, 0);
         capture->queue = dispatch_queue_create("com.apoorvdarshan.coincide.rust.microphone", DISPATCH_QUEUE_SERIAL);
         capture->maximum = maximum_samples;
         capture->samples = calloc(maximum_samples, sizeof(float));
@@ -265,6 +280,14 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
 void cc_mic_stop(void *handle) { if (handle) { CCMicrophone *capture = (__bridge CCMicrophone *)handle; dispatch_async(capture->queue, ^{ [capture finishCancelled:NO]; }); } }
 void cc_mic_cancel(void *handle) { if (handle) { CCMicrophone *capture = (__bridge CCMicrophone *)handle; dispatch_sync(capture->queue, ^{ [capture finishCancelled:YES]; }); } }
 int cc_mic_poll(void *handle) { return handle ? atomic_load_explicit(&((__bridge CCMicrophone *)handle)->state, memory_order_acquire) : -1; }
+int cc_mic_progress(void *handle, size_t *samples, float *level) {
+    if (!handle || !samples || !level || cc_mic_poll(handle) != 1) return 0;
+    CCMicrophone *capture = (__bridge CCMicrophone *)handle;
+    *samples = atomic_load_explicit(&capture->progressSamples, memory_order_acquire);
+    uint32_t bits = atomic_load_explicit(&capture->progressLevel, memory_order_acquire);
+    memcpy(level, &bits, sizeof(bits));
+    return 1;
+}
 size_t cc_mic_sample_count(void *handle) { if (!handle || cc_mic_poll(handle) < 2) return 0; return ((__bridge CCMicrophone *)handle)->sampleCount; }
 int cc_mic_copy_samples(void *handle, float *destination, size_t capacity) {
     if (!handle || !destination || cc_mic_poll(handle) < 2) return -1;

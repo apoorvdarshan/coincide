@@ -81,3 +81,5 @@ pub mod native_ui_edits;
 pub mod appshots;
 
 pub mod reply_selection;
+
+pub mod voice;

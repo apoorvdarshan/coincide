@@ -1,7 +1,9 @@
 //! Windows WASAPI / Linux ALSA capture. Only explicit Record opens a device.
 //! CPAL 0.18.2's two stream implementations terminate and join their owned
 //! callback thread in Drop; we drop on this owner before reading sample storage.
-use super::{BackendEvent, CaptureBackend, CaptureError, Permission, samples::Samples};
+use super::{
+    BackendEvent, BackendProgress, CaptureBackend, CaptureError, Permission, samples::Samples,
+};
 use cpal::{
     ErrorKind, SampleFormat,
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -9,7 +11,7 @@ use cpal::{
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -31,6 +33,8 @@ struct Buffer {
     accepting: AtomicBool,
     limited: AtomicBool,
     fault: AtomicU8,
+    samples_written: AtomicUsize,
+    level: AtomicU32,
 }
 fn error(error: cpal::Error) -> CaptureError {
     match error.kind() {
@@ -103,6 +107,11 @@ fn stream<T: cpal::SizedSample + Copy>(
                         shared.accepting.store(false, Ordering::Release);
                     }
                 }
+                if let Some(samples) = samples.as_ref() {
+                    let (written, level) = samples.progress();
+                    shared.samples_written.store(written, Ordering::Release);
+                    shared.level.store(level.to_bits(), Ordering::Release);
+                }
             },
             move |_| {
                 // Native diagnostic strings can contain personal device information.
@@ -116,6 +125,13 @@ fn stream<T: cpal::SizedSample + Copy>(
 impl CaptureBackend for Native {
     fn available(&self) -> bool {
         true
+    }
+    fn progress(&self) -> Option<BackendProgress> {
+        let capture = self.capture.as_ref()?;
+        Some(BackendProgress {
+            samples: capture.shared.samples_written.load(Ordering::Acquire),
+            level: f32::from_bits(capture.shared.level.load(Ordering::Acquire)),
+        })
     }
     fn permission(&self) -> Permission {
         // WASAPI/ALSA report actual access failure when opening the stream.
@@ -158,6 +174,8 @@ impl CaptureBackend for Native {
             accepting: AtomicBool::new(true),
             limited: AtomicBool::new(false),
             fault: AtomicU8::new(0),
+            samples_written: AtomicUsize::new(0),
+            level: AtomicU32::new(0.0_f32.to_bits()),
         });
         let input = config.config();
         let stream = match config.sample_format() {
