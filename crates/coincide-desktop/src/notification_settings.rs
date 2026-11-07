@@ -730,6 +730,9 @@ pub struct NotificationSettingsPanel {
     bridge: Option<Bridge>,
     status: Status,
     notice: Option<String>,
+    /// Turning background notifications on asks for system permission once the
+    /// opt-in is saved, as Swift asks when the permission is undetermined.
+    permission_after_enable: bool,
     _poll: Task<()>,
 }
 impl NotificationSettingsPanel {
@@ -752,6 +755,7 @@ impl NotificationSettingsPanel {
                             this.status = status;
                             cx.notify();
                         }
+                        this.request_permission_after_enable(cx);
                     })
                     .is_err()
                 {
@@ -772,7 +776,37 @@ impl NotificationSettingsPanel {
             bridge,
             status,
             notice,
+            permission_after_enable: false,
             _poll: poll,
+        }
+    }
+    pub fn status(&self) -> &Status {
+        &self.status
+    }
+    /// Settings › General's "Notify when Coincide is in the background".
+    pub fn set_background_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.permission_after_enable = enabled
+            && matches!(
+                self.status.permission,
+                Permission::NotDetermined | Permission::Unknown
+            );
+        self.action(Action::Configure(enabled), cx);
+    }
+    fn request_permission_after_enable(&mut self, cx: &mut Context<Self>) {
+        // Wait until the saved opt-in is observed; turning it off clears this.
+        if !self.permission_after_enable
+            || self.status.busy
+            || self.status.stopped
+            || !self.status.enabled
+        {
+            return;
+        }
+        self.permission_after_enable = false;
+        if matches!(
+            self.status.permission,
+            Permission::NotDetermined | Permission::Unknown
+        ) {
+            self.action(Action::AllowNotifications, cx);
         }
     }
     pub fn request_shutdown(&self) {

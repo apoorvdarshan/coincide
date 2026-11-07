@@ -3,7 +3,7 @@
 //! No discovery/token file is needed: directory identity and user SID determine
 //! the name. A first-instance reservation prevents another server from joining
 //! the same name. Clients verify the pipe owner/DACL before sending a command.
-use super::{MAX_FRAME, Server, read_frame, write_frame};
+use super::{MAX_FRAME, Server, dispatch_command_line, read_frame, write_frame};
 use crate::api::SharedEngine;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -547,10 +547,10 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
             };
             let response = (|| -> Result<Value> {
                 let request = read_frame(&mut stream)?;
-                Ok(engine
+                let mut engine = engine
                     .lock()
-                    .map_err(|_| anyhow::anyhow!("Engine lock failed"))?
-                    .dispatch(request))
+                    .map_err(|_| anyhow::anyhow!("Engine lock failed"))?;
+                Ok(dispatch_command_line(&mut engine, request))
             })()
             .unwrap_or_else(|error| json!({"error":{"message":error.to_string()}}));
             let response = if serde_json::to_vec(&response)

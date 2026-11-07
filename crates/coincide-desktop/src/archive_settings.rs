@@ -1,17 +1,20 @@
-//! Native archive review. Permanent deletion uses opaque Core plans/Undo;
-//! no deletion intent or confirmation can be supplied through JSON settings.
+//! Settings › Archive from Swift's ArchiveSettingsView: archived threads,
+//! newest first, grouped by project and kept current as threads are archived
+//! and deleted. Each row unarchives or deletes in one click; Delete follows
+//! the confirmation setting, and Delete All…/Delete Shown… always asks.
+//! Permanent deletion uses opaque Core plans/Undo; no deletion intent or
+//! confirmation can be supplied through JSON settings.
 use super::*;
 use coincide_core::api::{PreparedThreadDeletion, ThreadDeletionUndo, ThreadFlagAction};
 use coincide_core::store::ArchivedConversation;
-use std::collections::BTreeSet;
 const PAGE: usize = 50;
 pub(super) struct ArchiveSettings {
     query: Entity<InputState>,
-    project: Option<String>,
     rows: Vec<ArchivedConversation>,
     total: usize,
     offset: usize,
-    picked: BTreeSet<String>,
+    /// The threads the pending review deletes.
+    reviewing: Vec<String>,
     review: Option<PreparedThreadDeletion>,
     undo: Option<ThreadDeletionUndo>,
     status: String,
@@ -20,13 +23,11 @@ pub(super) struct ArchiveSettings {
 impl ArchiveSettings {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
         Self {
-            query: cx
-                .new(|cx| InputState::new(window, cx).placeholder("Search archived conversations")),
-            project: None,
+            query: cx.new(|cx| InputState::new(window, cx).placeholder("Filter archived threads")),
             rows: Vec::new(),
             total: 0,
             offset: 0,
-            picked: BTreeSet::new(),
+            reviewing: Vec::new(),
             review: None,
             undo: None,
             status: String::new(),
@@ -42,29 +43,27 @@ impl ArchiveSettings {
         })]
     }
     fn invalidate_filter(&mut self) {
-        self.review = None;
-        self.picked.clear();
+        self.close_review();
         self.offset = 0;
         self.rows.clear();
         self.loaded = false;
     }
     pub(super) fn close_review(&mut self) {
         self.review = None;
+        self.reviewing.clear();
     }
 }
-fn visible_selection(
-    rows: &[ArchivedConversation],
-    picked: &BTreeSet<String>,
-) -> Result<Vec<String>> {
+/// Only threads shown, at most a page of them, can be deleted together.
+fn visible_selection(rows: &[ArchivedConversation], ids: &[String]) -> Result<Vec<String>> {
     anyhow::ensure!(
-        !picked.is_empty() && picked.len() <= PAGE,
-        "Select 1–50 archived conversations"
+        !ids.is_empty() && ids.len() <= PAGE,
+        "Choose 1–50 archived threads"
     );
     anyhow::ensure!(
-        picked.iter().all(|id| rows.iter().any(|row| &row.id == id)),
-        "Archive view changed; select conversations again"
+        ids.iter().all(|id| rows.iter().any(|row| &row.id == id)),
+        "The archive changed; try again"
     );
-    Ok(picked.iter().cloned().collect())
+    Ok(ids.to_vec())
 }
 fn prepare_delete(engine: &SharedEngine, ids: &[String]) -> Result<PreparedThreadDeletion> {
     try_state(engine)?.prepare_native_thread_deletion(ids)
@@ -75,6 +74,75 @@ fn restore(engine: &SharedEngine, ids: &[String]) -> Result<()> {
     owner.apply_thread_flags(&prepared)?;
     Ok(())
 }
+/// Swift's named relative date: "now", "5 minutes ago", "yesterday", "last week".
+fn last_active(updated: f64, now: f64) -> String {
+    let seconds = if updated.is_finite() && now.is_finite() {
+        (now - updated).max(0.)
+    } else {
+        0.
+    };
+    let ago =
+        |count: u64, unit: &str| format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" });
+    let days = (seconds / 86_400.) as u64;
+    match seconds as u64 {
+        0 => "now".into(),
+        n @ 1..60 => ago(n, "second"),
+        n @ 60..3_600 => ago(n / 60, "minute"),
+        n @ 3_600..86_400 => ago(n / 3_600, "hour"),
+        _ if days == 1 => "yesterday".into(),
+        _ if days < 7 => ago(days, "day"),
+        _ if days < 14 => "last week".into(),
+        _ if days < 30 => ago(days / 7, "week"),
+        _ if days < 60 => "last month".into(),
+        _ if days < 365 => ago(days / 30, "month"),
+        _ if days < 730 => "last year".into(),
+        _ => ago(days / 365, "year"),
+    }
+}
+/// The page's threads grouped by project, groups ordered by their newest
+/// thread; rows arrive newest first.
+fn grouped<'a>(
+    rows: &'a [ArchivedConversation],
+    projects: &[Value],
+) -> Vec<(String, Vec<&'a ArchivedConversation>)> {
+    let mut groups: Vec<(String, Vec<&ArchivedConversation>)> = Vec::new();
+    for row in rows {
+        let project = if row.project_id.is_empty() {
+            navigation::NO_PROJECT_ID
+        } else {
+            row.project_id.as_str()
+        };
+        match groups
+            .iter_mut()
+            .find(|(id, _)| id.eq_ignore_ascii_case(project))
+        {
+            Some((_, threads)) => threads.push(row),
+            None => groups.push((project.to_owned(), vec![row])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(id, threads)| {
+            let name = if id.eq_ignore_ascii_case(navigation::NO_PROJECT_ID) {
+                "Chats".to_owned()
+            } else if id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
+                "Bots".to_owned()
+            } else {
+                projects
+                    .iter()
+                    .find(|project| {
+                        project["id"]
+                            .as_str()
+                            .is_some_and(|other| other.eq_ignore_ascii_case(&id))
+                    })
+                    .and_then(|project| project["name"].as_str())
+                    .unwrap_or("Unavailable project")
+                    .to_owned()
+            };
+            (name, threads)
+        })
+        .collect()
+}
 impl Coincide {
     pub(super) fn refresh_archive_settings(&mut self, cx: &mut Context<Self>) {
         let state = &self.archive_settings;
@@ -82,54 +150,76 @@ impl Coincide {
         let result = (|| -> Result<_> {
             let owner = try_state(&self.engine)?;
             anyhow::ensure!(!owner.admissions_frozen(), "App is closing");
-            owner.native_archived_conversations_for_project(
-                &query,
-                state.project.as_deref(),
-                state.offset,
-                PAGE,
-            )
+            owner.native_archived_conversations_for_project(&query, None, state.offset, PAGE)
         })();
         match result {
             Ok(page) => {
                 let state = &mut self.archive_settings;
+                if page.rows.is_empty() && page.offset > 0 && page.total > 0 {
+                    // Deleting the last thread of a later page shows the one before.
+                    state.offset = (page.total - 1) / PAGE * PAGE;
+                    return self.refresh_archive_settings(cx);
+                }
                 state.rows = page.rows;
                 state.total = page.total;
                 state.offset = page.offset;
                 state.loaded = true;
-                state
-                    .picked
-                    .retain(|id| state.rows.iter().any(|r| &r.id == id));
+                if !state
+                    .reviewing
+                    .iter()
+                    .all(|id| state.rows.iter().any(|row| &row.id == id))
+                {
+                    state.close_review();
+                }
             }
             Err(error) => {
-                self.archive_settings.loaded = false;
-                self.archive_settings.status = format!("Archive could not be loaded: {error}");
+                // Keep showing the last rows; a busy engine retries on the next change.
+                if !engine_busy(&error) {
+                    self.archive_settings.loaded = false;
+                    self.archive_settings.status = format!("Archive could not be loaded: {error}");
+                }
             }
         }
         cx.notify();
     }
-    fn prepare_archive_deletion(&mut self, cx: &mut Context<Self>) {
+    /// Delete for one row, or every row shown. One thread follows the
+    /// confirmation setting unless it is running; several always ask.
+    fn delete_archived(
+        &mut self,
+        ids: Vec<String>,
+        always_confirm: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let result = (|| -> Result<_> {
-            anyhow::ensure!(
-                self.archive_settings.loaded,
-                "Refresh the archive before deleting"
-            );
-            let ids =
-                visible_selection(&self.archive_settings.rows, &self.archive_settings.picked)?;
+            anyhow::ensure!(self.archive_settings.loaded, "The archive is still loading");
+            let ids = visible_selection(&self.archive_settings.rows, &ids)?;
             anyhow::ensure!(
                 !ids.iter().any(|id| self.pending_drafts.contains_key(id)),
-                "Save this conversation's pending draft before deleting it"
+                "Save this thread's pending draft before deleting it"
             );
-            prepare_delete(&self.engine, &ids)
+            Ok((prepare_delete(&self.engine, &ids)?, ids))
         })();
         match result {
-            Ok(review) => {
-                self.archive_settings.review = Some(review);
+            Ok((review, ids)) => {
+                let running = ids.iter().any(|id| {
+                    self.running
+                        .iter()
+                        .any(|other| other.eq_ignore_ascii_case(id))
+                });
+                let confirm = always_confirm
+                    || running
+                    || self.settings["confirmBeforeDeletingThreads"]
+                        .as_bool()
+                        .unwrap_or(true);
                 self.archive_settings.status.clear();
+                self.archive_settings.review = Some(review);
+                self.archive_settings.reviewing = ids;
+                if !confirm {
+                    return self.confirm_archive_deletion(window, cx);
+                }
             }
-            Err(error) => {
-                self.archive_settings.status =
-                    format!("Delete review could not be prepared: {error}")
-            }
+            Err(error) => self.archive_settings.status = format!("Nothing was deleted: {error}"),
         };
         cx.notify();
     }
@@ -137,16 +227,11 @@ impl Coincide {
         let Some(review) = self.archive_settings.review.take() else {
             return;
         };
-        let ids = self
-            .archive_settings
-            .picked
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let ids = std::mem::take(&mut self.archive_settings.reviewing);
         let result = (|| -> Result<_> {
             anyhow::ensure!(
                 !ids.iter().any(|id| self.pending_drafts.contains_key(id)),
-                "A selected conversation has a pending draft; nothing was deleted"
+                "A thread has a pending draft"
             );
             try_state(&self.engine)?.apply_native_thread_deletion(review)
         })();
@@ -167,42 +252,37 @@ impl Coincide {
                         .update(cx, |input, cx| input.set_value("", window, cx));
                     self.sync_workspace_context(cx);
                 }
-                self.archive_settings.status = format!(
-                    "Deleted {} conversation(s). Undo is available until you quit or delete another batch.",
-                    undo.count()
-                );
+                self.archive_settings.status = match undo.count() {
+                    1 => "Deleted 1 thread. You can undo this until Coincide quits or you delete again.".into(),
+                    count => format!("Deleted {count} threads. You can undo this until Coincide quits or you delete again."),
+                };
                 self.archive_settings.undo = Some(undo);
-                self.archive_settings.picked.clear();
                 self.refresh(cx);
                 self.refresh_archive_settings(cx);
             }
             Err(error) => {
-                self.archive_settings.status =
-                    format!("Nothing was deleted: {error}. Review the selection again.");
+                self.archive_settings.status = format!("Nothing was deleted: {error}");
                 cx.notify();
             }
         }
     }
-    fn restore_archive_selection(&mut self, cx: &mut Context<Self>) {
-        self.archive_settings.review = None;
-        let result = visible_selection(&self.archive_settings.rows, &self.archive_settings.picked)
-            .and_then(|ids| restore(&self.engine, &ids));
-        match result {
+    fn unarchive(&mut self, id: String, cx: &mut Context<Self>) {
+        self.archive_settings.close_review();
+        match restore(&self.engine, std::slice::from_ref(&id)) {
             Ok(()) => {
-                self.archive_settings.status = "Conversations restored".into();
-                self.archive_settings.picked.clear();
+                self.archive_settings.status.clear();
                 self.refresh(cx);
                 self.refresh_archive_settings(cx);
             }
             Err(error) => {
                 self.archive_settings.status =
-                    format!("Conversations could not be restored: {error}");
+                    format!("The thread could not be unarchived: {error}");
                 cx.notify();
             }
         }
     }
     fn undo_archive_deletion(&mut self, cx: &mut Context<Self>) {
-        self.archive_settings.review = None;
+        self.archive_settings.close_review();
         let result = (|| -> Result<()> {
             let undo = self
                 .archive_settings
@@ -214,8 +294,7 @@ impl Coincide {
         match result {
             Ok(()) => {
                 self.archive_settings.undo = None;
-                self.archive_settings.status =
-                    "Deletion undone. Conversation content is restored.".into();
+                self.archive_settings.status = "Deletion undone.".into();
                 self.refresh(cx);
                 self.refresh_archive_settings(cx);
             }
@@ -225,210 +304,247 @@ impl Coincide {
             }
         }
     }
-    pub(super) fn archive_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn archive_review(
+        &self,
+        review: &PreparedThreadDeletion,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let state = &self.archive_settings;
-        let mut filters = div().flex().flex_wrap().gap_1().child(
-            Button::new("archive-all-projects")
-                .label("All Projects")
-                .when(state.project.is_none(), |b| b.primary())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.archive_settings.project = None;
-                    this.archive_settings.invalidate_filter();
-                    this.refresh_archive_settings(cx);
-                })),
+        let title = match (review.count(), review.titles().first()) {
+            (1, Some(title)) => format!("Delete “{title}”?"),
+            (count, _) => format!("Delete Threads ({count})?"),
+        };
+        let running = state.reviewing.iter().any(|id| {
+            self.running
+                .iter()
+                .any(|other| other.eq_ignore_ascii_case(id))
+        });
+        let mut text = String::from(
+            "You can undo this deletion until Coincide quits or you delete again. Files in your project are not changed.",
         );
-        for project in self.projects.iter().take(200) {
-            let Some(id) = project["id"].as_str() else {
-                continue;
-            };
-            let id = id.to_owned();
-            let name = project["name"].as_str().unwrap_or("Project").to_owned();
-            let selected = state.project.as_ref() == Some(&id);
-            filters = filters.child(
-                Button::new(SharedString::from(format!("archive-project-{id}")))
-                    .label(name)
-                    .when(selected, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.archive_settings.project = Some(id.clone());
-                        this.archive_settings.invalidate_filter();
-                        this.refresh_archive_settings(cx);
-                    })),
-            )
+        if running {
+            text.push_str("\n\nRunning agents in these threads will stop. Undo restores conversations, but does not restart stopped work.");
         }
-        let mut list = div()
-            .id("archive-settings-list")
-            .max_h(px(420.))
-            .overflow_y_scroll()
+        if state.undo.is_some() {
+            text.push_str("\n\nThis replaces Undo for the previous deletion.");
+        }
+        div()
             .flex()
             .flex_col()
-            .gap_2();
-        for row in &state.rows {
-            let id = row.id.clone();
-            let selected = state.picked.contains(&id);
-            let open = id.clone();
-            let title = if row.title.is_empty() {
-                "Untitled conversation".to_owned()
-            } else {
-                row.title.clone()
-            };
-            list = list.child(
+            .gap_2()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(self.color(0x29303d))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(div().text_sm().child(text))
+            .child(
                 div()
                     .flex()
-                    .items_center()
+                    .justify_end()
                     .gap_2()
                     .child(
-                        Button::new(SharedString::from(format!("archive-pick-{id}")))
-                            .label(if selected { "Selected" } else { "Select" })
-                            .when(selected, |b| b.primary())
-                            .disabled(state.review.is_some())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !this.archive_settings.picked.remove(&id) {
-                                    this.archive_settings.picked.insert(id.clone());
-                                }
+                        Button::new("archive-delete-cancel")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.archive_settings.close_review();
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_1().child(title))
                     .child(
-                        Button::new(SharedString::from(format!("archive-open-{open}")))
-                            .label("Open")
-                            .disabled(state.review.is_some())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                match call(&this.engine, "threads.open", json!({"threadId":open})) {
-                                    Ok(_) => {
-                                        this.archive_settings.status =
-                                            "Opening conversation in the main window…".into()
-                                    }
-                                    Err(error) => {
-                                        this.archive_settings.status =
-                                            format!("Conversation could not be opened: {error}")
-                                    }
-                                };
-                                cx.notify();
+                        Button::new("archive-delete-confirm")
+                            .label("Delete")
+                            .danger()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_archive_deletion(window, cx)
                             })),
                     ),
-            );
-        }
-        if state.rows.is_empty() {
-            list = list.child(if state.loaded {
-                "No archived conversations match this filter."
-            } else {
-                "Refresh to load archived conversations."
-            });
-        }
+            )
+            .into_any_element()
+    }
+    pub(super) fn archive_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let state = &self.archive_settings;
+        let filtering = !state.query.read(cx).value().trim().is_empty();
+        let reviewing = state.review.is_some();
+        let shown = state
+            .rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>();
         let mut pane = div()
             .flex()
             .flex_col()
             .gap_3()
-            .child(div().text_lg().child("Archive"))
-            .child(filters)
-            .child(Input::new(&state.query))
-            .child(
-                Button::new("archive-refresh")
-                    .label("Refresh")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.archive_settings.review = None;
-                        this.refresh_archive_settings(cx);
-                    })),
-            )
-            .child(list)
-            .child(format!(
-                "{} archived conversation(s) · {} selected",
-                state.total,
-                state.picked.len()
+            .child(div().text_sm().text_color(self.color(0x98a6ba).opacity(0.8)).child(
+                "Threads you archive with a thread's archive button wait here. Unarchive one to bring it back to the sidebar.",
             ))
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
+                    .items_center()
                     .gap_2()
+                    .child(div().flex_1().child(Input::new(&state.query)))
+                    .child(
+                        Button::new("archive-delete-all")
+                            .label(if filtering { "Delete Shown…" } else { "Delete All…" })
+                            .danger()
+                            .disabled(state.rows.is_empty() || reviewing)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delete_archived(shown.clone(), true, window, cx)
+                            })),
+                    ),
+            );
+        if let Some(review) = &state.review {
+            pane = pane.child(self.archive_review(review, cx));
+        }
+        if state.rows.is_empty() {
+            let query = state.query.read(cx).value().trim().to_owned();
+            pane = pane.child(
+                div()
+                    .p_4()
+                    .flex()
+                    .justify_center()
+                    .text_color(self.color(0x98a6ba).opacity(0.8))
+                    .child(if !state.loaded {
+                        "Loading archived threads…".to_owned()
+                    } else if filtering {
+                        format!("No Results for “{query}”")
+                    } else {
+                        "No Archived Threads".to_owned()
+                    }),
+            );
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0., |elapsed| elapsed.as_secs_f64());
+        for (project, threads) in grouped(&state.rows, &self.projects) {
+            let mut group = div()
+                .flex()
+                .flex_col()
+                .rounded_md()
+                .border_1()
+                .border_color(self.color(0x29303d));
+            for (index, row) in threads.into_iter().enumerate() {
+                let id = row.id.clone();
+                let delete = row.id.clone();
+                let title = if row.title.is_empty() {
+                    "Untitled conversation".to_owned()
+                } else {
+                    row.title.clone()
+                };
+                group = group.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .p_2()
+                        .when(index > 0, |row| {
+                            row.border_t_1().border_color(self.color(0x29303d))
+                        })
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(div().truncate().child(title))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(self.color(0x98a6ba).opacity(0.7))
+                                        .child(format!(
+                                            "Last active {}",
+                                            last_active(row.updated_at, now)
+                                        )),
+                                ),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("archive-unarchive-{id}")))
+                                .label("Unarchive")
+                                .disabled(reviewing)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.unarchive(id.clone(), cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("archive-delete-{delete}")))
+                                .label("Delete")
+                                .danger()
+                                .disabled(reviewing)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.delete_archived(vec![delete.clone()], false, window, cx)
+                                })),
+                        ),
+                );
+            }
+            pane = pane.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(project),
+                    )
+                    .child(group),
+            );
+        }
+        if state.total > PAGE {
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().text_sm().child(format!(
+                        "Showing {}–{} of {} archived threads",
+                        state.offset + 1,
+                        state.offset + state.rows.len(),
+                        state.total
+                    )))
                     .child(
                         Button::new("archive-previous")
                             .label("Previous")
-                            .disabled(state.offset == 0 || state.review.is_some())
+                            .disabled(state.offset == 0 || reviewing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.archive_settings.offset =
                                     this.archive_settings.offset.saturating_sub(PAGE);
-                                this.archive_settings.picked.clear();
                                 this.refresh_archive_settings(cx);
                             })),
                     )
                     .child(
                         Button::new("archive-next")
                             .label("Next")
-                            .disabled(state.offset + PAGE >= state.total || state.review.is_some())
+                            .disabled(state.offset + PAGE >= state.total || reviewing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.archive_settings.offset += PAGE;
-                                this.archive_settings.picked.clear();
                                 this.refresh_archive_settings(cx);
                             })),
                     ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(
-                        Button::new("archive-restore")
-                            .label("Restore Selected")
-                            .disabled(
-                                !state.loaded || state.picked.is_empty() || state.review.is_some(),
-                            )
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.restore_archive_selection(cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("archive-delete-review")
-                            .label("Delete Selected…")
-                            .disabled(
-                                !state.loaded || state.picked.is_empty() || state.review.is_some(),
-                            )
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.prepare_archive_deletion(cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("archive-undo-delete")
-                            .label("Undo Delete")
-                            .disabled(state.undo.is_none() || state.review.is_some())
-                            .on_click(cx.listener(|this, _, _, cx| this.undo_archive_deletion(cx))),
-                    ),
-            );
-        if let Some(review) = &state.review {
-            let mut confirmation=div().flex().flex_col().gap_2().p_3().child(format!("Delete {} archived conversation(s)?",review.count())).child("This removes their local conversation content. Undo is available for this batch until Quit or the next deletion.");
-            for title in review.titles() {
-                confirmation = confirmation.child(title);
-            }
-            if state.undo.is_some() {
-                confirmation =
-                    confirmation.child("This deletion replaces the previous batch's Undo.");
-            }
-            pane = pane.child(
-                confirmation.child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new("archive-delete-cancel")
-                                .label("Cancel")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.archive_settings.review = None;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("archive-delete-confirm")
-                                .label("Delete Conversations")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.confirm_archive_deletion(window, cx)
-                                })),
-                        ),
-                ),
             );
         }
-        pane.child(state.status.clone()).into_any_element()
+        if state.undo.is_some() || !state.status.is_empty() {
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().text_sm().child(state.status.clone()))
+                    .when(state.undo.is_some(), |row| {
+                        row.child(
+                            Button::new("archive-undo-delete")
+                                .label("Undo Delete")
+                                .disabled(reviewing)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.undo_archive_deletion(cx)),
+                                ),
+                        )
+                    }),
+            );
+        }
+        pane.into_any_element()
     }
 }
 #[cfg(test)]
@@ -445,14 +561,60 @@ mod tests {
     #[::core::prelude::v1::test]
     fn selection_cannot_delete_an_unseen_or_unbounded_batch() {
         let rows = vec![row("one"), row("two")];
-        assert!(visible_selection(&rows, &BTreeSet::new()).is_err());
-        assert!(visible_selection(&rows, &BTreeSet::from(["unseen".into()])).is_err());
+        assert!(visible_selection(&rows, &[]).is_err());
+        assert!(visible_selection(&rows, &["unseen".into()]).is_err());
         assert_eq!(
-            visible_selection(&rows, &BTreeSet::from(["two".into()])).unwrap(),
+            visible_selection(&rows, &["two".into()]).unwrap(),
             vec!["two".to_owned()]
         );
-        let too_many = (0..51).map(|n| n.to_string()).collect::<BTreeSet<_>>();
+        let too_many = (0..51).map(|n| n.to_string()).collect::<Vec<_>>();
         assert!(visible_selection(&[], &too_many).is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn last_active_reads_like_named_relative_dates() {
+        let now = 1_000_000_000.;
+        assert_eq!(last_active(now, now), "now");
+        assert_eq!(last_active(now + 30., now), "now");
+        assert_eq!(last_active(now - 1., now), "1 second ago");
+        assert_eq!(last_active(now - 125., now), "2 minutes ago");
+        assert_eq!(last_active(now - 3. * 3_600., now), "3 hours ago");
+        assert_eq!(last_active(now - 30. * 3_600., now), "yesterday");
+        assert_eq!(last_active(now - 3. * 86_400., now), "3 days ago");
+        assert_eq!(last_active(now - 8. * 86_400., now), "last week");
+        assert_eq!(last_active(now - 21. * 86_400., now), "3 weeks ago");
+        assert_eq!(last_active(now - 40. * 86_400., now), "last month");
+        assert_eq!(last_active(now - 100. * 86_400., now), "3 months ago");
+        assert_eq!(last_active(now - 400. * 86_400., now), "last year");
+        assert_eq!(last_active(now - 800. * 86_400., now), "2 years ago");
+        assert_eq!(last_active(f64::NAN, now), "now");
+    }
+    #[::core::prelude::v1::test]
+    fn rows_group_by_project_in_newest_first_order() {
+        let project = "6F1C6C8A-7C51-4F7E-9A55-0D7E0D7F0A01";
+        let mut first = row("one");
+        first.project_id = project.into();
+        let mut chat = row("two");
+        chat.project_id = String::new();
+        let mut second = row("three");
+        second.project_id = project.to_lowercase();
+        let rows = [first, chat, second];
+        let projects = [json!({"id":project,"name":"Coincide"})];
+        let groups = grouped(&rows, &projects)
+            .into_iter()
+            .map(|(name, threads)| {
+                (
+                    name,
+                    threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups,
+            [
+                ("Coincide".to_owned(), vec!["one", "three"]),
+                ("Chats".to_owned(), vec!["two"]),
+            ]
+        );
     }
     #[::core::prelude::v1::test]
     fn typed_native_delete_requires_review_and_undo_preserves_full_content() {

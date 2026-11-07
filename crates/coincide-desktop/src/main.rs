@@ -38,6 +38,7 @@ mod chat_layout;
 mod chat_rewind;
 mod chat_turns;
 mod command_palette;
+mod community_links;
 mod composer_attachments;
 mod composer_commands;
 mod composer_context_mount;
@@ -114,6 +115,7 @@ mod session_import;
 mod settings;
 mod settings_navigation;
 mod settings_scroll;
+mod settings_search;
 mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
@@ -440,7 +442,6 @@ struct Coincide {
     provider_configuration_panel: Entity<provider_configuration_ui::Panel>,
     provider_enable_prompt: Option<Task<()>>,
     models_settings: models_settings::ModelsSettings,
-    general_settings: general_settings::GeneralSettings,
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
@@ -450,6 +451,8 @@ struct Coincide {
     starter_bots_checked: bool,
     settings_section: settings::SettingsSection,
     settings_scroll: settings_scroll::State,
+    settings_reveal: settings_search::Reveal,
+    general_settings: general_settings::State,
     settings_window: Option<gpui_kit::AnyWindowHandle>,
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
@@ -1053,8 +1056,8 @@ impl Coincide {
             )
         });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
-        let general_settings = general_settings::GeneralSettings::new(&settings, window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
+        let general_settings = general_settings::State::new(cx);
         let model_picker_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
@@ -1357,8 +1360,8 @@ impl Coincide {
             }
         }));
         subscriptions.extend(models_settings.subscriptions(window, cx));
-        subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
+        subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
@@ -1467,6 +1470,7 @@ impl Coincide {
             settings_navigation: Default::default(),
             settings_section: Default::default(),
             settings_scroll: Default::default(),
+            settings_reveal: Default::default(),
             instructions_panel,
             provider_configuration_panel,
             provider_enable_prompt: None,
@@ -2074,6 +2078,10 @@ impl Coincide {
         self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
+        }
+        // Settings › Archive stays current as threads are archived and deleted.
+        if self.settings_open && self.settings_section == settings::SettingsSection::Archive {
+            self.refresh_archive_settings(cx);
         }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();

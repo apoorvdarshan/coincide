@@ -50,7 +50,49 @@ struct Reply {
     _custody: NativeUiEditLease,
     expected_input: Zeroizing<String>,
 }
+/// Codex's `$CODEX_HOME/auth.json`, or `~/.codex/auth.json`.
+fn codex_auth_file() -> Option<std::path::PathBuf> {
+    if let Some(home) = std::env::var_os("CODEX_HOME").filter(|home| !home.is_empty()) {
+        return Some(std::path::PathBuf::from(home).join("auth.json"));
+    }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .filter(|home| !home.is_empty())?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".codex")
+            .join("auth.json"),
+    )
+}
+/// `OPENAI_API_KEY` of a Codex signed in with an API key, when it is a
+/// plausible key. A ChatGPT sign-in's tokens in the same file are never read.
+fn codex_api_key(document: &[u8]) -> Option<Zeroizing<String>> {
+    if document.len() >= 1_000_000 {
+        return None;
+    }
+    let object = serde_json::from_slice::<Value>(document).ok()?;
+    let key = Zeroizing::new(object.get("OPENAI_API_KEY")?.as_str()?.trim().to_owned());
+    (key.chars().count() >= 20 && !key.contains(char::is_whitespace)).then_some(key)
+}
+fn read_codex_api_key() -> Option<Zeroizing<String>> {
+    let path = codex_auth_file()?;
+    if std::fs::metadata(&path).ok()?.len() >= 1_000_000 {
+        return None;
+    }
+    codex_api_key(&Zeroizing::new(std::fs::read(path).ok()?))
+}
+#[cfg(target_os = "macos")]
+const VAULT: &str = "Keychain";
+#[cfg(windows)]
+const VAULT: &str = "Windows Credential Manager";
+#[cfg(not(any(target_os = "macos", windows)))]
+const VAULT: &str = "secret store";
 pub(super) struct Panel {
+    /// Codex is signed in with an API key Voice can copy, as of the last
+    /// time Voice opened.
+    codex_has_key: bool,
+    /// The pending save copies Codex's key.
+    codex_import: bool,
+    codex_prompt: Option<Task<()>>,
     editors: Vec<Editor>,
     secrets: VoiceSecrets,
     service: Arc<dyn Service>,
@@ -118,6 +160,9 @@ impl Panel {
             });
         }
         Self {
+            codex_has_key: false,
+            codex_import: false,
+            codex_prompt: None,
             editors,
             secrets,
             service,
@@ -182,6 +227,10 @@ impl Panel {
             let editor = &mut self.editors[index(reply.provider)];
             let tested = matches!(&reply.result, Ok(Outcome::Tested(_)));
             match reply.result {
+                Ok(Outcome::Loaded(key)) if std::mem::take(&mut self.codex_import) => {
+                    editor.credential = Some(key);
+                    editor.status = format!("Copied Codex’s key to the {VAULT}.");
+                }
                 Ok(Outcome::Loaded(key)) | Ok(Outcome::Tested(key)) => {
                     editor.credential = Some(key);
                     editor.status=if tested{"Voice key test succeeded. Recording sends audio only after an explicit dictation action."}else{"Voice key loaded for this session. Recording sends audio only after an explicit dictation action."}.into();
@@ -199,9 +248,51 @@ impl Panel {
                     editor.credential = None;
                     editor.status = "Voice key removed from the OS secret store.".into();
                 }
-                Err(message) => editor.status = message.into(),
+                Err(message) => {
+                    self.codex_import = false;
+                    editor.status = message.into()
+                }
             }
             cx.notify();
+        }
+    }
+    /// Checks whether Codex has an API key to offer, without keeping it.
+    pub fn refresh_codex_key(&mut self, cx: &mut Context<Self>) {
+        let has_key = read_codex_api_key().is_some();
+        if has_key != self.codex_has_key {
+            self.codex_has_key = has_key;
+            cx.notify();
+        }
+    }
+    fn confirm_codex_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let detail = format!(
+            "Coincide copies OPENAI_API_KEY from ~/.codex/auth.json into its {VAULT} and sends it only to OpenAI, with your dictation audio. Changing the key in Codex later doesn’t change Coincide’s copy."
+        );
+        let answer = window.prompt(
+            PromptLevel::Info,
+            "Copy Codex’s OpenAI API key?",
+            Some(&detail),
+            &["Copy Key", "Cancel"],
+            cx,
+        );
+        self.codex_prompt = Some(cx.spawn_in(window, async move |this, cx| {
+            if answer.await.unwrap_or(1) != 0 {
+                return;
+            }
+            this.update(cx, |this, cx| this.import_codex_key(cx)).ok();
+        }));
+    }
+    fn import_codex_key(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = read_codex_api_key() else {
+            self.codex_has_key = false;
+            self.editors[index(Provider::OpenAi)].status = "Codex no longer has an API key.".into();
+            cx.notify();
+            return;
+        };
+        self.codex_import = true;
+        self.action(Provider::OpenAi, Action::Save(key), cx);
+        if self.pending.is_none() {
+            self.codex_import = false;
         }
     }
     fn action(&mut self, provider: Provider, action: Action, cx: &mut Context<Self>) {
@@ -287,6 +378,13 @@ impl Panel {
             .child(Button::new(("voice-key-remove", index(provider))).label("Remove Key").disabled(busy).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Delete,cx))))
             .child(Button::new(("voice-key-discard", index(provider))).label("Discard Typed Key").disabled(busy||!editor.dirty).on_click(cx.listener(move|this,_,window,cx|{this.discard(provider,window,cx);})))
             .child(Button::new(("voice-key-cancel", index(provider))).label("Cancel pending result").disabled(self.pending.is_none()).on_click(cx.listener(|this,_,_,cx|{this.cancellation.store(true,Ordering::Release);cx.notify();})))
+            .when(provider == Provider::OpenAi && self.codex_has_key, |pane| {
+                pane.child(div().flex().items_center().gap_3().pt_2()
+                    .child(div().flex_1().flex().flex_col()
+                        .child("Use the OpenAI API key from Codex")
+                        .child(div().text_xs().child(format!("Codex is signed in with an API key. Coincide can copy that key to its own {VAULT} item; it never reads ChatGPT sign-ins."))))
+                    .child(Button::new("voice-key-codex").label("Use Codex’s Key…").disabled(busy).on_click(cx.listener(|this, _, window, cx| this.confirm_codex_import(window, cx)))))
+            })
             .child(editor.status.clone()).into_any_element()
     }
 }
@@ -303,3 +401,25 @@ impl Render for Panel {
 #[cfg(test)]
 #[path = "voice_credentials_ui_tests.rs"]
 mod native_tests;
+
+#[cfg(test)]
+mod codex_key_tests {
+    use super::codex_api_key;
+
+    #[::core::prelude::v1::test]
+    fn only_a_plausible_api_key_is_copied_from_codex() {
+        let key = "sk-synthetic-0123456789abcdef";
+        assert_eq!(
+            codex_api_key(format!(r#"{{"OPENAI_API_KEY":" {key}\n"}}"#).as_bytes())
+                .as_deref()
+                .map(String::as_str),
+            Some(key)
+        );
+        // A ChatGPT sign-in has tokens and no API key; nothing is read from them.
+        assert!(codex_api_key(br#"{"OPENAI_API_KEY":null,"tokens":{"access_token":"synthetic-token-value-long"}}"#).is_none());
+        assert!(codex_api_key(br#"{"OPENAI_API_KEY":"sk-short"}"#).is_none());
+        assert!(codex_api_key(br#"{"OPENAI_API_KEY":"sk-has a space in the middle"}"#).is_none());
+        assert!(codex_api_key(b"not json").is_none());
+        assert!(codex_api_key(&vec![b' '; 1_000_000]).is_none());
+    }
+}

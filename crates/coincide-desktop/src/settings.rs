@@ -108,19 +108,19 @@ fn find_escape_routes(
 
 // IDs and surface colors match the original macOS AppTheme catalog. Unknown
 // imported theme IDs fall back for display without rewriting the stored value.
-struct Palette {
-    id: &'static str,
-    name: &'static str,
-    dark: bool,
-    sidebar: u32,
-    content: u32,
-    surface: u32,
+pub(super) struct Palette {
+    pub(super) id: &'static str,
+    pub(super) name: &'static str,
+    pub(super) dark: bool,
+    pub(super) sidebar: u32,
+    pub(super) content: u32,
+    pub(super) surface: u32,
     raised: u32,
-    border: u32,
-    ink: u32,
+    pub(super) border: u32,
+    pub(super) ink: u32,
     accent: u32,
 }
-const PALETTES: &[Palette] = &[
+pub(super) const PALETTES: &[Palette] = &[
     Palette {
         id: "carbon",
         name: "Carbon",
@@ -475,14 +475,11 @@ impl Coincide {
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }
-        self.general_settings.sync(&self.settings, window, cx);
-        let prefix = general_settings::branch_prefix(&self.settings);
-        self.workspace_panel
-            .update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
         self.apply_appearance(window, cx);
+        self.sync_general_settings(window, cx);
         if self.terminal_open {
             self.ensure_terminal_space(window);
         }
@@ -753,8 +750,14 @@ impl Coincide {
         let query = String::new();
         let filtering = self.settings_section;
         let matches = |section, terms| settings_match(filtering, section, &query, terms);
-        let setting =
-            |key: &str, fallback: Value| self.settings.get(key).cloned().unwrap_or(fallback);
+        // A cleared key (Restore Defaults…) reads as its default.
+        let setting = |key: &str, fallback: Value| {
+            self.settings
+                .get(key)
+                .filter(|value| !value.is_null())
+                .cloned()
+                .unwrap_or(fallback)
+        };
         let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
         let mut count = 0;
         if matches(
@@ -766,8 +769,8 @@ impl Coincide {
         }
         if matches(S::Models, "models favorite hidden custom providers catalog") {
             count += 1;
-            let catalogs = self.model_catalogs(cx);
-            content = content.child(self.models_settings_panel(&catalogs, cx));
+            content =
+                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
         }
         if matches(
             S::About,
@@ -825,94 +828,82 @@ impl Coincide {
                 );
             }
         }
-        if matches(S::Appearance, "appearance system light dark color theme") {
-            count += 1;
-            let mode = setting("appearance", json!("system"));
-            content = content.child(self.setting_choices(
-                "Appearance",
-                "appearance",
-                mode.clone(),
-                vec![
-                    ("System", json!("system")),
-                    ("Light", json!("light")),
-                    ("Dark", json!("dark")),
-                ],
-                cx,
-            ));
-            for (dark, key, label, fallback) in [
-                (true, "darkTheme", "Dark theme", "carbon"),
-                (false, "lightTheme", "Light theme", "carbon-light"),
-            ] {
-                if mode == "system" || (mode == "dark" && dark) || (mode == "light" && !dark) {
-                    content = content.child(
-                        self.setting_choices(
-                            label,
-                            key,
-                            setting(key, json!(fallback)),
-                            PALETTES
-                                .iter()
-                                .filter(|p| p.dark == dark)
-                                .map(|p| (p.name, json!(p.id)))
-                                .collect(),
-                            cx,
-                        ),
-                    );
-                }
-            }
-        }
-        if matches(S::Appearance, "conversation font size text smaller larger") {
-            count += 1;
-            let size = self.conversation_font_size();
-            content = content.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .p_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(format!("Conversation font size: {size:.0}")),
-                    )
-                    .child(
-                        Button::new("font-smaller")
-                            .label("Smaller")
-                            .disabled(size <= 10.)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.change_setting(
-                                    "fontSize",
-                                    json!((this.conversation_font_size() - 1.).max(10.)),
-                                    window,
-                                    cx,
-                                )
-                            })),
-                    )
-                    .child(
-                        Button::new("font-larger")
-                            .label("Larger")
-                            .disabled(size >= 24.)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.change_setting(
-                                    "fontSize",
-                                    json!((this.conversation_font_size() + 1.).min(24.)),
-                                    window,
-                                    cx,
-                                )
-                            })),
-                    ),
-            );
-        }
+        use settings_search::Row as R;
         if matches(
             S::Appearance,
-            "open project folders editor terminal file manager application automatic",
+            "appearance system light dark color theme font size text smaller larger",
         ) {
             count += 1;
-            content = content.child(self.open_target_settings(cx));
+            content = content
+                .child(self.revealable(R::Appearance, self.appearance_picker(cx)))
+                .child(self.revealable(R::FontSize, self.font_size_row()));
         }
-        for (section, terms, label, key, fallback, choices) in [
-            (
+        let choice_rows = |rows: Vec<(
+            S,
+            &'static str,
+            R,
+            &'static str,
+            &'static str,
+            Value,
+            Vec<(&'static str, Value)>,
+        )>,
+                           content: Div,
+                           count: &mut usize,
+                           cx: &mut Context<Self>| {
+            let mut content = content;
+            for (section, terms, row, label, key, fallback, choices) in rows {
+                if matches(section, terms) {
+                    *count += 1;
+                    content = content.child(self.revealable(
+                        row,
+                        self.setting_choices(label, key, setting(key, fallback), choices, cx),
+                    ));
+                }
+            }
+            content
+        };
+        content = choice_rows(
+            vec![
+                (
+                    S::Appearance,
+                    "reply font serif system typeface",
+                    R::ReplyTypeface,
+                    "Reply font",
+                    "replyTypeface",
+                    json!("newYork"),
+                    vec![("Serif", json!("newYork")), ("System", json!("system"))],
+                ),
+                (
+                    S::Conversation,
+                    "your messages left right side alignment",
+                    R::UserMessageSide,
+                    "Your messages",
+                    "userMessageSide",
+                    json!("right"),
+                    vec![("Right", json!("right")), ("Left", json!("left"))],
+                ),
+            ],
+            content,
+            &mut count,
+            cx,
+        );
+        // Only the themes the chosen appearance can show: both with System. A
+        // search still reaches either.
+        let mode = setting("appearance", json!("system"));
+        for (dark, row) in [(true, R::DarkTheme), (false, R::LightTheme)] {
+            let shown = (mode != "light" && dark) || (mode != "dark" && !dark);
+            if matches(S::Appearance, "appearance color theme colors swatch")
+                && (shown || self.settings_reveal_targets(row))
+            {
+                count += 1;
+                content = content.child(self.revealable(row, self.theme_grid_row(dark, cx)));
+            }
+        }
+        content = choice_rows(
+            vec![(
                 S::Appearance,
                 "terminal placement bottom right panel drawer inspector",
+                R::TerminalPlacement,
                 "Terminal",
                 "terminalPlacement",
                 json!("bottom"),
@@ -920,134 +911,133 @@ impl Coincide {
                     ("Bottom panel", json!("bottom")),
                     ("Right panel", json!("right")),
                 ],
-            ),
-            (
-                S::Appearance,
-                "reply font serif system typeface",
-                "Reply font",
-                "replyTypeface",
-                json!("newYork"),
-                vec![("Serif", json!("newYork")), ("System", json!("system"))],
-            ),
-            (
-                S::Conversation,
-                "your messages left right side alignment",
-                "Your messages",
-                "userMessageSide",
-                json!("right"),
-                vec![("Right", json!("right")), ("Left", json!("left"))],
-            ),
-            (
-                S::Conversation,
-                "reasoning thinking show hide",
-                "Reasoning",
-                "showReasoning",
-                json!(true),
-                vec![("Show", json!(true)), ("Hide", json!(false))],
-            ),
-            (
-                S::Conversation,
-                "send messages return command control keyboard shortcuts",
-                "Send messages with",
-                "sendOnReturn",
-                json!(true),
-                vec![
-                    ("Return", json!(true)),
-                    ("Command / Control + Return", json!(false)),
-                ],
-            ),
-            (
-                S::Conversation,
-                "follow up behavior steer queue interrupt running agent new threads",
-                "Follow-up behavior for new threads",
-                "followUpBehavior",
-                json!("steer"),
-                vec![
-                    ("Steer", json!("steer")),
-                    ("Queue", json!("queue")),
-                    ("Interrupt", json!("interrupt")),
-                ],
-            ),
-            (
-                S::Conversation,
-                "new threads default access approval full commands edit files",
-                "Access for new threads",
-                "defaultAccessMode",
-                // Match the actual new-thread/Project Defaults fallback when
-                // no preference was saved; rendering never grants more access.
-                json!("approval"),
-                vec![
-                    ("Ask before changes", json!("approval")),
-                    ("Full access", json!("fullAccess")),
-                ],
-            ),
-            (
-                S::Conversation,
-                "new thread starts chat project command n",
-                "New Thread starts a chat",
-                "newThreadStartsChat",
-                json!(false),
-                vec![("On", json!(true)), ("Off", json!(false))],
-            ),
-            (
-                S::Conversation,
-                "hold quit keyboard command control q double press exit",
-                "Hold Command / Control + Q to quit",
-                "holdToQuit",
-                json!(true),
-                vec![("On", json!(true)), ("Off", json!(false))],
-            ),
-            (
-                S::Conversation,
-                "confirm deleting delete threads history",
-                "Confirm before deleting threads",
-                "confirmBeforeDeletingThreads",
-                json!(true),
-                vec![
-                    ("Ask", json!(true)),
-                    ("Skip for idle threads", json!(false)),
-                ],
-            ),
-            (
-                S::Conversation,
-                "confirm archiving archive threads",
-                "Confirm before archiving threads",
-                "confirmBeforeArchivingThreads",
-                json!(true),
-                vec![("Ask", json!(true)), ("Archive immediately", json!(false))],
-            ),
-        ] {
-            if matches(section, terms) {
-                count += 1;
-                content = content.child(self.setting_choices(
-                    label,
-                    key,
-                    setting(key, fallback),
-                    choices,
+            )],
+            content,
+            &mut count,
+            cx,
+        );
+        if matches(
+            S::Appearance,
+            "open project folders editor terminal file manager application automatic",
+        ) {
+            count += 1;
+            content = content.child(self.revealable(R::OpenIn, self.open_target_settings(cx)));
+        }
+        content = choice_rows(
+            vec![
+                (
+                    S::Conversation,
+                    "send messages return command control keyboard shortcuts",
+                    R::SendShortcut,
+                    "Send messages with",
+                    "sendOnReturn",
+                    json!(true),
+                    vec![
+                        ("Return", json!(true)),
+                        ("Command / Control + Return", json!(false)),
+                    ],
+                ),
+                (
+                    S::Conversation,
+                    "follow up behavior steer queue interrupt running agent new threads",
+                    R::FollowUpBehavior,
+                    "Follow-up behavior for new threads",
+                    "followUpBehavior",
+                    json!("steer"),
+                    vec![
+                        ("Steer", json!("steer")),
+                        ("Queue", json!("queue")),
+                        ("Interrupt", json!("interrupt")),
+                    ],
+                ),
+                (
+                    S::Conversation,
+                    "reasoning thinking show hide",
+                    R::ShowReasoning,
+                    "Reasoning",
+                    "showReasoning",
+                    json!(true),
+                    vec![("Show", json!(true)), ("Hide", json!(false))],
+                ),
+                (
+                    S::Conversation,
+                    "confirm deleting delete threads history",
+                    R::ConfirmDelete,
+                    "Confirm before deleting threads",
+                    "confirmBeforeDeletingThreads",
+                    json!(true),
+                    vec![
+                        ("Ask", json!(true)),
+                        ("Skip for idle threads", json!(false)),
+                    ],
+                ),
+                (
+                    S::Conversation,
+                    "confirm archiving archive threads",
+                    R::ConfirmArchive,
+                    "Confirm before archiving threads",
+                    "confirmBeforeArchivingThreads",
+                    json!(true),
+                    vec![("Ask", json!(true)), ("Archive immediately", json!(false))],
+                ),
+                (
+                    S::Conversation,
+                    "hold quit keyboard command control q double press exit",
+                    R::HoldToQuit,
+                    "Hold Command / Control + Q to quit",
+                    "holdToQuit",
+                    json!(true),
+                    vec![("On", json!(true)), ("Off", json!(false))],
+                ),
+                (
+                    S::Conversation,
+                    "new threads default access approval full commands edit files",
+                    R::AccessMode,
+                    "Access for new threads",
+                    "defaultAccessMode",
+                    // Match the actual new-thread/Project Defaults fallback when
+                    // no preference was saved; rendering never grants more access.
+                    json!("approval"),
+                    vec![
+                        ("Ask before changes", json!("approval")),
+                        ("Full access", json!("fullAccess")),
+                    ],
+                ),
+                (
+                    S::Conversation,
+                    "new thread starts chat project command n",
+                    R::NewThreadChat,
+                    "New Thread starts a chat",
+                    "newThreadStartsChat",
+                    json!(false),
+                    vec![("On", json!(true)), ("Off", json!(false))],
+                ),
+            ],
+            content,
+            &mut count,
+            cx,
+        );
+        if matches(
+            S::Conversation,
+            "open links default browser web click command control preview",
+        ) {
+            count += 1;
+            let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
+            content = content
+                .child(self.setting_choices(
+                    "Open links in your default browser",
+                    "opensLinksInDefaultBrowser",
+                    json!(default_browser),
+                    vec![("On", json!(true)), ("Off", json!(false))],
                     cx,
-                ));
-                if key == "followUpBehavior" {
-                    content = content.child(self.follow_up_settings_caption());
-                }
-            }
-        }
-        if matches(
-            S::Conversation,
-            "open links default browser preview web command control click",
-        ) {
-            count += 1;
-            content = content.child(self.link_settings(cx));
-        }
-        if matches(
-            S::Conversation,
-            "new threads default model reasoning effort provider",
-        ) {
-            count += 1;
-            content = content.child(self.default_model_settings(cx));
-        }
-        if matches(S::Conversation, "git worktree branch prefix name") {
-            count += 1;
-            content = content.child(self.branch_prefix_settings(cx));
+                ))
+                .child(
+                    div()
+                        .px_3()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child(link_routing_caption(default_browser)),
+                );
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
@@ -1060,16 +1050,23 @@ impl Coincide {
             count += 1;
             content = content.child(self.keyboard_settings(cx));
         }
+        if matches(
+            S::Automation,
+            "notify notifications background alerts permission",
+        ) {
+            count += 1;
+            content = content.child(self.revealable(R::Notifications, self.notifications_row(cx)));
+        }
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
-            content = content.child(self.awake_settings(cx));
+            content = content.child(self.revealable(R::KeepAwake, self.awake_settings(cx)));
         }
         if matches(
             S::Automation,
-            "remote coincide remote iphone ipad phone pair pairing qr code tailscale devices certificate",
+            "command line control coincide-rs terminal cli automation",
         ) {
             count += 1;
-            content = content.child(self.remote_panel.clone());
+            content = content.child(self.revealable(R::CommandLine, self.command_line_rows(cx)));
         }
         for (section, id, label, terms) in [
             (
@@ -1134,29 +1131,14 @@ impl Coincide {
                         Button::new(SharedString::from(format!("settings-{id}")))
                             .label(label)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.bots_open = id == "bots";
-                                this.notifications_open = id == "notifications";
-                                this.transcription_open = id == "transcription";
-                                this.credentials_open = id == "passwords";
-                                this.browser_settings_open = id == "browser";
-                                this.media.opened = id == "media";
-                                this.computer_use_open = id == "computer-use";
-                                this.provider_settings.open = false;
-                                if id == "antigravity" {
-                                    this.open_antigravity_settings(window, cx);
-                                } else if id == "codex-accounts" {
-                                    this.open_codex_account_settings(window, cx);
-                                } else {
-                                    this.focus_settings_route(window, cx);
-                                }
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
+                                this.open_settings_subpage(id, window, cx)
                             })),
                     ),
                 );
             }
+        }
+        if filtering == S::General {
+            content = content.child(self.restore_general_defaults_row(cx));
         }
         if count == 0 {
             content = content.child(div().p_3().child(
@@ -1197,6 +1179,37 @@ impl Coincide {
             )
             .child(div().text_sm().child(self.settings_status.clone()))
             .into_any_element()
+    }
+
+    /// Opens a page reached from a pane's button, by that button's id.
+    pub(super) fn open_settings_subpage(
+        &mut self,
+        id: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.credential_panel
+            .update(cx, |panel, cx| panel.cancel(cx));
+        self.bots_open = id == "bots";
+        self.notifications_open = id == "notifications";
+        self.transcription_open = id == "transcription";
+        self.credentials_open = id == "passwords";
+        self.browser_settings_open = id == "browser";
+        self.media.opened = id == "media";
+        self.computer_use_open = id == "computer-use";
+        self.provider_settings.open = false;
+        if id == "transcription" {
+            self.refresh_voice_environment(cx);
+        }
+        if id == "antigravity" {
+            self.open_antigravity_settings(window, cx);
+        } else if id == "codex-accounts" {
+            self.open_codex_account_settings(window, cx);
+        } else {
+            self.focus_settings_route(window, cx);
+        }
+        self.sync_transcription_binding(cx);
+        cx.notify();
     }
 
     pub(super) fn keyboard_panel_visible(&self, cx: &Context<Self>) -> bool {

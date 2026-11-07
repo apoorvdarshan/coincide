@@ -35,6 +35,14 @@ icon_assets!(
         Paperclip,
         PencilRuler,
         Zap,
+        // Settings › About's Help & Community, Follow, and Contact & Legal.
+        ArrowBigUp,
+        Bug,
+        CircleQuestionMark,
+        Hand,
+        Lightbulb,
+        Mail,
+        Users,
         Ban,
         BatteryCharging,
         BatteryFull,
@@ -210,11 +218,13 @@ mod tests {
             "icons/arrow-up-right.svg",
             "icons/arrow-down-right.svg",
             "icons/square.svg",
+            "icons/bug.svg",
+            "icons/lightbulb.svg",
+            "icons/circle-question-mark.svg",
             // Pull request glyphs and schedule row marks.
             // The Diff inspector's empty states.
             "icons/diff.svg",
             "icons/folder-x.svg",
-            "icons/diff.svg",
             "icons/git-pull-request.svg",
             "icons/shield-alert.svg",
             // Composer `/` and `#` suggestion rows.

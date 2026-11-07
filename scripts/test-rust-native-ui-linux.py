@@ -129,8 +129,12 @@ def main():
             return image
         return wait_for(f"presented native content for {stage}", presented_frame)
 
-    def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
-        """Target one observed sidebar word; never infer coordinates from layout."""
+    def click_rendered_word(window, stage, word, *, min_y=0, max_x=200, line=False):
+        """Target one observed sidebar word; never infer coordinates from layout.
+
+        With line=True the target is one whole rendered line, such as a search
+        result's title or the pane named under it, since a row-level search
+        also lists other rows containing the same word."""
         # Xvfb has no desktop window manager to focus a newly mapped window
         # when its pixels are clicked. Bind native key focus explicitly to the
         # already-observed owned Settings window before any search typing.
@@ -146,14 +150,30 @@ def main():
             # window OCR joined its icon and initial G into 'ceneral'. Read
             # only the actual label strip at higher resolution; exact matching
             # remains mandatory, and the original pixels remain in evidence.
-            left = 15 if word == "Search" else 44
+            # Search results are text-only rows beginning at x=22; the
+            # normal sidebar's icon-bearing labels start farther right.
+            left = 15 if word == "Search" or line else 44
             assert left < max_x < frame.width, "Sidebar label crop must fit the observed native window"
             crop = frame.crop((left, 0, max_x, frame.height))
             crop_path = artifacts / f"{name}-labels.png"
             crop.resize((crop.width * 3, crop.height * 3), Image.Resampling.LANCZOS).save(crop_path)
             tsv = command("tesseract", str(crop_path), "stdout", "--psm", "6", "tsv", env=env)
             (artifacts / f"{name}-locator.tsv").write_text(tsv)
-            matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
+            rows = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t") if row["text"].strip()]
+            if line:
+                lines = {}
+                for row in rows:
+                    lines.setdefault((row["block_num"], row["par_num"], row["line_num"]), []).append(row)
+                rows = []
+                for words in lines.values():
+                    lefts = [int(w["left"]) for w in words]
+                    rights = [int(w["left"]) + int(w["width"]) for w in words]
+                    tops = [int(w["top"]) for w in words]
+                    bottoms = [int(w["top"]) + int(w["height"]) for w in words]
+                    rows.append({"text": " ".join(w["text"].strip() for w in words),
+                                 "left": min(lefts), "width": max(rights) - min(lefts),
+                                 "top": min(tops), "height": max(bottoms) - min(tops)})
+            matches = [row for row in rows
                        if row["text"].strip().casefold() == word.casefold()
                        and int(row["top"]) / 3 >= min_y]
             if len(matches) != 1:
@@ -310,7 +330,7 @@ def main():
         assert int(command("xdotool", "getwindowfocus", env=env)) == int(settings_window), "Search typing must target the owned Settings window"
         command("xdotool", "type", "--clearmodifiers", "Codex", env=env)
         capture(settings_window, "settings-provider-filtered", "Results")
-        click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80)
+        click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80, line=True)
         capture(settings_window, "settings-provider-codex", "Executable")
         click_rendered_word(settings_window, "settings-return-general", "General")
         capture(settings_window, "settings-general-returned", "General")
@@ -328,13 +348,13 @@ def main():
             ("Keyboard", "Keyboard", "shortcuts"),
             ("Voice", "Voice", "Engine"),
             ("Browser", "Browser", "Browser profiles"),
-            ("Computer Use", "Computer", "Computer Use"),
+            ("Computer Use", "Computer Use", "Computer Use"),
             ("Appshots", "Appshots", "Permissions"),
-            ("Historical images", "Historical", "Historical images"),
+            ("Historical images", "Historical images", "Historical images"),
             ("About", "About", "Help"),
-            ("Claude Code", "Claude", "Executable"),
+            ("Claude Code", "Claude Code", "Executable"),
             ("Cursor", "Cursor", "Executable"),
-            ("Grok Build", "Grok", "Executable"),
+            ("Grok Build", "Grok Build", "Executable"),
             ("OpenCode", "OpenCode", "Executable"),
             ("Antigravity", "Antigravity", "Executable"),
         ]
@@ -344,7 +364,7 @@ def main():
             click_rendered_word(settings_window, stage + "-search", "Search")
             command("xdotool", "type", "--clearmodifiers", title, env=env)
             capture(settings_window, stage + "-filtered", "Results")
-            click_rendered_word(settings_window, stage + "-result", word, min_y=80)
+            click_rendered_word(settings_window, stage + "-result", word, min_y=80, line=True)
             wait_for(f"native Settings title {title}", lambda title=title: command("xdotool", "getwindowname", settings_window, env=env).strip() == title)
             provider_page = title in {"Claude Code", "Cursor", "Grok Build", "OpenCode", "Antigravity"}
             # These routes only load saved local configuration. Wait for that
