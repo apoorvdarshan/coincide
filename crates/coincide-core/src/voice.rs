@@ -132,6 +132,7 @@ pub enum Edit {
     Mode(Mode),
     SendsWhenStopped(bool),
     Model(Engine, String),
+    WhisperModel(crate::dictation::model_assets::ModelId),
     InputDevice(Option<String>),
 }
 impl Edit {
@@ -146,6 +147,7 @@ impl Edit {
             .as_object_mut()
             .context("Voice settings are not an object")?;
         let (key, value) = match self {
+            Self::WhisperModel(id) => ("whisperModel", json!(id.id())),
             Self::InputDevice(uid) => {
                 ensure!(
                     uid.as_ref().is_none_or(|uid| !uid.is_empty()
@@ -505,5 +507,22 @@ mod persistence_tests {
                 .is_err()
         );
         assert_eq!(store.document("settings.json").unwrap(), Some(malformed));
+    }
+}
+
+#[cfg(test)]
+mod whisper_model_preference_tests {
+    use super::Edit;
+    use crate::dictation::model_assets::ModelId;
+    #[test]
+    fn verified_catalog_preference_preserves_other_engine_and_future_settings() {
+        let mut document = serde_json::json!({"voice":{"engine":"openai","whisperModel":"future-model","future":{"opaque":[1,2]},"openAIModel":"retained-hosted"},"futureRoot":true});
+        Edit::WhisperModel(ModelId::Small)
+            .apply(&mut document)
+            .unwrap();
+        assert_eq!(
+            document,
+            serde_json::json!({"voice":{"engine":"openai","whisperModel":"small","future":{"opaque":[1,2]},"openAIModel":"retained-hosted"},"futureRoot":true})
+        );
     }
 }

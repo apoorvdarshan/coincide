@@ -138,3 +138,5 @@ pub mod local;
 pub mod voice_api;
 
 pub mod voice_secret;
+
+pub mod model_assets;

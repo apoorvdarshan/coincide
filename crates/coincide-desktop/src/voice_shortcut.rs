@@ -84,7 +84,7 @@ impl Coincide {
         let settings = Settings::decode(&self.settings);
         let enabled = settings.enabled
             && settings.shortcut_enabled
-            && settings.engine != Engine::Apple
+            && (settings.engine != Engine::Apple || voice_speech::compiled())
             && microphone::compiled_backend_available()
             && !self.media.shutdown_requested
             && !self.media.close_requested;
@@ -122,7 +122,7 @@ impl Coincide {
             return;
         };
         let voice = Settings::decode(&self.settings);
-        if !voice.enabled || voice.engine == Engine::Apple {
+        if !voice.enabled || (voice.engine == Engine::Apple && !voice_speech::compiled()) {
             return;
         }
         if !self.microphone_panel.read(cx).configured_for_dictation() {
@@ -194,7 +194,7 @@ impl Coincide {
         }
         let available = self.voice_target_available(window, cx)
             && settings.enabled
-            && settings.engine != Engine::Apple;
+            && (settings.engine != Engine::Apple || voice_speech::compiled());
         if self.voice.settings.as_ref() != Some(&settings) || !available {
             if self.voice.ticket.take().is_some() {
                 self.microphone_panel.update(cx, |p, cx| p.cancel(cx));
@@ -302,7 +302,7 @@ impl Coincide {
             || !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || settings.engine == Engine::Apple
+            || (settings.engine == Engine::Apple && !voice_speech::compiled())
         {
             return false;
         }
@@ -368,7 +368,7 @@ impl Coincide {
         if !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || settings.engine == Engine::Apple
+            || (settings.engine == Engine::Apple && !voice_speech::compiled())
         {
             return;
         }
@@ -421,6 +421,7 @@ mod tests {
             voice: voice.clone(),
         };
         let mut event = TextReady {
+            _model_lease: None,
             generation: 7,
             binding,
             text: "synthetic transcript".into(),
