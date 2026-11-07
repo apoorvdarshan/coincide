@@ -339,14 +339,22 @@ try {
     }
     $pending=@($script:PendingClients | Where-Object {-not $_.HasExited})
     if($null -ne $script:OwnedProcess -and -not $script:OwnedProcess.HasExited){$pending+= $script:OwnedProcess}
+    $cleanupError=$null
     if($pending.Count -gt 0){
         $Report.pendingOwnedPids=@($pending | ForEach-Object {$_.Id})
         $Report.retainedFixture=$Fixture
         $Report.passed=$false
         # No terminate/kill, key/data upload, or deletion while an owner remains.
     } else {
-        Remove-Item -LiteralPath $Fixture -Recurse -Force
+        # WebView2 helpers may release profile files shortly after the owned app
+        # exits. Retry briefly, and never let cleanup replace the original result.
+        foreach($attempt in 1..20){
+            try {Remove-Item -LiteralPath $Fixture -Recurse -Force -ErrorAction Stop;$cleanupError=$null;break}
+            catch {$cleanupError=$_.Exception.Message;Start-Sleep -Milliseconds 500}
+        }
+        if($null -ne $cleanupError){$Report.fixtureCleanupError=$cleanupError;$Report.retainedFixture=$Fixture}
     }
     $Report | ConvertTo-Json -Depth 30 | Set-Content -Encoding utf8 (Join-Path $Artifacts 'report.json')
+    if($null -ne $cleanupError -and $null -eq $Report.error){throw "Fixture cleanup failed: $cleanupError"}
 }
 $Report | ConvertTo-Json -Depth 30

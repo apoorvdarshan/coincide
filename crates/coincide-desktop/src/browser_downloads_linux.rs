@@ -28,6 +28,9 @@ use wry::WebViewExtUnix;
 
 pub(super) struct Owner {
     view: RefCell<Option<WebView>>,
+    // Wry destroys its GTK view when the tab drops, which would abort the
+    // closed page's blank load and leave that receipt unanswered forever.
+    handle: RefCell<Option<gpui_webview::WebViewHandle>>,
     weak_view: glib::WeakRef<WebView>,
     blank_returned: Cell<bool>,
     blank_ack: RefCell<Option<CallbackAck>>,
@@ -69,6 +72,7 @@ impl Owner {
         navigation: Arc<AtomicU64>,
         changed: impl Fn() + 'static,
     ) -> Result<Rc<Self>> {
+        let handle = view.handle();
         let view = view.raw().webview();
         let context = view
             .context()
@@ -76,6 +80,7 @@ impl Owner {
         let owner = Rc::new(Self {
             weak_view: view.downgrade(),
             view: RefCell::new(Some(view.clone())),
+            handle: RefCell::new(Some(handle)),
             blank_returned: Cell::new(false),
             blank_ack: RefCell::new(None),
             context,
@@ -310,6 +315,9 @@ impl Owner {
             // A weak native view keeps late starts attributable without retaining
             // the old document or a blank view as a permanent anchor.
             self.view.borrow_mut().take();
+            // Release outside the borrow: Wry's drop destroys the view now.
+            let handle = self.handle.borrow_mut().take();
+            drop(handle);
             if self.weak_view.upgrade().is_none() {
                 if let Some((started, _policy, _blank)) = self.signals.borrow_mut().take() {
                     self.context.disconnect(started);

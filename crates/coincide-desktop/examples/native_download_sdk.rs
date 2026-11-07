@@ -539,7 +539,6 @@ impl Fixture {
         }
         let passed = self.failures.is_empty();
         *self.result.lock().unwrap() = Some(passed);
-        // macOS quit terminates the process inside run, so report first.
         if passed {
             println!(
                 "synthetic native downloads: PASS (response, attribute and blob downloads attributed to exact views; close cancelled an active transfer with a native receipt; native SDK deallocation unconfirmed)"
@@ -547,8 +546,10 @@ impl Fixture {
         } else {
             eprintln!("synthetic native downloads: FAIL {:?}", self.failures);
         }
-        cx.quit();
-        true
+        // Every download and callback owner returned; window teardown is not
+        // under test. macOS terminates inside run and X11 can report teardown
+        // errors after this point, so the verdict is the exit status here.
+        std::process::exit(i32::from(!passed));
     }
 }
 impl Render for Fixture {
@@ -667,7 +668,7 @@ fn main() -> Result<()> {
         .expect("owned fixture window unavailable");
         cx.activate(true);
     });
-    // Hosts whose run returns also report the verdict through the exit status.
+    // Reached only if the event loop ends before the fixture reports.
     ensure!(
         *observed.lock().unwrap() == Some(true),
         "synthetic native download fixture did not pass"
