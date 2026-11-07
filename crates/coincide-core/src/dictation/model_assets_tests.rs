@@ -203,3 +203,35 @@ fn removal_waits_actual_read_lease_and_cancellation_does_not_delete_the_model() 
     repository.remove(&model, &|| false).unwrap();
     assert!(!model.path().exists());
 }
+
+#[test]
+fn unwinding_downloader_discards_only_its_private_staging_file() {
+    struct PanicSource;
+    impl Downloader for PanicSource {
+        fn fetch(
+            &self,
+            _: &Spec,
+            output: &mut dyn Write,
+            _: &(dyn Fn() -> bool + Sync),
+        ) -> Result<()> {
+            output.write_all(b"partial").unwrap();
+            panic!("synthetic downloader unwind");
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let repository = Repository::open(root.path()).unwrap();
+    let unknown = repository.directory.path.join("untouched-user-file");
+    std::fs::write(&unknown, b"preserve").unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        repository.download_spec(spec(), &PanicSource, &|| false, &mut |_| {})
+    }));
+    assert!(result.is_err());
+    assert_eq!(std::fs::read(unknown).unwrap(), b"preserve");
+    assert_eq!(
+        std::fs::read_dir(&repository.directory.path)
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(repository.pending_recovery(), 0);
+}

@@ -102,6 +102,7 @@ mod tests {
         let original = "Hello 🌍!";
         let binding = target.bind(Some("a"), original, 6..10, false).unwrap();
         let event = TextReady {
+            _model_lease: None,
             generation: 1,
             binding: binding.clone(),
             text: "世界".into(),

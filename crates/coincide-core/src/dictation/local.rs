@@ -110,9 +110,37 @@ impl LocalWhisper {
         wav: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Result<String, LocalError> {
+        if cancelled() {
+            return Err(LocalError::Cancelled);
+        }
+        let lease =
+            super::model_assets::acquire_model_path(&self.model, &cancelled).map_err(|error| {
+                if error == super::model_assets::Error::Cancelled {
+                    LocalError::Cancelled
+                } else {
+                    LocalError::Unavailable
+                }
+            })?;
+        let result = self.transcribe_local_with_lease(wav, &lease, cancelled);
+        if result == Err(LocalError::CleanupPending) {
+            super::model_assets::retain_uncertain(lease);
+        }
+        result
+    }
+    /// The native owner retains this same physical-file lease through capture,
+    /// inference and eventual transcript admission/discard.
+    pub fn transcribe_local_with_lease(
+        &self,
+        wav: &[u8],
+        lease: &super::model_assets::ModelReadLease,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<String, LocalError> {
         self.check_configuration()?;
         if cancelled() {
             return Err(LocalError::Cancelled);
+        }
+        if !lease.matches_path(&self.model) {
+            return Err(LocalError::InvalidConfiguration);
         }
         #[cfg(unix)]
         {

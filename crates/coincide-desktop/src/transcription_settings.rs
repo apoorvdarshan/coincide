@@ -38,6 +38,7 @@ pub struct ComposerBinding {
 /// Parent rechecks accepts_text against LIVE binding immediately before using
 /// DictationSession::start/update for insertion. Never automatically send it.
 pub struct TextReady {
+    pub(crate) _model_lease: Option<Arc<coincide_core::dictation::model_assets::ModelReadLease>>,
     pub generation: u64,
     pub binding: ComposerBinding,
     pub text: String,
@@ -61,11 +62,48 @@ enum Failure {
     Output,
     Cleanup,
 }
+type ModelLease = Arc<coincide_core::dictation::model_assets::ModelReadLease>;
 trait Backend: Send + Sync {
+    fn prepare_model(&self, _: &Configuration) -> Result<Option<ModelLease>, Failure> {
+        Ok(None)
+    }
+    fn transcribe_with_model(
+        &self,
+        configuration: Configuration,
+        _: Option<&ModelLease>,
+    ) -> Result<String, Failure> {
+        self.transcribe(configuration)
+    }
+
     fn transcribe(&self, configuration: Configuration) -> Result<String, Failure>;
 }
 struct LocalBackend;
 impl Backend for LocalBackend {
+    fn prepare_model(&self, config: &Configuration) -> Result<Option<ModelLease>, Failure> {
+        coincide_core::dictation::model_assets::acquire_model_path(&config.model, &|| false)
+            .map(Some)
+            .map_err(|_| Failure::Configuration)
+    }
+    fn transcribe_with_model(
+        &self,
+        config: Configuration,
+        lease: Option<&ModelLease>,
+    ) -> Result<String, Failure> {
+        let lease = lease.ok_or(Failure::Configuration)?;
+        let backend = LocalWhisper::new(
+            config.executable,
+            config.model,
+            config.language,
+            config.threads,
+            Duration::from_secs(120),
+        )
+        .map_err(classify)?;
+        let wav = read_wav(config.wav)?;
+        backend
+            .transcribe_local_with_lease(&wav, lease, || false)
+            .map_err(classify)
+    }
+
     fn transcribe(&self, configuration: Configuration) -> Result<String, Failure> {
         let mut backend = LocalWhisper::new(
             configuration.executable,
@@ -150,6 +188,7 @@ fn read_wav(path: PathBuf) -> Result<Vec<u8>, Failure> {
     Ok(wav)
 }
 struct Finished {
+    model_lease: Option<ModelLease>,
     job: Uuid,
     generation: u64,
     binding: ComposerBinding,
@@ -217,12 +256,25 @@ impl Workflow {
         let backend = self.backend.clone();
         let sender = self.sender.clone();
         if !self.workers.spawn(move |admission| {
-            let result = if admission.allowed() {
-                backend.transcribe(configuration)
+            let prepared = if admission.allowed() {
+                backend.prepare_model(&configuration)
             } else {
                 Err(Failure::Unavailable)
             };
+            let (result, mut model_lease) = match prepared {
+                Ok(lease) => (
+                    backend.transcribe_with_model(configuration, lease.as_ref()),
+                    lease,
+                ),
+                Err(error) => (Err(error), None),
+            };
+            if matches!(&result, Err(Failure::Cleanup)) {
+                if let Some(lease) = model_lease.take() {
+                    coincide_core::dictation::model_assets::retain_uncertain(lease);
+                }
+            }
             let _ = sender.send(Finished {
+                model_lease,
                 job,
                 generation,
                 binding,
@@ -276,6 +328,7 @@ impl Workflow {
             Ok(text) if text.trim().is_empty() => Some(Completion::Empty),
             Ok(text) => {
                 let _ = self.text.send(TextReady {
+                    _model_lease: result.model_lease,
                     generation: result.generation,
                     binding: result.binding,
                     text,
@@ -739,6 +792,7 @@ mod tests {
         assert!(workflow.start(configuration()));
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let old = TextReady {
+            _model_lease: None,
             generation: workflow.generation,
             binding: binding(1),
             text: "previously queued private text".into(),

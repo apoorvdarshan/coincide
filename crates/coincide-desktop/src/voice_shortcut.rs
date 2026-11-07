@@ -421,6 +421,7 @@ mod tests {
             voice: voice.clone(),
         };
         let mut event = TextReady {
+            _model_lease: None,
             generation: 7,
             binding,
             text: "synthetic transcript".into(),

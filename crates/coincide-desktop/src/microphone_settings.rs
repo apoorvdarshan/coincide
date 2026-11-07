@@ -173,7 +173,25 @@ enum InferenceFailure {
     CleanupPending,
     Hosted(coincide_core::dictation::transcription::Error),
 }
+type ModelLease = Arc<coincide_core::dictation::model_assets::ModelReadLease>;
 trait Inference {
+    fn prepare_model(
+        &mut self,
+        _: &LocalRecordingConfig,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ModelLease>, InferenceFailure> {
+        Ok(None)
+    }
+    fn transcribe_with_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        wav: &[u8],
+        _: Option<&ModelLease>,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        self.transcribe(config, wav, cancelled)
+    }
+
     fn hosted(
         &mut self,
         _: &coincide_core::dictation::voice_api::HostedConfig,
@@ -191,6 +209,39 @@ trait Inference {
 }
 struct LocalInference;
 impl Inference for LocalInference {
+    fn prepare_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ModelLease>, InferenceFailure> {
+        coincide_core::dictation::model_assets::acquire_model_path(&config.model, cancelled)
+            .map(Some)
+            .map_err(|_| InferenceFailure::Failed)
+    }
+    fn transcribe_with_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        wav: &[u8],
+        lease: Option<&ModelLease>,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        let lease = lease.ok_or(InferenceFailure::Failed)?;
+        LocalWhisper::new(
+            config.executable.clone(),
+            config.model.clone(),
+            config.language.clone(),
+            config.threads,
+            Duration::from_secs(120),
+        )
+        .map_err(|_| InferenceFailure::Failed)?
+        .transcribe_local_with_lease(wav, lease, cancelled)
+        .map_err(|error| match error {
+            LocalError::Cancelled => InferenceFailure::Cancelled,
+            LocalError::CleanupPending => InferenceFailure::CleanupPending,
+            _ => InferenceFailure::Failed,
+        })
+    }
+
     fn hosted(
         &mut self,
         config: &coincide_core::dictation::voice_api::HostedConfig,
@@ -244,6 +295,7 @@ struct Owner {
     permission_target: Option<Target>,
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
+    model_lease: Option<ModelLease>,
     dictation: bool,
     progress_bucket: Option<usize>,
     text_pending: bool,
@@ -284,10 +336,44 @@ impl Owner {
             controller.cancel();
         }
         self.audio = None;
+        self.model_lease = None;
         self.session = None;
         self.dictation = false;
         self.target = None;
         self.phase = Phase::Idle;
+    }
+    fn prepare_model(&mut self) -> bool {
+        if self.model_lease.is_some() {
+            return true;
+        }
+        let Some(RecordingConfig::Local(config)) =
+            self.target.as_ref().and_then(|t| t.config.as_ref())
+        else {
+            return true;
+        };
+        let shared = self.shared.clone();
+        let generation = self.generation;
+        let cancelled = || {
+            !shared.alive.load(Ordering::Acquire)
+                || !shared.enabled.load(Ordering::Acquire)
+                || shared.generation.load(Ordering::Acquire) != generation
+        };
+        match self
+            .inference
+            .as_mut()
+            .unwrap()
+            .prepare_model(config, &cancelled)
+        {
+            Ok(lease) => {
+                self.model_lease = lease;
+                true
+            }
+            Err(_) => {
+                self.phase = Phase::Failed;
+                self.publish("The selected local model is unavailable or being removed. No recording started.");
+                false
+            }
+        }
     }
     fn command(&mut self, command: Command) {
         if !self.shared.alive.load(Ordering::Acquire)
@@ -351,6 +437,9 @@ impl Owner {
                     self.publish("Configure transcription and select a composer before dictating.");
                     return;
                 }
+                if !self.prepare_model() {
+                    return;
+                }
                 self.dictation = true;
                 let target = self.target.clone().unwrap();
                 self.command(Command {
@@ -366,6 +455,7 @@ impl Owner {
                         self.publish(if self.dictation {"Waiting for microphone authorization to start this dictation. Cancel discards this request."}else{"Waiting for explicit microphone authorization. Granting permission does not record."});
                     }
                     Err(_) => {
+                        self.model_lease = None;
                         self.phase = Phase::Failed;
                         self.publish(
                             "Microphone permission is unavailable for this backend or bundle.",
@@ -378,6 +468,9 @@ impl Owner {
                     || self.phase == Phase::Captured
                     || self.phase == Phase::Failed =>
             {
+                if !self.prepare_model() {
+                    return;
+                }
                 let Some(target) = &self.target else {
                     return;
                 };
@@ -402,6 +495,7 @@ impl Owner {
                         self.publish(if self.dictation {"Listening. Stop transcribes this recording using the captured Voice settings."}else{"Recording locally. Stop ends capture; it does not transcribe or send."});
                     }
                     Err(error) => {
+                        self.model_lease = None;
                         self.phase = Phase::Failed;
                         self.publish(match error { CaptureError::Busy => "Another native owner is using the microphone.", CaptureError::NoInput => "The requested microphone is unavailable or unsupported. No fallback input was opened.", _ => "Recording could not start. Check authorization, device and configured limits." });
                     }
@@ -462,6 +556,7 @@ impl Owner {
                         continue;
                     }
                     self.dictation = false;
+                    self.model_lease = None;
                     self.publish(match permission {
                         Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
                         Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
@@ -500,6 +595,7 @@ impl Owner {
                     }
                 }
                 CaptureEvent::Failed(_) => {
+                    self.model_lease = None;
                     self.text_pending = false;
                     self.audio = None;
                     self.session = None;
@@ -507,6 +603,7 @@ impl Owner {
                     self.publish("Native capture failed. Nothing was transcribed or sent.");
                 }
                 CaptureEvent::Cancelled => {
+                    self.model_lease = None;
                     self.text_pending = false;
                     self.audio = None;
                     self.session = None;
@@ -559,14 +656,25 @@ impl Owner {
         };
         let inference = self.inference.as_mut().unwrap();
         let result = match &configuration {
-            RecordingConfig::Local(config) => inference.transcribe(config, &audio.wav, &cancelled),
+            RecordingConfig::Local(config) => inference.transcribe_with_model(
+                config,
+                &audio.wav,
+                self.model_lease.as_ref(),
+                &cancelled,
+            ),
             RecordingConfig::Hosted(config) => inference.hosted(config, &audio.wav, &cancelled),
         };
+        if matches!(&result, Err(InferenceFailure::CleanupPending)) {
+            if let Some(lease) = self.model_lease.take() {
+                coincide_core::dictation::model_assets::retain_uncertain(lease);
+            }
+        }
         if !self.current() {
             self.reset();
             return;
         }
         self.phase = Phase::Idle;
+        let model_lease = self.model_lease.take();
         match result {
             Ok(text) if !text.trim().is_empty() => {
                 self.text_pending = self
@@ -575,6 +683,7 @@ impl Owner {
                         generation: self.generation,
                         binding,
                         text,
+                        _model_lease: model_lease,
                     })
                     .is_ok();
                 self.publish("Transcript ready for the matching composer. Nothing was sent.");
@@ -704,6 +813,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 permission_target: None,
                 session: None,
                 audio: None,
+                model_lease: None,
                 dictation: false,
                 progress_bucket: None,
                 text_pending: false,
@@ -1317,6 +1427,7 @@ mod tests {
             permission_target: None,
             session: None,
             audio: None,
+            model_lease: None,
             dictation: false,
             progress_bucket: None,
             text_pending: false,
@@ -1719,6 +1830,7 @@ mod tests {
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {
+            _model_lease: None,
             generation: 0,
             binding: binding.clone(),
             text: "previously queued private text".into(),

@@ -127,6 +127,7 @@ struct UseState {
     readers: usize,
     removing: bool,
     removed: bool,
+    uncertain: bool,
 }
 #[derive(Default)]
 struct Usage {
@@ -159,7 +160,7 @@ impl VerifiedModel {
         self.usage
             .state
             .lock()
-            .is_ok_and(|state| !state.removing && !state.removed)
+            .is_ok_and(|state| !state.removing && !state.removed && !state.uncertain)
     }
     pub fn acquire(
         self: &Arc<Self>,
@@ -204,7 +205,7 @@ fn usage_for(identity: Identity) -> Result<Arc<Usage>> {
 /// installed artifact through the ordinary file picker instead of the catalog.
 pub fn acquire_model_path(
     path: &Path,
-    cancelled: &(dyn Fn() -> bool + Sync),
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Arc<ModelReadLease>> {
     if cancelled() {
         return Err(Error::Cancelled);
@@ -229,6 +230,9 @@ fn acquire_file(
     let usage = usage_for(identity)?;
     {
         let mut state = usage.state.lock().map_err(|_| Error::Busy)?;
+        if state.uncertain {
+            return Err(Error::RecoveryPending);
+        }
         if state.removing || (!explicit_file && state.removed) {
             return Err(Error::Busy);
         }
@@ -277,6 +281,25 @@ impl Drop for ModelReadLease {
         state.readers = state.readers.saturating_sub(1);
         self.usage.changed.notify_all();
     }
+}
+/// CleanupPending is not an exit receipt. Keep one physical-file reader until
+/// process exit; new use/removal fails explicitly rather than guessing teardown.
+/// This metadata is session-only and cannot be reconstructed from preferences.
+pub fn retain_uncertain(lease: Arc<ModelReadLease>) {
+    static UNCERTAIN: OnceLock<Mutex<std::collections::HashMap<Identity, Arc<ModelReadLease>>>> =
+        OnceLock::new();
+    lease
+        .usage
+        .state
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .uncertain = true;
+    UNCERTAIN
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(lease.identity)
+        .or_insert(lease);
 }
 struct Recovery {
     name: String,
@@ -361,6 +384,9 @@ impl Repository {
         let usage = usage_for(identity)?;
         {
             let mut state = usage.state.lock().map_err(|_| Error::Busy)?;
+            if state.uncertain {
+                return Err(Error::RecoveryPending);
+            }
             if state.removing {
                 return Err(Error::Busy);
             }
@@ -465,6 +491,9 @@ impl Repository {
             return Err(Error::Changed);
         }
         let mut state = model.usage.state.lock().map_err(|_| Error::Busy)?;
+        if state.uncertain {
+            return Err(Error::RecoveryPending);
+        }
         if state.removing || state.removed {
             return Err(Error::Busy);
         }
