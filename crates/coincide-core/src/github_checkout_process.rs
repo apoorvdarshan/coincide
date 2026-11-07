@@ -12,8 +12,10 @@ fn trace_drain(stage: &str, error: Option<&anyhow::Error>) {
     static LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 96 {
         eprintln!(
-            "owned-checkout-drain-v2 {stage}: {}",
-            error.map(|error| error.to_string()).unwrap_or_default()
+            "owned-checkout-drain-v3 {stage}: native_errno={:?}",
+            error
+                .and_then(|error| error.downcast_ref::<io::Error>())
+                .and_then(io::Error::raw_os_error)
         );
     }
 }
@@ -275,10 +277,6 @@ impl Owner {
         if self.joined {
             return Ok(true);
         }
-        if let Err(error) = self.stop() {
-            trace_drain("stop-error", Some(&error));
-            return Err(error);
-        }
         let exited = match self.exited() {
             Ok(value) => value,
             Err(error) => {
@@ -286,46 +284,43 @@ impl Owner {
                 return Err(error);
             }
         };
-        if exited.is_none() {
-            trace_drain("waitid-not-returned", None);
-            return Ok(false);
-        }
-
-        #[cfg(unix)]
-        {
-            // Retain the unreaped leader so PGID/PID cannot be reused while
-            // checking only its group. Zombies have actually exited; their
-            // adoption/reap is not confused with a running descendant.
-            match group_exited(self.child.id()) {
-                Ok(true) => {}
-                Ok(false) => {
-                    trace_drain("group-still-running", None);
-                    return Ok(false);
-                }
+        if exited.is_some() {
+            #[cfg(unix)]
+            let empty = match group_exited(self.child.id()) {
+                Ok(value) => value,
                 Err(error) => {
                     trace_drain("group-classification-error", Some(&error));
                     return Err(error);
                 }
-            }
-            if let Err(error) = self.child.wait() {
-                let error =
-                    anyhow::Error::from(error).context("Native checkout leader has not returned");
-                trace_drain("leader-wait-error", Some(&error));
-                return Err(error);
+            };
+            #[cfg(windows)]
+            let empty = self.child.stopped()?;
+            if empty {
+                // A returned leader plus the successful native empty-group/Job
+                // proof needs no signal. Darwin correctly returns EPERM for
+                // SIGKILL to a group whose retained members are already zombies.
+                #[cfg(unix)]
+                let waited = self.child.wait();
+                #[cfg(windows)]
+                let waited = self.child.child.wait();
+                if let Err(error) = waited {
+                    let error = anyhow::Error::from(error)
+                        .context("Native checkout leader has not returned");
+                    trace_drain("leader-wait-error", Some(&error));
+                    return Err(error);
+                }
+                self.joined = true;
+                return Ok(true);
             }
         }
-        #[cfg(windows)]
-        {
-            if !self.child.stopped()? {
-                return Ok(false);
-            }
-            self.child
-                .child
-                .wait()
-                .context("Native checkout leader has not returned")?;
+        // Live or unclassified members must still be stopped. A signal error
+        // never substitutes for an exit receipt; keep ownership and re-observe.
+        if let Err(error) = self.stop() {
+            trace_drain("stop-error", Some(&error));
+            return Err(error);
         }
-        self.joined = true;
-        Ok(true)
+        trace_drain("stop-requested-awaiting-actual-return", None);
+        Ok(false)
     }
 }
 impl Drop for Owner {
