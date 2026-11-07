@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod swift_link_options;
 fn main() {
     // GPUI's main-thread view construction exceeds the MSVC 1 MiB default
     // stack in debug builds (observed by the native Windows startup smoke).
@@ -152,17 +154,12 @@ fn compile_apple_speech() {
     cc::Build::new()
         .object(&object)
         .compile("coincide_voice_speech");
-    let autolink = directory.join("voice_speech_autolink.txt");
-    let result = Command::new("xcrun")
-        .arg("swift-autolink-extract")
-        .arg(&object)
-        .arg("-o")
-        .arg(&autolink)
-        .output()
-        .expect("Extract Swift runtime requirements");
-    assert!(result.status.success(), "Swift autolink extraction failed");
-    let flags = std::fs::read_to_string(autolink).expect("Read Swift runtime requirements");
-    let mut flags = flags.split_whitespace().map(|flag| flag.trim_matches('"'));
+    // Darwin embeds autolink flags in Mach-O LC_LINKER_OPTION. The Linux
+    // swift-autolink-extract utility is not shipped by Xcode on this host.
+    let object_bytes = std::fs::read(&object).expect("Read compiled Swift object");
+    let options = swift_link_options::extract(&object_bytes)
+        .expect("Extract Darwin Swift runtime requirements");
+    let mut flags = options.iter().map(String::as_str);
     while let Some(flag) = flags.next() {
         if let Some(library) = flag.strip_prefix("-l") {
             assert!(!library.is_empty());

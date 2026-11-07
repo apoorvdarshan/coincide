@@ -3,6 +3,9 @@ mod appshots_platform;
 mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
+#[cfg(test)]
+#[path = "../swift_link_options.rs"]
+mod swift_link_options_tests;
 mod usage_history_mount;
 mod usage_history_view;
 mod voice_credentials;
