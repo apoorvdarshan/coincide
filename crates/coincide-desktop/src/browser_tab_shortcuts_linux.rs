@@ -130,6 +130,18 @@ pub(super) fn focus(view: &wry::WebView) -> Result<()> {
         .window()
         .ok_or_else(|| anyhow::anyhow!("Native browser focus window unavailable"))?;
     window.focus(gdk::ffi::GDK_CURRENT_TIME as u32);
+    // A bare Xvfb has no window manager to apply that request. Set X input
+    // focus on our own view directly so the native key reaches it.
+    use gtk::glib::translate::ToGlibPtr;
+    let xid = unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) };
+    if let Ok(owned) = u32::try_from(xid)
+        && owned > 1
+        && let Ok((connection, _)) = x11rb::connect(None)
+    {
+        use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
+        let _ = connection.set_input_focus(InputFocus::Parent, owned, x11rb::CURRENT_TIME);
+        let _ = connection.flush();
+    }
     widget.display().sync();
     Ok(())
 }
