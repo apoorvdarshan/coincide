@@ -3,15 +3,23 @@
 //! final native dispatch is the commit boundary; see the native bridge contract.
 use crate::credentials::{FillPermit, PrivateBrowserHook};
 use coincide_core::credentials::{Failure, PageBinding};
+#[path = "browser_credential_scripts.rs"]
+mod scripts;
 
 #[cfg(target_os = "macos")]
 #[path = "browser_credentials_macos.rs"]
 mod native;
 #[cfg(target_os = "macos")]
 pub use native::NativeCredentialTarget;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+#[path = "browser_credentials_linux.rs"]
+mod native_linux;
+#[cfg(target_os = "linux")]
+pub use native_linux::NativeCredentialTarget;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[derive(Clone)]
 pub struct NativeCredentialTarget;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl NativeCredentialTarget {
     pub fn new(
         _view: &wry::WebView,
@@ -22,13 +30,20 @@ impl NativeCredentialTarget {
     pub(super) fn with_lifetimes(self, _lifetimes: super::shutdown::NativeLifetimes) -> Self {
         self
     }
+    pub(super) fn poll_ownership(&self) -> bool {
+        true
+    }
 }
 pub fn credential_fill_available() -> bool {
     #[cfg(target_os = "macos")]
     {
         native::available()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        native_linux::available()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         false
     }
@@ -90,7 +105,7 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
             completion(Err(error));
             return;
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(target) = &self.target {
             target.fill(
                 binding.clone(),
@@ -102,7 +117,7 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
             );
             return;
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let _ = (&self.target, username, password, totp);
         completion(Err(Failure::Unavailable));
     }
