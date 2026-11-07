@@ -321,6 +321,16 @@ fn query_at_caret(text: &str, selection: std::ops::Range<usize>) -> Option<Strin
 pub(super) fn init(cx: &mut App) {
     capture::init(cx);
 }
+fn suggestion_key(key: keys::Key) -> crate::composer_suggestions::Key {
+    use crate::composer_suggestions::Key;
+    match key {
+        keys::Key::Up => Key::Up,
+        keys::Key::Down => Key::Down,
+        keys::Key::Enter => Key::Enter,
+        keys::Key::Tab => Key::Tab,
+        keys::Key::Escape => Key::Escape,
+    }
+}
 impl Coincide {
     fn file_reference_route(&self, cx: &Context<Self>) -> bool {
         if !self.microphone_window_active
@@ -734,8 +744,12 @@ impl Coincide {
             cx,
             Self::composer_file_bound_key,
             Self::composer_file_key,
-            |this, key, _| this.composer_files.keys.release(key),
+            |this, key, _| {
+                this.composer_files.keys.release(key);
+                this.composer_suggestions.keys.release(suggestion_key(key));
+            },
         );
+        let scope = self.composer_suggestion_surface(scope, cx);
         self.follow_up_key_scope(scope, cx)
     }
 
@@ -804,6 +818,10 @@ impl Coincide {
         }
         let decision = self.composer_files.keys.decide(key, &scope);
         match decision {
+            // The `/`, `$` and `#` list gets keys the file picker declines, with the same owner.
+            keys::Decision::Pass
+                if scope.owns_keys()
+                    && self.composer_suggestion_key(suggestion_key(key), window, cx) => {}
             keys::Decision::Pass => return,
             keys::Decision::Consume => {}
             keys::Decision::Dismiss => self.close_composer_file_picker(window, cx),

@@ -11,6 +11,72 @@ impl Render for BotDrag {
         div().child("Move bot")
     }
 }
+/// Swift's personality chip names; a personality the user wrote reads Custom.
+fn personality_name(bot: &Value) -> Option<String> {
+    let personality = bot.get("personality").filter(|value| value.is_object())?;
+    match personality["preset"].as_str().filter(|id| !id.is_empty()) {
+        Some(id) => Some(
+            match id {
+                "cheerful" => "Cheerful",
+                "calm" => "Calm & Concise",
+                "witty" => "Witty",
+                "mentor" => "Mentor",
+                "coach" => "Coach",
+                "candid" => "Straight Shooter",
+                "curious" => "Curious Explorer",
+                "professional" => "Professional",
+                "gentle" => "Gentle",
+                "creative" => "Creative",
+                other => other,
+            }
+            .to_owned(),
+        ),
+        None => personality["custom"]
+            .as_str()
+            .filter(|text| !text.trim().is_empty())
+            .map(|_| "Custom".to_owned()),
+    }
+}
+/// The bot's working folder as Swift abbreviates it, under `~`.
+fn bot_folder(bot: &Value, home: Option<&std::path::Path>) -> String {
+    let folder = bot["folder"].as_str().unwrap_or_default();
+    if folder.is_empty() || folder == "~" || folder.starts_with("~/") {
+        return if folder.is_empty() {
+            "~".into()
+        } else {
+            folder.into()
+        };
+    }
+    match home.and_then(|home| std::path::Path::new(folder).strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => folder.into(),
+    }
+}
+/// Swift's bot row tooltip: its name, personality, latest conversation, agent
+/// and model, folder and status.
+fn bot_tooltip(
+    bot: &Value,
+    name: &str,
+    latest: Option<&str>,
+    model: &str,
+    status: Option<&str>,
+    home: Option<&std::path::Path>,
+) -> String {
+    let mut lines = vec![name.to_owned()];
+    if let Some(personality) = personality_name(bot) {
+        lines.push(format!("Personality: {personality}"));
+    }
+    lines.extend(latest.map(str::to_owned));
+    lines.push(format!(
+        "{} · {model}",
+        presentation::provider_name(bot["selection"]["provider"].as_str().unwrap_or_default())
+    ));
+    lines.push(bot_folder(bot, home));
+    lines.extend(status.map(str::to_owned));
+    lines.join("\n")
+}
+
 impl Coincide {
     pub(super) fn sidebar_edit_bot(
         &mut self,
@@ -186,6 +252,50 @@ impl Coincide {
             let running = conversations
                 .iter()
                 .any(|thread| self.running.contains(&thread.id));
+            // The most pressing unseen result among its conversations: a
+            // failure shows as a badge, a finished reply as the green dot.
+            let unseen = conversations
+                .iter()
+                .filter_map(|thread| {
+                    self.sidebar_preferences.document["unseen"][&thread.id].as_str()
+                })
+                .fold(None, |strongest, kind| match strongest {
+                    Some("failed") => strongest,
+                    _ => Some(kind),
+                })
+                .filter(|_| !running);
+            let failed = unseen == Some("failed");
+            let completed = unseen.is_some() && !failed;
+            let status = if running {
+                Some("Working")
+            } else if failed {
+                Some("Failed")
+            } else if completed {
+                Some("Completed")
+            } else {
+                None
+            };
+            let selection = &bot["selection"];
+            let model_id = text(selection, "modelID");
+            let model = project_defaults_ui::catalog_model(
+                &self.selection_ui.catalog,
+                &text(selection, "provider"),
+                &model_id,
+            )
+            .and_then(|model| model["displayName"].as_str())
+            .map(str::to_owned)
+            .unwrap_or(model_id);
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from);
+            let mut tooltip = bot_tooltip(
+                bot,
+                &name,
+                latest.map(|thread| thread.title.as_str()),
+                &model,
+                status,
+                home.as_deref(),
+            );
             let age = navigation::sidebar_age(
                 latest.and_then(|thread| thread.navigation.as_ref()?.updated_at),
                 coincide_core::store::swift_timestamp(),
@@ -202,6 +312,18 @@ impl Coincide {
                 })
                 .map(|task| text(task, "name"))
                 .collect::<Vec<_>>();
+            if !active_schedules.is_empty() {
+                tooltip.push('\n');
+                tooltip.push_str(&active_schedules.join("\n"));
+            }
+            let accessibility = [Some(name.as_str()), status, Some(preview.as_str())]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ink = self.color(0xe4e9f2);
+            let theme = cx.theme();
+            let (danger, success) = (theme.danger, theme.success);
             let parent = cx.entity().downgrade();
             let past = conversations
                 .iter()
@@ -261,7 +383,8 @@ impl Coincide {
                             .justify_start()
                             .selected(selected)
                             .disabled(self.sidebar_bot_pending.is_some())
-                            .accessibility_label(format!("{name}, {preview}"))
+                            .accessibility_label(accessibility)
+                            .tooltip(tooltip)
                             .child(
                                 div()
                                     .flex()
@@ -286,9 +409,52 @@ impl Coincide {
                                                         div()
                                                             .truncate()
                                                             .text_size(px(13.))
+                                                            .font_weight(if unseen.is_some() {
+                                                                FontWeight::SEMIBOLD
+                                                            } else {
+                                                                FontWeight::MEDIUM
+                                                            })
                                                             .child(name),
                                                     )
-                                                    .child(div().text_size(px(11.)).child(age)),
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_shrink_0()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .when(failed, |row| {
+                                                                row.child(
+                                                                    div()
+                                                                        .px(px(5.))
+                                                                        .rounded_full()
+                                                                        .bg(danger.opacity(0.18))
+                                                                        .text_color(danger)
+                                                                        .text_size(px(10.))
+                                                                        .font_weight(
+                                                                            FontWeight::SEMIBOLD,
+                                                                        )
+                                                                        .child("Failed"),
+                                                                )
+                                                            })
+                                                            .when(completed, |row| {
+                                                                row.child(
+                                                                    div()
+                                                                        .size(px(7.))
+                                                                        .rounded_full()
+                                                                        .bg(success),
+                                                                )
+                                                            })
+                                                            .when(!failed, |row| {
+                                                                row.child(
+                                                                    div()
+                                                                        .text_size(px(11.))
+                                                                        .text_color(
+                                                                            ink.opacity(0.55),
+                                                                        )
+                                                                        .child(age),
+                                                                )
+                                                            }),
+                                                    ),
                                             )
                                             .child(div().truncate().text_xs().child(preview)),
                                     )
@@ -314,7 +480,7 @@ impl Coincide {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.sidebar_open_bot(click_id.clone(), false, window, cx)
                             }))
-                            .context_menu(move |mut menu, _, _| {
+                            .context_menu(move |mut menu, window, cx| {
                                 let parent_new = parent.clone();
                                 let id = menu_id.clone();
                                 menu = menu.item(PopupMenuItem::new("New Conversation").on_click(
@@ -324,18 +490,29 @@ impl Coincide {
                                         });
                                     },
                                 ));
-                                for (thread, title) in &past {
-                                    let parent = parent.clone();
-                                    let thread = thread.clone();
-                                    menu = menu.item(
-                                        PopupMenuItem::new(format!("Past Conversation: {title}"))
-                                            .on_click(move |_, window, cx| {
-                                                let _ = parent.update(cx, |this, cx| {
-                                                    this.select(&thread, window, cx)
-                                                });
-                                            }),
-                                    );
-                                }
+                                let parent_past = parent.clone();
+                                let past_rows = past.clone();
+                                menu = menu.submenu(
+                                    "Past Conversations",
+                                    window,
+                                    cx,
+                                    move |mut menu, _, _| {
+                                        for (thread, title) in &past_rows {
+                                            let parent = parent_past.clone();
+                                            let thread = thread.clone();
+                                            menu = menu.item(
+                                                PopupMenuItem::new(title.clone()).on_click(
+                                                    move |_, window, cx| {
+                                                        let _ = parent.update(cx, |this, cx| {
+                                                            this.select(&thread, window, cx)
+                                                        });
+                                                    },
+                                                ),
+                                            );
+                                        }
+                                        menu
+                                    },
+                                );
                                 if let Some((latest, _)) = past.first() {
                                     let parent = parent.clone();
                                     let latest = latest.clone();
@@ -355,6 +532,7 @@ impl Coincide {
                                         },
                                     ));
                                 }
+                                menu = menu.item(PopupMenuItem::separator());
                                 let parent_edit = parent.clone();
                                 let id = menu_id.clone();
                                 menu = menu.item(PopupMenuItem::new("Edit Bot…").on_click(
@@ -366,13 +544,13 @@ impl Coincide {
                                 ));
                                 let parent_delete = parent.clone();
                                 let id = menu_id.clone();
-                                menu.item(PopupMenuItem::new("Delete Bot…").on_click(
-                                    move |_, _, cx| {
+                                menu.item(PopupMenuItem::separator()).item(
+                                    PopupMenuItem::new("Delete Bot…").on_click(move |_, _, cx| {
                                         let _ = parent_delete.update(cx, |this, cx| {
                                             this.sidebar_bot_delete_review(id.clone(), cx)
                                         });
-                                    },
-                                ))
+                                    }),
+                                )
                             }),
                     ),
             );
@@ -416,6 +594,43 @@ pub(super) fn bot_conversations<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn bot_tooltip_lists_personality_latest_conversation_agent_folder_and_status() {
+        let home = std::path::Path::new("/Users/fixture");
+        let bot = json!({"name":"Helper","personality":{"preset":"calm"},"folder":"/Users/fixture/work/site","selection":{"provider":"claude","modelID":"sonnet"}});
+        assert_eq!(
+            bot_tooltip(
+                &bot,
+                "Helper",
+                Some("Fix the build"),
+                "Sonnet",
+                Some("Completed"),
+                Some(home)
+            ),
+            "Helper\nPersonality: Calm & Concise\nFix the build\nClaude · Sonnet\n~/work/site\nCompleted"
+        );
+        let plain = json!({"selection":{"provider":"codex","modelID":"default"},"personality":{"custom":"  "}});
+        assert_eq!(
+            bot_tooltip(&plain, "Bot", None, "default", None, Some(home)),
+            "Bot\nCodex · default\n~"
+        );
+        assert_eq!(
+            personality_name(&json!({"personality":{"custom":"Speak like a pirate"}})).as_deref(),
+            Some("Custom")
+        );
+        assert_eq!(
+            bot_folder(&json!({"folder":"~/notes"}), Some(home)),
+            "~/notes"
+        );
+        assert_eq!(
+            bot_folder(&json!({"folder":"/srv/bot"}), Some(home)),
+            "/srv/bot"
+        );
+        assert_eq!(
+            bot_folder(&json!({"folder":"/Users/fixture"}), Some(home)),
+            "~"
+        );
+    }
     #[::core::prelude::v1::test]
     fn latest_bot_routing_ignores_pinning_archived_and_other_bots_and_handles_legacy_summaries() {
         let row = |id: &str, bot: Option<&str>, date: f64, archived: bool, pinned: bool| {

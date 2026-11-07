@@ -351,6 +351,25 @@ const PALETTES: &[Palette] = &[
     },
 ];
 
+/// Swift's caption under "Open links in your default browser", naming this
+/// platform's modifier for the other destination.
+fn link_routing_caption(default_browser: bool) -> &'static str {
+    match (default_browser, cfg!(target_os = "macos")) {
+        (true, true) => {
+            "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview."
+        }
+        (true, false) => {
+            "Clicking a web link opens your default browser. Ctrl-click opens it in Coincide’s browser preview."
+        }
+        (false, true) => {
+            "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."
+        }
+        (false, false) => {
+            "Clicking a web link opens it in Coincide’s browser preview. Ctrl-click opens your default browser."
+        }
+    }
+}
+
 pub(super) fn reply_font() -> &'static str {
     #[cfg(target_os = "macos")]
     {

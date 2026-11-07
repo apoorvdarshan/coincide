@@ -20,6 +20,7 @@ use anyhow::{Context as _, Result};
 mod about_settings;
 mod app_menu;
 mod app_menu_mount;
+mod approval_banner;
 mod archive_settings;
 mod assets;
 mod bot_avatar;
@@ -29,6 +30,7 @@ mod browser_dialog_ui;
 mod browser_settings;
 mod chat_inspector;
 mod chat_layout;
+mod chat_turns;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
@@ -39,6 +41,7 @@ mod composer_follow_up_mount;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
+mod composer_suggestions;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
@@ -100,14 +103,20 @@ mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
 mod sidebar_controls;
+mod sidebar_drop;
+mod sidebar_keys;
 mod sidebar_lifecycle;
+mod sidebar_menus;
 mod sidebar_preferences;
+mod sidebar_rename;
 mod sidebar_search;
+mod sidebar_settle;
 mod terminal_context_mount;
 mod terminal_layout;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
+mod tool_detail;
 mod transcript;
 mod transcript_find;
 mod transcription_composer;
@@ -482,6 +491,8 @@ struct Coincide {
     transcript_list: ListState,
     transcript_count: usize,
     expanded: std::collections::HashSet<usize>,
+    chat_turns: chat_turns::State,
+    approval_replies: approval_banner::Replies,
     threads: Vec<ThreadSummary>,
     sidebar_all_threads: Vec<ThreadSummary>,
     sidebar_preferences: sidebar_preferences::Preferences,
@@ -489,14 +500,16 @@ struct Coincide {
     sidebar_schedules: Vec<Value>,
     sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
-    sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
+    sidebar_settle_undo: Option<Vec<sidebar_settle::SettleChange>>,
     projects: Vec<Value>,
     selected_project: Option<String>,
     expanded_sidebar_lists: std::collections::HashSet<String>,
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
-    rename_target: Option<String>,
+    sidebar_renaming: Option<sidebar_rename::Renaming>,
+    sidebar_rename_candidate: Option<String>,
+    sidebar_type_select: sidebar_keys::TypeSelect,
     rename_input: Entity<InputState>,
     archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
@@ -513,6 +526,7 @@ struct Coincide {
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
+    composer_suggestions: composer_suggestions::Suggestions,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -1052,7 +1066,9 @@ impl Coincide {
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
-        let (browser, browser_error) = match BrowserController::new(profile_dir) {
+        let (browser, browser_error) = match control::download_directory()
+            .and_then(|downloads| BrowserController::new(profile_dir, downloads))
+        {
             Ok(browser) => (Some(browser), None),
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
@@ -1228,9 +1244,10 @@ impl Coincide {
                     cx.notify();
                 },
             ),
-            cx.subscribe(&rename_input, |this, _, event, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.save_rename(cx);
+            // Return or a click elsewhere saves a sidebar rename.
+            cx.subscribe_in(&rename_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    this.end_sidebar_rename(true, window, cx);
                 }
             }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
@@ -1455,6 +1472,8 @@ impl Coincide {
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
             expanded: Default::default(),
+            chat_turns: Default::default(),
+            approval_replies: Default::default(),
             sidebar_all_threads: threads.clone(),
             show_archived: sidebar_preferences.flag("showsArchivedThreads"),
             show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
@@ -1470,7 +1489,9 @@ impl Coincide {
             expanded_sidebar_lists: std::collections::HashSet::new(),
             collapsed_projects,
             navigation_last_clock: Instant::now(),
-            rename_target: None,
+            sidebar_renaming: None,
+            sidebar_rename_candidate: None,
+            sidebar_type_select: Default::default(),
             rename_input,
             archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
@@ -1487,6 +1508,7 @@ impl Coincide {
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
+            composer_suggestions: Default::default(),
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -2088,7 +2110,6 @@ impl Coincide {
                 }
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();
-                self.rename_target = None;
                 self.archive_confirmation = None;
                 self.pending_requests.clear();
                 self.schedules.clear();
@@ -2580,6 +2601,40 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.new_thread_in_folder(project, None, window, cx);
+    }
+    /// Swift's `ThreadActions.newThread(in:basedOn:)`: a new thread in the
+    /// source thread's folder, on its branch.
+    fn new_thread_on_branch(&mut self, source: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let based = call(&self.engine, "threads.read", json!({"threadId":source})).map(|thread| {
+            let branch = text(&thread, "branch");
+            (
+                text(&thread, "projectID"),
+                open_targets::folder_of(&thread, &self.projects),
+                branch,
+            )
+        });
+        match based {
+            Ok((project, Some(folder), branch)) if !branch.is_empty() => {
+                self.new_thread_in_folder(&project, Some((folder, branch)), window, cx)
+            }
+            Ok(_) => {
+                self.status = "This conversation's folder or branch is unavailable.".into();
+                cx.notify();
+            }
+            Err(error) => {
+                self.status = format!("Conversation could not be read: {error}");
+                cx.notify();
+            }
+        }
+    }
+    fn new_thread_in_folder(
+        &mut self,
+        project: &str,
+        based_on: Option<(std::path::PathBuf, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.startup_selection_pending = false;
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
@@ -2595,14 +2650,19 @@ impl Coincide {
             cx.notify();
             return;
         }
-        let cwd = self
-            .projects
-            .iter()
-            .find(|p| p["id"].as_str() == Some(project))
-            .and_then(|p| p["path"].as_str())
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::current_dir().ok());
+        let (cwd, branch) = match based_on {
+            Some((folder, branch)) => (Some(folder), Some(branch)),
+            None => (
+                self.projects
+                    .iter()
+                    .find(|p| p["id"].as_str() == Some(project))
+                    .and_then(|p| p["path"].as_str())
+                    .filter(|path| !path.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok()),
+                None,
+            ),
+        };
         if !self.flush_pending_drafts() {
             self.status = "Save pending drafts before opening a new conversation.".into();
             cx.notify();
@@ -2610,8 +2670,11 @@ impl Coincide {
         }
         let result = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
-            let intent =
-                engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
+            let mut request = json!({"projectId":project,"cwd":cwd});
+            if let Some(branch) = &branch {
+                request["branch"] = json!(branch);
+            }
+            let intent = engine.prepare_native_new_thread(&request)?;
             engine.apply_native_new_thread(intent)
         })();
         match result {
@@ -3022,6 +3085,7 @@ impl Coincide {
         self.poll_sidebar_lifecycle(window, cx);
         self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
+        self.poll_composer_suggestions(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
@@ -3060,6 +3124,7 @@ impl Coincide {
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.composer_files.closed_and_drained()
+                && self.composer_suggestions.closed_and_drained()
             {
                 window.remove_window();
             } else if !drafts_saved {
@@ -3079,6 +3144,9 @@ impl Coincide {
                 self.show_media_shutdown(window, cx);
             } else if !self.composer_files.closed_and_drained() {
                 self.status="Closing waits for owned project-file discovery/attachment work and its receipt.".into();
+                cx.notify();
+            } else if !self.composer_suggestions.closed_and_drained() {
+                self.status = "Closing waits for the pull request list read to finish.".into();
                 cx.notify();
             } else if !self.thread_bulk.closed_and_drained() {
                 self.status = "Closing waits for the owned sidebar operation to finish and join. Committed changes retain their receipt.".into();
@@ -3211,6 +3279,15 @@ impl Coincide {
             let is_running = selected_thread
                 .as_ref()
                 .is_some_and(|id| self.running.contains(id));
+            let starting = status["starting"]
+                .as_array()
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.set_starting_runs(starting, cx);
             if was_running != is_running {
                 self.transcript_list
                     .splice(0..self.transcript_count, self.transcript_count);
@@ -3245,6 +3322,7 @@ impl Coincide {
                     self.revision = revision;
                 }
             }
+            self.tick_turn_clock(cx);
         }
         self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
@@ -3296,22 +3374,13 @@ impl Coincide {
                 });
             }
         }
+        self.sync_approval_replies(&thread, &requests, window, cx);
         if self.pending_requests != requests {
             self.pending_requests = requests;
+            // A waiting approval replaces the live line below the last row.
+            self.redraw_live_row(cx);
             cx.notify();
         }
-    }
-    fn respond_pending(&mut self, request_id: &str, decision: &str, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
-            return;
-        };
-        self.finish_pending(
-            &thread,
-            request_id,
-            "agent.respond",
-            json!({"threadId":thread,"requestId":request_id,"decision":decision}),
-            cx,
-        );
     }
     fn answer_pending(&mut self, request_id: &str, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
@@ -3378,13 +3447,18 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn pending_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn pending_pane(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.pending_requests.is_empty() {
             return None;
         }
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
+        // Approvals show one at a time in Swift's banner; questions keep their cards.
+        let banner = self.approval_banner(window, cx);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
+            if request["method"] != "item/tool/requestUserInput" {
+                continue;
+            }
             let request_id = text(request, "requestId");
             let card = div()
                 .flex()
@@ -3403,7 +3477,7 @@ impl Coincide {
                 .min_h_0()
                 .gap_2()
                 .overflow_y_scroll();
-            let actions = if request["method"] == "item/tool/requestUserInput" {
+            let actions = {
                 body = body.child(div().font_semibold().child("The agent needs your answer"));
                 for (index, question) in request["params"]["questions"]
                     .as_array()
@@ -3476,49 +3550,12 @@ impl Coincide {
                         .label("Submit answers")
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
                 )
-            } else {
-                body = body.child(div().font_semibold().child("Approval required"));
-                let mut details = request["params"].clone();
-                if let Some(object) = details.as_object_mut() {
-                    object.remove("providerFrame");
-                }
-                body = body
-                    .child(div().text_sm().child(text(request, "method")))
-                    .child(TextView::markdown(
-                        SharedString::from(format!("approval-details-{request_id}")),
-                        format!(
-                            "```json\n{}\n```",
-                            serde_json::to_string_pretty(&details).unwrap_or_default()
-                        ),
-                    ));
-                let offered = request["params"]["availableDecisions"].as_array();
-                let mut buttons = div().flex().flex_wrap().flex_shrink_0().gap_2();
-                for (decision, label) in [
-                    ("accept", "Allow once"),
-                    ("decline", "Decline"),
-                    ("cancel", "Cancel request"),
-                ] {
-                    if offered.is_some_and(|options| !options.iter().any(|v| v == decision)) {
-                        continue;
-                    }
-                    let id = request_id.clone();
-                    buttons = buttons.child(
-                        Button::new(SharedString::from(format!(
-                            "decision-{request_id}-{decision}"
-                        )))
-                        .label(label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.respond_pending(&id, decision, cx)
-                        })),
-                    );
-                }
-                div().flex_shrink_0().child(buttons)
             };
             // Only the request details scroll. Decisions stay in a separate
             // footer, reachable even when questions/options exceed the pane.
             cards.push(card.child(body).child(actions));
         }
-        Some(
+        let questions = (!cards.is_empty()).then(|| {
             div()
                 .id("pending-agent-requests")
                 .flex()
@@ -3533,6 +3570,14 @@ impl Coincide {
                     self.pending_requests.len()
                 )))
                 .children(cards)
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .children(banner)
+                .children(questions)
                 .into_any_element(),
         )
     }
@@ -3832,6 +3877,30 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn toggle_item_expanded(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().filter(|v| v["id"] == source) else {
+            return;
+        };
+        let Some(index) = thread["items"]
+            .as_array()
+            .and_then(|items| items.iter().position(|v| v["id"] == item))
+        else {
+            return;
+        };
+        if self
+            .find_revealed
+            .as_ref()
+            .is_some_and(|(thread, id, _)| thread == source && id == item)
+        {
+            self.find_revealed = None;
+            self.find_pending = None;
+            self.expanded.remove(&index);
+        } else if !self.expanded.remove(&index) {
+            self.expanded.insert(index);
+        }
+        self.transcript_list.splice(index..index + 1, 1);
+        cx.notify();
+    }
     fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self
             .selected
@@ -3865,17 +3934,25 @@ impl Coincide {
                 .is_some_and(|(thread, item, generation)| {
                     thread == &source_id && item == &item_id && *generation == self.find_generation
                 });
-        if kind == "reasoning"
-            && !find_revealed
-            && !self.settings["showReasoning"].as_bool().unwrap_or(true)
-        {
-            return div().into_any_element();
+        // Swift's turn layout: work folded under "Worked for…", rows that
+        // never draw, and headers below the messages that open or split turns.
+        // A find target stays drawn even inside a folded turn.
+        let plan = self.turn_plan(index);
+        if plan.hidden && !find_revealed {
+            return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let body = text(item, "text");
         // The active find target uses the existing expanded native body so a
         // later-line match remains visible. Clearing Find remounts the compact row.
         if kind == "notice" && !find_revealed {
-            return self.notice_row(&source_id, &item_id, body, window, cx);
+            let row = self.notice_row(&source_id, &item_id, body, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
+        }
+        if kind == "tool" && !find_revealed {
+            let item = item.clone();
+            let expanded = self.expanded.contains(&index);
+            let row = self.tool_row(&source_id, &item_id, &item, expanded, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
         }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
@@ -3966,39 +4043,19 @@ impl Coincide {
         } else {
             (Some(copy_action), None)
         };
-        let disclosure = collapsible.then(|| {
-            let source = source_id.clone();
-            let item = item_id.clone();
-            Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                .accessibility_id(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                .label(if expanded { "Collapse" } else { "Expand" })
-                .ghost()
-                .compact()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source) else {
-                        return;
-                    };
-                    let Some(index) = thread["items"]
-                        .as_array()
-                        .and_then(|items| items.iter().position(|v| v["id"] == item))
-                    else {
-                        return;
-                    };
-                    if this
-                        .find_revealed
-                        .as_ref()
-                        .is_some_and(|(thread, id, _)| thread == &source && id == &item)
-                    {
-                        this.find_revealed = None;
-                        this.find_pending = None;
-                        this.expanded.remove(&index);
-                    } else if !this.expanded.remove(&index) {
-                        this.expanded.insert(index);
-                    }
-                    this.transcript_list.splice(index..index + 1, 1);
-                    cx.notify();
-                }))
-        });
+        let disclosure =
+            collapsible.then(|| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                    .accessibility_id(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                    .label(if expanded { "Collapse" } else { "Expand" })
+                    .ghost()
+                    .compact()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_item_expanded(&source, &item, cx)
+                    }))
+            });
         let (work_disclosure, other_disclosure) = if work_header.is_some() {
             (disclosure, None)
         } else {
@@ -4209,7 +4266,7 @@ impl Coincide {
         } else {
             card.into_any_element()
         };
-        div()
+        let row = div()
             .flex()
             .w_full()
             .px(px(presentation::CONTENT_GUTTER))
@@ -4229,7 +4286,8 @@ impl Coincide {
                     )
                     .child(card),
             )
-            .into_any_element()
+            .into_any_element();
+        self.turn_decorated(index, row, plan.header, cx)
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_inspector_placeholders();
@@ -4491,6 +4549,7 @@ impl Render for Coincide {
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
         self.sync_automatic_file_mentions(window, cx);
+        self.sync_composer_suggestions(window, cx);
         if self.settings_window.is_none() {
             self.sync_keyboard_recording(window, cx);
         }
@@ -4538,7 +4597,7 @@ impl Render for Coincide {
         self.sync_inspector_browser_visibility(cx);
         let inspector_pane = self.chat_inspector_surface(window, cx);
         let pending_pane = if self.chat_visible() {
-            self.pending_pane(cx)
+            self.pending_pane(window, cx)
         } else {
             None
         };
@@ -4906,6 +4965,7 @@ fn main() -> Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             composer_file_picker::init(cx);
+            sidebar_keys::init(cx);
             composer_follow_up_mount::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
