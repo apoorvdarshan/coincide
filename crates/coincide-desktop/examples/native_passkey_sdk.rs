@@ -354,9 +354,16 @@ impl Fixture {
         }
     }
 
-    /// The evaluation's value, once it has arrived.
+    /// The evaluation's value, once it has arrived; null when the WebView dropped
+    /// its callback, so the caller asks again.
     fn value(&mut self) -> Option<Value> {
-        let value = self.read.as_ref()?.try_recv().ok()?;
+        let value = match self.read.as_ref()?.try_recv() {
+            Ok(value) => value,
+            Err(mpsc::TryRecvError::Empty) => return None,
+            // Wry's WebKitGTK view runs scripts sent before its first commit
+            // later, without their callbacks.
+            Err(mpsc::TryRecvError::Disconnected) => Value::Null,
+        };
         self.read = None;
         Some(value)
     }
