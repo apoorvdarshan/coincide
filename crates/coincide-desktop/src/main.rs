@@ -9,6 +9,8 @@ mod dictation_preview_ui_tests;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
+mod usage_dashboard;
+mod usage_dashboard_ui;
 mod usage_history_mount;
 mod usage_history_view;
 mod voice_credentials;
@@ -52,6 +54,8 @@ mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
 mod dictation_preview;
+mod diff_mount;
+mod diff_panel;
 mod draft_close;
 mod github_actions;
 mod github_review;
@@ -472,6 +476,9 @@ struct Coincide {
     inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    diff_panel: Entity<diff_panel::DiffPanel>,
+    /// The Local Git tab shows the Rust-only checkpoint and worktree tools, not the diff.
+    git_tools_open: bool,
     github_open: bool,
     github_panel: Entity<github_review::GitHubReviewPanel>,
     github_threads_panel: Entity<github_threads::GitHubThreadsPanel>,
@@ -595,6 +602,10 @@ impl Coincide {
                         .map(str::to_owned)
                 })
         });
+        self.diff_panel.update(cx, |panel, cx| {
+            panel.set_context(thread.clone(), root_hint.clone(), cx)
+        });
+        self.sync_diff_thread(false, cx);
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
@@ -1040,6 +1051,7 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let diff_panel = cx.new(|cx| diff_panel::DiffPanel::new(engine.clone(), window, cx));
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
         let github_actions =
             cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
@@ -1089,6 +1101,9 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
+                this.open_github_checkout(event, window, cx);
+            }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -1452,6 +1467,8 @@ impl Coincide {
             inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
+            diff_panel,
+            git_tools_open: false,
             github_open: false,
             github_panel,
             github_threads_panel,
@@ -2664,6 +2681,29 @@ impl Coincide {
             Err(e) => self.status = e.to_string(),
         }
     }
+    /// Swift ThreadActions.newThread(in:worktreePath:branch:) after a PR
+    /// checkout: the Engine already admitted the conversation, so only
+    /// navigation runs here. Selection is retried by ID until it reads.
+    fn open_github_checkout(
+        &mut self,
+        event: &github_review::CheckoutOpened,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.shutdown_requested {
+            return;
+        }
+        self.startup_selection_pending = false;
+        self.created_bot_thread_to_focus = Some(event.thread.clone());
+        self.schedules_open = false;
+        self.session_import_open = false;
+        self.refresh(cx);
+        self.select(&event.thread, window, cx);
+        if let Some(notice) = &event.notice {
+            self.status = notice.clone();
+        }
+        cx.notify();
+    }
     fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project_ui_admitted() {
             return;
@@ -3230,7 +3270,21 @@ impl Coincide {
             self.navigation_last_clock = Instant::now();
             cx.notify();
         }
-        self.usage_history.poll(cx);
+        // Opening Settings › Usage reads saved local history, as Swift's `appeared()`;
+        // plan limits wait for Refresh.
+        let usage_visible =
+            self.settings_open && self.settings_section == settings::SettingsSection::Usage;
+        if self
+            .usage_history
+            .dashboard
+            .appeared(usage_visible, chrono::Utc::now())
+        {
+            self.usage_history.load_dashboard();
+            cx.notify();
+        }
+        if self.usage_history.poll(cx) {
+            cx.notify();
+        }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
@@ -3306,6 +3360,9 @@ impl Coincide {
                 if self.refresh(cx) {
                     self.revision = revision;
                 }
+                self.sync_diff_thread(true, cx);
+            } else {
+                self.sync_diff_thread(false, cx);
             }
             self.tick_turn_clock(cx);
         }

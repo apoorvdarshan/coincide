@@ -1,7 +1,9 @@
-//! Typed desktop handoff only. This module never enables authority, grants a
-//! thread, requests OS permission, or invokes a native backend.
+//! Typed desktop handoff only. This module never enables authority, requests
+//! OS permission, or invokes a native backend. While the saved switch is on,
+//! any stored thread may ask, selected or not (Swift ComputerUseController).
 use super::*;
-use crate::computer_use::{Authority, Failure, MAX_REQUEST, MAX_RESULT, Request};
+use crate::computer_use::{Authority, Failure, MAX_REQUEST, MAX_RESULT, Request, SETTING};
+use crate::computer_use_bridge::Bridge;
 
 pub(super) const METHODS: &[&str] = &["computer_use.request", "computer_use.result"];
 const CAPACITY: usize = 8;
@@ -25,6 +27,7 @@ struct Operation {
 #[derive(Default)]
 pub(super) struct State {
     authority: Option<Authority>,
+    bridge: Option<Arc<Bridge>>,
     queue: VecDeque<Pending>,
     operations: HashMap<Uuid, Operation>,
 }
@@ -87,6 +90,44 @@ impl Engine {
     pub fn computer_use_unbind_authority(&mut self) {
         self.computer_use_revoke_all();
         self.computer_use.authority = None;
+        if let Some(bridge) = self.computer_use.bridge.take() {
+            bridge.stop();
+        }
+    }
+    /// Native parent only: each thread's private agent connection. Replacing
+    /// a bridge ends every capability the previous one handed out.
+    pub fn computer_use_bind_bridge(&mut self, bridge: Arc<Bridge>) {
+        if let Some(previous) = self.computer_use.bridge.replace(bridge) {
+            previous.stop();
+        }
+    }
+    /// The instructions added to a message sent in `thread`, with its private
+    /// capability; nil while Computer Use is off. Never saved as user text.
+    pub fn computer_use_runtime_context(&self, thread: Uuid) -> Option<String> {
+        if self.shutdown || !self.ui_available {
+            return None;
+        }
+        self.computer_use.authority.as_ref()?.grant(thread).ok()?;
+        Some(
+            self.computer_use
+                .bridge
+                .as_ref()?
+                .access(thread)?
+                .instructions(),
+        )
+    }
+    /// The saved switch (`computerUseEnabled`, shared with the Swift app).
+    pub fn computer_use_saved_enabled(&self) -> Result<bool> {
+        Ok(crate::computer_use::saved_enabled(
+            &self.store.document("settings.json")?.unwrap_or(Value::Null),
+        ))
+    }
+    /// Native Settings switch only; `settings.patch` refuses this key.
+    pub fn computer_use_save_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.store
+            .patch_document("settings.json", &json!({ SETTING: enabled }))?;
+        self.revision += 1;
+        Ok(())
     }
     /// Trusted provider transport entry point. The context must come from the
     /// session/transport owner; it must never be derived from JSON parameters.
@@ -147,17 +188,11 @@ impl Engine {
         );
         let thread_text = required(params, "threadId")?;
         let thread = Uuid::parse_str(thread_text).context("Invalid Computer Use thread ID")?;
-        let selected = self
-            .active_thread
-            .as_deref()
-            .context("Select a stored thread before using Computer Use")?;
-        ensure!(
-            Uuid::parse_str(selected).ok() == Some(thread),
-            "Select this stored thread before using Computer Use"
-        );
-        // Preserve the Store's original ID spelling (legacy UUIDs are often
-        // uppercase); transport/native identities compare as typed UUIDs.
-        self.store.thread(selected)?;
+        // Legacy UUIDs are often uppercase; identities compare as typed UUIDs.
+        // Background threads may ask too, as in the Swift app.
+        self.store
+            .resolve_thread_id(thread)?
+            .context("Computer Use thread not found")?;
         ensure!(
             trusted_thread.is_none_or(|trusted| trusted == thread),
             "Computer Use payload does not match the trusted transport thread"
@@ -254,20 +289,6 @@ impl Engine {
             self.computer_use_shutdown();
             return Vec::new();
         }
-        let selected = self
-            .active_thread
-            .as_deref()
-            .and_then(|id| Uuid::parse_str(id).ok());
-        let stale = self
-            .computer_use
-            .queue
-            .iter()
-            .filter(|queued| Some(queued.thread) != selected)
-            .map(|queued| queued.thread)
-            .collect::<Vec<_>>();
-        for thread in stale {
-            self.computer_use_revoke(thread);
-        }
         self.computer_use.queue.drain(..).collect()
     }
     /// Native owner only; no JSON route accepts replies or authority changes.
@@ -311,11 +332,15 @@ impl Engine {
             self.revision += 1;
         }
     }
-    /// Trusted selection transition: revoke the old grant synchronously, even
-    /// when desktop polling never observes an intermediate selected thread.
-    pub(super) fn computer_use_selection_changed(&mut self, thread: Uuid) {
+    /// A thread was deleted, archived or moved: end its epoch and private
+    /// connection synchronously. A later message in a surviving thread gets a
+    /// fresh capability; selecting another thread revokes nothing.
+    pub(super) fn computer_use_thread_removed(&mut self, thread: Uuid) {
         if let Some(authority) = self.computer_use.authority.as_ref() {
             authority.native_revoke(thread);
+        }
+        if let Some(bridge) = self.computer_use.bridge.as_ref() {
+            bridge.disable(thread);
         }
         self.computer_use_revoke(thread);
     }
@@ -378,7 +403,7 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn local_owner_requires_selected_stored_thread_and_typed_payload_cannot_grant() {
+    fn disabled_authority_refuses_every_thread_and_typed_payload_cannot_grant() {
         let (_dir, mut e, a, b) = fixture();
         let authority = e.computer_use.authority.as_ref().unwrap().clone();
         authority.native_enable(false);
@@ -473,15 +498,67 @@ mod tests {
         e.active_thread = Some(ninth.clone());
         assert!(e.execute("computer_use.request", &request(&ninth)).is_err());
         assert_eq!(e.computer_use.operations.len(), CAPACITY);
-        // Selection changed: stale queued work is completed revoked rather than
-        // dispatched under another selected thread's current UI context.
-        assert!(e.computer_use_drain().is_empty());
+        // Background threads' queued work still runs after selection moves on.
+        let drained = e.computer_use_drain();
+        assert_eq!(drained.len(), CAPACITY);
+        assert!(
+            e.computer_use_drain().is_empty(),
+            "drained work is never replayed"
+        );
         assert!(
             e.computer_use
                 .operations
                 .values()
-                .all(|op| matches!(op.result.as_ref(), Some(Err(Failure::Revoked))))
+                .all(|op| op.result.is_none())
         );
+    }
+    #[test]
+    fn background_thread_is_admitted_and_removed_or_unknown_threads_are_refused() {
+        let (_dir, mut e, a, b) = fixture();
+        assert_eq!(e.active_thread.as_deref(), Some(a.as_str()));
+        let id = admit(&mut e, &b);
+        assert_eq!(
+            e.computer_use_drain()[0].thread,
+            Uuid::parse_str(&b).unwrap()
+        );
+        let unknown = Uuid::new_v4().to_string();
+        assert!(
+            e.execute("computer_use.request", &request(&unknown))
+                .is_err()
+        );
+        let thread = Uuid::parse_str(&b).unwrap();
+        let authority = e.computer_use.authority.clone().unwrap();
+        let stamp = authority.grant(thread).unwrap();
+        e.computer_use_thread_removed(thread);
+        assert_ne!(authority.grant(thread), Ok(stamp), "removal ends the epoch");
+        assert_eq!(
+            e.execute("computer_use.result", &result(&b, id)).unwrap()["error"],
+            "revoked"
+        );
+    }
+    #[test]
+    fn saved_switch_is_native_only() {
+        let (_dir, mut e, _, _) = fixture();
+        assert!(!e.computer_use_saved_enabled().unwrap());
+        assert!(
+            e.execute(
+                "settings.patch",
+                &json!({"patch":{"computerUseEnabled":true}})
+            )
+            .is_err()
+        );
+        assert!(!e.computer_use_saved_enabled().unwrap());
+        e.computer_use_save_enabled(true).unwrap();
+        assert!(e.computer_use_saved_enabled().unwrap());
+        // Unrelated patches, and patches repeating the saved value, still work.
+        e.execute(
+            "settings.patch",
+            &json!({"patch":{"computerUseEnabled":true,"appearance":"dark"}}),
+        )
+        .unwrap();
+        assert!(e.computer_use_saved_enabled().unwrap());
+        e.computer_use_save_enabled(false).unwrap();
+        assert!(!e.computer_use_saved_enabled().unwrap());
     }
     #[test]
     fn replies_and_collection_require_exact_operation_and_thread() {

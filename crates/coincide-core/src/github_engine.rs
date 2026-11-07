@@ -28,7 +28,7 @@ impl GithubState {
             std::env::var_os("PATH").as_deref(),
         )
     }
-    fn configured(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Self {
+    pub(super) fn configured(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Self {
         match resolve(explicit, search).and_then(GhRunner::new) {
             Ok(runner) => Self {
                 service: Some(GithubService::new(runner)),
