@@ -143,12 +143,24 @@ jobs:
           set -o pipefail
           target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
           grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      - name: Build synthetic native passkey executable
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify Bitwarden passkey sign-in in a real WKWebView on a fresh macOS runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (bitwarden-sign-in)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native macOS credential SDK evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-native-fill-sdk
-          path: ${{ runner.temp }}/native-fill-sdk.log
+          path: |
+            ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
@@ -241,6 +253,17 @@ jobs:
           & target/debug/examples/native_credential_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-fill-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-fill-sdk.log" -SimpleMatch 'synthetic native fill: PASS')) { throw 'Expected actual native private fill and callback-owner return' }
+      - name: Build synthetic native passkey executable
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          & target/debug/examples/native_passkey_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-passkey-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-passkey-sdk.log" -SimpleMatch 'synthetic native passkeys: PASS (webview2-native)')) { throw 'Expected WebView2 to give the owned https page its WebAuthn API' }
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
@@ -253,6 +276,7 @@ jobs:
             ${{ runner.temp }}/windows-native-ui
             ${{ runner.temp }}/native-host-toast-*.log
             ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -401,6 +425,21 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
           grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      - name: Build synthetic native passkey executable
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebKitGTK's missing WebAuthn API on a fresh Linux runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence
@@ -411,4 +450,5 @@ jobs:
           path: |
             ${{ runner.temp }}/linux-native-ui
             ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn

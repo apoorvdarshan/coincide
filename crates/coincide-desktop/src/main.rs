@@ -25,6 +25,7 @@ mod assets;
 mod bot_settings;
 mod browser;
 mod browser_dialog_ui;
+mod browser_passkey_ui;
 mod browser_settings;
 mod chat_inspector;
 mod chat_layout;
@@ -1000,10 +1001,14 @@ impl Coincide {
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
         let session_import_panel =
             cx.new(|cx| session_import::SessionImportPanel::new(engine.clone(), window, cx));
-        // Discovery checks executable metadata only. Vault reads require a
-        // password-manager button click in this native panel.
+        // Discovery checks executable metadata only. Vault reads for filling
+        // require a password-manager button click in this native panel; a page's
+        // passkey request lists Bitwarden's passkeys only while "Use passkeys
+        // from Bitwarden" is on and Bitwarden is unlocked (browser_passkeys.rs).
+        let credential_sources = credential_settings::installed_sources();
+        let passkey_vault = credential_settings::bitwarden_passkeys(&credential_sources);
         let (credential_settings, credential_jobs) =
-            credential_settings::CredentialSettings::new(credential_settings::installed_sources());
+            credential_settings::CredentialSettings::new(credential_sources);
         let credential_panel = cx.new(|_| credential_settings);
         let mut browser_profile_requests = None;
         let browser_settings_panel = cx.new(|cx| {
@@ -1045,7 +1050,11 @@ impl Coincide {
         let browser_address =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
         let (browser, browser_error) = match BrowserController::new(profile_dir) {
-            Ok(browser) => (Some(browser), None),
+            Ok(mut browser) => {
+                // `bw` runs only after a page asks and, for the key, after Sign In.
+                browser.set_passkey_vault(passkey_vault);
+                (Some(browser), None)
+            }
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
         if let Ok(mut engine) = engine.try_lock() {
@@ -1724,6 +1733,9 @@ impl Coincide {
         for request in requests {
             browser.execute(request, window, cx);
         }
+        changed |= browser.set_passkey_preferences(browser::passkeys::Preferences::from_settings(
+            &self.settings,
+        ));
         changed |= browser.poll(window, cx);
         if close_visible_last_tab
             && selected_id
@@ -1842,6 +1854,7 @@ impl Coincide {
             .collect::<Vec<_>>();
         let active_id = active.as_ref().map(|tab| text(tab, "id"));
         let dialog_banner = self.browser_dialog_banner(cx);
+        let passkey_banner = self.browser_passkey_banner(cx);
         Some(
             div()
                 .flex()
@@ -1939,6 +1952,7 @@ impl Coincide {
                         .child(url),
                 )
                 .children(dialog_banner)
+                .children(passkey_banner)
                 .child(
                     div()
                         .flex_1()

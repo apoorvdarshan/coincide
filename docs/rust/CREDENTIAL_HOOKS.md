@@ -4,7 +4,7 @@
 an acknowledged private sink. It is compiled by the desktop integration test
 harness and mounted in main.rs/browser.rs. The macOS WebKit bridge has passed
 synthetic native renderer acceptance; see [the evidence](NATIVE_CREDENTIAL_ACCEPTANCE.md).
-Native manager/approval visual acceptance remains separate. Passkeys remain unavailable.
+Native manager/approval visual acceptance remains separate. Passkeys are separate; see PASSKEYS.md.
 
 Owner integration steps:
 

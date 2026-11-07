@@ -24,6 +24,7 @@ pub mod credentials;
 pub mod dictation;
 pub mod local_usage;
 pub mod organization;
+pub mod passkeys;
 pub mod platform_host;
 pub mod remote;
 pub mod usage_history;

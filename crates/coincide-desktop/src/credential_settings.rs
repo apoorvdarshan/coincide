@@ -7,6 +7,7 @@ use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use coincide_core::credentials::{
     CliCommand, Failure, Login, Manager, PageBinding, Status, Vault, VaultCommand,
 };
+use coincide_core::passkeys::{BitwardenPasskeys, PasskeyVault};
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window,
     component::{Disableable, button::Button},
@@ -54,6 +55,16 @@ pub fn installed_sources() -> Vec<CredentialSource> {
                 })
         })
         .collect()
+}
+/// The browser's Bitwarden passkeys, through the same discovered `bw` as
+/// password filling. Nothing runs until a page asks for a passkey.
+pub fn bitwarden_passkeys(
+    sources: &[CredentialSource],
+) -> Option<Arc<dyn PasskeyVault + Send + Sync>> {
+    let source = sources
+        .iter()
+        .find(|source| source.manager == Manager::Bitwarden)?;
+    Some(Arc::new(BitwardenPasskeys::new(source.command.clone())))
 }
 #[derive(Clone)]
 struct Account {
@@ -581,7 +592,7 @@ impl Render for CredentialSettings {
         if let Some(pending) = &self.approval {
             panel = panel.child(pending.view.clone());
         }
-        panel.child("Bitwarden uses its current CLI account; switching Bitwarden accounts is not supported here. 1Password reads are scoped to the selected account. Passkeys are not supported in the Rust preview.")
+        panel.child("Bitwarden uses its current CLI account; switching Bitwarden accounts is not supported here. 1Password reads are scoped to the selected account. Passkeys come from Bitwarden only; see Passkeys below.")
     }
 }
 
