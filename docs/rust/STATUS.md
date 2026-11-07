@@ -988,10 +988,13 @@ Implemented foundations are deliberately narrower than full feature groups:
   on macOS, Windows and Linux; password, credential, one-time-code and card
   fields are hidden and redacted. The panel must be shown; Linux refuses full
   pages beyond its native surface budget. A fresh-runner fixture checks pixels
-  on all three; only main-document fields (with open shadow roots) are masked. Native downloads have bounded,
-  thread-scoped session history and private verified destinations on Mac. Linux
-  downloads fail closed because upstream shared-profile callbacks misattribute tabs.
-  Progress/cancel/resume, blob downloads and persistent history remain. Same-origin
+  on all three; only main-document fields (with open shadow roots) are masked.
+  Native downloads have bounded,
+  thread-scoped session history and verified destinations in a fresh folder under
+  ~/Downloads/Coincide. Every host owns exact native objects (WKDownload, WebView2
+  download operations, WebKitGTK downloads) with per-object receipts, including
+  document-origin blob downloads; closing a tab cancels its transfers and waits for
+  the native outcome. Progress/explicit cancel/resume and persistent history remain. Same-origin
   nested frames have expiring handles; read/click/input/type/scroll reject stale
   ancestors. Native srcdoc navigation works while public navigation stays HTTP(S).
   Console captures bounded primitive-only diagnostics with per-tab clearing. Native

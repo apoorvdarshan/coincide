@@ -367,9 +367,10 @@ pub const CONSOLE_SCRIPT: &str = r#"
 })();
 "#;
 
-/// Native download callbacks do not provide an ID on macOS. Permit only one
-/// accepted transfer per (thread, tab, URL), and account for callbacks from
-/// rejected starts before accepting that URL again. Never expose request URLs.
+/// URL-only callbacks carry no transfer ID. Permit only one accepted transfer per
+/// (thread, tab, URL) there, and account for callbacks from rejected starts before
+/// accepting that URL again. Native object adapters use receipts instead. Never
+/// expose request URLs.
 pub struct DownloadRegistry {
     directory: std::path::PathBuf,
     records: Vec<DownloadRecord>,
@@ -399,6 +400,19 @@ impl NativeDownloadReceipt {
     pub fn destination(&self) -> &std::path::Path {
         &self.destination
     }
+    /// The same file in Win32 syntax when that cannot change its meaning, for
+    /// SDKs that reject verbatim paths. Other hosts return the destination.
+    pub fn native_destination(&self) -> std::path::PathBuf {
+        public_path(&self.destination)
+    }
+}
+/// Actual terminal native outcome for one retained download object. Cancelled
+/// means the native SDK confirmed a cancellation this app requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeDownloadOutcome {
+    Finished,
+    Failed,
+    Cancelled,
 }
 /// Blob downloads remain document-scoped; this does not broaden public navigation.
 pub fn validate_native_download(address: &str, document: &str) -> Result<()> {
@@ -415,20 +429,18 @@ pub fn validate_native_download(address: &str, document: &str) -> Result<()> {
     }
 }
 impl DownloadRegistry {
+    /// The root is created on the first accepted download, like Swift's
+    /// ~/Downloads/Coincide, so opening the browser never adds an empty folder.
     pub fn new(directory: std::path::PathBuf) -> Result<Self> {
         ensure!(
             directory.is_absolute(),
             "Download directory must be absolute"
         );
-        std::fs::create_dir_all(&directory)?;
-        require_download_directory(&directory)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        if std::fs::symlink_metadata(&directory).is_ok() {
+            require_download_directory(&directory)?;
         }
         Ok(Self {
-            directory: directory.canonicalize()?,
+            directory,
             records: Vec::new(),
             rejected: Default::default(),
             last_errors: Default::default(),
@@ -489,16 +501,47 @@ impl DownloadRegistry {
         }
         result
     }
-    pub fn complete_native(&mut self, receipt: &NativeDownloadReceipt, success: bool) {
-        if self.directory == receipt.root {
-            self.complete(
-                &receipt.thread,
-                &receipt.tab,
-                &receipt.key,
-                Some(&receipt.destination),
-                success,
-            );
+    pub fn complete_native(
+        &mut self,
+        receipt: &NativeDownloadReceipt,
+        outcome: NativeDownloadOutcome,
+    ) {
+        if self.directory != receipt.root {
+            return;
         }
+        if outcome == NativeDownloadOutcome::Cancelled {
+            if let Some(record) = self.records.iter_mut().find(|record| {
+                record.thread == receipt.thread
+                    && record.tab == receipt.tab
+                    && record.url == receipt.key
+                    && matches!(record.state, "downloading" | "unconfirmed")
+            }) {
+                record.state = "cancelled";
+                record.error = Some(
+                    "Cancelled because its tab or the browser closed. Any partial file is left in its download folder."
+                        .into(),
+                );
+            }
+            return;
+        }
+        self.complete(
+            &receipt.thread,
+            &receipt.tab,
+            &receipt.key,
+            Some(&receipt.destination),
+            outcome == NativeDownloadOutcome::Finished,
+        );
+    }
+    /// Create the private root on demand; downloads never follow a symlinked root.
+    fn root(&self) -> Result<std::path::PathBuf> {
+        std::fs::create_dir_all(&self.directory)?;
+        require_download_directory(&self.directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.directory, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(self.directory.canonicalize()?)
     }
     fn reserve(
         &mut self,
@@ -543,9 +586,8 @@ impl DownloadRegistry {
                 ensure!(removable.is_some(), "Download history is full");
                 self.records.remove(removable.expect("checked record"));
             }
-            require_download_directory(&self.directory)?;
             let id = uuid::Uuid::new_v4().to_string();
-            let folder = self.directory.join(&id);
+            let folder = self.root()?.join(&id);
             let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             {
@@ -626,7 +668,12 @@ impl DownloadRegistry {
                 Some("Native browser reported that the download failed or was cancelled.".into());
             return;
         }
-        match finish_download(&self.directory, &record.destination) {
+        match self
+            .directory
+            .canonicalize()
+            .map_err(anyhow::Error::from)
+            .and_then(|root| finish_download(&root, &record.destination))
+        {
             Ok(()) => {
                 record.state = "finished";
                 record.error = None;
@@ -652,15 +699,57 @@ impl DownloadRegistry {
     pub fn list(&self, thread: &str, tab: Option<&str>) -> Value {
         let downloads=self.records.iter().filter(|r|r.thread==thread && tab.is_none_or(|tab|r.tab==tab)).map(|r| {
             let mut value=serde_json::json!({"id":r.id,"tab":r.tab,"state":r.state,"name":r.destination.file_name().map(|name|name.to_string_lossy())});
-            if r.state=="finished" {value["path"]=serde_json::json!(r.destination);}
+            if r.state=="finished" {value["path"]=serde_json::json!(public_path(&r.destination));}
             if let Some(error)=&r.error {value["error"]=serde_json::json!(error.chars().take(2000).collect::<String>());}
             value
         }).collect::<Vec<_>>();
         serde_json::json!({"downloads":downloads,"acceptingDownloads":!self.correlation_exhausted,
             "lastError":self.last_errors.iter().find(|(owner,_)|owner==thread).map(|(_,error)|error),
             "pendingCancellationCallbacks":self.rejected.iter().filter(|((owner,owner_tab,_),_)|owner==thread && tab.is_none_or(|tab|owner_tab==tab)).map(|(_,count)|u64::from(*count)).sum::<u64>(),
-            "limitations":["No progress bytes, cancellation or resume API","Files and partial downloads remain on disk; history is session-only","HTTP(S); native object adapters additionally support document-origin blob downloads; at most 8 active and 50 retained records","Missing cancellation callbacks can block same-URL retries in a tab"]})
+            "limitations":["No progress bytes, cancellation or resume API; closing a tab cancels its downloads","Files and partial downloads remain on disk; history is session-only","HTTP(S) and document-origin blob downloads; at most 8 active and 50 retained records","A closed tab's download stays unconfirmed until the native browser reports its outcome"]})
     }
+}
+
+/// Published and SDK paths. Windows canonical roots are verbatim (`\\?\C:\…`);
+/// agents and WebView2 get the Win32 spelling when it names the same file.
+fn public_path(path: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    if let Some(simplified) = path.to_str().and_then(win32_path) {
+        return simplified.into();
+    }
+    path.to_owned()
+}
+/// Win32 spelling of a verbatim drive or UNC path, or None when Win32 path
+/// normalization or MAX_PATH could change which file it names.
+#[cfg(any(windows, test))]
+fn win32_path(path: &str) -> Option<String> {
+    let simplified = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        let drive = path.strip_prefix(r"\\?\")?;
+        let bytes = drive.as_bytes();
+        if !(bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && &bytes[1..3] == br":\") {
+            return None;
+        }
+        drive.to_owned()
+    };
+    let mut parts = simplified.trim_start_matches('\\').split('\\').skip(1);
+    let unchanged = parts.all(|part| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !part.ends_with(['.', ' '])
+            && !part.contains('/')
+            && !windows_reserved_name(part)
+    });
+    (unchanged && simplified.encode_utf16().count() < 260).then_some(simplified)
+}
+fn windows_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
 /// Server-supplied suggestions are filenames, never trusted paths. Match both
@@ -676,12 +765,7 @@ pub fn download_filename(suggestion: &str) -> String {
     if name.is_empty() {
         return "download".into();
     }
-    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
-    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
-    {
+    if windows_reserved_name(&name) {
         name.insert(0, '_');
     }
     name
@@ -1020,6 +1104,32 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn win32_download_paths_only_drop_a_prefix_that_cannot_change_the_file() {
+        let id = "0b9c6f5e-6a0b-4b8e-9d0e-0f1a2b3c4d5e";
+        assert_eq!(
+            win32_path(&format!(
+                r"\\?\C:\Users\me\Downloads\Coincide\{id}\report.csv"
+            ))
+            .as_deref(),
+            Some(format!(r"C:\Users\me\Downloads\Coincide\{id}\report.csv").as_str())
+        );
+        assert_eq!(
+            win32_path(r"\\?\UNC\server\share\Coincide\report.csv").as_deref(),
+            Some(r"\\server\share\Coincide\report.csv")
+        );
+        for path in [
+            r"C:\already\win32.txt".to_owned(),
+            r"\\?\GLOBALROOT\Device\file.txt".to_owned(),
+            r"\\?\C:\Users\me\trailing.\report.csv".to_owned(),
+            r"\\?\C:\Users\me\space \report.csv".to_owned(),
+            r"\\?\C:\Users\me\CON\report.csv".to_owned(),
+            r"\\?\C:\Users\me\..\report.csv".to_owned(),
+            format!(r"\\?\C:\{}\report.csv", "a".repeat(250)),
+        ] {
+            assert_eq!(win32_path(&path), None, "{path}");
+        }
+    }
     #[test]
     fn console_only_accepts_bounded_diagnostics_and_strips_url_credentials() {
         let mut console = BrowserConsole::default();

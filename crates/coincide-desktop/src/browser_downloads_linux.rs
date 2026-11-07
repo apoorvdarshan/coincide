@@ -3,7 +3,8 @@
 use super::shutdown::{CallbackAck, Callbacks, NativeLease};
 use anyhow::{Context, Result};
 use coincide_core::browser_protocol::{
-    DownloadRegistry, NativeDownloadReceipt, allow_native_navigation, validate_native_download,
+    DownloadRegistry, NativeDownloadOutcome, NativeDownloadReceipt, allow_native_navigation,
+    validate_native_download,
 };
 use gtk::glib::{
     self, SignalHandlerId,
@@ -59,7 +60,7 @@ struct Transfer {
 }
 impl Owner {
     pub(super) fn install(
-        view: &wry::WebView,
+        view: &gpui_webview::WebView,
         thread: &str,
         tab: &str,
         registry: Rc<RefCell<DownloadRegistry>>,
@@ -68,7 +69,7 @@ impl Owner {
         navigation: Arc<AtomicU64>,
         changed: impl Fn() + 'static,
     ) -> Result<Rc<Self>> {
-        let view = view.webview();
+        let view = view.raw().webview();
         let context = view
             .context()
             .context("Native download context unavailable")?;
@@ -342,16 +343,12 @@ impl Transfer {
             self.cancel();
             return;
         };
+        // A response download briefly makes its own URL the view's active URI,
+        // so the navigation epoch, not the URI, proves the initiating page remains.
         if self.receipt.borrow().is_some()
             || self.cancelled.get()
             || !owner.admitting()
             || owner.navigation.load(Ordering::Acquire) != self.epoch
-            || owner
-                .weak_view
-                .upgrade()
-                .and_then(|view| view.uri())
-                .as_deref()
-                != Some(self.source.as_str())
             || self.download.web_view() != owner.weak_view.upgrade()
         {
             self.cancel();
@@ -380,7 +377,10 @@ impl Transfer {
                     self.download.set_allow_overwrite(false);
                     self.download.set_destination(&destination);
                 } else {
-                    owner.registry.borrow_mut().complete_native(&receipt, false);
+                    owner
+                        .registry
+                        .borrow_mut()
+                        .complete_native(&receipt, NativeDownloadOutcome::Failed);
                     self.cancel();
                 }
             }
@@ -394,10 +394,19 @@ impl Transfer {
         }
         if let Some(owner) = self.owner.upgrade() {
             if let Some(receipt) = self.receipt.borrow_mut().take() {
+                // WebKitGTK emits finished after every outcome; only an accepted
+                // transfer is cancelled after its receipt, when its tab closes.
+                let outcome = if self.cancelled.get() {
+                    NativeDownloadOutcome::Cancelled
+                } else if self.failed.get() {
+                    NativeDownloadOutcome::Failed
+                } else {
+                    NativeDownloadOutcome::Finished
+                };
                 owner
                     .registry
                     .borrow_mut()
-                    .complete_native(&receipt, !self.failed.get() && !self.cancelled.get());
+                    .complete_native(&receipt, outcome);
             }
             (owner.changed)();
         }
