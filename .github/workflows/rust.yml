@@ -200,7 +200,7 @@ jobs:
         run: |
           cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- transcript_links:: composer_plan_card:: turn_changes:: chat_rewind:: --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/chat-actions-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Select-String -Path "$env:RUNNER_TEMP/chat-actions-tests.log" -SimpleMatch 'test result: ok. 14 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly fourteen chat action logic tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/chat-actions-tests.log" -SimpleMatch 'test result: ok. 15 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly fifteen chat action logic tests' }
       - name: Test opted-in Computer Use with inert constructors and fake backends only
         shell: pwsh
         run: |
@@ -336,7 +336,7 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- transcript_links:: composer_plan_card:: turn_changes:: chat_rewind:: --nocapture | tee "$RUNNER_TEMP/chat-actions-tests.log"
-          grep -F 'test result: ok. 14 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/chat-actions-tests.log"
+          grep -F 'test result: ok. 15 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/chat-actions-tests.log"
       - name: Build actual Linux native application
         run: cargo build -p coincide-desktop --features native-microphone,native-notifications,native-computer-use --locked
       - name: Test actual owned X11 Computer Use on a private desktop
