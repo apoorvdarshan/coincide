@@ -129,7 +129,7 @@ mod tests {
             .unwrap()
             .execute("INSERT INTO imported_threads(id) VALUES(?1)", [&imported])
             .unwrap();
-        let original = b"synthetic original profile bytes";
+        let original = br#"{ "version": 1, "accounts": {}, "syntheticOriginal": true }"#;
         store
             .connection_mut()
             .unwrap()
