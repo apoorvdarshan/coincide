@@ -144,6 +144,15 @@ pub fn parse_date(value: &Value) -> Result<DateTime<Utc>> {
         .context("Invalid schedule date")
 }
 
+/// The host's IANA time zone, as Swift's TimeZone.current names it, or UTC
+/// when the system doesn't report one chrono-tz knows.
+pub fn local_time_zone() -> String {
+    iana_time_zone::get_timezone()
+        .ok()
+        .filter(|zone| zone.parse::<Tz>().is_ok())
+        .unwrap_or_else(|| "UTC".into())
+}
+
 /// Parse minute-precision editor input using the same DST policy as recurrence.
 /// A spring gap advances to the first valid minute; a fold chooses its first occurrence.
 pub fn parse_local_datetime(date: &str, time: &str, zone: &str) -> Result<DateTime<Utc>> {

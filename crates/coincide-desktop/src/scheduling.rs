@@ -4,20 +4,43 @@ use super::*;
 use coincide_core::scheduling::{
     Recurrence, format_local_datetime, parse_date, parse_local_datetime,
 };
+use gpui_kit::{
+    assets::IconName as Symbol,
+    component::{
+        checkbox::Checkbox,
+        input::{Enter, Escape},
+        menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
+        tooltip::Tooltip,
+    },
+};
 
 #[path = "scheduling_list.rs"]
 mod list;
-use list::{same_schedule_target, schedule_guard_snapshot, schedule_visible};
+use list::{
+    Owner, ScheduleFilter, Tone, same_schedule_target, schedule_guard_snapshot, schedule_visible,
+};
 
+/// Swift ScheduledTaskEditor's Repeat menu, in its order and words.
 const KINDS: &[(&str, &str)] = &[
     ("once", "Once"),
     ("daily", "Daily"),
-    ("weekly", "Weekly"),
     ("weekdays", "Weekdays"),
-    ("days", "Selected days"),
-    ("interval", "Interval"),
-    ("cron", "Cron"),
+    ("weekly", "Weekly"),
+    ("days", "On Selected Days"),
+    ("interval", "Every…"),
+    ("cron", "Custom (cron)"),
 ];
+/// Every…'s units, in minutes.
+const UNITS: [(u64, &str); 3] = [(1, "Minutes"), (60, "Hours"), (1440, "Days")];
+/// What a schedule row's hover buttons, click and context menu do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowAction {
+    Open,
+    TogglePause,
+    RunNow,
+    Edit,
+    Delete,
+}
 const DAYS: &[(u32, &str)] = &[
     (2, "Mon"),
     (3, "Tue"),
@@ -46,6 +69,18 @@ pub(super) struct ScheduleEditor {
     kind: String,
     weekday: u32,
     days: Vec<u32>,
+    /// Index into UNITS for Every….
+    interval_unit: usize,
+    /// The editor's Paused checkbox, and the schedule's state when it opened.
+    paused: bool,
+    baseline_paused: bool,
+    /// What the panel lists, and whether the saved choice has been read.
+    view_filter: ScheduleFilter,
+    filter_loaded: bool,
+    /// The row under the pointer shows its actions in place of its badge.
+    hovered: Option<String>,
+    /// The minute the rows last said "Next: …" for (Swift's 60 s timer).
+    rendered_minute: i64,
     name: Entity<InputState>,
     prompt: Entity<TextareaState>,
     date: Entity<InputState>,
@@ -96,7 +131,7 @@ impl ScheduleEditor {
             thread_id: String::new(),
             all_conversations: false,
             scope_epoch: 0,
-            filter: cx.new(|cx| InputState::new(window, cx).placeholder("Filter schedules")),
+            filter: cx.new(|cx| InputState::new(window, cx).placeholder("Search schedules")),
             editing_global: false,
             baseline_target: Value::Null,
             target_label: String::new(),
@@ -106,9 +141,16 @@ impl ScheduleEditor {
             baseline_recurrence: json!({}),
             original_date: String::new(),
             original_time: String::new(),
-            kind: "once".into(),
+            kind: "daily".into(),
             weekday: 2,
             days: vec![2, 3, 4, 5, 6],
+            interval_unit: 0,
+            paused: false,
+            baseline_paused: false,
+            view_filter: ScheduleFilter::All,
+            filter_loaded: false,
+            hovered: None,
+            rendered_minute: 0,
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Schedule name")),
             prompt: cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -120,7 +162,7 @@ impl ScheduleEditor {
             zone: cx.new(|cx| {
                 InputState::new(window, cx).placeholder("IANA time zone, e.g. Asia/Kolkata")
             }),
-            interval: cx.new(|cx| InputState::new(window, cx).placeholder("Minutes between runs")),
+            interval: cx.new(|cx| InputState::new(window, cx).placeholder("30")),
             cron: cx.new(|cx| InputState::new(window, cx).placeholder("0 9 * * 1-5")),
             preview: String::new(),
             preview_key: None,
@@ -153,14 +195,14 @@ impl ScheduleEditor {
             value["weekdays"] = json!(self.days);
         }
         if self.kind == "interval" {
-            value["intervalMinutes"] = json!(
-                self.interval
-                    .read(cx)
-                    .value()
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| anyhow::anyhow!("Enter an interval in whole minutes"))?
-            );
+            let count = self
+                .interval
+                .read(cx)
+                .value()
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| anyhow::anyhow!("Enter a whole number for the interval"))?;
+            value["intervalMinutes"] = json!(count.saturating_mul(UNITS[self.interval_unit].0));
         }
         if self.kind == "cron" {
             value["cron"] = json!(self.cron.read(cx).value().trim());
@@ -194,6 +236,7 @@ impl ScheduleEditor {
             self.time.read(cx).value().as_ref(),
             self.zone.read(cx).value().as_ref(),
             self.interval.read(cx).value().as_ref(),
+            self.interval_unit,
             self.cron.read(cx).value().as_ref()
         ])
     }
@@ -203,32 +246,30 @@ impl ScheduleEditor {
             return;
         }
         self.preview_key = Some(key);
+        // Swift's preview: "Every day at 09:00. Next: a, b and c".
         let result = (|| -> Result<String> {
-            let recurrence: Recurrence = serde_json::from_value(self.recurrence(cx)?)?;
-            let mut after = parse_date(&json!(coincide_core::store::swift_timestamp()))?;
+            let value = self.recurrence(cx)?;
+            let recurrence: Recurrence = serde_json::from_value(value.clone())?;
+            let now = parse_date(&json!(coincide_core::store::swift_timestamp()))?;
+            let local = coincide_core::scheduling::local_time_zone();
+            let mut after = now;
             let mut dates = Vec::new();
             for _ in 0..3 {
                 let Some(next) = recurrence.next_after(after)? else {
                     break;
                 };
-                let (day, time) = format_local_datetime(&json!(next), &recurrence.time_zone_id)?;
-                dates.push(format!("{day} {time}"));
+                dates.push(list::full_time(next, &recurrence.time_zone_id, &local, now));
                 after = next;
             }
-            anyhow::ensure!(
-                !dates.is_empty(),
-                "This timing has no future run. Choose a future date or a matching recurrence."
-            );
+            anyhow::ensure!(!dates.is_empty(), "No future runs. Choose a later time.");
+            let dates = dates.iter().map(String::as_str).collect::<Vec<_>>();
             Ok(format!(
-                "Next runs in {}: {}",
-                recurrence.time_zone_id,
-                dates.join(" · ")
+                "{}. Next: {}",
+                list::summary(&value),
+                list::list(&dates)
             ))
         })();
-        self.preview = match result {
-            Ok(preview) => preview,
-            Err(error) => format!("Timing needs attention: {error}"),
-        };
+        self.preview = result.unwrap_or_else(|error| error.to_string());
     }
 }
 
@@ -275,6 +316,7 @@ impl Coincide {
         self.schedule_editor.open = false;
         self.schedules_open = true;
         self.refresh_schedules(cx);
+        self.prepare_schedule_filter();
     }
     pub(super) fn open_conversation_schedules(
         &mut self,
@@ -293,6 +335,7 @@ impl Coincide {
             self.terminal_open = false;
         }
         self.refresh_schedules(cx);
+        self.prepare_schedule_filter();
     }
     fn schedule_action(
         &mut self,
@@ -313,6 +356,7 @@ impl Coincide {
                         self.schedule_editor.all_conversations,
                         selected.as_deref(),
                         &query,
+                        &self.schedule_place(task),
                     )
             })
         {
@@ -383,6 +427,7 @@ impl Coincide {
                         self.schedule_editor.all_conversations,
                         self.selected.as_ref().and_then(|t| t["id"].as_str()),
                         &self.schedule_editor.filter.read(cx).value(),
+                        &self.schedule_place(task),
                     )
             }) {
                 Some(task) => Some(task.clone()),
@@ -400,8 +445,9 @@ impl Coincide {
                 .filter(|p| p.is_object())
                 .unwrap_or(task)
         });
+        // Swift TaskRecurrence's default: daily at 9:00 in the host's zone.
         let recurrence=proposed.map(|task|task["recurrence"].clone()).unwrap_or_else(||json!({
-            "kind":"once","timeZoneID":"UTC","date":coincide_core::store::swift_timestamp()+3600.,
+            "kind":"daily","timeZoneID":coincide_core::scheduling::local_time_zone(),"date":coincide_core::store::swift_timestamp()+3600.,
             "hour":9,"minute":0,"weekday":2,"weekdays":null,"intervalMinutes":30,"cron":"0 9 * * 1-5"
         }));
         let zone = recurrence["timeZoneID"]
@@ -466,6 +512,17 @@ impl Coincide {
             .unwrap_or_else(|| vec![2, 3, 4, 5, 6]);
         editor.original_date = date.clone();
         editor.original_time = time.clone();
+        // Every… shows the largest unit the interval is a whole number of.
+        let minutes = recurrence["intervalMinutes"].as_u64().unwrap_or(30).max(1);
+        editor.interval_unit = UNITS
+            .iter()
+            .rposition(|(unit, _)| minutes % unit == 0)
+            .unwrap_or(0);
+        let interval = minutes / UNITS[editor.interval_unit].0;
+        editor.paused = existing
+            .as_ref()
+            .is_some_and(|task| task["isPaused"] == true);
+        editor.baseline_paused = editor.paused;
         editor.name.update(cx, |input, cx| {
             input.set_value(
                 proposed.map(|p| text(p, "name")).unwrap_or_default(),
@@ -490,14 +547,7 @@ impl Coincide {
             .zone
             .update(cx, |input, cx| input.set_value(zone, window, cx));
         editor.interval.update(cx, |input, cx| {
-            input.set_value(
-                recurrence["intervalMinutes"]
-                    .as_u64()
-                    .unwrap_or(30)
-                    .to_string(),
-                window,
-                cx,
-            )
+            input.set_value(interval.to_string(), window, cx)
         });
         editor.cron.update(cx, |input, cx| {
             input.set_value(
@@ -569,13 +619,53 @@ impl Coincide {
             }
         })();
         match outcome {
-            Ok(_) => {
+            Ok(saved) => {
                 self.schedule_editor.open = false;
                 self.schedule_status="Saved for review. Execution requires a separate approval below; any previous approval was revoked.".into();
+                // The editor's Paused checkbox, applied to what was just saved.
+                let id = self
+                    .schedule_editor
+                    .editing_id
+                    .clone()
+                    .or_else(|| saved["task"]["id"].as_str().map(str::to_owned));
+                let paused = self.schedule_editor.paused;
+                if let Some(id) = id
+                    && (saved["task"]["isPaused"] == true) != paused
+                    && (paused || self.schedule_editor.baseline_paused)
+                {
+                    let method = if paused {
+                        "schedules.pause"
+                    } else {
+                        "schedules.resume"
+                    };
+                    if let Err(error) = call(&self.engine, method, json!({"scheduleId":id})) {
+                        self.schedule_status = format!(
+                            "Schedule saved, but it couldn’t be {}: {error}",
+                            if paused { "paused" } else { "resumed" }
+                        );
+                    }
+                }
             }
             Err(error) => self.schedule_status = format!("Schedule was not saved: {error}"),
         }
         self.refresh_schedules(cx);
+    }
+    /// Swift's ⌘Return and Esc in the editor.
+    fn schedule_editor_keys(&self, form: Div, cx: &mut Context<Self>) -> Div {
+        form.capture_action(cx.listener(|this, action: &Enter, window, cx| {
+            if action.secondary && this.schedule_editor.open {
+                window.prevent_default();
+                cx.stop_propagation();
+                this.save_schedule(cx);
+            }
+        }))
+        .capture_action(cx.listener(|this, _: &Escape, _, cx| {
+            if this.schedule_editor.open {
+                cx.stop_propagation();
+                this.schedule_editor.open = false;
+                cx.notify();
+            }
+        }))
     }
     fn schedule_editor_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         let editor = &self.schedule_editor;
@@ -635,9 +725,24 @@ impl Coincide {
                 .child(Input::new(&editor.time));
         }
         if kind == "interval" {
-            form = form
-                .child(div().text_sm().child("Repeat every N minutes (5–44,640)"))
-                .child(Input::new(&editor.interval));
+            let unit = editor.interval_unit;
+            form = form.child(div().text_sm().child("Every")).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(90.)).child(Input::new(&editor.interval)))
+                    .children(UNITS.iter().enumerate().map(|(index, (_, label))| {
+                        Button::new(SharedString::from(format!("schedule-unit-{index}")))
+                            .label(*label)
+                            .small()
+                            .when(unit == index, |b| b.primary())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.schedule_editor.interval_unit = index;
+                                cx.notify();
+                            }))
+                    })),
+            );
         }
         if matches!(kind, "weekly" | "days") {
             form = form
@@ -674,7 +779,18 @@ impl Coincide {
             form=form.child(div().text_sm().child("Cron: minute hour day-of-month month day-of-week" )).child(Input::new(&editor.cron))
             .child(div().text_sm().child("Example: 0 9 * * 1-5 runs at 09:00 on weekdays. Runs must be at least five minutes apart."));
         }
-        form.child(div().text_sm().child(editor.preview.clone()))
+        let paused = editor.paused;
+        let form = form.child(
+            Checkbox::new("schedule-paused")
+                .label("Paused")
+                .checked(paused)
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                    this.schedule_editor.paused = *checked;
+                    cx.notify();
+                })),
+        );
+        self.schedule_editor_keys(form, cx)
+            .child(div().text_sm().child(editor.preview.clone()))
             .child(div().text_sm().child("Busy conversations wait for their current turn. Saving edits requires renewed approval; it does not interrupt an already running turn."))
             .child(div().flex().gap_2()
                 .child(Button::new("schedule-save").label("Save for review").primary().on_click(cx.listener(|this,_,_,cx|this.save_schedule(cx))))
@@ -682,196 +798,676 @@ impl Coincide {
             .into_any_element()
     }
 
+    /// The bot a thread belongs to, when the sidebar knows that bot.
+    fn schedule_bot_of(&self, thread: &str) -> Option<String> {
+        let bot = self
+            .sidebar_all_threads
+            .iter()
+            .chain(&self.threads)
+            .find(|summary| summary.id.eq_ignore_ascii_case(thread))?
+            .navigation
+            .as_ref()?
+            .bot_id
+            .clone()?;
+        self.sidebar_bots
+            .iter()
+            .any(|known| {
+                known["id"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&bot))
+            })
+            .then_some(bot)
+    }
+    fn schedule_thread_title(&self, thread: &str) -> Option<String> {
+        self.sidebar_all_threads
+            .iter()
+            .chain(&self.threads)
+            .find(|summary| summary.id.eq_ignore_ascii_case(thread))
+            .map(|summary| summary.title.clone())
+            .filter(|title| !title.is_empty())
+    }
+    fn schedule_project_name(&self, project: &str) -> Option<String> {
+        self.projects
+            .iter()
+            .find(|known| {
+                known["id"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(project))
+            })
+            .map(|known| text(known, "name"))
+            .filter(|name| !name.is_empty())
+    }
+    /// A group's heading: the bot, the thread and its project, or the project
+    /// whose new threads the runs start (Swift SchedulesPanelController.title).
+    fn schedule_group_title(&self, owner: &Owner) -> (String, Option<String>) {
+        match owner {
+            Owner::Bot(id) => (
+                self.sidebar_bots
+                    .iter()
+                    .find(|bot| {
+                        bot["id"]
+                            .as_str()
+                            .is_some_and(|known| known.eq_ignore_ascii_case(id))
+                    })
+                    .map(|bot| text(bot, "name"))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "Bot".into()),
+                Some("Bot".into()),
+            ),
+            Owner::Thread(id) => {
+                let Some(title) = self.schedule_thread_title(id) else {
+                    return ("Deleted thread".into(), None);
+                };
+                let project = self
+                    .sidebar_all_threads
+                    .iter()
+                    .chain(&self.threads)
+                    .find(|summary| summary.id.eq_ignore_ascii_case(id))
+                    .map(|summary| summary.project_id.clone());
+                let place = project.and_then(|project| {
+                    if project == crate::navigation::NO_PROJECT_ID {
+                        Some("Chat".into())
+                    } else {
+                        self.schedule_project_name(&project)
+                    }
+                });
+                (title, place)
+            }
+            Owner::Project(id) => (
+                self.schedule_project_name(id)
+                    .unwrap_or_else(|| "Project unavailable".into()),
+                Some("A new thread each run".into()),
+            ),
+        }
+    }
+    /// Where a schedule's runs go, which search matches too.
+    fn schedule_place(&self, task: &Value) -> String {
+        let owner = list::owner(task, &|thread: &str| self.schedule_bot_of(thread));
+        let (title, subtitle) = self.schedule_group_title(&owner);
+        let thread = task["threadID"]
+            .as_str()
+            .and_then(|thread| self.schedule_thread_title(thread))
+            .unwrap_or_default();
+        [title, subtitle.unwrap_or_default(), thread].join(" ")
+    }
+    /// The thread a row opens: its own, or a project task's last run.
+    fn schedule_open_target(&self, task: &Value) -> Option<String> {
+        task["threadID"]
+            .as_str()
+            .or_else(|| task["lastThreadID"].as_str())
+            .filter(|thread| self.schedule_thread_title(thread).is_some())
+            .map(str::to_owned)
+    }
+    /// The saved filter, read when the panel opens (Swift UserDefaults).
+    fn load_schedule_filter(&mut self) {
+        if self.schedule_editor.filter_loaded {
+            return;
+        }
+        if let Ok(engine) = try_state(&self.engine) {
+            let document = engine.store.document("ui-state.json").ok().flatten();
+            self.schedule_editor.view_filter =
+                list::saved_filter(document.as_ref().unwrap_or(&Value::Null));
+            self.schedule_editor.filter_loaded = true;
+        }
+    }
+    /// Swift prepareToShow: the window-wide panel opens on This Thread when the
+    /// open thread has schedules, otherwise on the filter last chosen.
+    pub(super) fn prepare_schedule_filter(&mut self) {
+        self.load_schedule_filter();
+        let saved = if self.schedule_editor.view_filter == ScheduleFilter::ThisThread {
+            ScheduleFilter::All
+        } else {
+            self.schedule_editor.view_filter
+        };
+        let thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let here = self.schedule_editor.all_conversations
+            && thread.as_deref().is_some_and(|id| {
+                self.schedules
+                    .iter()
+                    .any(|task| ScheduleFilter::ThisThread.includes(task, Some(id)))
+            });
+        self.schedule_editor.view_filter = if here {
+            ScheduleFilter::ThisThread
+        } else {
+            saved
+        };
+    }
+    fn choose_schedule_filter(&mut self, filter: ScheduleFilter, cx: &mut Context<Self>) {
+        self.schedule_editor.view_filter = filter;
+        self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+        // This Thread follows the window and is never remembered.
+        if filter != ScheduleFilter::ThisThread {
+            let saved = try_state(&self.engine).and_then(|mut engine| {
+                engine
+                    .store
+                    .patch_document("ui-state.json", &json!({list::FILTER_KEY:filter.wire()}))
+            });
+            if saved.is_err() {
+                self.schedule_status =
+                    "The filter applies now but wasn’t saved for next time.".into();
+            }
+        }
+        cx.notify();
+    }
+    /// The 60 s timer that keeps "Next: Today at 09:00" current.
+    pub(super) fn tick_schedule_times(&mut self, cx: &mut Context<Self>) {
+        let minute = (coincide_core::store::swift_timestamp() / 60.).floor() as i64;
+        if self.schedules_open && minute != self.schedule_editor.rendered_minute {
+            self.schedule_editor.rendered_minute = minute;
+            cx.notify();
+        }
+    }
+    fn schedule_row_action(
+        &mut self,
+        action: RowAction,
+        id: &str,
+        expected: &Value,
+        scope_epoch: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(task) = self
+            .schedules
+            .iter()
+            .find(|task| task["id"] == id && same_schedule_target(task, expected))
+            .cloned()
+        else {
+            self.schedule_status =
+                "Schedule view changed. Reopen the schedule before acting.".into();
+            cx.notify();
+            return;
+        };
+        let (pause, run_now) = list::actions_enabled(&task);
+        match action {
+            RowAction::Open => {
+                if let Some(thread) = self.schedule_open_target(&task) {
+                    self.select(&thread, window, cx);
+                }
+            }
+            RowAction::TogglePause if pause => {
+                let method = if task["isPaused"] == true {
+                    "schedules.resume"
+                } else {
+                    "schedules.pause"
+                };
+                self.schedule_action(id, method, expected, scope_epoch, cx);
+            }
+            RowAction::RunNow if run_now => {
+                self.schedule_action(id, "schedules.run-now", expected, scope_epoch, cx)
+            }
+            RowAction::Edit if !self.schedule_editor.open => {
+                if self.schedule_editor.scope_epoch == scope_epoch {
+                    self.open_schedule_editor(Some(id), window, cx);
+                } else {
+                    self.schedule_status =
+                        "Schedule view changed. Reopen the schedule before editing.".into();
+                    cx.notify();
+                }
+            }
+            RowAction::Delete => {
+                self.schedule_action(id, "schedules.delete", expected, scope_epoch, cx)
+            }
+            _ => {}
+        }
+    }
+    fn schedule_tone(&self, tone: Tone, cx: &App) -> Hsla {
+        let theme = cx.theme();
+        match tone {
+            Tone::Warning => theme.warning,
+            Tone::Ink => theme.foreground,
+            Tone::Muted => theme.muted_foreground,
+            Tone::Danger => theme.danger,
+        }
+    }
+    fn schedule_filter_menu(&self, cx: &Context<Self>) -> AnyElement {
+        let parent = cx.entity().downgrade();
+        let current = self.schedule_editor.view_filter;
+        let global = self.schedule_editor.all_conversations;
+        let thread_open = self.selected.is_some();
+        Button::new("schedule-filter")
+            .label(current.title())
+            .ghost()
+            .compact()
+            .dropdown_caret(true)
+            .accessibility_label("Schedules to show")
+            .dropdown_menu(move |mut menu, _, _| {
+                for filter in ScheduleFilter::ALL {
+                    // A thread's own schedules panel already is This Thread.
+                    if filter == ScheduleFilter::ThisThread && !global {
+                        continue;
+                    }
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(filter.title())
+                            .checked(filter == current)
+                            // This Thread needs a thread open.
+                            .disabled(filter == ScheduleFilter::ThisThread && !thread_open)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent
+                                    .update(cx, |this, cx| this.choose_schedule_filter(filter, cx));
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
+    }
+    fn schedule_group_header(&self, group: &list::Group<'_>, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, hover) = (theme.muted_foreground, theme.list_hover);
+        let icon = match group.owner {
+            Owner::Bot(_) => Symbol::Bot,
+            Owner::Thread(_) => Symbol::MessagesSquare,
+            Owner::Project(_) => Symbol::Folder,
+        };
+        // A thread's header opens it; a bot's opens its first schedule's thread.
+        let target = match &group.owner {
+            Owner::Thread(id) => self.schedule_thread_title(id).map(|_| id.clone()),
+            Owner::Bot(_) => group
+                .tasks
+                .first()
+                .and_then(|task| self.schedule_open_target(task)),
+            Owner::Project(_) => None,
+        };
+        let key = match &group.owner {
+            Owner::Bot(id) | Owner::Thread(id) | Owner::Project(id) => id.clone(),
+        };
+        div()
+            .id(SharedString::from(format!("schedule-group-{key}")))
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .mt_1()
+            .rounded_md()
+            .child(Icon::new(icon).xsmall().text_color(muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_baseline()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .font_semibold()
+                            .child(group.title.clone()),
+                    )
+                    .when_some(group.subtitle.clone(), |row, subtitle| {
+                        row.child(div().truncate().text_xs().text_color(muted).child(subtitle))
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(group.tasks.len().to_string()),
+            )
+            .when_some(target, |header, thread| {
+                header
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.select(&thread, window, cx)),
+                    )
+            })
+            .into_any_element()
+    }
+    fn schedule_row(
+        &self,
+        schedule: &Value,
+        local_zone: &str,
+        now: chrono::DateTime<chrono::Utc>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (ink, muted, hover, warning) = (
+            theme.foreground,
+            theme.muted_foreground,
+            theme.list_hover,
+            theme.warning,
+        );
+        let id = text(schedule, "id");
+        let shown = list::shown(schedule);
+        let name = text(shown, "name");
+        let active = list::is_active(schedule);
+        let approval = list::needs_approval(schedule);
+        let status = list::status(schedule);
+        let detail = list::detail(schedule, local_zone, now);
+        let note = list::note(schedule);
+        let tooltip = [Some(name.clone()), Some(detail.clone()), note]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let spoken = [
+            Some(name.clone()),
+            Some(detail.clone()),
+            status.map(|(label, _)| label.to_owned()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+        let hovered = self.schedule_editor.hovered.as_deref() == Some(id.as_str());
+        let scope_epoch = self.schedule_editor.scope_epoch;
+        let expected = schedule_guard_snapshot(schedule);
+        let (pause_enabled, run_enabled) = list::actions_enabled(schedule);
+        let paused = schedule["isPaused"] == true;
+        let editing = self.schedule_editor.open
+            && self.schedule_editor.editing_id.as_deref() == Some(id.as_str());
+        let mut first = div().flex().items_center().gap_1p5().min_w_0().child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .font_medium()
+                .text_color(if active { ink } else { muted })
+                .child(name.clone()),
+        );
+        if schedule["createdByAgent"] == true {
+            first = first.child(
+                div()
+                    .id(SharedString::from(format!("schedule-agent-{id}")))
+                    .flex_none()
+                    .tooltip(|window, cx| Tooltip::new("Created by the agent").build(window, cx))
+                    .child(
+                        Icon::new(Symbol::Sparkles)
+                            .xsmall()
+                            .text_color(muted.opacity(0.7)),
+                    ),
+            );
+        }
+        first = first.child(div().flex_1());
+        // On hover the actions take the badge's place, as in Swift.
+        if hovered {
+            let mut buttons = div().flex().flex_none().items_center();
+            for (action, icon, label, enabled) in [
+                (
+                    RowAction::TogglePause,
+                    if paused { Symbol::Play } else { Symbol::Pause },
+                    if paused { "Resume" } else { "Pause" },
+                    pause_enabled,
+                ),
+                (
+                    RowAction::RunNow,
+                    Symbol::CircleArrowRight,
+                    "Run Now",
+                    run_enabled && !editing,
+                ),
+                (
+                    RowAction::Edit,
+                    Symbol::Pencil,
+                    "Edit…",
+                    !self.schedule_editor.open,
+                ),
+                (RowAction::Delete, Symbol::Trash, "Delete…", true),
+            ] {
+                let id = id.clone();
+                let expected = expected.clone();
+                buttons = buttons.child(
+                    Button::new(SharedString::from(format!("schedule-{action:?}-{id}")))
+                        .icon(icon)
+                        .ghost()
+                        .xsmall()
+                        .tooltip(label)
+                        .accessibility_label(label)
+                        .disabled(!enabled)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.schedule_row_action(
+                                action,
+                                &id,
+                                &expected,
+                                scope_epoch,
+                                window,
+                                cx,
+                            )
+                        })),
+                );
+            }
+            first = first.child(buttons);
+        } else if let Some((label, tone)) = status {
+            let color = self.schedule_tone(tone, cx);
+            first = first.child(
+                div()
+                    .flex_none()
+                    .px_1p5()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(color.opacity(0.5))
+                    .text_xs()
+                    .text_color(color)
+                    .child(label),
+            );
+        }
+        let mut lines = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(first)
+            .child(div().truncate().text_xs().text_color(muted).child(detail));
+        // Allowing a schedule stays its own explicit step.
+        if approval || schedule["proposal"].is_object() {
+            let id = id.clone();
+            let expected = expected.clone();
+            lines = lines.child(
+                div().flex().child(
+                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
+                        .label("Approve in Rust")
+                        .small()
+                        .disabled(editing)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.schedule_action(&id, "approve", &expected, scope_epoch, cx)
+                        })),
+                ),
+            );
+        }
+        let clock = if active {
+            ink
+        } else if approval {
+            warning
+        } else {
+            muted.opacity(0.6)
+        };
+        let hover_id = id.clone();
+        let click_id = id.clone();
+        let click_expected = expected.clone();
+        let parent = cx.entity().downgrade();
+        let menu_id = id.clone();
+        let menu_expected = expected.clone();
+        let open_label = if schedule["threadID"].is_string() {
+            "Open Thread"
+        } else {
+            "Open Last Run"
+        };
+        let can_open = self.schedule_open_target(schedule).is_some();
+        let edit_open = self.schedule_editor.open;
+        div()
+            .id(SharedString::from(format!("schedule-row-{id}")))
+            .aria_label(spoken)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let editor = &mut this.schedule_editor;
+                if *hovered {
+                    editor.hovered = Some(hover_id.clone());
+                } else if editor.hovered.as_deref() == Some(hover_id.as_str()) {
+                    editor.hovered = None;
+                }
+                cx.notify();
+            }))
+            // A click opens the thread, a double-click edits (Swift's mouseUp).
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                let action = if event.click_count() >= 2 {
+                    RowAction::Edit
+                } else {
+                    RowAction::Open
+                };
+                this.schedule_row_action(
+                    action,
+                    &click_id,
+                    &click_expected,
+                    scope_epoch,
+                    window,
+                    cx,
+                );
+            }))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(14.))
+                    .child(Icon::new(Symbol::Clock).xsmall().text_color(clock)),
+            )
+            .child(lines)
+            .context_menu(move |menu, _, _| {
+                let item = |label: &'static str, action: RowAction, enabled: bool| {
+                    let parent = parent.clone();
+                    let id = menu_id.clone();
+                    let expected = menu_expected.clone();
+                    PopupMenuItem::new(label)
+                        .disabled(!enabled)
+                        .on_click(move |_, window, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                this.schedule_row_action(
+                                    action,
+                                    &id,
+                                    &expected,
+                                    scope_epoch,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        })
+                };
+                menu.item(item(open_label, RowAction::Open, can_open))
+                    .separator()
+                    .item(item(
+                        if paused { "Resume" } else { "Pause" },
+                        RowAction::TogglePause,
+                        pause_enabled,
+                    ))
+                    .item(item("Run Now", RowAction::RunNow, run_enabled && !editing))
+                    .item(item("Edit…", RowAction::Edit, !edit_open))
+                    .separator()
+                    .item(item("Delete…", RowAction::Delete, true))
+            })
+            .into_any_element()
+    }
     pub(super) fn schedules_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.schedule_editor.open {
             self.schedule_editor.update_preview(cx);
         }
+        self.load_schedule_filter();
+        self.schedule_editor.rendered_minute =
+            (coincide_core::store::swift_timestamp() / 60.).floor() as i64;
+        let muted = cx.theme().muted_foreground;
+        let global = self.schedule_editor.all_conversations;
+        let mut header =
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_2()
+                .child(div().text_lg().child(if global {
+                    "Scheduled"
+                } else {
+                    "Schedules for this conversation"
+                }));
+        if !self.schedules.is_empty() {
+            header = header.child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(self.schedules.len().to_string()),
+            );
+        }
+        header = header
+            .child(div().flex_1())
+            .child(self.schedule_filter_menu(cx));
         let mut content=div().id("schedule-panel").flex().flex_col().flex_1().min_h_0().min_w_0().gap_3().p_4().overflow_y_scroll()
-            .child(div().text_lg().child(if self.schedule_editor.all_conversations {"Scheduled"} else {"Schedules for this conversation"}))
+            .child(header)
             .child(Input::new(&self.schedule_editor.filter))
             .child(div().text_sm().child("Imported schedules remain dormant until approved separately in Coincide Rust. The app must stay open; missed occurrences are skipped."))
-            .child(Button::new("schedule-new").label(if self.schedule_editor.all_conversations {"New for selected conversation"} else {"New schedule"}).disabled(self.selected.is_none() || self.schedule_editor.open)
-                .on_click(cx.listener(|this,_,window,cx|this.open_schedule_editor(None,window,cx))))
-            .child(div().text_sm().child(self.schedule_status.clone()));
+            .child(Button::new("schedule-new").label(if global {"New for selected conversation"} else {"New schedule"}).disabled(self.selected.is_none() || self.schedule_editor.open)
+                .on_click(cx.listener(|this,_,window,cx|this.open_schedule_editor(None,window,cx))));
+        if !self.schedule_status.is_empty() {
+            content = content.child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(self.schedule_status.clone()),
+            );
+        }
         if self.schedule_editor.open {
             content = content.child(self.schedule_editor_pane(cx));
         }
         let query = self.schedule_editor.filter.read(cx).value().to_string();
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
-        let rows = self
+        let filter = self.schedule_editor.view_filter;
+        let shown = self
             .schedules
             .iter()
             .filter(|task| {
-                schedule_visible(
-                    task,
-                    self.schedule_editor.all_conversations,
-                    selected.as_deref(),
-                    &query,
-                )
+                filter.includes(task, selected.as_deref())
+                    && schedule_visible(
+                        task,
+                        global,
+                        selected.as_deref(),
+                        &query,
+                        &self.schedule_place(task),
+                    )
             })
             .collect::<Vec<_>>();
-        if rows.is_empty() {
-            content = content.child(div().child(if query.trim().is_empty() {
-                "No schedules in this view."
-            } else {
-                "No schedules match this filter."
-            }));
-        }
-        let scope_epoch = self.schedule_editor.scope_epoch;
-        for schedule in rows {
-            let id = text(schedule, "id");
-            let state = text(schedule, "approvalState");
-            let approved = state == "approved";
-            let proposed = schedule
-                .get("proposal")
-                .filter(|value| value.is_object())
-                .unwrap_or(schedule);
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .flex_shrink_0()
-                .gap_2()
-                .p_3()
-                .rounded_md()
-                .bg(self.color(0x202a3b))
-                .child(div().font_semibold().child(text(proposed, "name")))
-                .child(div().child(text(proposed, "prompt")))
-                .child(div().text_sm().child(format!(
-                    "Next run: {}",
-                    schedule_date(&schedule["nextRunAt"])
-                )))
-                .child(div().text_sm().child(format!(
-                    "Timing: {}",
-                    schedule_timing(&proposed["recurrence"])
-                )))
-                .child(div().text_sm().child(format!(
-                    "Approval: {} · {}",
-                    if approved {
-                        "Approved"
-                    } else if state == "awaitingUserApproval" {
-                        "Awaiting your approval"
+        let groups = list::groups(
+            shown,
+            &|thread: &str| self.schedule_bot_of(thread),
+            &|owner: &Owner| self.schedule_group_title(owner),
+        );
+        if groups.is_empty() {
+            content = content.child(
+                div()
+                    .py_6()
+                    .text_sm()
+                    .text_color(muted)
+                    .text_center()
+                    .child(if self.schedules.is_empty() && global {
+                        "Nothing is scheduled yet. Ask an agent in any thread to do something later or on a schedule, or choose Schedule… from a thread’s menu."
+                    } else if query.trim().is_empty()
+                        && (!global || filter == ScheduleFilter::ThisThread)
+                    {
+                        "Nothing is scheduled here yet. Add a schedule, or ask the agent to do something later or on a schedule."
                     } else {
-                        "Awaiting separate Rust approval"
-                    },
-                    if schedule["isPaused"] == true {
-                        "Paused"
-                    } else {
-                        "Enabled"
-                    }
-                )));
-            if self.schedule_editor.all_conversations {
-                let project = self
-                    .projects
-                    .iter()
-                    .find(|p| p["id"] == schedule["projectID"])
-                    .map(|p| text(p, "name"))
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "Other project".into());
-                card = card.child(div().text_sm().child(format!(
-                    "{project} · {}",
-                    if schedule["threadID"].is_string() {
-                        "Saved conversation"
-                    } else {
-                        "New conversation per run"
-                    }
-                )));
-            }
-            if !schedule["proposal"].is_null() {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .child("Pending changes shown above will take effect when approved."),
-                );
-            }
-            if let Some(reason) = schedule["pauseReason"].as_str() {
-                card = card.child(div().text_sm().child(reason.to_owned()));
-            }
-            if !schedule["pendingDelivery"].is_null() {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .child("Waiting for this conversation's current turn to finish."),
-                );
-            }
-            if !schedule["rustClaim"].is_null() {
-                card = card.child(div().text_sm().child("A scheduled turn is running."));
-            }
-            if let Some(outcome) = schedule["lastOutcome"].as_str() {
-                card = card.child(div().text_sm().child(format!("Last outcome: {outcome}")));
-            }
-            if let Some(message) = schedule["lastMessage"].as_str() {
-                card = card.child(div().text_sm().child(message.to_owned()));
-            }
-            let editing = self.schedule_editor.open
-                && self.schedule_editor.editing_id.as_deref() == Some(id.as_str());
-            let edit_id = id.clone();
-            let edit_expected = schedule_guard_snapshot(schedule);
-            let mut actions = div().flex().flex_wrap().gap_2().child(
-                Button::new(SharedString::from(format!("schedule-edit-{id}")))
-                    .label("Edit")
-                    .disabled(self.schedule_editor.open)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.schedule_editor.scope_epoch == scope_epoch
-                            && this.schedules.iter().any(|task| {
-                                task["id"] == edit_id && same_schedule_target(task, &edit_expected)
-                            })
-                        {
-                            this.open_schedule_editor(Some(&edit_id), window, cx);
-                        } else {
-                            this.schedule_status =
-                                "Schedule view changed. Reopen the schedule before editing.".into();
-                            cx.notify();
-                        }
-                    })),
+                        "No schedules match."
+                    }),
             );
-            if !approved {
-                let id = id.clone();
-                let expected = schedule_guard_snapshot(schedule);
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
-                        .label("Approve in Rust")
-                        .disabled(editing)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, "approve", &expected, scope_epoch, cx)
-                        })),
-                );
-            }
-            for (action, label) in [
-                (
-                    if schedule["isPaused"] == true {
-                        "schedules.resume"
-                    } else {
-                        "schedules.pause"
-                    },
-                    if schedule["isPaused"] == true {
-                        "Resume"
-                    } else {
-                        "Pause"
-                    },
-                ),
-                ("schedules.run-now", "Run now"),
-                ("schedules.delete", "Delete"),
-            ] {
-                if action == "schedules.run-now" && !approved {
-                    continue;
-                }
-                let id = id.clone();
-                let expected = schedule_guard_snapshot(schedule);
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("schedule-{action}-{id}")))
-                        .label(label)
-                        .disabled(
-                            action == "schedules.run-now"
-                                && (editing || schedule["isPaused"] == true),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, action, &expected, scope_epoch, cx)
-                        })),
-                );
-            }
-            content = content.child(card.child(actions));
         }
-        content.into_any_element()
+        let local_zone = coincide_core::scheduling::local_time_zone();
+        let now = chrono::Utc::now();
+        let mut rows = Vec::new();
+        for group in &groups {
+            rows.push(self.schedule_group_header(group, cx));
+            for task in &group.tasks {
+                rows.push(self.schedule_row(task, &local_zone, now, cx));
+            }
+        }
+        content.children(rows).into_any_element()
     }
 }
 // The engine lock stays held from this comparison through approval or edit,
@@ -895,55 +1491,6 @@ fn check_schedule_revision(
         "Schedule changed. Refresh and reopen it to review the latest values."
     );
     Ok(())
-}
-fn schedule_timing(recurrence: &Value) -> String {
-    let zone = text(recurrence, "timeZoneID");
-    let time = format!(
-        "{:02}:{:02} ({zone})",
-        recurrence["hour"].as_u64().unwrap_or(0),
-        recurrence["minute"].as_u64().unwrap_or(0)
-    );
-    let weekday = |day: u64| {
-        [
-            "Sunday",
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-        ]
-        .get(day.saturating_sub(1) as usize)
-        .copied()
-        .unwrap_or("Unknown day")
-    };
-    match recurrence["kind"].as_str().unwrap_or("") {
-        "once" => format!("Once at {} · {zone}", schedule_date(&recurrence["date"])),
-        "interval" => format!(
-            "Every {} minutes · first run {}",
-            recurrence["intervalMinutes"],
-            schedule_date(&recurrence["date"])
-        ),
-        "daily" => format!("Daily at {time}"),
-        "weekly" => format!(
-            "Every {} at {time}",
-            weekday(recurrence["weekday"].as_u64().unwrap_or(0))
-        ),
-        "weekdays" => format!("Monday–Friday at {time}"),
-        "days" => format!(
-            "{} at {time}",
-            recurrence["weekdays"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_u64)
-                .map(weekday)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        "cron" => format!("Cron {} ({zone})", text(recurrence, "cron")),
-        _ => "Unsupported timing".into(),
-    }
 }
 
 #[cfg(test)]
