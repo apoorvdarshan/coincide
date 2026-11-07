@@ -150,7 +150,9 @@ def main():
             # window OCR joined its icon and initial G into 'ceneral'. Read
             # only the actual label strip at higher resolution; exact matching
             # remains mandatory, and the original pixels remain in evidence.
-            left = 15 if word == "Search" else 44
+            # Search results are text-only rows beginning at x=22; the
+            # normal sidebar's icon-bearing labels start farther right.
+            left = 15 if word == "Search" or line else 44
             assert left < max_x < frame.width, "Sidebar label crop must fit the observed native window"
             crop = frame.crop((left, 0, max_x, frame.height))
             crop_path = artifacts / f"{name}-labels.png"
