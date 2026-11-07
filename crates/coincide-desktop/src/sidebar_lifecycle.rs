@@ -8,14 +8,13 @@ use coincide_core::api::{
 #[derive(Clone)]
 enum Intent {
     Move(String, String),
-    Delete(String),
+    Delete(Vec<String>),
     Bot(String, Disposition),
 }
 enum Review {
     Move(PreparedThreadMove),
     Delete(PreparedThreadDeletion),
     Bot(PreparedBotDeletion),
-    ChooseMove(String),
     ChooseBot(String),
     Waiting(Intent),
 }
@@ -40,18 +39,30 @@ impl State {
         self.review.is_some() || self.undo.is_some() || !self.status.is_empty()
     }
 }
+fn stop_if_running(engine: &mut Engine, id: &str) -> Result<()> {
+    let status = engine.dispatch(json!({"method":"app.status","params":{}}));
+    if status["result"]["running"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row.as_str() == Some(id) || row["threadId"] == *id)
+    }) {
+        engine.request_provider_stop(id)?;
+    }
+    Ok(())
+}
 impl Coincide {
-    pub(super) fn sidebar_move_review(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.media.shutdown_requested || self.media.close_requested {
-            return;
-        }
-        self.sidebar_lifecycle.review = Some(Review::ChooseMove(id));
-        self.sidebar_lifecycle.stopping = false;
-        self.sidebar_lifecycle.status="Choose the destination project. Existing folder sessions will not move into another folder.".into();
-        cx.notify();
+    /// The move review for a destination already chosen: a Move to Project
+    /// submenu item, or threads dropped on a project.
+    pub(super) fn sidebar_move_to(&mut self, id: String, target: String, cx: &mut Context<Self>) {
+        self.prepare_sidebar_lifecycle(Intent::Move(id, target), cx);
     }
     pub(super) fn sidebar_delete_review(&mut self, id: String, cx: &mut Context<Self>) {
-        self.prepare_sidebar_lifecycle(Intent::Delete(id), cx);
+        self.sidebar_delete_threads(vec![id], cx);
+    }
+    /// Swift's `ThreadActions.delete(_:in:)` for every selected conversation.
+    pub(super) fn sidebar_delete_threads(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        if !ids.is_empty() {
+            self.prepare_sidebar_lifecycle(Intent::Delete(ids), cx);
+        }
     }
     pub(super) fn sidebar_bot_delete_review(&mut self, id: String, cx: &mut Context<Self>) {
         if self.media.shutdown_requested || self.media.close_requested {
@@ -81,10 +92,10 @@ impl Coincide {
                 Intent::Move(id, target) => {
                     Ok(Review::Move(engine.prepare_native_thread_move(id, target)?))
                 }
-                Intent::Delete(id) => Ok(Review::Delete(if previously_waiting {
-                    engine.prepare_native_conversation_deletion(std::slice::from_ref(id))?
+                Intent::Delete(ids) => Ok(Review::Delete(if previously_waiting {
+                    engine.prepare_native_conversation_deletion(ids)?
                 } else {
-                    engine.prepare_native_sidebar_conversation_deletion(std::slice::from_ref(id))?
+                    engine.prepare_native_sidebar_conversation_deletion(ids)?
                 })),
                 Intent::Bot(id, mode) => {
                     Ok(Review::Bot(engine.prepare_native_bot_deletion(id, *mode)?))
@@ -121,13 +132,10 @@ impl Coincide {
                 Intent::Bot(id, _) => {
                     engine.request_native_bot_stop(id)?;
                 }
-                Intent::Move(id, _) | Intent::Delete(id) => {
-                    let status = engine.dispatch(json!({"method":"app.status","params":{}}));
-                    if status["result"]["running"].as_array().is_some_and(|rows| {
-                        rows.iter()
-                            .any(|row| row.as_str() == Some(id.as_str()) || row["threadId"] == *id)
-                    }) {
-                        engine.request_provider_stop(id)?;
+                Intent::Move(id, _) => stop_if_running(&mut engine, id)?,
+                Intent::Delete(ids) => {
+                    for id in ids {
+                        stop_if_running(&mut engine, id)?;
                     }
                 }
             }
@@ -271,25 +279,6 @@ impl Coincide {
             .border_color(cx.theme().border)
             .child(self.sidebar_lifecycle.status.clone());
         match &self.sidebar_lifecycle.review {
-            Some(Review::ChooseMove(id)) => {
-                for project in &self.projects {
-                    let target = text(project, "id");
-                    if target == coincide_core::bot_runtime::BOTS_PROJECT_ID {
-                        continue;
-                    }
-                    let id = id.clone();
-                    pane = pane.child(
-                        Button::new(SharedString::from(format!("sidebar-move-target-{target}")))
-                            .label(project["name"].as_str().unwrap_or("Project").to_owned())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.prepare_sidebar_lifecycle(
-                                    Intent::Move(id.clone(), target.clone()),
-                                    cx,
-                                )
-                            })),
-                    );
-                }
-            }
             Some(Review::ChooseBot(id)) => {
                 for (label, mode) in [
                     ("Keep Conversations as Chats", Disposition::KeepAsChats),
@@ -402,7 +391,9 @@ mod confirmation_policy_tests {
     fn initial_delete_opt_out_is_never_reused_after_wait_or_stop() {
         let mut state = State::default();
         assert!(state.initial_delete());
-        state.review = Some(Review::Waiting(Intent::Delete("synthetic-thread".into())));
+        state.review = Some(Review::Waiting(Intent::Delete(vec![
+            "synthetic-thread".into(),
+        ])));
         assert!(
             !state.initial_delete(),
             "draft, persistence or worker recovery requires review"

@@ -432,6 +432,36 @@ fn sidebar_snooze_presets<T: TimeZone>(now: DateTime<T>) -> Vec<(&'static str, f
     }
     result
 }
+/// The presets as the sidebar's Snooze menu lists them, each with Swift's
+/// subtitle: the local time it wakes at, with the weekday for Next Week.
+pub fn native_snooze_menu() -> Vec<(&'static str, String, f64)> {
+    sidebar_snooze_menu(chrono::Local::now())
+}
+fn sidebar_snooze_menu<T: TimeZone>(now: DateTime<T>) -> Vec<(&'static str, String, f64)>
+where
+    T::Offset: std::fmt::Display,
+{
+    let zone = now.timezone();
+    sidebar_snooze_presets(now)
+        .into_iter()
+        .map(|(title, stamp)| {
+            let millis = ((stamp + 978307200.) * 1000.).round() as i64;
+            let detail = zone
+                .timestamp_millis_opt(millis)
+                .single()
+                .map(|date| {
+                    date.format(if title == "Next Week" {
+                        "%a %H:%M"
+                    } else {
+                        "%H:%M"
+                    })
+                    .to_string()
+                })
+                .unwrap_or_default();
+            (title, detail, stamp)
+        })
+        .collect()
+}
 #[cfg(test)]
 mod sidebar_snooze_tests {
     use super::*;
@@ -463,5 +493,35 @@ mod sidebar_snooze_tests {
         let choices = sidebar_snooze_presets(sunday);
         assert!(!choices.iter().any(|(label, _)| *label == "Next Week"));
         assert!(!choices.iter().any(|(label, _)| *label == "This Evening"));
+    }
+    #[test]
+    fn snooze_menu_subtitles_show_the_local_wake_time_and_next_weeks_weekday() {
+        let zone: Tz = "America/New_York".parse().unwrap();
+        let now = zone
+            .with_ymd_and_hms(2026, 3, 5, 10, 15, 0)
+            .single()
+            .unwrap();
+        let menu = sidebar_snooze_menu(now);
+        let detail = |title: &str| {
+            menu.iter()
+                .find(|(label, _, _)| *label == title)
+                .map(|(_, detail, _)| detail.as_str())
+                .unwrap()
+        };
+        assert_eq!(detail("In 1 Hour"), "11:15");
+        assert_eq!(detail("In 3 Hours"), "13:15");
+        assert_eq!(detail("This Evening"), "18:00");
+        assert_eq!(detail("Tomorrow"), "09:00");
+        // Monday 9 March falls after the daylight saving change of 8 March.
+        assert_eq!(detail("Next Week"), "Mon 09:00");
+        let dates: Vec<_> = sidebar_snooze_presets(now)
+            .into_iter()
+            .map(|row| row.1)
+            .collect();
+        assert_eq!(
+            menu.iter().map(|row| row.2).collect::<Vec<_>>(),
+            dates,
+            "the menu snoozes until exactly the presets' dates"
+        );
     }
 }

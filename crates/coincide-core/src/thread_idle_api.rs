@@ -58,12 +58,36 @@ impl Engine {
         ensure!(
             params.as_object().is_some_and(|fields| fields
                 .keys()
-                .all(|key| matches!(key.as_str(), "projectId" | "cwd"))),
-            "Native New Thread accepts only a project and folder"
+                .all(|key| matches!(key.as_str(), "projectId" | "cwd" | "branch"))),
+            "Native New Thread accepts only a project, folder and branch"
         );
+        // Swift's "New Thread on <branch>" records the source thread's branch;
+        // it never checks anything out.
+        let branch = params
+            .get("branch")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|branch| {
+                        !branch.trim().is_empty()
+                            && branch.len() <= 512
+                            && !branch.chars().any(char::is_control)
+                    })
+                    .map(str::to_owned)
+                    .context("Branch must be nonblank text without control characters")
+            })
+            .transpose()?;
+        let mut ordinary = params.clone();
+        if let Some(fields) = ordinary.as_object_mut() {
+            fields.remove("branch");
+        }
         let changes = self.store.mutation_serial()?;
         let external = self.store.sidebar_external_version()?;
-        let fresh = self.prepare_ordinary_thread(params)?;
+        let mut fresh = self.prepare_ordinary_thread(&ordinary)?;
+        if let Some(branch) = &branch {
+            fresh["branch"] = json!(branch);
+        }
         let project = text(&fresh, "projectID");
         ensure!(
             !project.eq_ignore_ascii_case(crate::bot_runtime::BOTS_PROJECT_ID),
@@ -119,7 +143,10 @@ impl Engine {
             let Some(thread) = self.store.native_idle_candidate(&summary.id)? else {
                 continue;
             };
-            if untouched(&thread, &fresh, &ui, now) {
+            // A thread reused for a branch must already be on that branch.
+            if untouched(&thread, &fresh, &ui, now)
+                && (branch.is_none() || thread["branch"] == fresh["branch"])
+            {
                 reusable = Some(thread);
                 break;
             }
