@@ -167,6 +167,10 @@ def main():
     def quit_normally(*, guarded=False):
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
+        report["quitInputFocusBefore"] = command("xdotool", "getwindowfocus", env=env)
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        report["quitInputFocus"] = command("xdotool", "getwindowfocus", env=env)
+        assert int(report["quitInputFocus"]) == int(window), "Native Quit input must target the observed main window"
         first = time.monotonic()
         command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
         if guarded:
@@ -180,7 +184,25 @@ def main():
             command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
             report["guardedQuitFirstPressAlive"] = True
             report["guardedQuitSecondPressSeconds"] = elapsed
-        assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
+        try:
+            assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
+        except (subprocess.TimeoutExpired, AssertionError):
+            # Read-only failure evidence. Do not issue another Quit key, extend
+            # the timeout or let a successful cleanup request erase this failure.
+            for key, action in [
+                ("quitFailureFocus", lambda: command("xdotool", "getwindowfocus", env=env)),
+                ("quitFailureWindows", lambda: command("xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), env=env)),
+                ("quitFailureControlStatus", lambda: rpc("app.status")),
+            ]:
+                try:
+                    report[key] = action()
+                except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as diagnostic:
+                    report[key + "Error"] = str(diagnostic)
+            try:
+                capture(window, "quit-failure")
+            except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as diagnostic:
+                report["quitFailureFrameError"] = str(diagnostic)
+            raise
         process = None
         log.close()
         log = None
@@ -352,10 +374,11 @@ def main():
         drained = process is None or process.poll() is not None
         if process is not None and process.poll() is None:
             try:
-                rpc("app.quit")  # Failure cleanup only; cannot turn failed UI input into PASS.
+                report["failureCleanupQuitReply"] = rpc("app.quit")  # Failure cleanup only; cannot turn failed UI input into PASS.
                 process.wait(timeout=25)
                 drained = True
-            except (OSError, ValueError, AssertionError, subprocess.TimeoutExpired):
+            except (OSError, ValueError, AssertionError, subprocess.TimeoutExpired) as cleanup_error:
+                report["failureCleanupQuitError"] = str(cleanup_error)
                 report["ownerPending"] = True
                 report["fixtureRetained"] = True
         if log is not None:
