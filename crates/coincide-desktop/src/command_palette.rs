@@ -8,6 +8,7 @@ use gpui_kit::{
         button::*,
         input::{Input, InputEvent, InputState},
     },
+    prelude::FluentBuilder,
     *,
 };
 use std::collections::HashSet;
@@ -31,6 +32,11 @@ pub enum PaletteCommand {
     },
     OpenSettings,
     ShowSchedules,
+    /// An app action the parent resolves by its stable ID (Swift's palette
+    /// item IDs such as `action:diff`, `setting:keyboard` or `help:…`).
+    Action {
+        id: String,
+    },
 }
 impl PaletteCommand {
     fn id(&self) -> Option<&str> {
@@ -39,6 +45,7 @@ impl PaletteCommand {
             Self::SelectProject { project_id } | Self::NewThread { project_id } => {
                 project_id.as_deref()
             }
+            Self::Action { id } => Some(id),
             _ => None,
         }
     }
@@ -55,11 +62,12 @@ impl PaletteCommand {
             },
             Self::OpenSettings => "action/settings".into(),
             Self::ShowSchedules => "action/schedules".into(),
+            Self::Action { id } => format!("run/{}:{id}", id.len()),
         }
     }
     fn allocated_bytes(&self) -> usize {
         match self {
-            Self::OpenThread { thread_id } => thread_id.capacity(),
+            Self::OpenThread { thread_id } | Self::Action { id: thread_id } => thread_id.capacity(),
             Self::SelectProject { project_id } | Self::NewThread { project_id } => {
                 project_id.as_ref().map_or(0, String::capacity)
             }
@@ -73,6 +81,8 @@ pub struct PaletteEntry {
     pub title: String,
     pub subtitle: Option<String>,
     pub keywords: Vec<String>,
+    /// A shortcut ("⌘N", the user's for a menu command), shown beside the title.
+    pub trailing: Option<String>,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
 }
@@ -116,8 +126,12 @@ fn validate(snapshot: &PaletteSnapshot) -> Result<()> {
                 && entry
                     .disabled_reason
                     .as_ref()
-                    .is_none_or(|s| bounded_string(s, 512)),
-            "Palette subtitle/reason exceeds bounds"
+                    .is_none_or(|s| bounded_string(s, 512))
+                && entry
+                    .trailing
+                    .as_ref()
+                    .is_none_or(|s| bounded_string(s, 64)),
+            "Palette subtitle/reason/shortcut exceeds bounds"
         );
         ensure!(
             entry.keywords.len() <= 32 && entry.keywords.iter().all(|s| bounded_string(s, 128)),
@@ -138,6 +152,7 @@ fn validate(snapshot: &PaletteSnapshot) -> Result<()> {
             entry.title.capacity(),
             entry.subtitle.as_ref().map_or(0, String::capacity),
             entry.disabled_reason.as_ref().map_or(0, String::capacity),
+            entry.trailing.as_ref().map_or(0, String::capacity),
             entry.command.allocated_bytes(),
             entry
                 .keywords
@@ -518,6 +533,9 @@ impl Render for CommandPalette {
                             if disabled.is_empty() { "" } else { " · " },
                             disabled
                         ))
+                        .when_some(entry.trailing.clone(), |button, trailing| {
+                            button.child(div().pl_2().text_xs().opacity(0.7).child(trailing))
+                        })
                         .disabled(!entry.enabled)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.activate(&command, window, cx)
@@ -550,6 +568,7 @@ mod tests {
             title: title.into(),
             subtitle: None,
             keywords: Vec::new(),
+            trailing: None,
             enabled: true,
             disabled_reason: None,
         }
@@ -743,5 +762,27 @@ mod tests {
         let settings = Command::OpenSettings;
         let schedules = Command::ShowSchedules;
         assert_ne!(settings.key(), schedules.key());
+        let action = Command::Action {
+            id: "settings".into(),
+        };
+        assert_ne!(action.key(), settings.key());
+    }
+    #[::core::prelude::v1::test]
+    fn actions_and_shortcuts_are_bounded_and_searchable_by_keyword() {
+        let mut diff = entry("unused", "Show Diff");
+        diff.command = Command::Action {
+            id: "action:diff".into(),
+        };
+        diff.keywords = vec!["changes".into(), "git".into()];
+        diff.trailing = Some("⌘D".into());
+        let mut m = Model::new(snapshot(1, vec![diff.clone(), entry("t", "Thread")])).unwrap();
+        m.query("git changes");
+        assert_eq!(titles(&m), vec!["Show Diff"]);
+        let mut blank = diff.clone();
+        blank.command = Command::Action { id: " ".into() };
+        assert!(validate(&snapshot(1, vec![blank])).is_err());
+        let mut long = diff;
+        long.trailing = Some("x".repeat(65));
+        assert!(validate(&snapshot(1, vec![long])).is_err());
     }
 }

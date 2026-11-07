@@ -1159,49 +1159,9 @@ impl Coincide {
                 self.settings_section,
                 SettingsSection::Keyboard,
                 self.settings_search.read(cx).value().as_ref(),
-                "keyboard shortcuts record reset disable command palette terminal font",
+                "keyboard shortcuts keybindings keys record reset remove command palette terminal font thread chat project editor finder sidebar diff schedules archive stop model effort access plan rename pin copy path delete report feature go to",
             )
     }
-    pub(super) fn run_keyboard_command(
-        &mut self,
-        command: keyboard_settings::Command,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        use keyboard_settings::Command as K;
-        match command {
-            K::NewThread => self.new_thread(window, cx),
-            K::Palette => self.toggle_palette(window, cx),
-            K::Sidebar => self.toggle_sidebar(window, cx),
-            K::Terminal => {
-                if !self.chat_visible() {
-                    return;
-                }
-                self.terminal(window, cx);
-            }
-            K::Schedules => {
-                self.hide_inline_settings();
-                self.workspace_open = false;
-                self.session_import_open = false;
-                if self.schedules_open {
-                    self.schedules_open = false;
-                } else {
-                    self.open_global_schedules(cx);
-                }
-                self.sync_transcription_binding(cx);
-                cx.notify();
-            }
-            K::Larger | K::Smaller | K::FontReset => {
-                let size = match command {
-                    K::Larger => (self.conversation_font_size() + 1.).min(24.),
-                    K::Smaller => (self.conversation_font_size() - 1.).max(10.),
-                    _ => 13.,
-                };
-                self.change_setting("fontSize", json!(size), window, cx);
-            }
-        }
-    }
-
     pub(super) fn app_shortcut(
         &mut self,
         event: &KeyDownEvent,
@@ -1245,37 +1205,47 @@ impl Coincide {
             cx.stop_propagation();
             return;
         }
-        if event.is_held || !window.is_window_active() {
+        if !window.is_window_active() {
             return;
         }
         #[cfg(target_os = "macos")]
         let command = key.modifiers.platform;
         #[cfg(not(target_os = "macos"))]
         let command = key.modifiers.control;
-        let custom = self.keyboard_command(
-            key,
-            terminal_owns,
-            browser_visible,
-            self.command_palette.read(cx).is_open(),
-        );
+        let palette_open = self.command_palette.read(cx).is_open();
+        let custom = self.keyboard_command(key, terminal_owns, browser_visible, palette_open);
+        // Commands stay closed while the palette is open. Their native menu
+        // items share these keys, so consume them rather than let AppKit run one.
+        let palette_consumes = palette_open
+            && ((command && !key.modifiers.alt && !key.modifiers.shift)
+                || self.keyboard_command_unrouted(key).is_some());
+        if event.is_held {
+            // A held command key repeats nothing, here or in its menu item.
+            if custom.is_some() || palette_consumes {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if custom == Some(keyboard_settings::Command::Palette) {
             self.toggle_palette(window, cx);
             cx.stop_propagation();
             return;
         }
-        if self.command_palette.read(cx).is_open() {
-            if command && !key.modifiers.alt && !key.modifiers.shift {
+        if palette_open {
+            if palette_consumes {
                 cx.stop_propagation();
             }
             return;
         }
-        // Focused terminals retain control sequences and their local bindings.
-        if terminal_owns {
-            return;
-        }
+        // Routing already left the terminal its own keys: on macOS the rest
+        // of the menu commands still run, as in Swift.
         if let Some(command) = custom {
             self.run_keyboard_command(command, window, cx);
             cx.stop_propagation();
+            return;
+        }
+        // Focused terminals retain control sequences and their local bindings.
+        if terminal_owns {
             return;
         }
         if !command || key.modifiers.alt || key.modifiers.shift {

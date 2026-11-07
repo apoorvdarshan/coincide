@@ -48,7 +48,7 @@ enum SidebarThreadAction {
     Unsnooze,
 }
 
-fn adjacent_sidebar_row<'a>(
+pub(super) fn adjacent_sidebar_row<'a>(
     rows: &[&'a str],
     selected: Option<&str>,
     step: i32,

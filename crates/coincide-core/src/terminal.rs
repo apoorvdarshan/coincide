@@ -455,6 +455,22 @@ impl Terminal {
             .try_send(bytes)?;
         Ok(json!({"accepted":true,"observedRevision":self.revision,"encodedBytes":len}))
     }
+    /// Swift ShellTerminalView.clear: drop the scrollback, then ask the shell
+    /// to redraw its prompt (form feed). Prompt anchors pointed into the old
+    /// history, so they go with it.
+    pub fn clear(&mut self) -> Result<()> {
+        self.poll()?;
+        if !self.term.mode().contains(TermMode::ALT_SCREEN) {
+            self.term.grid_mut().clear_history();
+            self.shell_anchors.invalidate();
+            self.revision += 1;
+        }
+        self.writer
+            .as_ref()
+            .context("Terminal is stopping")?
+            .try_send(vec![0x0c])?;
+        Ok(())
+    }
     fn input_modes(&self) -> InputModes {
         InputModes {
             application_cursor: self.term.mode().contains(TermMode::APP_CURSOR),
@@ -782,6 +798,11 @@ fn encode_key(key: &str, m: KeyModifiers, application: bool) -> Result<String> {
             if m.alt { "\x1b" } else { "" },
             (byte - 64) as char
         ));
+    }
+    // Meta with one printable key is ESC and the key, as readline expects for
+    // macOS Option-arrow word motion (ESC b, ESC f).
+    if m.alt && !m.shift && key.chars().count() == 1 && key.chars().all(|c| c.is_ascii_graphic()) {
+        return Ok(format!("\x1b{key}"));
     }
     let result = match key {
         "up" | "down" | "left" | "right" | "home" | "end" => {
@@ -1263,6 +1284,40 @@ mod tests {
 }
 
 #[cfg(test)]
+mod clear_tests {
+    use super::*;
+    #[test]
+    fn clear_drops_scrollback_and_prompt_marks_then_asks_for_a_new_prompt() {
+        let mut output = String::from("\x1b]133;A\x07$ seq\r\n");
+        for line in 0..20 {
+            output.push_str(&format!("line {line}\r\n"));
+        }
+        output.push_str("\x1b]133;A\x07$ ");
+        let mut terminal = Terminal::fixture_output(4, 20, output.as_bytes());
+        let (writer, written) = mpsc::sync_channel(1);
+        terminal.writer = Some(writer);
+        terminal.poll().unwrap();
+        assert!(terminal.term.grid().history_size() > 0);
+        let revision = terminal.revision;
+        assert_eq!(
+            terminal.prompt_marks(revision).unwrap()["marks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        terminal.clear().unwrap();
+        assert_eq!(terminal.term.grid().history_size(), 0);
+        assert!(terminal.revision > revision);
+        assert_eq!(
+            terminal.prompt_marks(terminal.revision).unwrap()["marks"],
+            json!([])
+        );
+        assert_eq!(written.try_recv().unwrap(), vec![0x0c]);
+    }
+}
+
+#[cfg(test)]
 mod structured_input_tests {
     use super::*;
     fn key(key: &str, modifiers: KeyModifiers) -> TerminalInput {
@@ -1352,6 +1407,23 @@ mod structured_input_tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn meta_letters_send_escape_prefixed_readline_keys() {
+        let normal = InputModes::default();
+        let alt = KeyModifiers {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(encode_input(key("b", alt), normal).unwrap(), b"\x1bb");
+        assert_eq!(encode_input(key("f", alt), normal).unwrap(), b"\x1bf");
+        assert_eq!(
+            encode_input(key("backspace", alt), normal).unwrap(),
+            b"\x1b\x7f"
+        );
+        let shifted = KeyModifiers { shift: true, ..alt };
+        assert!(encode_input(key("b", shifted), normal).is_err());
+        assert!(encode_input(key("b", Default::default()), normal).is_err());
     }
     #[test]
     fn paste_and_text_preserve_unicode_and_newlines_without_generated_enter() {

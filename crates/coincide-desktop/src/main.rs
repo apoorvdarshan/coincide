@@ -18,6 +18,7 @@ mod voice_speech;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
+mod app_commands;
 mod app_menu;
 mod app_menu_mount;
 mod archive_settings;
@@ -76,6 +77,7 @@ mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
+mod palette_actions;
 mod presentation;
 mod project_defaults_ui;
 mod project_management;
@@ -2378,64 +2380,6 @@ impl Coincide {
         }
         transcript::markdown(thread, item, source, window, cx)
     }
-    fn palette_catalog(&self) -> Vec<command_palette::PaletteEntry> {
-        use command_palette::{PaletteCommand as C, PaletteEntry as E};
-        let entry = |command, title, subtitle| E {
-            command,
-            title,
-            subtitle,
-            keywords: Vec::new(),
-            enabled: true,
-            disabled_reason: None,
-        };
-        let mut entries = vec![
-            entry(
-                C::NewThread { project_id: None },
-                "New projectless conversation".into(),
-                None,
-            ),
-            entry(C::OpenSettings, "Open settings".into(), None),
-            entry(C::ShowSchedules, "Show schedules".into(), None),
-            entry(
-                C::SelectProject { project_id: None },
-                "All projects".into(),
-                None,
-            ),
-        ];
-        for project in &self.projects {
-            let id = text(project, "id");
-            if id.is_empty() {
-                continue;
-            }
-            let name = text(project, "name");
-            entries.push(entry(
-                C::SelectProject {
-                    project_id: Some(id.clone()),
-                },
-                format!("Show project: {name}"),
-                None,
-            ));
-            if !id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
-                entries.push(entry(
-                    C::NewThread {
-                        project_id: Some(id),
-                    },
-                    format!("New conversation in {name}"),
-                    None,
-                ));
-            }
-        }
-        for thread in &self.threads {
-            entries.push(entry(
-                C::OpenThread {
-                    thread_id: thread.id.clone(),
-                },
-                thread.title.clone(),
-                Some("Conversation".into()),
-            ));
-        }
-        entries
-    }
     fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.command_palette
             .update(cx, |palette, cx| palette.dismiss(window, cx));
@@ -2519,11 +2463,9 @@ impl Coincide {
             ),
             C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
-                self.hide_inline_settings();
-                self.workspace_open = false;
-                self.session_import_open = false;
-                self.open_global_schedules(cx);
+                self.run_keyboard_command(keyboard_settings::Command::Schedules, window, cx)
             }
+            C::Action { id } => self.run_palette_action(&id, window, cx),
         }
         self.sync_transcription_binding(cx);
         cx.notify();
@@ -4831,6 +4773,7 @@ fn palette_entries_equal(
                 && a.title == b.title
                 && a.subtitle == b.subtitle
                 && a.keywords == b.keywords
+                && a.trailing == b.trailing
                 && a.enabled == b.enabled
                 && a.disabled_reason == b.disabled_reason
         })

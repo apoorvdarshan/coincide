@@ -566,7 +566,22 @@ enum Action {
     Input(TerminalInput),
     Resize(u16, u16),
     Scroll(u64, TerminalScroll),
+    /// Drop the scrollback and send the shell a form feed (Swift's Clear).
+    Clear,
+    /// Scroll to the previous (true) or next prompt the shell marked, from
+    /// the observed revision and display offset; past the last, to the bottom.
+    JumpPrompt(u64, u64, bool),
     Close,
+}
+/// The display offset that puts the nearest marked prompt above (`up`) or
+/// below the current viewport top at the top of the pane.
+fn prompt_target(offsets: &[u64], current: u64, up: bool) -> Option<u64> {
+    let candidates = offsets.iter().copied();
+    if up {
+        candidates.filter(|offset| *offset > current).min()
+    } else {
+        candidates.filter(|offset| *offset < current).max()
+    }
 }
 enum Command {
     Adopt(PaneId, String),
@@ -745,6 +760,8 @@ fn run_worker(
                     Action::Input(_) => "Terminal input was not sent",
                     Action::Resize(_, _) => "Terminal resize failed",
                     Action::Scroll(_, _) => "Terminal scroll failed",
+                    Action::Clear => "Terminal clear failed",
+                    Action::JumpPrompt(..) => "Command navigation failed",
                     Action::Close => "Terminal close failed",
                 };
                 let result = (|| -> Result<()> {
@@ -768,6 +785,39 @@ fn run_worker(
                                 "terminal.scroll",
                                 json!({"terminalId":id,"revision":revision,"scroll":scroll}),
                             )?;
+                        }
+                        Action::Clear => {
+                            call("terminal.clear", json!({"terminalId":id}))?;
+                        }
+                        Action::JumpPrompt(revision, current, up) => {
+                            let marks = call(
+                                "terminal.prompt_marks",
+                                json!({"terminalId":id,"revision":revision}),
+                            )?;
+                            let offsets = marks["marks"]
+                                .as_array()
+                                .map(|marks| {
+                                    marks
+                                        .iter()
+                                        .filter_map(|mark| mark["displayOffset"].as_u64())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            let scroll = match prompt_target(&offsets, current, up) {
+                                Some(target) => Some(TerminalScroll::Lines(
+                                    (target as i64 - current as i64)
+                                        .clamp(i32::MIN as i64, i32::MAX as i64)
+                                        as i32,
+                                )),
+                                None if !up => Some(TerminalScroll::Bottom),
+                                None => None,
+                            };
+                            if let Some(scroll) = scroll {
+                                call(
+                                    "terminal.scroll",
+                                    json!({"terminalId":id,"revision":revision,"scroll":scroll}),
+                                )?;
+                            }
                         }
                         Action::Close => {
                             call("terminal.close", json!({"terminalId":id}))?;
@@ -1462,6 +1512,13 @@ impl TerminalWorkspace {
             cx.stop_propagation();
             return;
         }
+        if let Some(shortcut) = crate::keyboard_settings::terminal_key(k)
+            && self.shortcut(key, shortcut, k, window, cx)
+        {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let Some(pane) = self.panes.get_mut(&key) else {
             return;
         };
@@ -1529,6 +1586,109 @@ impl TerminalWorkspace {
             self.act(key, Action::Input(input), cx);
             cx.stop_propagation();
         }
+    }
+    /// The terminal's own keys (`keyboard_settings::TERMINAL_KEYS`), as Swift's
+    /// `ShellTerminalView.handleKeyDown`. Returns whether the key was used.
+    fn shortcut(
+        &mut self,
+        key: PaneId,
+        title: &str,
+        k: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(pane) = self.panes.get(&key) else {
+            return false;
+        };
+        let marked = pane
+            .ime
+            .as_ref()
+            .is_some_and(|ime| ime.read(cx).composition.marked);
+        let alternate = pane
+            .frame
+            .as_ref()
+            .is_some_and(|f| f["viewport"]["alternateScreen"] == true);
+        let backward = matches!(k.key.as_str(), "left" | "up" | "[" | "{" | "pageup");
+        let send = |key: &str, control: bool, alt: bool| {
+            Action::Input(TerminalInput::Key {
+                key: key.into(),
+                modifiers: KeyModifiers {
+                    shift: false,
+                    alt,
+                    control,
+                },
+            })
+        };
+        // Line editing is the shell's readline keys; full-screen apps and an
+        // unfinished composition get the original key instead.
+        let edits = !marked && !alternate;
+        match title {
+            "New terminal" => self.create(None, window, cx),
+            "Split right" => self.create(Some((key, SplitAxis::Horizontal)), window, cx),
+            "Split down" => self.create(Some((key, SplitAxis::Vertical)), window, cx),
+            "Close terminal" => {
+                self.act(key, Action::Close, cx);
+            }
+            "Clear" => {
+                self.act(key, Action::Clear, cx);
+            }
+            "Previous and next terminal tab" => {
+                self.select_tab(if backward { -1 } else { 1 }, window, cx)
+            }
+            "Previous and next pane" => {
+                self.focus_pane(key, if backward { -1 } else { 1 }, window, cx)
+            }
+            "Previous and next command" if !alternate => {
+                let Some(frame) = &pane.frame else {
+                    return true;
+                };
+                let (Some(revision), Some(offset)) = (
+                    frame["revision"].as_u64(),
+                    frame["viewport"]["displayOffset"].as_u64(),
+                ) else {
+                    return true;
+                };
+                self.act(key, Action::JumpPrompt(revision, offset, backward), cx);
+            }
+            "Move to the start or end of the line" if edits => {
+                self.act(key, send(if backward { "a" } else { "e" }, true, false), cx);
+            }
+            "Delete to the start of the line" if edits => {
+                self.act(key, send("u", true, false), cx);
+            }
+            "Move by word" if edits => {
+                self.act(key, send(if backward { "b" } else { "f" }, false, true), cx);
+            }
+            "Delete the previous word" if edits => {
+                self.act(key, send("backspace", false, true), cx);
+            }
+            _ => return false,
+        }
+        true
+    }
+    fn select_tab(&mut self, offset: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.tabs.iter().position(|t| Some(t.key) == self.active) else {
+            return;
+        };
+        let next = (index as i32 + offset).rem_euclid(self.tabs.len() as i32) as usize;
+        let (tab, focus) = (self.tabs[next].key, self.tabs[next].focus);
+        self.active = Some(tab);
+        self.watch();
+        self.focus(focus, window, cx);
+    }
+    fn focus_pane(
+        &mut self,
+        current: PaneId,
+        offset: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ids = self.ids();
+        let Some(index) = ids.iter().position(|id| *id == current) else {
+            return;
+        };
+        let next = ids[(index as i32 + offset).rem_euclid(ids.len() as i32) as usize];
+        self.focus(next, window, cx);
     }
     fn copy(&mut self, key: PaneId, cx: &mut Context<Self>) {
         if self.stopping.load(Ordering::Acquire) {
@@ -2262,6 +2422,18 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), ["terminal.list"]);
     }
 
+    #[::core::prelude::v1::test]
+    fn prompt_jumps_pick_the_nearest_marked_prompt_or_the_bottom() {
+        // Display offsets put each mark at the top; larger is further back.
+        let marks = [40, 25, 10, 0];
+        assert_eq!(prompt_target(&marks, 12, true), Some(25));
+        assert_eq!(prompt_target(&marks, 25, true), Some(40));
+        assert_eq!(prompt_target(&marks, 40, true), None);
+        assert_eq!(prompt_target(&marks, 12, false), Some(10));
+        assert_eq!(prompt_target(&marks, 10, false), Some(0));
+        assert_eq!(prompt_target(&marks, 0, false), None);
+        assert_eq!(prompt_target(&[], 5, true), None);
+    }
     fn leaves(layout: &Layout) -> Vec<PaneId> {
         let mut out = vec![];
         layout.panes(&mut out);
