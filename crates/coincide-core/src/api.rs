@@ -82,6 +82,8 @@ mod composer_astra_api_tests;
 mod composer_context_api;
 #[path = "composer_file_reference.rs"]
 mod composer_file_reference;
+#[path = "composer_suggestions_api.rs"]
+mod composer_suggestions_api;
 #[path = "terminal_context_api.rs"]
 mod terminal_context_api;
 #[cfg(test)]
@@ -248,6 +250,7 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    composer_commands: crate::composer_suggestions::ReportedCommands,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -330,6 +333,7 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            composer_commands: Default::default(),
         }
     }
     pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
@@ -631,6 +635,7 @@ impl Engine {
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
                 methods.push("composer.context.attachTerminalSelection");
+                methods.push("composer.commands");
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
@@ -869,6 +874,7 @@ impl Engine {
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "composer.context.edit" => self.edit_composer_context(p),
             "composer.context.attachTerminalSelection" => self.attach_terminal_selection(p),
+            "composer.commands" => self.reported_composer_commands(p),
             "agent.send" => self.send_turn(p,SendOrigin::Ordinary),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
@@ -2002,6 +2008,26 @@ impl Engine {
                                         item["text"] = json!("Provider cancelled this request");
                                         break;
                                     }
+                                }
+                            }
+                            "provider/event" => {
+                                if let Some(commands) =
+                                    crate::composer_suggestions::reported_commands(p)
+                                {
+                                    let provider = self.runs[&id].provider.clone();
+                                    let account = if v["selection"]["provider"] == provider {
+                                        v["selection"]["accountID"].clone()
+                                    } else {
+                                        Value::Null
+                                    };
+                                    let folder = self.working_directory(&v).ok();
+                                    self.composer_commands.record(
+                                        &id,
+                                        &provider,
+                                        &account,
+                                        folder.as_deref(),
+                                        commands,
+                                    );
                                 }
                             }
                             "provider/requestRejected" => {
