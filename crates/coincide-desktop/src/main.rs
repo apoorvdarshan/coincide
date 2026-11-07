@@ -1021,9 +1021,10 @@ impl Coincide {
                         let open = cx.background_executor().spawn(async move {
                             coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                         });
+                        let completion_window = this.main_window;
                         let completion = cx.spawn_in(window, async move |this, cx| {
                             let result = open.await;
-                            let _ = this.update_in(cx, |this, window, cx| {
+                            let _ = main_window_poll::update(completion_window, &this, cx, |this, window, cx| {
                                 if this.media.shutdown_requested { return; }
                                 this.refresh(cx);
                                 match result {
@@ -1068,9 +1069,10 @@ impl Coincide {
                     let open = cx.background_executor().spawn(async move {
                         coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                     });
+                    let completion_window = this.main_window;
                     let completion = cx.spawn_in(window, async move |this, cx| {
                         let result = open.await;
-                        let _ = this.update_in(cx, |this, window, cx| {
+                        let _ = main_window_poll::update(completion_window, &this, cx, |this, window, cx| {
                             if this.media.shutdown_requested { return; }
                             this.refresh(cx);
                             match result {
