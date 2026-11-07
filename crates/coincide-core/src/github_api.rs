@@ -16,7 +16,8 @@ use std::{
 };
 
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
-const SUMMARY: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName";
+const SUMMARY: &str =
+    "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,author,updatedAt";
 const DETAIL: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,body,author,updatedAt,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup";
 
 #[cfg(test)]
@@ -752,13 +753,14 @@ fn normalize_pr(raw: &Value, repo: &str, detail: bool) -> Result<Value> {
     for field in ["title", "headRefName", "baseRefName"] {
         ensure!(pr[field].is_string(), "Required PR summary field missing");
     }
+    // Lists carry the author and update time too, for the composer's `#` picker.
+    pr["author"] = actor(&raw["author"])?;
+    pr["updatedAt"] = nullable_text(&raw["updatedAt"], 100)?;
     if detail {
         pr["body"] = nullable_text(&raw["body"], 128 * 1024)?;
         if pr["body"].is_null() {
             pr["body"] = json!("");
         }
-        pr["author"] = actor(&raw["author"])?;
-        pr["updatedAt"] = nullable_text(&raw["updatedAt"], 100)?;
         for field in ["additions", "deletions", "changedFiles"] {
             ensure!(
                 raw[field].is_null() || raw[field].as_u64().is_some(),

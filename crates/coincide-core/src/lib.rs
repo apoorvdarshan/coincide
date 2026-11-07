@@ -14,6 +14,7 @@ pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
 pub mod workspace;
+pub mod workspace_diff;
 
 pub mod inspector_preferences;
 pub mod message_queue;
@@ -28,6 +29,10 @@ pub mod organization;
 pub mod platform_host;
 pub mod remote;
 pub mod usage_history;
+pub mod usage_limits;
+pub mod usage_presentation;
+pub mod usage_pricing;
+pub mod usage_report;
 pub mod workspace_git;
 pub mod workspace_github;
 
@@ -56,12 +61,15 @@ pub mod updater_install;
 pub mod updater_helper;
 
 pub mod computer_use;
+pub mod computer_use_bridge;
 
 pub mod legacy_media_recovery;
 
 pub mod composer_context;
 
 pub mod composer_policy;
+
+pub mod composer_suggestions;
 
 pub mod browser_bookmarks;
 pub mod browser_history;

@@ -4,7 +4,7 @@
 //! Owner authentication remains the control transport's responsibility. Repository
 //! roots come exclusively from stored threads, never a caller-supplied cwd.
 use super::*;
-use crate::workspace_git;
+use crate::{workspace_diff, workspace_git};
 use std::path::Path;
 
 pub(super) const METHODS: &[&str] = &[
@@ -13,6 +13,7 @@ pub(super) const METHODS: &[&str] = &[
     "git.checkpoints.diff",
     "git.worktrees.reserve",
     "git.worktrees.list",
+    "git.review.diff",
     "git.workspace.result",
 ];
 
@@ -36,6 +37,7 @@ impl Engine {
             "git.checkpoints.create" => &["threadId", "expectedRoot", "expectedHead", "label"],
             "git.checkpoints.diff" => &["threadId", "expectedRoot", "checkpointId"],
             "git.worktrees.reserve" => &["threadId", "expectedRoot", "base", "name", "branch"],
+            "git.review.diff" => &["threadId", "expectedRoot", "scope", "ignoreWhitespace"],
             "git.workspace.result" => &["threadId", "operationId"],
             _ => &["threadId", "expectedRoot"],
         };
@@ -141,6 +143,11 @@ impl Engine {
         } else {
             None
         };
+        let review = if method == "git.review.diff" {
+            Some(workspace_diff::parse_request(p)?)
+        } else {
+            None
+        };
         let reservation = if method == "git.worktrees.reserve" {
             let base = bounded(p, "base", 64)?.to_owned();
             workspace_git::validate_oid(&base)?;
@@ -177,6 +184,10 @@ impl Engine {
                         checkpoint.as_deref().context("Missing checkpoint")?,
                     ),
                     "git.worktrees.list" => workspace_git::worktrees(&directory),
+                    "git.review.diff" => {
+                        let (scope, ignore_whitespace) = review.context("Missing review")?;
+                        workspace_diff::review(&directory, scope, ignore_whitespace)
+                    }
                     "git.worktrees.reserve" => {
                         let (data, name, branch, base) =
                             reservation.context("Missing reservation")?;

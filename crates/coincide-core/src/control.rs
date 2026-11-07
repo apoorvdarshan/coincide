@@ -254,6 +254,22 @@ pub fn data_directory() -> Result<PathBuf> {
     }
 }
 
+/// Browser downloads go to ~/Downloads/Coincide like the Swift app; each file
+/// gets its own folder there. Fixtures isolate it by owning HOME/USERPROFILE.
+pub fn download_directory() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let home = std::env::var_os("USERPROFILE")
+        .filter(|path| !path.is_empty())
+        .context("USERPROFILE is missing")?;
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME")
+        .filter(|path| !path.is_empty())
+        .context("HOME is missing")?;
+    let home = PathBuf::from(home);
+    ensure!(home.is_absolute(), "Home directory must be absolute");
+    Ok(home.join("Downloads").join("Coincide"))
+}
+
 #[cfg(test)]
 mod framing_tests {
     use super::*;

@@ -181,16 +181,28 @@ impl Coincide {
         value: Option<Value>,
         cx: &mut Context<Self>,
     ) {
+        self.sidebar_thread_markers(key, &[(id.to_owned(), value)], cx);
+    }
+    /// Several conversations' markers in one saved change, so a bulk action
+    /// and its Undo never leave part of a selection changed.
+    pub(super) fn sidebar_thread_markers(
+        &mut self,
+        key: &str,
+        values: &[(String, Option<Value>)],
+        cx: &mut Context<Self>,
+    ) {
         let result = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
             anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
             let current = engine.store.document("ui-state.json")?.unwrap_or(json!({}));
             anyhow::ensure!(current.is_object(), "Invalid interface preferences");
             let mut entries = current[key].as_object().cloned().unwrap_or_default();
-            if let Some(value) = value {
-                entries.insert(id.into(), value);
-            } else {
-                entries.remove(id);
+            for (id, value) in values {
+                if let Some(value) = value {
+                    entries.insert(id.clone(), value.clone());
+                } else {
+                    entries.remove(id);
+                }
             }
             let mut patch = json!({});
             patch[key] = json!(entries);

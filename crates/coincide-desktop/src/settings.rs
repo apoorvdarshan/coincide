@@ -351,6 +351,25 @@ const PALETTES: &[Palette] = &[
     },
 ];
 
+/// Swift's caption under "Open links in your default browser", naming this
+/// platform's modifier for the other destination.
+fn link_routing_caption(default_browser: bool) -> &'static str {
+    match (default_browser, cfg!(target_os = "macos")) {
+        (true, true) => {
+            "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview."
+        }
+        (true, false) => {
+            "Clicking a web link opens your default browser. Ctrl-click opens it in Coincide’s browser preview."
+        }
+        (false, true) => {
+            "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."
+        }
+        (false, false) => {
+            "Clicking a web link opens it in Coincide’s browser preview. Ctrl-click opens your default browser."
+        }
+    }
+}
+
 pub(super) fn reply_font() -> &'static str {
     #[cfg(target_os = "macos")]
     {
@@ -767,7 +786,7 @@ impl Coincide {
         }
         if matches(
             S::Usage,
-            "saved local usage history tokens provider reports cost counters live codex limits quota credits",
+            "saved local usage history tokens provider reports cost counters live codex claude plan limits quota credits daily chart models projects activity",
         ) {
             count += 1;
             if self.settings_section == S::Usage {
@@ -775,8 +794,16 @@ impl Coincide {
                     .provider_configuration_panel
                     .update(cx, |panel, cx| panel.admin_usage_view(cx));
                 content = content
+                    .child(self.usage_dashboard(cx))
                     .child(admin_usage)
-                    .child(self.codex_limits.panel.clone())
+                    .child(
+                        div()
+                            .mt_2()
+                            .px_1()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Saved turn reports"),
+                    )
                     .child(
                         div()
                             .h(px(460.))
@@ -786,7 +813,7 @@ impl Coincide {
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")
-                        .label("View usage and Codex limits")
+                        .label("View usage and plan limits")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.settings_section = S::Usage;
                             cx.notify();
@@ -996,6 +1023,28 @@ impl Coincide {
                     cx,
                 ));
             }
+        }
+        if matches(
+            S::Conversation,
+            "open links default browser web click command control preview",
+        ) {
+            count += 1;
+            let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
+            content = content
+                .child(self.setting_choices(
+                    "Open links in your default browser",
+                    "opensLinksInDefaultBrowser",
+                    json!(default_browser),
+                    vec![("On", json!(true)), ("Off", json!(false))],
+                    cx,
+                ))
+                .child(
+                    div()
+                        .px_3()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child(link_routing_caption(default_browser)),
+                );
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
