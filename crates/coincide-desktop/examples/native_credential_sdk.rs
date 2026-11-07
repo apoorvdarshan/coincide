@@ -20,7 +20,11 @@ use gpui_kit::{
 use shutdown::TrackedEvaluation;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::AtomicU64, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, TryRecvError},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -39,6 +43,18 @@ const VERIFY: &str = r#"(()=>location.href==='https://credential-fixture.invalid
 struct SyntheticVault;
 impl VaultCommand for SyntheticVault {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
+        // Approval and fill both recheck membership through the origin listing.
+        if args
+            == [
+                "list",
+                "items",
+                "--url",
+                "https://credential-fixture.invalid",
+                "--nointeraction",
+            ]
+        {
+            return Ok(br#"[{"id":"synthetic-owned-entry","type":1,"name":"Synthetic","login":{"username":"synthetic-user","uris":[{"uri":"https://credential-fixture.invalid"}]}}]"#.to_vec());
+        }
         if args != ["get", "item", "synthetic-owned-entry", "--nointeraction"] {
             return Err(Failure::Unavailable);
         }
@@ -75,6 +91,7 @@ struct Fixture {
     worker: Option<JoinHandle<Result<(), Failure>>>,
     jobs: Option<mpsc::Receiver<FillJob>>,
     read: Option<mpsc::Receiver<bool>>,
+    loaded: Arc<AtomicBool>,
     stage: u8,
     started: Instant,
     failed: bool,
@@ -89,12 +106,21 @@ impl Fixture {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut context = wry::WebContext::new(Some(root.join("runtime")));
+        // Wry queues scripts evaluated before a view's first commit on macOS and
+        // Linux and drops their callbacks, so probe only after the fixture loads.
+        let loaded = Arc::new(AtomicBool::new(false));
+        let page_loaded = loaded.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_incognito(true)
             .with_devtools(false)
             .with_clipboard(false)
             .with_autoplay(false)
             .with_navigation_handler(|url| url == URL || url == "about:blank")
+            .with_on_page_load_handler(move |event, url| {
+                if matches!(event, wry::PageLoadEvent::Finished) && url == URL {
+                    page_loaded.store(true, Ordering::Release);
+                }
+            })
             .with_url("about:blank");
         // The runtime path is fresh and runner-owned; never use a personal WebView2 profile.
         let view = gpui_webview::WebView::build(builder, window, cx)
@@ -127,6 +153,7 @@ impl Fixture {
             worker: None,
             jobs: None,
             read: None,
+            loaded,
             stage: 0,
             started: Instant::now(),
             failed: false,
@@ -150,6 +177,26 @@ impl Fixture {
             self.stage = 4;
         }
     }
+    /// Diagnostics name a stage only; never a value, page text or secret.
+    fn fail(&mut self, reason: &str) {
+        eprintln!("synthetic fill failed at stage {}: {reason}", self.stage);
+        self.failed = true;
+        self.stage = 4;
+    }
+    /// The sink lives on the worker, so a closed queue means it returned
+    /// before queueing its job and will never deliver one.
+    fn take_job(&mut self) -> Option<FillJob> {
+        match self.jobs.as_ref()?.try_recv() {
+            Ok(job) => Some(job),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                let outcome = self.worker.take().map(|worker| worker.join());
+                self.jobs = None;
+                self.fail(&format!("worker ended before delivery: {outcome:?}"));
+                None
+            }
+        }
+    }
     fn poll(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(target) = &self.target {
             target.poll_ownership();
@@ -157,10 +204,14 @@ impl Fixture {
         if self.started.elapsed() > Duration::from_secs(30) && !self.deadline_reported {
             // A deadline is a failure, never a native callback/deallocation ACK.
             self.deadline_reported = true;
+            eprintln!(
+                "synthetic fill deadline exceeded at stage {} (fixture loaded: {}); retaining pending callback owners",
+                self.stage,
+                self.loaded.load(Ordering::Acquire)
+            );
             self.failed = true;
             self.stage = 4;
             self.jobs = None;
-            eprintln!("synthetic fill deadline exceeded; retaining pending callback owners");
             if let Some(target) = &self.target {
                 target.close();
             }
@@ -168,19 +219,27 @@ impl Fixture {
         match self.stage {
             0 => {
                 if self.read.is_none() {
-                    self.evaluate("window.fixtureReady===true", cx);
-                } else if let Ok(ready) = self.read.as_ref().unwrap().try_recv() {
-                    self.read = None;
-                    if ready {
-                        let (jobs, worker) = worker();
-                        self.jobs = Some(jobs);
-                        self.worker = Some(worker);
-                        self.stage = 1;
+                    if self.loaded.load(Ordering::Acquire) {
+                        self.evaluate("window.fixtureReady===true", cx);
+                    }
+                } else {
+                    match self.read.as_ref().unwrap().try_recv() {
+                        Ok(ready) => {
+                            self.read = None;
+                            if ready {
+                                let (jobs, worker) = worker();
+                                self.jobs = Some(jobs);
+                                self.worker = Some(worker);
+                                self.stage = 1;
+                            }
+                        }
+                        Err(TryRecvError::Disconnected) => self.fail("readiness callback dropped"),
+                        Err(TryRecvError::Empty) => {}
                     }
                 }
             }
             1 => {
-                if let Some(job) = self.jobs.as_ref().and_then(|jobs| jobs.try_recv().ok()) {
+                if let Some(job) = self.take_job() {
                     let mut hook = BrowserCredentialSink::new(|_: &str| Ok(binding(1)))
                         .with_target(self.target.clone());
                     let callbacks = self.shutdown.callbacks.clone();
@@ -198,18 +257,21 @@ impl Fixture {
                     .as_ref()
                     .is_some_and(|worker| worker.is_finished())
                 {
-                    if self.worker.take().unwrap().join().ok() != Some(Ok(())) {
-                        self.failed = true;
-                        self.stage = 4;
+                    let outcome = self.worker.take().unwrap().join().ok();
+                    if outcome != Some(Ok(())) {
+                        self.fail(&format!("fill returned {outcome:?}"));
                     } else {
                         self.evaluate(VERIFY, cx);
                         self.stage = 3;
                     }
                 }
             }
-            3 => {
-                if let Some(value) = self.read.as_ref().and_then(|read| read.try_recv().ok()) {
+            3 => match self.read.as_ref().map(|read| read.try_recv()) {
+                Some(Ok(value)) => {
                     self.read = None;
+                    if !value {
+                        eprintln!("synthetic fill verification returned false");
+                    }
                     self.failed |= !value;
                     // Exercise the real channel's native source recheck without dispatching a second secret.
                     let (jobs, worker) = worker();
@@ -217,9 +279,11 @@ impl Fixture {
                     self.worker = Some(worker);
                     self.stage = 5;
                 }
-            }
+                Some(Err(TryRecvError::Disconnected)) => self.fail("verification callback dropped"),
+                _ => {}
+            },
             5 => {
-                if let Some(job) = self.jobs.as_ref().and_then(|jobs| jobs.try_recv().ok()) {
+                if let Some(job) = self.take_job() {
                     let mut hook = BrowserCredentialSink::new(|_: &str| Ok(binding(2)))
                         .with_target(self.target.clone());
                     deliver_fill(job, &mut hook);
@@ -232,8 +296,10 @@ impl Fixture {
                     .as_ref()
                     .is_some_and(|worker| worker.is_finished())
                 {
-                    self.failed |=
-                        self.worker.take().unwrap().join().ok() != Some(Err(Failure::StalePage));
+                    let outcome = self.worker.take().unwrap().join().ok();
+                    if outcome != Some(Err(Failure::StalePage)) {
+                        self.fail(&format!("changed source returned {outcome:?}"));
+                    }
                     self.stage = 4;
                 }
             }
