@@ -2,13 +2,14 @@
 //! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
-        CaptureBinding, CaptureError, CaptureEvent, CapturedAudio, Microphone, Permission,
+        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, Microphone,
+        Permission,
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
 use coincide_core::{
     agent::{WorkerCompletion, WorkerThreadStatus},
-    dictation::local::LocalWhisper,
+    dictation::local::{LocalError, LocalWhisper},
 };
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
@@ -63,6 +64,7 @@ enum Phase {
 }
 #[derive(Clone, Copy)]
 enum Action {
+    BeginDictation,
     Enable,
     Record,
     Stop,
@@ -78,6 +80,8 @@ struct Snapshot {
     phase: Phase,
     permission: Permission,
     message: &'static str,
+    progress: Option<CaptureProgress>,
+    text_pending: bool,
 }
 struct Shared {
     enabled: AtomicBool,
@@ -86,6 +90,9 @@ struct Shared {
     controller_constructed: AtomicBool,
 }
 trait Controller {
+    fn progress(&self) -> Option<CaptureProgress> {
+        None
+    }
     fn set_binding(&mut self, binding: Option<CaptureBinding>);
     fn request_permission(&mut self) -> Result<(), CaptureError>;
     fn start(&mut self, seconds: usize) -> Result<Uuid, CaptureError>;
@@ -95,6 +102,9 @@ trait Controller {
     fn accepts(&self, audio: &CapturedAudio, binding: &CaptureBinding) -> bool;
 }
 impl Controller for Microphone {
+    fn progress(&self) -> Option<CaptureProgress> {
+        Microphone::progress(self)
+    }
     fn set_binding(&mut self, binding: Option<CaptureBinding>) {
         Microphone::set_binding(self, binding);
     }
@@ -117,12 +127,19 @@ impl Controller for Microphone {
         self.accepts_audio(audio, binding)
     }
 }
+#[derive(Debug)]
+enum InferenceFailure {
+    Failed,
+    Cancelled,
+    CleanupPending,
+}
 trait Inference {
     fn transcribe(
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-    ) -> Result<String, ()>;
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, InferenceFailure>;
 }
 struct LocalInference;
 impl Inference for LocalInference {
@@ -130,7 +147,8 @@ impl Inference for LocalInference {
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-    ) -> Result<String, ()> {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, InferenceFailure> {
         LocalWhisper::new(
             configuration.executable.clone(),
             configuration.model.clone(),
@@ -138,9 +156,13 @@ impl Inference for LocalInference {
             configuration.threads,
             Duration::from_secs(120),
         )
-        .map_err(|_| ())?
-        .transcribe_local(wav)
-        .map_err(|_| ())
+        .map_err(|_| InferenceFailure::Failed)?
+        .transcribe_local_cancellable(wav, cancelled)
+        .map_err(|error| match error {
+            LocalError::Cancelled => InferenceFailure::Cancelled,
+            LocalError::CleanupPending => InferenceFailure::CleanupPending,
+            _ => InferenceFailure::Failed,
+        })
     }
 }
 type Factory = Box<dyn FnOnce() -> (Box<dyn Controller>, Box<dyn Inference>) + Send>;
@@ -158,6 +180,9 @@ struct Owner {
     permission_target: Option<Target>,
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
+    dictation: bool,
+    progress_bucket: Option<usize>,
+    text_pending: bool,
 }
 impl Owner {
     fn current(&self) -> bool {
@@ -172,15 +197,31 @@ impl Owner {
                 phase: self.phase,
                 permission: self.permission,
                 message,
+                progress: self.progress(),
+                text_pending: self.text_pending,
             });
         }
     }
+    fn progress(&self) -> Option<CaptureProgress> {
+        if self.phase != Phase::Recording || !self.current() {
+            return None;
+        }
+        self.controller.as_ref()?.progress().filter(|p| {
+            Some(p.session) == self.session
+                && p.captured_samples <= 16_000 * 60
+                && p.level.is_finite()
+                && (0.0..=1.0).contains(&p.level)
+        })
+    }
     fn reset(&mut self) {
+        self.progress_bucket = None;
+        self.text_pending = false;
         if let Some(controller) = self.controller.as_mut() {
             controller.cancel();
         }
         self.audio = None;
         self.session = None;
+        self.dictation = false;
         self.target = None;
         self.phase = Phase::Idle;
     }
@@ -224,6 +265,27 @@ impl Owner {
             return;
         }
         match command.action {
+            Action::BeginDictation if matches!(self.phase, Phase::Idle | Phase::Failed) => {
+                // This closed native intent authorizes permission followed by
+                // capture for this exact target. Manual Enable stays separate.
+                if self
+                    .target
+                    .as_ref()
+                    .is_none_or(|target| target.binding.is_none() || target.config.is_none())
+                {
+                    self.publish(
+                        "Choose a local executable/model and a composer before dictating.",
+                    );
+                    return;
+                }
+                self.dictation = true;
+                let target = self.target.clone().unwrap();
+                self.command(Command {
+                    generation: self.generation,
+                    target,
+                    action: Action::Enable,
+                });
+            }
             Action::Enable if self.phase == Phase::Idle || self.phase == Phase::Failed => {
                 match self.controller.as_mut().unwrap().request_permission() {
                     Ok(()) => {
@@ -315,9 +377,22 @@ impl Owner {
             };
             match event {
                 CaptureEvent::PermissionChanged(permission) => {
+                    let continue_dictation = self.dictation && self.phase == Phase::Permission;
                     self.permission = permission;
                     self.permission_target = self.target.clone();
                     self.phase = Phase::Idle;
+                    if continue_dictation
+                        && matches!(permission, Permission::Authorized | Permission::Ready)
+                    {
+                        let target = self.target.clone().unwrap();
+                        self.command(Command {
+                            generation: self.generation,
+                            target,
+                            action: Action::Record,
+                        });
+                        continue;
+                    }
+                    self.dictation = false;
                     self.publish(match permission {
                         Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
                         Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
@@ -345,6 +420,10 @@ impl Owner {
                         self.audio = Some(audio);
                         self.session = None;
                         self.phase = Phase::Captured;
+                        if self.dictation {
+                            self.transcribe();
+                            continue;
+                        }
                         self.publish(if limited { "Recording reached its limit and stopped. Press Transcribe Recording to proceed." } else { "Recording stopped. Press Transcribe Recording to proceed; nothing was sent." });
                     } else {
                         self.reset();
@@ -352,17 +431,26 @@ impl Owner {
                     }
                 }
                 CaptureEvent::Failed(_) => {
+                    self.text_pending = false;
                     self.audio = None;
                     self.session = None;
                     self.phase = Phase::Failed;
                     self.publish("Native capture failed. Nothing was transcribed or sent.");
                 }
                 CaptureEvent::Cancelled => {
+                    self.text_pending = false;
                     self.audio = None;
                     self.session = None;
                     self.phase = Phase::Idle;
                     self.publish("Recording cancelled and discarded.");
                 }
+            }
+        }
+        if let Some(progress) = self.progress() {
+            let bucket = progress.captured_samples / 1600;
+            if self.progress_bucket != Some(bucket) {
+                self.progress_bucket = Some(bucket);
+                self.publish("Listening…");
             }
         }
     }
@@ -388,15 +476,23 @@ impl Owner {
             self.reset();
             return;
         }
+        self.text_pending = false;
         self.phase = Phase::Transcribing;
         self.publish("Transcribing the stopped recording locally… Cancel discards the result; inference may finish cleanup in the background.");
         // Runs on the same dedicated owner, with capture already stopped. The
         // UI never waits. Shared generation revokes results during this call.
-        let result = self
-            .inference
-            .as_mut()
-            .unwrap()
-            .transcribe(&configuration, &audio.wav);
+        let shared = self.shared.clone();
+        let generation = self.generation;
+        let cancelled = || {
+            !shared.alive.load(Ordering::Acquire)
+                || !shared.enabled.load(Ordering::Acquire)
+                || shared.generation.load(Ordering::Acquire) != generation
+        };
+        let result =
+            self.inference
+                .as_mut()
+                .unwrap()
+                .transcribe(&configuration, &audio.wav, &cancelled);
         if !self.current() {
             self.reset();
             return;
@@ -404,15 +500,26 @@ impl Owner {
         self.phase = Phase::Idle;
         match result {
             Ok(text) if !text.trim().is_empty() => {
-                let _ = self.text.send(TextReady {
-                    generation: self.generation,
-                    binding,
-                    text,
-                });
+                self.text_pending = self
+                    .text
+                    .send(TextReady {
+                        generation: self.generation,
+                        binding,
+                        text,
+                    })
+                    .is_ok();
                 self.publish("Transcript ready for the matching composer. Nothing was sent.");
             }
             Ok(_) => self.publish("No speech text was returned. Composer unchanged."),
-            Err(()) => {
+            Err(InferenceFailure::Cancelled) => {
+                self.phase = Phase::Idle;
+                self.publish("Dictation cancelled; no text inserted.");
+            }
+            Err(InferenceFailure::CleanupPending) => {
+                self.phase = Phase::Failed;
+                self.publish("Transcription cleanup is uncertain. Private audio was retained; no transcript was inserted.");
+            }
+            Err(InferenceFailure::Failed) => {
                 self.phase = Phase::Failed;
                 self.publish("Local transcription failed. Check the selected CLI/model and recording format.");
             }
@@ -519,6 +626,9 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 permission_target: None,
                 session: None,
                 audio: None,
+                dictation: false,
+                progress_bucket: None,
+                text_pending: false,
             };
             while owner.shared.alive.load(Ordering::Acquire) {
                 match receiver.recv_timeout(Duration::from_millis(10)) {
@@ -565,13 +675,19 @@ pub struct MicrophoneSettings {
     phase: Phase,
     permission: Permission,
     status: String,
+    listening_since: Option<std::time::Instant>,
+    progress: Option<CaptureProgress>,
+    text_pending: bool,
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
-        let (connection, events) = spawn_owner(Box::new(|| {
+        Self::with_factory(Box::new(|| {
             (Box::new(Microphone::new()), Box::new(LocalInference))
-        }));
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into() }, events)
+        }))
+    }
+    fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
+        let (connection, events) = spawn_owner(factory);
+        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false }, events)
     }
     pub fn set_target(
         &mut self,
@@ -600,6 +716,7 @@ impl MicrophoneSettings {
                 .generation
                 .fetch_add(1, Ordering::AcqRel)
                 .wrapping_add(1);
+            self.text_pending = false;
             self.target = target;
             self.backend_enabled = backend_enabled;
             self.phase = Phase::Idle;
@@ -614,6 +731,7 @@ impl MicrophoneSettings {
     }
     pub fn request_shutdown(&mut self) {
         self.connection.request_shutdown();
+        self.text_pending = false;
         self.generation = self.connection.shared.generation.load(Ordering::Acquire);
         self.backend_enabled = false;
         self.target.binding = None;
@@ -636,8 +754,63 @@ impl MicrophoneSettings {
             .wrapping_add(1);
         self.phase = Phase::Idle;
         self.permission = Permission::Unavailable;
+        self.text_pending = false;
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
         cx.notify();
+    }
+    pub fn begin_dictation(&mut self, cx: &mut Context<Self>) -> u64 {
+        self.action(Action::BeginDictation, cx);
+        self.generation
+    }
+    pub fn intent_generation(&self) -> Option<u64> {
+        (self.connection.shared.alive.load(Ordering::Acquire)
+            && self.backend_enabled
+            && (self.dictation_active() || self.text_pending))
+            .then_some(self.generation)
+    }
+    pub fn stop_dictation(&mut self, cx: &mut Context<Self>) {
+        if self.phase == Phase::Recording {
+            self.action(Action::Stop, cx);
+        } else if matches!(self.phase, Phase::Permission | Phase::Pending) {
+            self.cancel(cx);
+        }
+    }
+    pub fn dictation_active(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Pending
+                | Phase::Permission
+                | Phase::Recording
+                | Phase::Stopping
+                | Phase::Transcribing
+        )
+    }
+    pub fn level(&self) -> Option<f32> {
+        if self.phase == Phase::Recording {
+            self.progress.map(|p| p.level)
+        } else {
+            None
+        }
+    }
+    pub fn status_text(&self) -> String {
+        if self.phase == Phase::Recording
+            && let Some(progress) = self.progress
+        {
+            return format!(
+                "Listening · {:.1}s",
+                progress.captured_samples as f64 / 16_000.0
+            );
+        }
+        if self.phase == Phase::Recording {
+            format!(
+                "Listening · {}s",
+                self.listening_since
+                    .map(|since| since.elapsed().as_secs())
+                    .unwrap_or(0)
+            )
+        } else {
+            self.status.clone()
+        }
     }
     pub fn accepts_text(&self, event: &TextReady, live: &ComposerBinding) -> bool {
         self.backend_enabled
@@ -653,6 +826,14 @@ impl MicrophoneSettings {
         }
         while let Ok(snapshot) = self.connection.snapshots.try_recv() {
             if snapshot.generation == self.generation && self.backend_enabled {
+                if snapshot.phase == Phase::Recording && self.phase != Phase::Recording {
+                    self.listening_since = Some(std::time::Instant::now());
+                }
+                if snapshot.phase != Phase::Recording {
+                    self.listening_since = None;
+                }
+                self.progress = snapshot.progress;
+                self.text_pending = snapshot.text_pending;
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
                 self.status = snapshot.message.into();
@@ -665,7 +846,16 @@ impl MicrophoneSettings {
             return;
         }
         // Beginning a new explicit request invalidates any older queued text.
-        if matches!(action, Action::Enable | Action::Record) {
+        if matches!(
+            action,
+            Action::Enable | Action::Record | Action::BeginDictation
+        ) {
+            self.text_pending = false;
+        }
+        if matches!(
+            action,
+            Action::Enable | Action::Record | Action::BeginDictation
+        ) {
             self.generation = self
                 .connection
                 .shared
@@ -720,6 +910,9 @@ mod tests {
         cancels: usize,
         inference: usize,
         ready_permission: bool,
+        empty_inference: bool,
+        fail_inference: bool,
+        progress: Option<CaptureProgress>,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
         drop_gate: Option<Receiver<()>>,
@@ -731,6 +924,9 @@ mod tests {
         events: VecDeque<CaptureEvent>,
     }
     impl Controller for FakeController {
+        fn progress(&self) -> Option<CaptureProgress> {
+            self.trace.lock().unwrap().progress
+        }
         fn set_binding(&mut self, binding: Option<CaptureBinding>) {
             self.trace
                 .lock()
@@ -814,7 +1010,16 @@ mod tests {
         revoke: Option<Arc<Shared>>,
     }
     impl Inference for FakeInference {
-        fn transcribe(&mut self, config: &LocalRecordingConfig, wav: &[u8]) -> Result<String, ()> {
+        fn transcribe(
+            &mut self,
+            config: &LocalRecordingConfig,
+            wav: &[u8],
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<String, InferenceFailure> {
+            assert!(
+                !cancelled(),
+                "current native owner passes a live cancellation receipt"
+            );
             assert_eq!(config.language, "en");
             assert!(wav.starts_with(b"RIFF"));
             let mut trace = self.trace.lock().unwrap();
@@ -822,6 +1027,16 @@ mod tests {
             trace.threads.push(thread::current().id());
             if let Some(shared) = &self.revoke {
                 shared.generation.fetch_add(1, Ordering::AcqRel);
+                assert!(
+                    cancelled(),
+                    "worker generation revocation must reach local process cancellation"
+                );
+            }
+            if trace.fail_inference {
+                return Err(InferenceFailure::Failed);
+            }
+            if trace.empty_inference {
+                return Ok(String::new());
             }
             Ok("synthetic recorded transcript".into())
         }
@@ -891,6 +1106,9 @@ mod tests {
             permission_target: None,
             session: None,
             audio: None,
+            dictation: false,
+            progress_bucket: None,
+            text_pending: false,
         };
         (owner, events, trace)
     }
@@ -907,6 +1125,93 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn empty_or_failed_actual_inference_produces_no_pending_send_receipt() {
+        for failure in [false, true] {
+            let (mut owner, events, trace) = setup(true, false);
+            trace.lock().unwrap().empty_inference = !failure;
+            trace.lock().unwrap().fail_inference = failure;
+            action(&mut owner, Action::BeginDictation);
+            action(&mut owner, Action::Stop);
+            assert_eq!(trace.lock().unwrap().inference, 1);
+            assert!(
+                !owner.text_pending,
+                "only a successfully queued nonempty transcript produces a delivery receipt"
+            );
+            assert!(events.try_recv().is_err());
+            assert!(!matches!(
+                owner.phase,
+                Phase::Recording | Phase::Transcribing | Phase::Stopping
+            ));
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn native_progress_is_bound_to_actual_recording_session_and_generation() {
+        let (mut owner, _, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        let session = owner.session.unwrap();
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: 0.5,
+        });
+        assert_eq!(owner.progress().unwrap().captured_samples, 16_000);
+        trace.lock().unwrap().progress.as_mut().unwrap().session = Uuid::new_v4();
+        assert!(
+            owner.progress().is_none(),
+            "another session must never animate this recording"
+        );
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: f32::NAN,
+        });
+        assert!(owner.progress().is_none());
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: 0.5,
+        });
+        owner.shared.generation.store(2, Ordering::Release);
+        assert!(
+            owner.progress().is_none(),
+            "revoked targets must not retain native progress"
+        );
+        owner.shared.generation.store(1, Ordering::Release);
+        action(&mut owner, Action::Stop);
+        assert!(
+            owner.progress().is_none(),
+            "finished audio is not a live meter"
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn native_dictation_intent_continues_matching_permission_and_transcribes_stop_once() {
+        let (mut owner, events, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        assert_eq!(trace.lock().unwrap().requests, 1);
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        assert_eq!(trace.lock().unwrap().inference, 0);
+        assert!(owner.phase == Phase::Recording);
+        action(&mut owner, Action::Stop);
+        assert_eq!(trace.lock().unwrap().inference, 1);
+        assert!(
+            events.try_recv().unwrap().binding == target().binding.unwrap(),
+            "dictation result keeps its exact captured composer binding"
+        );
+        action(&mut owner, Action::Transcribe);
+        assert!(events.try_recv().is_err());
+        assert_eq!(trace.lock().unwrap().inference, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn dictation_generation_revoke_prevents_automatic_inference() {
+        let (mut owner, events, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        owner.shared.generation.store(2, Ordering::Release);
+        action(&mut owner, Action::Stop);
+        assert_eq!(trace.lock().unwrap().inference, 0);
+        assert!(events.try_recv().is_err());
+        assert!(!owner.dictation);
     }
     #[::core::prelude::v1::test]
     fn default_acceptance_gate_prevents_even_controller_construction() {
@@ -1105,6 +1410,9 @@ mod tests {
             phase: Phase::Idle,
             permission: Permission::Unavailable,
             status: String::new(),
+            listening_since: None,
+            progress: None,
+            text_pending: false,
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {
@@ -1183,7 +1491,12 @@ mod tests {
         tls_release: Option<Receiver<()>>,
     }
     impl Inference for ShutdownInference {
-        fn transcribe(&mut self, _: &LocalRecordingConfig, _: &[u8]) -> Result<String, ()> {
+        fn transcribe(
+            &mut self,
+            _: &LocalRecordingConfig,
+            _: &[u8],
+            _: &dyn Fn() -> bool,
+        ) -> Result<String, InferenceFailure> {
             SHUTDOWN_TLS.with(|slot| {
                 *slot.borrow_mut() = Some(ShutdownTls {
                     entered: self.tls_entered.clone(),
@@ -1264,3 +1577,7 @@ mod tests {
         assert!(events.try_recv().is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "microphone_ui_tests.rs"]
+mod native_tests;

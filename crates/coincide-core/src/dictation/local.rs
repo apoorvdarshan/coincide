@@ -1,6 +1,6 @@
 //! Local whisper.cpp `whisper-cli` backend. No installation, model download,
 //! microphone capture, networking or implicit executable/model discovery.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::transcription::{self, Response};
 use super::{DictationError, Transcriber};
 #[cfg(unix)]
@@ -16,9 +16,9 @@ use std::{
 };
 use std::{path::PathBuf, time::Duration};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_WAV: usize = 25_000_000;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_OUTPUT: usize = 1_048_576;
 #[derive(Debug, PartialEq, Eq)]
 pub enum LocalError {
@@ -30,6 +30,8 @@ pub enum LocalError {
     TimedOut,
     ProcessFailed,
     InvalidOutput,
+    Cancelled,
+    CleanupPending,
 }
 /// A configuration check is not proof that a model loads or inference works.
 pub struct LocalWhisper {
@@ -58,7 +60,7 @@ impl LocalWhisper {
         Ok(backend)
     }
     pub fn check_configuration(&self) -> Result<(), LocalError> {
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err(LocalError::UnsupportedPlatform);
         }
         if !self.executable.is_absolute()
@@ -88,28 +90,68 @@ impl LocalWhisper {
         {
             return Err(LocalError::InvalidConfiguration);
         }
+        #[cfg(windows)]
+        windows::configuration(self)?;
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn transcribe_local(&mut self, _wav: &[u8]) -> Result<String, LocalError> {
         Err(LocalError::UnsupportedPlatform)
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn transcribe_local(&mut self, wav: &[u8]) -> Result<String, LocalError> {
-        self.transcribe_after_spawn(wav, || Ok(()))
+        self.transcribe_local_cancellable(wav, || false)
     }
-    #[cfg(unix)]
+    /// Cancellation is checked before launch and while waiting. Success,
+    /// cancellation and timeout require owned child teardown. CleanupPending
+    /// explicitly retains private audio if teardown/removal cannot be confirmed.
+    pub fn transcribe_local_cancellable(
+        &self,
+        wav: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Result<String, LocalError> {
+        self.check_configuration()?;
+        if cancelled() {
+            return Err(LocalError::Cancelled);
+        }
+        #[cfg(unix)]
+        {
+            self.transcribe_after_spawn_cancellable(wav, || Ok(()), &cancelled)
+        }
+        #[cfg(windows)]
+        {
+            windows::transcribe(self, wav, &cancelled)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (wav, cancelled);
+            Err(LocalError::UnsupportedPlatform)
+        }
+    }
+    #[cfg(all(test, unix))]
     fn transcribe_after_spawn(
-        &mut self,
+        &self,
         wav: &[u8],
         after_spawn: impl FnOnce() -> Result<(), LocalError>,
     ) -> Result<String, LocalError> {
+        self.transcribe_after_spawn_cancellable(wav, after_spawn, &|| false)
+    }
+    #[cfg(unix)]
+    fn transcribe_after_spawn_cancellable(
+        &self,
+        wav: &[u8],
+        after_spawn: impl FnOnce() -> Result<(), LocalError>,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<String, LocalError> {
         self.check_configuration()?;
         validate_input(wav)?;
+        if cancelled() {
+            return Err(LocalError::Cancelled);
+        }
         // Drop order matters: process group is always torn down/reaped before
         // this directory is removed, on success and on every failure path.
         let directory = PrivateDirectory::create()?;
-        let result = self.run_in_directory(wav, &directory, after_spawn);
+        let result = self.run_in_directory(wav, &directory, after_spawn, cancelled);
         directory.cleanup()?;
         result
     }
@@ -119,6 +161,7 @@ impl LocalWhisper {
         wav: &[u8],
         directory: &PrivateDirectory,
         after_spawn: impl FnOnce() -> Result<(), LocalError>,
+        cancelled: &impl Fn() -> bool,
     ) -> Result<String, LocalError> {
         let input = directory.0.join("dictation.wav");
         let prefix = directory.0.join("transcript");
@@ -170,10 +213,16 @@ impl LocalWhisper {
                 Ok(())
             });
         }
+        if cancelled() {
+            return Err(LocalError::Cancelled);
+        }
         let group = OwnedProcess(command.spawn().map_err(|_| LocalError::Unavailable)?);
         after_spawn()?;
         let started = Instant::now();
         loop {
+            if cancelled() {
+                return Err(LocalError::Cancelled);
+            }
             if started.elapsed() >= self.timeout {
                 return Err(LocalError::TimedOut);
             }
@@ -206,6 +255,9 @@ impl LocalWhisper {
             .take(MAX_OUTPUT as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| LocalError::InvalidOutput)?;
+        if cancelled() {
+            return Err(LocalError::Cancelled);
+        }
         parse_output(&bytes)
     }
 }
@@ -215,7 +267,7 @@ impl Transcriber for LocalWhisper {
             .map_err(|_| DictationError::Unavailable)
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn validate_input(wav: &[u8]) -> Result<(), LocalError> {
     if wav.len() > MAX_WAV {
         return Err(LocalError::TooLarge);
@@ -246,7 +298,7 @@ fn validate_input(wav: &[u8]) -> Result<(), LocalError> {
     }
     Ok(())
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn parse_output(bytes: &[u8]) -> Result<String, LocalError> {
     if bytes.len() > MAX_OUTPUT {
         return Err(LocalError::TooLarge);
@@ -490,7 +542,7 @@ printf '%s' '{{"transcription":[{{"text":" world "}},{{"text":" fixture"}}]}}' >
     }
 }
 
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, not(any(unix, windows))))]
 mod platform_tests {
     use super::*;
     #[test]
@@ -507,3 +559,7 @@ mod platform_tests {
         ));
     }
 }
+
+#[cfg(windows)]
+#[path = "local_windows.rs"]
+mod windows;

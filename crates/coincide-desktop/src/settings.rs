@@ -632,6 +632,7 @@ impl Coincide {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
+                            .child(self.voice_preferences(cx))
                             .child(self.transcription_panel.clone())
                             .child(self.microphone_panel.clone())
                             .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Enable Microphone prepares access; Record starts capture. Stop and Transcribe Recording are separate actions. Your transcript waits in the composer."))

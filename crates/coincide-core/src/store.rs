@@ -1067,6 +1067,62 @@ impl Store {
         Ok(())
     }
 
+    /// Typed native Voice edit against the exact effective document. Imported
+    /// settings retain unknowns and never become capture/credential authority.
+    pub fn save_native_voice_settings_if_unchanged(
+        &mut self,
+        expected: Option<&Value>,
+        edit: crate::voice::Edit,
+    ) -> Result<Value> {
+        self.connection()?;
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // Reject oversized documents before SQLite copies the text/blob into
+        // memory. Never fall back to the captured original over an overlay.
+        for query in [
+            "SELECT length(CAST(document AS BLOB)) FROM documents WHERE name='settings.json'",
+            "SELECT length(data) FROM original_files WHERE path='settings.json' AND NOT EXISTS(SELECT 1 FROM documents WHERE name='settings.json')",
+        ] {
+            let bytes: Option<i64> = tx.query_row(query, [], |row| row.get(0)).optional()?;
+            ensure!(
+                bytes.is_none_or(|bytes| (0..=2 * 1024 * 1024).contains(&bytes)),
+                "Voice settings document is too large"
+            );
+        }
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='settings.json'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current: Option<Value> = if let Some(local) = local {
+            Some(serde_json::from_str(&local)?)
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='settings.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+        };
+        ensure!(
+            current.as_ref() == expected,
+            "Voice settings changed; reload before saving"
+        );
+        let mut value = current.unwrap_or_else(|| json!({}));
+        edit.apply(&mut value)?;
+        tx.execute("INSERT INTO documents(name,document) VALUES ('settings.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [value.to_string()])?;
+        tx.commit()?;
+        Ok(value)
+    }
+
     pub fn patch_document(&mut self, name: &str, patch: &Value) -> Result<Value> {
         self.connection()?;
         let patch = patch

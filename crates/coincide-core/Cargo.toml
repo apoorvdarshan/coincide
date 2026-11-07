@@ -57,3 +57,8 @@ harness = false
 name = "provider_native_follow_up_portable"
 path = "tests/provider_native_follow_up_portable.rs"
 harness = false
+
+[[test]]
+name = "local_whisper_portable"
+path = "tests/local_whisper_portable.rs"
+harness = false
