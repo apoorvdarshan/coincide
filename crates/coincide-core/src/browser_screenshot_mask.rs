@@ -85,7 +85,7 @@ try {
   scrollX,scrollY,devicePixelRatio,masks:rects(fields)};
  if(mode!=='measure'){
   globalThis[key]={ticket,at:performance.now(),url:location.href,fields,masks:JSON.stringify(metrics.masks),
-   innerWidth,innerHeight,scrollX,scrollY,saved,props,restore};
+   innerWidth,innerHeight,scrollX,scrollY,saved,props,restore,classify:sensitive};
  }
  return JSON.stringify(metrics);
 }catch(_){restore();delete globalThis[key];return '';}
@@ -110,21 +110,12 @@ function check(){
  if(s.url!==location.href || location.href!==expectedURL) return 'navigated';
  if(s.innerWidth!==innerWidth || s.innerHeight!==innerHeight) return 'resized';
  if(s.scrollX!==scrollX || s.scrollY!==scrollY) return 'scrolled';
- const now=[], pending=[document];
- let visited=0;
- while(pending.length){
-  for(const el of pending.pop().querySelectorAll('*')){
-   if(++visited>250000) return 'large';
-   if(el.localName==='input' || ['iframe','frame','object','embed'].includes(el.localName)) now.push(el);
-   if(el.shadowRoot) pending.push(el.shadowRoot);
-  }
- }
- // Every field PREPARE hid is still connected, still ours and unmoved, and
- // no detectable sensitive field or opaque surface appeared. Closed shadow
- // roots and secrets drawn as ordinary content remain outside this contract.
+ // Reuse PREPARE's exact private-world classifier. This includes newly
+ // associated username/email inputs and opaque surfaces, not just passwords.
+ const now=s.classify();
+ if(!now) return 'large';
  const kept=new Set(s.fields);
- if(now.some(el=>!kept.has(el) && (['iframe','frame','object','embed'].includes(el.localName) || el.type==='password' ||
-   /password|one-time-code|cc-/i.test(String(el.getAttribute('autocomplete')||''))))) return 'added';
+ if(now.some(el=>!kept.has(el))) return 'added';
  const masks=[];
  for(const el of s.fields){
   if(!el.isConnected) return 'removed';

@@ -51,6 +51,8 @@ jobs:
             rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo fmt --all --check
+      - name: Test private screenshot classification with an inert DOM
+        run: node scripts/test-rust-browser-screenshot-mask.js
       - run: cargo test -p coincide-core --locked
         id: core_tests
       - name: Diagnose Windows PTY and control tests after core failure
