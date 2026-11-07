@@ -21,6 +21,7 @@ impl Observation {
 }
 pub(crate) struct Native<B>(pub B);
 impl<B: Backend> Backend for Native<B> {
+    const MAY_RETAIN_NATIVE_CALLBACKS: bool = B::MAY_RETAIN_NATIVE_CALLBACKS;
     fn permission(&mut self) -> Result<Permission> {
         self.0.permission()
     }

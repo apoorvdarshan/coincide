@@ -492,19 +492,9 @@ impl Pump {
         }
     }
     fn receipt(&mut self, engine: &mut impl Outbox, receipt: Receipt) {
-        if self.status.native_compiled
-            && matches!(
-                &receipt.outcome,
-                Outcome::Notification {
-                    ack: worker::Ack::Delivered(Delivery::Uncertain),
-                    reason: worker::Reason::Attempted | worker::Reason::BackendPanic,
-                    ..
-                } | Outcome::Rejected(_)
-                    | Outcome::Cleared { error: Some(_), .. }
-                    | Outcome::Permission(Permission::Unknown)
-            )
-        {
-            // Native callback timeouts do not prove callback cancellation.
+        if self.status.native_compiled && receipt.native_callbacks_unconfirmed {
+            // Callback work may outlive an acknowledgement timeout. A returned
+            // synchronous native call can still have uncertain OS delivery.
             self.status.native_callbacks_unconfirmed = true;
         }
         let Some(flight) = self.flights.remove(&receipt.command_id) else {
@@ -1155,6 +1145,37 @@ mod tests {
         assert!(engine.0.lock().unwrap().acks.is_empty());
     }
     #[::core::prelude::v1::test]
+    fn returned_synchronous_receipt_preserves_uncertain_delivery_without_unknown_callback_owner() {
+        let (mut pump, mut engine, _) = setup(Delivery::Uncertain, true);
+        let event = claim();
+        let command = Uuid::new_v4();
+        pump.flights.insert(
+            command,
+            Flight::Event(Identity {
+                claim: event.claim_id,
+                key: event.alert.key,
+            }),
+        );
+        pump.receipt(
+            &mut engine,
+            Receipt {
+                command_id: command,
+                native_callbacks_unconfirmed: false,
+                outcome: Outcome::Notification {
+                    claim_id: event.claim_id,
+                    key: event.alert.key,
+                    ack: worker::Ack::Delivered(Delivery::Uncertain),
+                    reason: worker::Reason::Attempted,
+                },
+            },
+        );
+        pump.finish(&mut engine);
+        assert!(!pump.status.native_callbacks_unconfirmed);
+        assert!(pump.status.native_worker_joined);
+        assert_eq!(pump.status.outstanding, 0);
+        assert!(!engine.0.lock().unwrap().acks.is_empty());
+    }
+    #[::core::prelude::v1::test]
     fn uncertain_native_receipt_never_claims_callback_cancellation_on_shutdown() {
         let (mut pump, mut engine, _) = setup(Delivery::Uncertain, true);
         let event = claim();
@@ -1170,6 +1191,7 @@ mod tests {
             &mut engine,
             Receipt {
                 command_id: command,
+                native_callbacks_unconfirmed: true,
                 outcome: Outcome::Notification {
                     claim_id: event.claim_id,
                     key: event.alert.key,

@@ -70,6 +70,8 @@ pub enum Outcome {
 pub struct Receipt {
     pub command_id: Uuid,
     pub outcome: Outcome,
+    /// Native callback custody is independent of delivery acknowledgement.
+    pub native_callbacks_unconfirmed: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Status {
@@ -230,6 +232,26 @@ impl Drop for NotificationRuntime {
 fn publish(handle: &Handle, status: &Status) {
     *handle.status.lock().unwrap_or_else(|e| e.into_inner()) = status.clone();
 }
+fn callback_custody(outcome: &Outcome, may_retain: bool) -> bool {
+    let panic = matches!(
+        outcome,
+        Outcome::Notification {
+            reason: Reason::BackendPanic,
+            ..
+        }
+    );
+    panic
+        || (may_retain
+            && matches!(
+                outcome,
+                Outcome::Notification {
+                    ack: Ack::Delivered(Delivery::Uncertain),
+                    ..
+                } | Outcome::Rejected(_)
+                    | Outcome::Cleared { error: Some(_), .. }
+                    | Outcome::Permission(Permission::Unknown)
+            ))
+}
 fn run<B: Backend>(
     backend: B,
     handle: Handle,
@@ -315,6 +337,10 @@ fn run<B: Backend>(
         publish(&handle, &status);
         pending = Some(Receipt {
             command_id: queued.command_id,
+            native_callbacks_unconfirmed: callback_custody(
+                &outcome,
+                B::MAY_RETAIN_NATIVE_CALLBACKS,
+            ),
             outcome,
         });
     }
@@ -491,6 +517,71 @@ mod tests {
             .unwrap(),
             state,
         )
+    }
+    #[test]
+    fn synchronous_native_return_does_not_claim_certain_delivery_or_pending_callbacks() {
+        struct Synchronous(Fake);
+        impl Backend for Synchronous {
+            const MAY_RETAIN_NATIVE_CALLBACKS: bool = false;
+            fn permission(&mut self) -> Result<Permission> {
+                self.0.permission()
+            }
+            fn request_permission(&mut self) -> Result<Permission> {
+                self.0.request_permission()
+            }
+            fn post(&mut self, p: &Payload) -> Delivery {
+                self.0.post(p)
+            }
+            fn clear_thread(&mut self, id: Uuid) -> Result<()> {
+                self.0.clear_thread(id)
+            }
+        }
+        let state = Arc::new(Mutex::new(State::default()));
+        let mut runtime = NotificationRuntime::spawn(
+            Synchronous(Fake {
+                state: state.clone(),
+                result: Delivery::Uncertain,
+            }),
+            8,
+        )
+        .unwrap();
+        let handle = runtime.handle();
+        send(
+            &handle,
+            Command::Configure(Settings {
+                enabled: true,
+                include_preview: false,
+            }),
+        );
+        assert!(!receipt(&runtime).native_callbacks_unconfirmed);
+        send(&handle, job(key()));
+        let returned = receipt(&runtime);
+        assert!(matches!(
+            returned.outcome,
+            Outcome::Notification {
+                ack: Ack::Delivered(Delivery::Uncertain),
+                reason: Reason::Attempted,
+                ..
+            }
+        ));
+        assert!(!returned.native_callbacks_unconfirmed);
+        assert!(state.lock().unwrap().calls.contains(&"post"));
+        let exit = runtime.shutdown().unwrap();
+        assert!(exit.unprocessed.is_empty() && exit.pending_receipt.is_none());
+        // A backend panic remains unconfirmed even for a synchronous adapter.
+        assert!(callback_custody(
+            &Outcome::Notification {
+                claim_id: Uuid::new_v4(),
+                key: key(),
+                ack: Ack::Delivered(Delivery::Uncertain),
+                reason: Reason::BackendPanic,
+            },
+            false
+        ));
+        assert!(callback_custody(
+            &Outcome::Permission(Permission::Unknown),
+            true
+        ));
     }
     #[test]
     fn activity_sampling_requires_enabled_configuration_and_stays_on_owned_worker() {

@@ -275,6 +275,9 @@ fn clear(app_id: &str, thread: Uuid) -> Result<()> {
     Ok(())
 }
 impl Backend for NativeBackend {
+    // All COM/WinRT calls are synchronous, with no event handlers, async
+    // operations or app callbacks registered. Apartment/objects return in scope.
+    const MAY_RETAIN_NATIVE_CALLBACKS: bool = false;
     fn permission(&mut self) -> Result<Permission> {
         let _apartment = Apartment::new()?;
         status(&executable()?, &programs()?.join(SHORTCUT), APP_ID)
