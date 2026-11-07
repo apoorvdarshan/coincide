@@ -164,5 +164,5 @@ fn windows_uploads_fail_closed_before_opening_paths() {
     let error = script_for_request(&request(json!([file])))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("disabled on Windows"));
+    assert!(error.contains("Windows uploads await native filesystem SDK acceptance"));
 }
