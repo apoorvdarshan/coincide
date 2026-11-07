@@ -1426,6 +1426,10 @@ impl PendingTerminalShutdown {
                 // Avoid signalling an already reaped PID. Signal only the directly
                 // owned child; never a process group. Confirmed wait resolves a
                 // benign kill error; a failed wait remains unknown.
+                // Release the owner's controlling PTY endpoint before waiting
+                // for a Unix session leader to finish terminal teardown.
+                #[cfg(unix)]
+                drop(resources.master.take());
                 let waited = match resources.child.try_wait() {
                     Ok(Some(status)) => Ok(status),
                     _ => {
@@ -1979,5 +1983,37 @@ mod appearance_tests {
         assert!(terminal.poll().unwrap());
         assert!(terminal.revision > revision);
         assert_eq!(terminal.status()["progress"], Value::Null);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod active_shell_shutdown_regression {
+    use super::*;
+    #[test]
+    fn active_private_shell_is_reaped_before_owner_drain_reports_ready() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ready");
+        let mut terminal = Terminal::spawn(root.path(), "/bin/sh", 6, 40).unwrap();
+        terminal
+            .write(&format!("printf ready > '{}'\r", marker.display()))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(&marker).ok().as_deref() != Some("ready") {
+            assert!(
+                Instant::now() < deadline,
+                "private shell did not execute builtin"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pending = terminal.request_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !pending.poll().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private shell drain stalled: {:?}",
+                pending.poll()
+            );
+            thread::yield_now();
+        }
     }
 }
