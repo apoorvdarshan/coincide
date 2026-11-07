@@ -45,13 +45,34 @@ impl Lease {
         );
         file.try_lock_shared()
             .context("Codex account is being changed or removed")?;
-        let generation = Self::generation(home)?;
-        let lease = Self {
-            path,
-            identity,
-            generation,
-        };
-        lease.validate()?;
+        Self::capture_locked(home, path, identity, &file)
+    }
+    fn capture_locked(
+        home: &Path,
+        path: PathBuf,
+        identity: crate::private_fs::Identity,
+        file: &File,
+    ) -> Result<Self> {
+        let result = (|| {
+            let generation = Self::generation(home)?;
+            let lease = Self {
+                path,
+                identity,
+                generation,
+            };
+            lease.validate()?;
+            Ok(lease)
+        })();
+        // A metadata pin retains no lock. Closing this FD alone is insufficient
+        // on Unix when a concurrent fork inherited the same open-file-description:
+        // its duplicate can keep flock alive until exec. Explicitly release only
+        // this short capture lease, including validation failures. Actual Held
+        // child/worker leases below deliberately remain locked through cleanup.
+        let unlocked = file
+            .unlock()
+            .context("Codex metadata lease could not be released");
+        let lease = result?;
+        unlocked?;
         Ok(lease)
     }
     pub(crate) fn validate(&self) -> Result<()> {
@@ -149,5 +170,55 @@ mod tests {
         drop(copy);
         exclusive.try_lock().unwrap();
         assert!(pin.acquire().is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn metadata_capture_unlocks_inherited_like_duplicate_but_actual_held_still_excludes_change() {
+        use std::os::unix::fs::DirBuilderExt;
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("owned");
+        fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
+        Lease::capture(&home).unwrap();
+        let path = home.join(".native-account-owner");
+        let file = open_file(&path, false).unwrap();
+        file.try_lock_shared().unwrap();
+        // dup models the same open-file-description retained by a parallel
+        // fork before exec, without executing any child or provider.
+        let inherited = file.try_clone().unwrap();
+        let identity = crate::private_fs::file_identity(&file).unwrap();
+        let pin = Lease::capture_locked(&home, path.clone(), identity, &file).unwrap();
+        let exclusive = open_file(&path, false).unwrap();
+        exclusive.try_lock().unwrap();
+        assert!(pin.acquire().is_err());
+        exclusive.unlock().unwrap();
+        let actual = pin.acquire().unwrap();
+        assert!(exclusive.try_lock().is_err());
+        drop(file);
+        drop(inherited);
+        assert!(
+            exclusive.try_lock().is_err(),
+            "Actual worker lease must survive metadata FD cleanup"
+        );
+        drop(actual);
+        exclusive.try_lock().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn rejected_metadata_capture_releases_only_its_own_shared_lease() {
+        use std::os::unix::fs::DirBuilderExt;
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("owned");
+        fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
+        Lease::capture(&home).unwrap();
+        let path = home.join(".native-account-owner");
+        let file = open_file(&path, false).unwrap();
+        file.set_len(65).unwrap();
+        file.try_lock_shared().unwrap();
+        let inherited = file.try_clone().unwrap();
+        let identity = crate::private_fs::file_identity(&file).unwrap();
+        assert!(Lease::capture_locked(&home, path.clone(), identity, &file).is_err());
+        let exclusive = open_file(&path, false).unwrap();
+        exclusive.try_lock().unwrap();
+        drop(inherited);
     }
 }
