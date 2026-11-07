@@ -3,6 +3,7 @@
 //! text to the selected window. No PrintWindow/full-desktop fallback is used.
 use super::*;
 use std::{
+    os::windows::io::AsRawHandle,
     sync::{
         Mutex,
         atomic::{AtomicBool, AtomicPtr, Ordering},
@@ -11,8 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-    System::Com::*,
+    Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
+    System::{Com::*, Threading::GetThreadId},
     UI::{Accessibility::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 use windows_capture::{
@@ -352,10 +353,24 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
             }
         }
     };
-    // The outer owned worker retains custody through actual WGC thread join.
-    control
-        .stop()
-        .map_err(|e| anyhow::anyhow!("Capture shutdown failed: {e:?}"))?;
+    // Upstream CaptureControl::stop can return before joining on a failed
+    // message post. Keep the actual handle through every stop/error/TLS path.
+    control.halt_handle().store(true, Ordering::Release);
+    let worker = control.into_thread_handle();
+    let thread_id = unsafe { GetThreadId(HANDLE(worker.as_raw_handle())) };
+    let returned = crate::computer_use::capture_owner::join_after_stop(worker, || {
+        unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) }
+            .or_else(|error| {
+                if error.code() == windows::core::HRESULT::from_win32(1444) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|_| ())
+    })
+    .map_err(|_| anyhow::anyhow!("Capture stop or actual worker join failed"))?;
+    returned.map_err(|_| anyhow::anyhow!("Capture worker returned an error"))?;
     anyhow::ensure!(allowed(), "Capture cancelled");
     password_guard(&automation, pid, hwnd)?;
     Ok(Capture {
