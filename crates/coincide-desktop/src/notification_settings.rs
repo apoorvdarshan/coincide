@@ -10,7 +10,7 @@ use coincide_core::api::{
     notification_events::{NotificationAck, NotificationClaim},
 };
 use coincide_core::platform_host::notifications::{Delivery, DesktopActivity, EventKey};
-use gpui_kit::{base::Disableable, component::button::Button, *};
+use gpui_kit::{base::Disableable, component::button::Button, prelude::FluentBuilder, *};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
