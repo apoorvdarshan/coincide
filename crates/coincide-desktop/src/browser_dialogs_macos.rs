@@ -1,13 +1,14 @@
 use super::{Kind, Sink};
 use anyhow::{Context, Result};
-use block2::Block;
+use block2::{Block, RcBlock};
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
     rc::Retained,
     runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject, Sel},
 };
-use objc2_foundation::NSString;
-use objc2_web_kit::{WKFrameInfo, WKUIDelegate, WKWebView};
+use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel};
+use objc2_foundation::{NSArray, NSString, NSURL};
+use objc2_web_kit::{WKFrameInfo, WKOpenPanelParameters, WKUIDelegate, WKWebView};
 use wry::WebViewExtMacOS;
 
 pub(super) struct Ivars {
@@ -55,6 +56,31 @@ define_class!(
                 handler.call((value.as_ref().map_or(std::ptr::null_mut(), |value| Retained::as_ptr(value).cast_mut()),));
                 Ok(())
             });
+        }
+        /// A page's file chooser, as in Swift: an agent never gets a picker. Only a
+        /// page shown in the key window gets the standard open panel, as a sheet on
+        /// that window; hidden or parked tabs and background windows decline at once,
+        /// so no app-modal panel can appear for, or block on, an agent's tab.
+        #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
+        fn open_panel(&self, view: &WKWebView, parameters: &WKOpenPanelParameters, _frame: &WKFrameInfo, handler: &Block<dyn Fn(*mut NSArray<NSURL>)>) {
+            let window = view.window().filter(|window| window.isKeyWindow() && !view.isHiddenOrHasHiddenAncestor());
+            let Some(window) = window else {
+                handler.call((std::ptr::null_mut(),));
+                return;
+            };
+            let panel = NSOpenPanel::openPanel(self.mtm());
+            panel.setCanChooseFiles(true);
+            unsafe {
+                panel.setCanChooseDirectories(parameters.allowsDirectories());
+                panel.setAllowsMultipleSelection(parameters.allowsMultipleSelection());
+            }
+            let handler = handler.copy();
+            let chosen = panel.clone();
+            let completion = RcBlock::new(move |response: NSModalResponse| {
+                let urls = (response == NSModalResponseOK).then(|| chosen.URLs());
+                handler.call((urls.as_ref().map_or(std::ptr::null_mut(), |urls| Retained::as_ptr(urls).cast_mut()),));
+            });
+            panel.beginSheetModalForWindow_completionHandler(&window, &completion);
         }
     }
 );

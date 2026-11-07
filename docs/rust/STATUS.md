@@ -811,7 +811,7 @@ The broad feature groups above remain open until their complete behavior passes.
 | Owner | Verified evidence | Current work / remaining acceptance |
 | --- | --- | --- |
 | Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Thread-cached tabs/splits, mode-aware input and native IME callbacks mounted; 18 focused tests pass; native IME/shell/Windows GUI acceptance pending |
-| Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes | Windows uploads, broader browser parity and real-account acceptance remain |
+| Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes; Windows no-reparse upload reader passed six owned SDK tests on a fresh runner and is enabled | WebView-level upload fixtures await green desktop jobs; OneDrive/cloud-placeholder and other reparse-point files are refused on Windows; broader browser parity and real-account acceptance remain |
 | Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot new conversation/focus, empty native state, retained editor draft and frozen instructions passed native fixtures; real provider acceptance pending |
 | Credentials | Native synthetic WAV insertion preserved Unicode selection and did not send; microphone converter/lifecycle fixtures pass | Gated microphone controls mounted; six fake workflow tests and feature-on converter/lifecycle fixtures pass; real vault/passkey/model/mic acceptance absent |
 | Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | Durable write service and native confirmation transport mounted; 131 combined desktop tests pass; fake-process service validation and native write confirmation acceptance remain separate |
@@ -981,8 +981,15 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Shared CLI/API supports project CRUD, settings-document patches, thread actions,
   Codex/Claude/Grok/OpenCode/Cursor selection, pending approvals/questions, and explicit responses.
 - Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
-  uploads, passwords, passkeys, dialogs, screenshots and native-key actions
-  still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
+  uploads, passwords, passkeys, dialogs and native-key actions
+  still need implementation. Existing Swift browser profiles are not migrated.
+  Native screenshots (viewport, or fullPage up to 20,000 CSS pixels with
+  truncated, at most 1600 pixels wide) render the selected tab's own WebView
+  on macOS, Windows and Linux; password, credential, one-time-code and card
+  fields are hidden and redacted. The panel must be shown; Linux refuses full
+  pages beyond its native surface budget. A fresh-runner fixture checks pixels
+  on all three; only main-document fields (with open shadow roots) are masked.
+  Native downloads have bounded,
   thread-scoped session history and verified destinations in a fresh folder under
   ~/Downloads/Coincide. Every host owns exact native objects (WKDownload, WebView2
   download operations, WebKitGTK downloads) with per-object receipts, including

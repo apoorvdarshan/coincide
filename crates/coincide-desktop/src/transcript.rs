@@ -13,6 +13,24 @@ use gpui_kit::{
 };
 use std::collections::HashMap;
 
+/// Where rendered transcript links go (`transcript_links`). Without a router a
+/// click does nothing: the component default hands any URL to the system,
+/// which launches apps and runs scripts agent-written links can point at.
+#[allow(clippy::type_complexity)]
+pub struct LinkRouter(
+    pub std::sync::Arc<dyn Fn(&str, &ClickEvent, &mut Window, &mut App) + Send + Sync>,
+);
+impl Global for LinkRouter {}
+
+pub fn routed(view: TextView, cx: &App) -> TextView {
+    let router = cx.try_global::<LinkRouter>().map(|router| router.0.clone());
+    view.on_link_click(move |url, event, window, cx| {
+        if let Some(router) = &router {
+            router(url, event, window, cx);
+        }
+    })
+}
+
 #[derive(Default)]
 struct TranscriptViews {
     views: HashMap<(WindowId, EntityId), RegisteredView>,
@@ -38,7 +56,41 @@ pub fn markdown(
     window: &mut Window,
     cx: &mut App,
 ) -> TextView {
-    let source = source.into();
+    routed(
+        TextView::new(&native_state(thread, item, source.into(), window, cx)),
+        cx,
+    )
+}
+
+/// A registered native body whose fenced code is colored by `highlights`,
+/// byte ranges into the code block's text. Kit's compatibility TextView does
+/// not expose Base's code highlighter, and it adds nothing else here.
+pub fn highlighted(
+    thread: &str,
+    item: &str,
+    source: impl Into<SharedString>,
+    highlights: Vec<(std::ops::Range<usize>, HighlightStyle)>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_kit::base::TextView {
+    let state = native_state(thread, item, source.into(), window, cx);
+    let router = cx.try_global::<LinkRouter>().map(|router| router.0.clone());
+    gpui_kit::base::TextView::new(&state)
+        .code_block_highlighter(move |_| highlights.clone())
+        .on_link_click(move |url, event, window, cx| {
+            if let Some(router) = &router {
+                router(url.as_ref(), event, window, cx);
+            }
+        })
+}
+
+fn native_state(
+    thread: &str,
+    item: &str,
+    source: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<TextViewState> {
     let key = SharedString::from(format!("native-state/{}", selection_id(thread, item)));
     let body = window.use_keyed_state(key, cx, |_, cx| NativeBody {
         state: cx.new(|cx| TextViewState::markdown(source.as_ref(), cx)),
@@ -71,7 +123,7 @@ pub fn markdown(
             state: state.downgrade(),
         },
     );
-    TextView::new(&state)
+    state
 }
 
 pub fn init(cx: &mut App) {
@@ -216,7 +268,7 @@ pub fn managed_markdown(
             state: state.downgrade(),
         },
     );
-    TextView::new(state)
+    routed(TextView::new(state), cx)
 }
 
 /// An opaque selection from exactly one focused, registered reply renderer.

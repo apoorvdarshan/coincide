@@ -47,9 +47,9 @@ Coordinator validation requested:
 - `cargo test -p coincide-desktop --test credential_integration`
 - strict core clippy on allocated Linux lane
 
-Native approval accessibility/keyboard acceptance remains pending. Actual macOS
-WebKit filling passed the linked synthetic acceptance; other backends remain
-unavailable. This is not real-account or complete workflow acceptance.
+Native approval accessibility/keyboard acceptance remains pending. Actual macOS, WebKitGTK and WebView2 filling passed the linked synthetic
+acceptance; supported private browser sinks are enabled. Windows vault CLI
+execution remains a separate platform limitation. This is not real-account or complete workflow acceptance.
 
 ## Native manager/account panel
 

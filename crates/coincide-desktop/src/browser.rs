@@ -30,6 +30,10 @@ pub(crate) mod passkeys;
 mod press;
 #[path = "browser_private_profiles.rs"]
 mod private_profiles;
+#[path = "browser_screenshot_native.rs"]
+mod screenshot_native;
+#[path = "browser_screenshots.rs"]
+mod screenshots;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
 pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
@@ -88,6 +92,7 @@ struct Tab {
     loading: bool,
     console: Rc<RefCell<BrowserConsole>>,
     credential_console_suppressed: Arc<AtomicBool>,
+    snapshot_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
     /// Linux Wry queues scripts before the first commit and drops their
     /// callbacks, so tracked evaluations wait for that commit.
@@ -104,6 +109,8 @@ impl Tab {
 }
 impl Drop for Tab {
     fn drop(&mut self) {
+        self.snapshot_console_suppressed
+            .store(true, Ordering::Release);
         if let Some(target) = self.credential.take() {
             target.close();
         }
@@ -200,6 +207,7 @@ pub struct BrowserController {
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
+    screenshots: screenshots::Owner,
     shutdown: shutdown::Shutdown,
 }
 
@@ -274,6 +282,7 @@ impl BrowserController {
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
+            screenshots: screenshots::Owner::new(profile_dir.join("screenshots")),
             shutdown: shutdown::Shutdown::default(),
         })
     }
@@ -286,6 +295,7 @@ impl BrowserController {
         self.shutdown.close();
         // Waiting pages are refused now; `bw` workers stay tracked until joined.
         self.passkeys.shutdown();
+        self.screenshots.close();
         for owner in &self.native_downloads {
             owner.close();
         }
@@ -319,6 +329,7 @@ impl BrowserController {
     /// Native release is deliberately unconfirmed; no file/profile deletion or
     /// semantic cancellation is used as completion evidence.
     pub fn poll_shutdown(&mut self) -> BrowserShutdownStatus {
+        let _ = self.screenshots.poll(&self.shutdown.callbacks, |_| false);
         self.poll_credential_targets();
         self.poll_cookie_import();
         self.native_downloads.retain(|owner| !owner.drained());
@@ -445,7 +456,67 @@ impl BrowserController {
                 "Answer the page dialog before using this action"
             );
         }
+        if self.screenshots.pending(thread, &target) {
+            ensure!(
+                matches!(
+                    request.action,
+                    BrowserAction::CloseTab
+                        | BrowserAction::SelectTab
+                        | BrowserAction::Navigate { .. }
+                        | BrowserAction::Reload
+                ),
+                "A native screenshot mask transaction is pending in this tab"
+            );
+        }
         match &request.action {
+            BrowserAction::Screenshot { full_page } => {
+                ensure!(
+                    self.active.get(thread) == Some(&target),
+                    "Select this tab before taking a screenshot"
+                );
+                // Native snapshots render the laid-out view; a hidden panel has
+                // no current size on every platform. Ask for show first.
+                ensure!(
+                    self.is_visible(thread),
+                    "Show the browser before taking a screenshot"
+                );
+                ensure!(
+                    !self.has_pending_press(thread, &target)
+                        && !self
+                            .uploads
+                            .values()
+                            .any(|job| job.request.thread_id == *thread && job.tab == target)
+                        && !self.scripts.values().any(|job| job.thread == *thread
+                            && job.tab == target
+                            && !job.completed.load(Ordering::Acquire))
+                        && !self
+                            .waits
+                            .values()
+                            .any(|job| job.request.thread_id == *thread
+                                && job.tab == target
+                                && job.in_flight),
+                    "Wait for pending page operations before taking a screenshot"
+                );
+                let tab = &self.tabs[thread][index];
+                ensure!(
+                    !tab.loading,
+                    "Wait for navigation before taking a screenshot"
+                );
+                let url = credential_native_address(tab.view.read(cx).raw())
+                    .context("Native screenshot document is unavailable")?;
+                self.screenshots.begin(
+                    request.clone(),
+                    target,
+                    url,
+                    tab.view.read(cx).raw(),
+                    tab.navigation.clone(),
+                    tab.credential_console_suppressed.clone(),
+                    self.shutdown.callbacks.clone(),
+                    tab.snapshot_console_suppressed.clone(),
+                    *full_page,
+                )?;
+                Ok(None)
+            }
             BrowserAction::Press { .. } => {
                 self.begin_press(request, target, cx)?;
                 Ok(None)
@@ -477,8 +548,8 @@ impl BrowserController {
             }
             BrowserAction::Upload { .. } => {
                 ensure!(
-                    !cfg!(windows),
-                    "Browser uploads are disabled on Windows until safe reparse-point handling is implemented"
+                    coincide_core::browser_protocol::upload::available(),
+                    "Windows uploads await native filesystem SDK acceptance; local-drive-only attachment is not enabled"
                 );
                 ensure!(
                     !self.uploads.contains_key(&request.id),
@@ -703,6 +774,10 @@ impl BrowserController {
         let console = Rc::new(RefCell::new(BrowserConsole::default()));
         let console_handler = console.clone();
         let credential_console_suppressed = Arc::new(AtomicBool::new(false));
+        let snapshot_console_suppressed = Arc::new(AtomicBool::new(false));
+        let snapshot_console = snapshot_console_suppressed.clone();
+        let snapshot_title = snapshot_console_suppressed.clone();
+        let snapshot_popup = snapshot_console_suppressed.clone();
         let console_suppressed = credential_console_suppressed.clone();
         let title_suppressed = credential_console_suppressed.clone();
         let popup_suppressed = credential_console_suppressed.clone();
@@ -782,7 +857,9 @@ impl BrowserController {
             .with_clipboard(false)
             .with_initialization_script_for_main_only(CONSOLE_SCRIPT, false)
             .with_ipc_handler(move |message| {
-                if console_suppressed.load(Ordering::Acquire) {
+                if console_suppressed.load(Ordering::Acquire)
+                    || snapshot_console.load(Ordering::Acquire)
+                {
                     return;
                 }
                 console_handler
@@ -790,7 +867,9 @@ impl BrowserController {
                     .receive(message.body(), &message.uri().to_string());
             })
             .with_document_title_changed_handler(move |title| {
-                if title_suppressed.load(Ordering::Acquire) {
+                if title_suppressed.load(Ordering::Acquire)
+                    || snapshot_title.load(Ordering::Acquire)
+                {
                     return;
                 }
                 let _ = title_sender.try_send(NativeEvent::Title {
@@ -818,7 +897,10 @@ impl BrowserController {
                 });
             })
             .with_new_window_req_handler(move |url, _| {
-                if !popup_suppressed.load(Ordering::Acquire) && validate_url(&url).is_ok() {
+                if !popup_suppressed.load(Ordering::Acquire)
+                    && !snapshot_popup.load(Ordering::Acquire)
+                    && validate_url(&url).is_ok()
+                {
                     let _ = popup_sender.try_send(NativeEvent::Popup {
                         thread: popup_thread.clone(),
                         url,
@@ -970,6 +1052,7 @@ impl BrowserController {
             loading: url != "about:blank",
             console,
             credential_console_suppressed,
+            snapshot_console_suppressed,
             navigation,
             scripts_ready,
         });
@@ -983,6 +1066,22 @@ impl BrowserController {
 
     pub fn poll(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.poll_credential_targets();
+        let tabs = &self.tabs;
+        let active = &self.active;
+        if let Some(reply) = self.screenshots.poll(&self.shutdown.callbacks, |binding| {
+            active.get(&binding.thread) == Some(&binding.tab)
+                && tabs
+                    .get(&binding.thread)
+                    .and_then(|rows| rows.iter().find(|tab| tab.id == binding.tab))
+                    .is_some_and(|tab| {
+                        !tab.loading
+                            && credential_native_address(tab.view.read(cx).raw()).as_deref()
+                                == Some(binding.url.as_str())
+                    })
+        }) && !self.shutdown.callbacks.closed()
+        {
+            self.replies.push_back(reply);
+        }
         if self.shutdown.callbacks.closed() {
             let discarded = self.events.try_iter().take(512).count();
             self.replies.clear();
@@ -1593,7 +1692,8 @@ impl BrowserController {
                 }
             }
             let pending_mutation = self.active.get(thread).is_some_and(|tab| {
-                self.has_pending_press(thread, tab)
+                self.screenshots.pending(thread, tab)
+                    || self.has_pending_press(thread, tab)
                     || self
                         .tabs
                         .get(thread)
@@ -1703,8 +1803,14 @@ impl BrowserController {
             "download-cancel",
             "download-resume",
             "cross-origin-frame-actions",
-            "screenshots",
         ];
+        if !cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        )) {
+            unsupported.push("screenshots");
+        }
         match passkeys::support() {
             // Bitwarden answers sign-in only, as in the Swift app.
             "bitwarden-sign-in" => unsupported.push("passkey-registration"),
@@ -1725,7 +1831,7 @@ impl BrowserController {
         {
             unsupported.push("native-key-events");
         }
-        if cfg!(windows) {
+        if !coincide_core::browser_protocol::upload::available() {
             unsupported.push("upload");
         }
         if !native_password_manager {

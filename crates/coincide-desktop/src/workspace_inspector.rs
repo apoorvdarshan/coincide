@@ -19,11 +19,30 @@ impl Coincide {
                         .flex()
                         .gap_2()
                         .child(
-                            Button::new("workspace-local-tab")
-                                .label("Local Git")
+                            Button::new("workspace-diff-tab")
+                                .label("Diff")
+                                .selected(self.diff_tab_visible())
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.github_open = false;
                                     this.github_threads_open = false;
+                                    this.git_tools_open = false;
+                                    this.remember_current_inspector(cx);
+                                    this.sync_github_context(cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("workspace-local-tab")
+                                .label("Local Git")
+                                .selected(
+                                    self.git_tools_open
+                                        && !self.github_open
+                                        && !self.github_threads_open,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.github_open = false;
+                                    this.github_threads_open = false;
+                                    this.git_tools_open = true;
                                     this.remember_current_inspector(cx);
                                     this.sync_github_context(cx);
                                     cx.notify();
@@ -73,7 +92,11 @@ impl Coincide {
                         .min_h_0()
                         .min_w_0()
                         .overflow_hidden()
-                        .child(self.workspace_panel.clone())
+                        .child(if self.git_tools_open {
+                            self.workspace_panel.clone().into_any_element()
+                        } else {
+                            self.diff_panel.clone().into_any_element()
+                        })
                         .into_any_element()
                 })
                 .into_any_element()

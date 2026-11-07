@@ -2,7 +2,7 @@
 #[path = "workspace_path.rs"]
 mod path;
 use anyhow::{Context, Result, bail, ensure};
-pub(crate) use path::external_git_path;
+pub(crate) use path::{external_git_directory, external_git_path};
 use serde_json::{Value, json};
 use std::{
     io::Read,
@@ -15,7 +15,127 @@ use std::{
 
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 
+/// How one Git invocation differs from the bounded default.
+pub(crate) struct GitOptions<'a> {
+    /// A throwaway index, so Git never reads or writes the user's.
+    pub index_file: Option<&'a Path>,
+    pub input: Option<&'a [u8]>,
+    pub timeout: Duration,
+    pub max_output: usize,
+    /// Stop reading at `max_output` and report the cut instead of failing.
+    pub truncate: bool,
+}
+
+impl Default for GitOptions<'_> {
+    fn default() -> Self {
+        Self {
+            index_file: None,
+            input: None,
+            timeout: Duration::from_secs(15),
+            max_output: MAX_OUTPUT,
+            truncate: false,
+        }
+    }
+}
+
 pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+    let output = git_output(directory, arguments, &GitRequest::default())?;
+    ensure!(
+        !output.overflowed,
+        "Git output exceeds 3 MiB; narrow the path"
+    );
+    ensure!(
+        output.success,
+        "Git failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(2000)
+            .collect::<String>()
+    );
+    Ok(output.stdout)
+}
+
+/// Per-call additions to the hardened runner. Environment entries are applied
+/// after inherited GIT_* variables are removed, so only these reach Git.
+pub(crate) struct GitRequest<'a> {
+    pub env: &'a [(&'a str, &'a std::ffi::OsStr)],
+    pub input: Option<&'a [u8]>,
+    pub timeout: Duration,
+    pub max_output: usize,
+    /// Off only for callers that build explicitly literal pathspec magic.
+    pub literal_pathspecs: bool,
+    pub truncate: bool,
+    pub stderr_limit: Option<usize>,
+}
+impl Default for GitRequest<'_> {
+    fn default() -> Self {
+        Self {
+            env: &[],
+            input: None,
+            timeout: Duration::from_secs(15),
+            max_output: MAX_OUTPUT,
+            literal_pathspecs: true,
+            truncate: false,
+            stderr_limit: None,
+        }
+    }
+}
+pub(crate) struct GitOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    /// Output passed max_output; stdout holds its first max_output + 1 bytes.
+    pub overflowed: bool,
+    pub truncated: bool,
+}
+impl GitOutput {
+    pub(crate) fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.stderr)
+            .chars()
+            .take(2000)
+            .collect()
+    }
+}
+
+pub(crate) fn git_with(
+    directory: &Path,
+    arguments: &[&str],
+    options: &GitOptions<'_>,
+) -> Result<(Vec<u8>, bool)> {
+    let index = options.index_file.map(external_git_path).transpose()?;
+    let env = index
+        .as_ref()
+        .map(|index| [("GIT_INDEX_FILE", index.as_os_str())]);
+    let output = git_output(
+        directory,
+        arguments,
+        &GitRequest {
+            env: env.as_ref().map_or(&[], |entries| entries.as_slice()),
+            input: options.input,
+            timeout: options.timeout,
+            max_output: options.max_output,
+            truncate: options.truncate,
+            stderr_limit: Some(MAX_OUTPUT),
+            ..Default::default()
+        },
+    )?;
+    ensure!(!output.overflowed, "Git output is too large");
+    ensure!(
+        output.truncated || output.success,
+        "Git failed: {}",
+        output.stderr_text()
+    );
+    Ok((output.stdout, output.truncated))
+}
+
+/// The hardened runner without the status check, for plumbing that inspects
+/// stderr or exit codes. Timeouts and spawn failures are still errors.
+pub(crate) fn git_output(
+    directory: &Path,
+    arguments: &[&str],
+    request: &GitRequest<'_>,
+) -> Result<GitOutput> {
     ensure!(directory.is_dir(), "Project directory does not exist");
     let mut command = Command::new("git");
     #[cfg(windows)]
@@ -31,10 +151,12 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     command
         .arg("-c")
         .arg(format!("core.hooksPath={}", hooks.to_string_lossy()));
+    command.arg("--no-pager");
+    if request.literal_pathspecs {
+        command.arg("--literal-pathspecs");
+    }
     command
         .args([
-            "--no-pager",
-            "--literal-pathspecs",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -48,7 +170,11 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
+        .stdin(if request.input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for name in [
@@ -59,28 +185,61 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     ] {
         command.env_remove(name);
     }
+    for (name, value) in request.env {
+        command.env(name, value);
+    }
     let mut child = command.spawn().context("Unable to start git")?;
+    if let Some(input) = request.input {
+        let mut stdin = child.stdin.take().context("Missing git stdin")?;
+        let input = input.to_vec();
+        // A separate writer keeps a large input from blocking output reads.
+        thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = child.stdout.take().context("Missing git stdout")?;
     let stderr = child.stderr.take().context("Missing git stderr")?;
-    let read_pipe = |pipe: Box<dyn Read + Send>| {
+    let limit = request.max_output;
+    let read_pipe = |mut pipe: Box<dyn Read + Send>, limit: usize| {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut bytes = Vec::new();
-            let result = pipe
-                .take((MAX_OUTPUT + 1) as u64)
+            let result = (&mut pipe)
+                .take((limit + 1) as u64)
                 .read_to_end(&mut bytes)
                 .map(|_| bytes);
+            let capped = result.as_ref().is_ok_and(|bytes| bytes.len() > limit);
+            // Publish the cap before draining so an authorized truncated read
+            // can stop and reap Git without waiting for the rest of its output.
             let _ = tx.send(result);
+            if capped {
+                let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+            }
         });
         rx
     };
-    let output = read_pipe(Box::new(stdout));
-    let errors = read_pipe(Box::new(stderr));
+    let output = read_pipe(Box::new(stdout), limit);
+    let stderr_limit = request.stderr_limit.unwrap_or(limit);
+    let errors = read_pipe(Box::new(stderr), stderr_limit);
     let started = Instant::now();
+    let mut read = None;
     let status = loop {
+        if read.is_none()
+            && let Ok(result) = output.try_recv()
+        {
+            read = Some(result);
+        }
+        if request.truncate
+            && let Some(Ok(bytes)) = &read
+            && bytes.len() > limit
+        {
+            let _ = child.kill();
+            break child.wait()?;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < Duration::from_secs(15) => {
+            Ok(None) if started.elapsed() < request.timeout => {
                 thread::sleep(Duration::from_millis(20))
             }
             Ok(None) => {
@@ -95,25 +254,27 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
             }
         }
     };
-    let bytes = output
-        .recv_timeout(Duration::from_secs(1))
-        .context("Git stdout did not close")??;
+    let mut bytes = match read {
+        Some(result) => result?,
+        None => output
+            .recv_timeout(Duration::from_secs(1))
+            .context("Git stdout did not close")??,
+    };
     let errors = errors
         .recv_timeout(Duration::from_secs(1))
         .context("Git stderr did not close")??;
-    ensure!(
-        bytes.len() <= MAX_OUTPUT && errors.len() <= MAX_OUTPUT,
-        "Git output exceeds 3 MiB; narrow the path"
-    );
-    ensure!(
-        status.success(),
-        "Git failed: {}",
-        String::from_utf8_lossy(&errors)
-            .chars()
-            .take(2000)
-            .collect::<String>()
-    );
-    Ok(bytes)
+    let truncated = request.truncate && bytes.len() > limit;
+    if truncated {
+        bytes.truncate(limit);
+    }
+    Ok(GitOutput {
+        success: status.success(),
+        code: status.code(),
+        overflowed: bytes.len() > limit || errors.len() > stderr_limit,
+        truncated,
+        stdout: bytes,
+        stderr: errors,
+    })
 }
 
 fn relative_path(path: &str) -> Result<&Path> {
