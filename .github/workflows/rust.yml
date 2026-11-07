@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -56,6 +56,15 @@ jobs:
       - name: Diagnose Windows PTY and control tests after core failure
         if: ${{ failure() && runner.os == 'Windows' && steps.core_tests.outcome == 'failure' }}
         run: cargo test -p coincide-core --locked --no-fail-fast --test terminal_windows --test control_windows -- --nocapture
+      - name: Test owned Windows upload reader against actual junctions, symlinks and sharing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+        run: |
+          cargo test -p coincide-core --lib --locked browser_protocol::upload::windows::sdk_tests -- --ignored --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/upload-sdk-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/upload-sdk-tests.log" -SimpleMatch 'test result: ok. 6 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly six owned Windows upload SDK tests' }
       - run: cargo clippy -p coincide-core --all-targets --locked -- -D warnings
         if: runner.os != 'Windows'
       - name: Test isolated preview updater helper fixtures
@@ -133,6 +142,50 @@ jobs:
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use
       - name: Test isolated desktop helper transport without native launch
         run: cargo test -p coincide-desktop --locked --features preview-updater-helper updater_helper_transport
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh macOS runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
+          grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      - name: Build synthetic native download executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_download_sdk --locked
+      - name: Verify exact native downloads on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_DOWNLOAD_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
+          grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
+      - name: Build synthetic owned upload SDK executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_upload_sdk --locked
+      - name: Verify native file attachment and chooser policy on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
+          grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Retain native macOS credential SDK evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-native-fill-sdk
+          path: |
+            ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
+          if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
     runs-on: windows-latest
@@ -174,6 +227,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one unchanged owned-window native host test' }
           } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
+      - name: Test native Windows notification payload policy without OS calls
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use,native-notifications --locked notifications::windows_policy::tests -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-toast-policy.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-policy.log" -SimpleMatch 'test result: ok. 4 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly four production toast policy tests' }
+      - name: Verify actual isolated Windows toast registration delivery and clearing
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use,native-notifications --locked notifications::windows::tests::actual_owned_notification_registration_post_clear_and_absence -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-toast-owned.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-owned.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one actual owned Windows notification test' }
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
@@ -200,16 +265,58 @@ jobs:
             if (-not (Select-String -Path "$env:RUNNER_TEMP/computer-use-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one owned-window native Computer Use test' }
           } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
       - name: Build actual Windows native application and owner-aware control CLI
-        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone,coincide-desktop/native-computer-use --locked
+        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone,coincide-desktop/native-computer-use,coincide-desktop/native-notifications --locked
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh Windows runner
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+        run: |
+          & target/debug/examples/native_credential_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-fill-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-fill-sdk.log" -SimpleMatch 'synthetic native fill: PASS')) { throw 'Expected actual native private fill and callback-owner return' }
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
+      - name: Build synthetic native download executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_download_sdk --locked
+      - name: Verify exact native downloads on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_DOWNLOAD_SDK: '1'
+        run: |
+          & target/debug/examples/native_download_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-download-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-download-sdk.log" -SimpleMatch 'synthetic native downloads: PASS')) { throw 'Expected actual native downloads and callback-owner return' }
+      - name: Build synthetic owned upload SDK executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_upload_sdk --locked
+      - name: Verify native file attachment through the no-reparse reader on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+        run: |
+          & target/debug/examples/native_upload_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-upload-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-upload-sdk.log" -SimpleMatch 'synthetic native upload: PASS')) { throw 'Expected actual native WebView2 attachment of owned files' }
       - name: Retain actual Windows native UI attempt evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-ui
-          path: ${{ runner.temp }}/windows-native-ui
+          path: |
+            ${{ runner.temp }}/windows-native-ui
+            ${{ runner.temp }}/native-host-toast-*.log
+            ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -343,12 +450,65 @@ jobs:
           set -o pipefail
           dbus-run-session -- sh -c 'DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" xvfb-run -a -s "-screen 0 1440x1000x24" cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications --locked notification_activity::tests::actual_private_x11_activity -- --ignored --exact --nocapture' | tee "$RUNNER_TEMP/notification-activity-tests.log"
           python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"notification-activity-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact private activity test"'
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh Linux runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
+          grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
+      - name: Build synthetic native download executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_download_sdk --locked
+      - name: Verify exact native downloads on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_DOWNLOAD_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
+          grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
+      - name: Build synthetic owned upload SDK executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_upload_sdk --locked
+      - name: Verify native file attachment and chooser policy on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
+          grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
       - name: Retain native Linux UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-native-ui
-          path: ${{ runner.temp }}/linux-native-ui
+          path: |
+            ${{ runner.temp }}/linux-native-ui
+            ${{ runner.temp }}/native-fill-sdk.log
+            ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
           if-no-files-found: warn

@@ -54,24 +54,33 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 ## Current integration (2026-11-07)
 
 Checkpoints [#277](https://github.com/apoorvdarshan/coincide/pull/277) through
-[#281](https://github.com/apoorvdarshan/coincide/pull/281) are merged after
-exact-head checks and identical-tree verification. These add shared inspectors,
-Settings scrolling, native credential controls, source-bound dictation, device
-pickers, organization usage and owned Windows/Linux platform foundations.
-Actual native Windows/Linux app input, Settings close, ordinary/guarded Quit
-and older conversation/draft restart passed; artifacts were reviewed. Fresh
-runner OS secret-store write/read/delete and Windows power acquire/release also
-passed. These do not prove personal-device audio capture or live provider setup.
+[#282](https://github.com/apoorvdarshan/coincide/pull/282) are merged after
+exact-head checks and identical-tree verification. They add shared inspectors,
+Settings scrolling and retained child polling, native credential controls,
+source-bound dictation, device pickers, organization usage, reviewed account
+removal and owned Windows/Linux platform foundations. Actual Windows/Linux
+app input, separate Settings close, ordinary/guarded Quit and older selected
+conversation/draft restart passed; screenshots and reports were reviewed.
+The final #282 run also rendered all sixteen Linux Settings routes. These
+results do not prove personal-device audio capture or live provider setup.
 
-[#282](https://github.com/apoorvdarshan/coincide/pull/282) remains under final
-native acceptance after a sixteen-page Settings run exposed a Quit stall.
-The persistent-child polling fix has an actual private GPUI regression; native
-Quit must pass before acceptance. Windows Computer Use in
-[#283](https://github.com/apoorvdarshan/coincide/pull/283) and Voice/model/account/
-notification integration in [#284](https://github.com/apoorvdarshan/coincide/pull/284)
-remain drafts pending combined checks and isolated platform runtime evidence.
+[#283](https://github.com/apoorvdarshan/coincide/pull/283) through
+[#290](https://github.com/apoorvdarshan/coincide/pull/290) remain drafts pending
+final combined checks and native runtime acceptance. The current sources add
+Windows UI Automation, verified Voice models and Apple Speech, account lifecycle,
+Linux notifications, persistent Settings controls, activity routing, native
+browser history/dialogs/keys, isolated browser profiles, inline dictation,
+Linux Computer Use and PR involvement filters. Actual SDK tests have exposed
+and are driving repairs to Windows provider connection timing, browser history
+self-navigation rejection and a Linux controlled-window freshness boundary.
+Earlier failures remain recorded; compilation or fake tests do not close them.
+
 The Apple Speech bridge compiled and linked against the actual SDK with a
-macOS 14 deployment floor; it was not executed on the personal host.
+macOS 14 deployment floor. It was not executed on the personal host. Windows
+notification delivery and safe PR checkout remain separate implementation work.
+No user microphone, vault, desktop-control permission, live provider or external
+review was exercised during this unattended continuation. Antigravity live
+testing remains off. The running Swift app and user instruction files are unchanged.
 
 
 Shared UI/UX parity applies to macOS, Windows and Linux. The current verified
@@ -122,22 +131,9 @@ kept ordinary admissions available and the second within 1.5 seconds exited
 normally, preserving selection and draft across restart. This does not establish
 real shell/IME, provider authentication or hardware acceptance.
 
-[#277](https://github.com/apoorvdarshan/coincide/pull/277) and
-[#278](https://github.com/apoorvdarshan/coincide/pull/278) remain under hosted
-verification. They contain shared chat/inspector composition, per-thread panel
-preferences, Settings scrolling, native account storage groundwork and explicit
-Windows/Linux microphone backends. Windows verification found a Unix-only setup
-source reader and default database ownership mismatch; the production repair
-retains exact native source handles and creates new databases privately. Native
-microphone compilation also required an explicit static sample-type bound. These
-new heads require their own checks; earlier passing heads do not certify them.
-
-The next isolated batches add full composer dictation, owned cancellable Windows
-offline inference, actual converted-audio telemetry, provider account controls,
-Voice API engines and fresh-runner native credential-store tests. Synthetic
-lifecycle results do not establish personal microphone/vault/provider acceptance.
-The live Swift app, original checkout, global instructions and personal data
-remain preserved; no installation, cutover or release occurred.
+The platform and composer results above supersede the older pending notes for
+#277–#281. Actual Appshots capture/hooks/permissions, complete provider workflows
+and full Swift screen-by-screen acceptance remain distinct unfinished gates.
 
 See [CHECKLIST](CHECKLIST.md) for the current concise worklist. The following older
 checkpoints retain their original evidence and limitations; their pending notes
@@ -815,7 +811,7 @@ The broad feature groups above remain open until their complete behavior passes.
 | Owner | Verified evidence | Current work / remaining acceptance |
 | --- | --- | --- |
 | Terminal | Native Mac scroll/selection/alternate-screen checks; Windows ConPTY/control and GPUI compilation pass | Thread-cached tabs/splits, mode-aware input and native IME callbacks mounted; 18 focused tests pass; native IME/shell/Windows GUI acceptance pending |
-| Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes | Windows uploads, broader browser parity and real-account acceptance remain |
+| Browser | Private WebKit fill passed 11 native fixture groups; upload/private-channel synthetic coverage passes; Windows no-reparse upload reader passed six owned SDK tests on a fresh runner and is enabled | WebView-level upload fixtures await green desktop jobs; OneDrive/cloud-placeholder and other reparse-point files are refused on Windows; broader browser parity and real-account acceptance remain |
 | Organization | Native Codex/Claude picker import, stale SHA refusal and read-only protection passed; bot edit/draft persistence passed | Saved-bot new conversation/focus, empty native state, retained editor draft and frozen instructions passed native fixtures; real provider acceptance pending |
 | Credentials | Native synthetic WAV insertion preserved Unicode selection and did not send; microphone converter/lifecycle fixtures pass | Gated microphone controls mounted; six fake workflow tests and feature-on converter/lifecycle fixtures pass; real vault/passkey/model/mic acceptance absent |
 | Workspace | Native exact whitespace/Unicode transcript copying and composer/terminal isolation passed; fake-gh metadata and URL copy passed | Durable write service and native confirmation transport mounted; 131 combined desktop tests pass; fake-process service validation and native write confirmation acceptance remain separate |
@@ -987,9 +983,11 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
   uploads, passwords, passkeys, dialogs, screenshots and native-key actions
   still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
-  thread-scoped session history and private verified destinations on Mac. Linux
-  downloads fail closed because upstream shared-profile callbacks misattribute tabs.
-  Progress/cancel/resume, blob downloads and persistent history remain. Same-origin
+  thread-scoped session history and verified destinations in a fresh folder under
+  ~/Downloads/Coincide. Every host owns exact native objects (WKDownload, WebView2
+  download operations, WebKitGTK downloads) with per-object receipts, including
+  document-origin blob downloads; closing a tab cancels its transfers and waits for
+  the native outcome. Progress/explicit cancel/resume and persistent history remain. Same-origin
   nested frames have expiring handles; read/click/input/type/scroll reject stale
   ancestors. Native srcdoc navigation works while public navigation stays HTTP(S).
   Console captures bounded primitive-only diagnostics with per-tab clearing. Native
