@@ -260,7 +260,15 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
       - name: Build actual Linux native application
-        run: cargo build -p coincide-desktop --features native-microphone --locked
+        run: cargo build -p coincide-desktop --features native-microphone,native-notifications --locked
+      - name: Test notifications through a private synthetic desktop bus
+        shell: bash
+        env:
+          COINCIDE_NOTIFICATION_BUS_CI: private-synthetic-server-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications --locked notifications::linux::tests::actual_private_notification_bus_round_trip -- --ignored --exact --nocapture | tee "$RUNNER_TEMP/notification-bus-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"notification-bus-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact private notification bus test"'
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence

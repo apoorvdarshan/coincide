@@ -154,3 +154,96 @@ impl Server for BusServer {
 pub(crate) fn backend() -> NativeServer<BusServer> {
     NativeServer::new(BusServer::default())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notifications::{Backend, Permission};
+    use coincide_core::platform_host::notifications::Delivery;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
+    #[derive(Default)]
+    struct Calls {
+        replacements: Vec<u32>,
+        closed: Vec<u32>,
+        bodies: Vec<String>,
+    }
+    struct Service(Arc<Mutex<Calls>>);
+    #[zbus::interface(name = "org.freedesktop.Notifications")]
+    impl Service {
+        fn get_capabilities(&self) -> Vec<&str> {
+            vec!["body", "body-markup"]
+        }
+        #[allow(clippy::too_many_arguments)]
+        fn notify(
+            &self,
+            app_name: &str,
+            replaces_id: u32,
+            icon: &str,
+            summary: &str,
+            body: &str,
+            actions: Vec<String>,
+            hints: HashMap<String, zbus::zvariant::OwnedValue>,
+            timeout: i32,
+        ) -> u32 {
+            assert_eq!(app_name, "Coincide");
+            assert!(icon.is_empty() && actions.is_empty() && hints.is_empty());
+            assert_eq!(summary, "Synthetic notice");
+            assert_eq!(timeout, -1);
+            let mut calls = self.0.lock().unwrap();
+            calls.replacements.push(replaces_id);
+            calls.bodies.push(body.into());
+            if replaces_id == 0 {
+                19
+            } else {
+                assert_eq!(replaces_id, 19);
+                replaces_id
+            }
+        }
+        fn close_notification(&self, id: u32) {
+            self.0.lock().unwrap().closed.push(id);
+        }
+    }
+    #[::core::prelude::v1::test]
+    #[ignore = "fresh Linux CI private dbus-run-session only; never the user session bus"]
+    fn actual_private_notification_bus_round_trip() {
+        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+        assert_eq!(
+            std::env::var("COINCIDE_NOTIFICATION_BUS_CI").as_deref(),
+            Ok("private-synthetic-server-v1")
+        );
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let server = Builder::session()
+            .unwrap()
+            .name("org.freedesktop.Notifications")
+            .unwrap()
+            .serve_at("/org/freedesktop/Notifications", Service(calls.clone()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut native = backend();
+        assert!(calls.lock().unwrap().replacements.is_empty());
+        assert_eq!(native.permission().unwrap(), Permission::Authorized);
+        let thread = Uuid::new_v4();
+        let payload = Payload {
+            id: format!("coincide-rust.{thread}.{}.completed", Uuid::new_v4()),
+            thread,
+            title: "Synthetic notice".into(),
+            body: Some("Literal <text> & data".into()),
+        };
+        assert_eq!(native.post(&payload), Delivery::Accepted);
+        assert_eq!(native.post(&payload), Delivery::Accepted);
+        native.clear_thread(thread).unwrap();
+        {
+            let calls = calls.lock().unwrap();
+            assert_eq!(calls.replacements, vec![0, 19]);
+            assert_eq!(calls.closed, vec![19]);
+            assert_eq!(calls.bodies, vec!["Literal &lt;text&gt; &amp; data"; 2]);
+        }
+        drop(native);
+        drop(server);
+        println!(
+            "Private notification service accepted exact payload, replacement and owned close; no desktop banner requested"
+        );
+    }
+}
