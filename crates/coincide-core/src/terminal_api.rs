@@ -11,7 +11,7 @@ use crate::terminal::{
 pub(super) const METHODS: &[&str] = &["terminal.status", "terminal.restart", "terminal.close"];
 
 /// The shell a terminal runs: `$SHELL`, else the platform's own.
-fn terminal_shell() -> String {
+pub(super) fn terminal_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| {
         if cfg!(windows) {
             "powershell.exe".into()
@@ -82,8 +82,19 @@ impl Engine {
         thread: &Value,
         shell: &str,
     ) -> Result<Terminal> {
+        self.spawn_thread_terminal_with_environment(thread_id, thread, shell, &[])
+    }
+    /// Script and plain panes share fallback, numbering and status ownership.
+    pub(super) fn spawn_thread_terminal_with_environment(
+        &self,
+        thread_id: &str,
+        thread: &Value,
+        shell: &str,
+        environment: &[(String, String)],
+    ) -> Result<Terminal> {
         let start = self.terminal_start_directory(thread)?;
-        let mut terminal = Terminal::spawn_in(&start, shell, 24, 100)?;
+        let mut terminal =
+            Terminal::spawn_in_with_environment(&start, shell, 24, 100, environment)?;
         terminal.number = self.next_terminal_number(thread_id);
         Ok(terminal)
     }

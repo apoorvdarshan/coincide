@@ -79,6 +79,8 @@ pub struct Terminal {
     shell_anchors: shell::Anchors,
     history_limit: usize,
     _shell_launch: Option<shell::ShellLaunch>,
+    /// User-configured project locations survive an explicit shell restart.
+    extra_environment: Vec<(String, String)>,
     reader_worker: Option<thread::JoinHandle<()>>,
     writer_worker: Option<thread::JoinHandle<()>>,
     pub revision: u64,
@@ -111,6 +113,7 @@ impl Terminal {
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
             _shell_launch: None,
+            extra_environment: Vec::new(),
             reader_worker: None,
             writer_worker: None,
             revision: 0,
@@ -179,6 +182,7 @@ impl Terminal {
             );
             command.env(name, value);
         }
+        let extra_environment = environment.to_vec();
         let shell_launch = shell::ShellLaunch::prepare(
             shell,
             command
@@ -242,6 +246,7 @@ impl Terminal {
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
             _shell_launch: Some(shell_launch),
+            extra_environment,
             revision: 0,
             title: "Terminal".into(),
             number: 0,
@@ -260,7 +265,18 @@ impl Terminal {
         rows: u16,
         cols: u16,
     ) -> Result<Self> {
-        let mut terminal = Self::spawn(&start.path, shell, rows, cols)?;
+        Self::spawn_in_with_environment(start, shell, rows, cols, &[])
+    }
+    /// The same fallback launch with project-script locations added last.
+    pub fn spawn_in_with_environment(
+        start: &launch::StartDirectory,
+        shell: &str,
+        rows: u16,
+        cols: u16,
+        environment: &[(String, String)],
+    ) -> Result<Self> {
+        let mut terminal =
+            Self::spawn_with_environment(&start.path, shell, rows, cols, environment)?;
         if let Some(notice) = start.notice() {
             terminal
                 .processor
@@ -283,7 +299,8 @@ impl Terminal {
         ensure!(self.exit.is_some(), "Terminal is still running");
         let rows = self.term.screen_lines() as u16;
         let cols = self.term.columns() as u16;
-        let mut fresh = Self::spawn(cwd, shell, rows, cols)?;
+        let mut fresh =
+            Self::spawn_with_environment(cwd, shell, rows, cols, &self.extra_environment)?;
         // An exited shell may still have I/O workers unwinding. Transfer its
         // complete owner before replacement instead of detaching their handles.
         let retired = self.request_shutdown()?;
@@ -1450,6 +1467,10 @@ impl PendingTerminalShutdown {
                 // Avoid signalling an already reaped PID. Signal only the directly
                 // owned child; never a process group. Confirmed wait resolves a
                 // benign kill error; a failed wait remains unknown.
+                // Release the owner's controlling PTY endpoint before waiting
+                // for a Unix session leader to finish terminal teardown.
+                #[cfg(unix)]
+                drop(resources.master.take());
                 let waited = match resources.child.try_wait() {
                     Ok(Some(status)) => Ok(status),
                     _ => {
@@ -2003,5 +2024,37 @@ mod appearance_tests {
         assert!(terminal.poll().unwrap());
         assert!(terminal.revision > revision);
         assert_eq!(terminal.status()["progress"], Value::Null);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod active_shell_shutdown_regression {
+    use super::*;
+    #[test]
+    fn active_private_shell_is_reaped_before_owner_drain_reports_ready() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ready");
+        let mut terminal = Terminal::spawn(root.path(), "/bin/sh", 6, 40).unwrap();
+        terminal
+            .write(&format!("printf ready > '{}'\r", marker.display()))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(&marker).ok().as_deref() != Some("ready") {
+            assert!(
+                Instant::now() < deadline,
+                "private shell did not execute builtin"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pending = terminal.request_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !pending.poll().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private shell drain stalled: {:?}",
+                pending.poll()
+            );
+            thread::yield_now();
+        }
     }
 }

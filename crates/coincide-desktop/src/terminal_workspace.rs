@@ -1145,6 +1145,48 @@ impl TerminalWorkspace {
         });
         self.active = Some(key);
     }
+    /// Adopt terminals that the accepted worktree setup hook already created.
+    /// This never creates another shell, and hidden threads never steal focus.
+    pub fn adopt_created(
+        &mut self,
+        owner: &str,
+        terminals: &[String],
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if owner != self.thread || self.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        self.activation.requested = false;
+        for id in terminals.iter().take(MAX_PANES) {
+            if self
+                .panes
+                .values()
+                .any(|pane| pane.terminal.as_ref() == Some(id))
+            {
+                continue;
+            }
+            if self.panes.len() >= MAX_PANES {
+                self.notice = "At most 32 terminal panes".into();
+                break;
+            }
+            let key = self.allocate(cx);
+            if self.tx.try_send(Command::Adopt(key, id.clone())).is_ok() {
+                self.panes.get_mut(&key).unwrap().terminal = Some(id.clone());
+                self.tab_for(key);
+            } else {
+                self.panes.remove(&key);
+                self.notice = "Could not attach setup terminal; reopen the terminal panel to retry attachment.".into();
+            }
+        }
+        self.watch();
+        if focus {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
     /// Swift ThreadTerminals.run: a project script gets a new tab that comes
     /// to the front. Existing shells are still adopted beside it, and this
     /// panel-open does not also start a plain shell.
@@ -2484,7 +2526,9 @@ impl TerminalWorkspace {
                     .compact()
                     .accessibility_label("New Terminal")
                     .tooltip(format!("New Terminal ({})", tabs::new_terminal_shortcut()))
-                    .on_click(cx.listener(|this, _, window, cx| this.create(None, window, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.create(None, None, window, cx)),
+                    ),
             )
             .child(div().flex_1().min_w_0());
         if let Some(directory) = directory {
@@ -2519,7 +2563,7 @@ impl TerminalWorkspace {
                         })
                         .disabled(!can_split)
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            this.create(Some((focus, axis)), window, cx)
+                            this.create(Some((focus, axis)), None, window, cx)
                         })),
                 );
             }
@@ -2753,9 +2797,9 @@ impl Render for TerminalWorkspace {
                             .label("New Terminal")
                             .primary()
                             .tooltip(format!("New Terminal ({})", tabs::new_terminal_shortcut()))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.create(None, window, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.create(None, None, window, cx)
+                            })),
                     ),
             );
         }

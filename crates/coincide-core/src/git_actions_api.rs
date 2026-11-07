@@ -667,39 +667,7 @@ impl Engine {
                 }
             }
             Completion::NewWorktree => {
-                self.git_actions.preparing.remove(&owner);
-                let Some(path) = result["worktree"]["path"].as_str().map(str::to_owned) else {
-                    return;
-                };
-                let branch = result["worktree"]["branch"].as_str().map(str::to_owned);
-                let prefix = result["prefix"].as_str().unwrap_or("coincide/").to_owned();
-                let unstarted = self
-                    .store
-                    .thread(&owner)
-                    .is_ok_and(|thread| !has_user_messages(&thread));
-                // A message sent meanwhile already runs in the project folder; leave it there.
-                if !unstarted || !self.set_thread_place(&owner, Some(&path), branch.as_deref()) {
-                    let discard = Unused { path, branch };
-                    let _ = self.spawn_git(&owner, false, Completion::None, move |_| {
-                        ops::discard_unused_worktree(
-                            Path::new(&discard.path),
-                            discard.branch.as_deref(),
-                            &prefix,
-                        );
-                        Ok(json!({}))
-                    });
-                    result["discarded"] = json!(true);
-                    return;
-                }
-                if let Some(base) = result["base"].as_str() {
-                    self.git_actions
-                        .bases
-                        .insert(owner.clone(), base.to_owned());
-                }
-                self.git_actions
-                    .unused
-                    .insert(owner.clone(), Unused { path, branch });
-                self.git_actions.watched.insert(owner);
+                self.complete_new_worktree(&owner, result, &terminal_api::terminal_shell())
             }
             Completion::ExistingWorktree(branch) => {
                 let Some(path) = result["path"].as_str().map(str::to_owned) else {
@@ -737,8 +705,52 @@ impl Engine {
         }
     }
 
-    /// Names temporary worktree branches after a thread's first message, and removes
-    /// worktrees made for threads that were deleted before they started.
+    /// Commit one worktree result before running opted-in setup. This also
+    /// supplies a private-shell seam for synthetic integration fixtures.
+    fn complete_new_worktree(&mut self, owner: &str, result: &mut Value, shell: &str) {
+        self.git_actions.preparing.remove(owner);
+        let Some(path) = result["worktree"]["path"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let branch = result["worktree"]["branch"].as_str().map(str::to_owned);
+        let prefix = result["prefix"].as_str().unwrap_or("coincide/").to_owned();
+        let unstarted = self
+            .store
+            .thread(&owner)
+            .is_ok_and(|thread| !has_user_messages(&thread));
+        // A message sent meanwhile already runs in the project folder; leave it there.
+        if !unstarted || !self.set_thread_place(owner, Some(&path), branch.as_deref()) {
+            let discard = Unused { path, branch };
+            let _ = self.spawn_git(owner, false, Completion::None, move |_| {
+                ops::discard_unused_worktree(
+                    Path::new(&discard.path),
+                    discard.branch.as_deref(),
+                    &prefix,
+                );
+                Ok(json!({}))
+            });
+            result["discarded"] = json!(true);
+            return;
+        }
+        if let Some(base) = result["base"].as_str() {
+            self.git_actions
+                .bases
+                .insert(owner.to_owned(), base.to_owned());
+        }
+        self.git_actions.unused.insert(
+            owner.to_owned(),
+            Unused {
+                path: path.clone(),
+                branch,
+            },
+        );
+        self.git_actions.watched.insert(owner.to_owned());
+        result["setupScripts"] = self.run_worktree_setup_scripts(owner, &path, shell)
+            .unwrap_or_else(|error| json!({"terminalIds":[],"errors":[{"name":"Setup scripts","error":error.to_string()}]}));
+    }
+
+    /// Names temporary worktree branches after a thread's first message, and
+    /// removes worktrees made for threads deleted before they started.
     fn watch_worktree_threads(&mut self) {
         if self.git_actions.watched.is_empty() && self.git_actions.unused.is_empty() {
             return;

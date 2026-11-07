@@ -315,3 +315,276 @@ fn elapsed_time_does_not_release_an_unfinished_git_mutation() {
     assert!(!engine.git_actions.pending.contains_key(&id));
     assert!(!engine.git_actions.mutating.contains(&owner));
 }
+
+#[cfg(unix)]
+mod setup_script_integration {
+    use super::*;
+    use crate::{
+        project_scripts::{self, ScriptDraft},
+        store::ScriptEdit,
+    };
+
+    fn project(engine: &Engine, owner: &str) -> Value {
+        let thread = engine.store.thread(owner).unwrap();
+        engine
+            .store
+            .projects()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|project| project["id"] == thread["projectID"])
+            .unwrap()
+            .clone()
+    }
+    fn script(
+        engine: &mut Engine,
+        project: &mut Value,
+        name: &str,
+        command: String,
+        automatic: bool,
+    ) -> String {
+        *project = engine
+            .native_edit_project_scripts(
+                project,
+                &ScriptEdit::Save {
+                    id: None,
+                    draft: ScriptDraft {
+                        name: name.into(),
+                        command,
+                        run_on_worktree_create: automatic,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        project_scripts::scripts(project).last().unwrap().id.clone()
+    }
+    fn new_worktree(root: &Path, folder: &Path) -> Value {
+        let branch = format!("coincide/setup-{}", Uuid::new_v4().simple());
+        git_in(
+            root,
+            &[
+                "worktree",
+                "add",
+                "--no-track",
+                "-b",
+                &branch,
+                folder.to_str().unwrap(),
+                "main",
+            ],
+        );
+        json!({"worktree":{"path":folder.canonicalize().unwrap().display().to_string(),"branch":branch},"base":"main","prefix":"coincide/"})
+    }
+    fn wait_file(path: &Path, expected: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(path).ok().as_deref() != Some(expected) {
+            assert!(
+                Instant::now() < deadline,
+                "private setup marker did not arrive"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn drain_terminals(engine: &mut Engine) {
+        engine.freeze_admissions();
+        engine.request_terminals_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !engine.poll_terminals_shutdown().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private terminal owner cleanup did not join: {:?}",
+                engine.poll_terminals_shutdown()
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn accepted_new_worktree_runs_only_opted_scripts_once_with_numbering_locations_and_unchanged_primary()
+     {
+        let (root, mut engine, owner, _, checkout) = fixture();
+        let folder = root.path().join("worktree");
+        let marker = root.path().join("locations");
+        let count = root.path().join("count");
+        let skipped = root.path().join("disabled");
+        let second = root.path().join("second");
+        let mut project = project(&engine, &owner);
+        script(
+            &mut engine,
+            &mut project,
+            "Locations",
+            format!(
+                "printf '%s\\n' \"$PWD\" \"$COINCIDE_PROJECT_ROOT\" \"$T3CODE_PROJECT_ROOT\" \"$COINCIDE_WORKTREE_PATH\" \"$T3CODE_WORKTREE_PATH\" > '{}'; printf x >> '{}'",
+                marker.display(),
+                count.display()
+            ),
+            true,
+        );
+        let primary = script(
+            &mut engine,
+            &mut project,
+            "Manual only",
+            format!("printf skipped > '{}'", skipped.display()),
+            false,
+        );
+        script(
+            &mut engine,
+            &mut project,
+            "Second setup",
+            format!("printf second > '{}'", second.display()),
+            true,
+        );
+        engine
+            .store
+            .remember_last_project_script(
+                Uuid::parse_str(project["id"].as_str().unwrap()).unwrap(),
+                Uuid::parse_str(&primary).unwrap(),
+            )
+            .unwrap();
+        let before_ui = engine.store.document("ui-state.json").unwrap();
+        let plain = engine
+            .create_terminal(&json!({"threadId":owner}), "/bin/sh")
+            .unwrap();
+        assert_eq!(
+            engine.terminals[plain["terminalId"].as_str().unwrap()]
+                .1
+                .number,
+            1
+        );
+        let mut result = new_worktree(&checkout, &folder);
+        engine.complete_new_worktree(&owner, &mut result, "/bin/sh");
+        assert_eq!(result["setupScripts"]["errors"], json!([]));
+        let ids = result["setupScripts"]["terminalIds"].as_array().unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(engine.terminals[ids[0].as_str().unwrap()].1.number, 2);
+        assert_eq!(engine.terminals[ids[1].as_str().unwrap()].1.number, 3);
+        wait_file(&count, "x");
+        wait_file(&second, "second");
+        assert!(!skipped.exists());
+        let worktree = folder.canonicalize().unwrap().display().to_string();
+        let project_root = checkout.display().to_string();
+        let locations = std::fs::read_to_string(&marker).unwrap();
+        let values = locations.lines().collect::<Vec<_>>();
+        assert_eq!(values.len(), 5);
+        assert_eq!(
+            Path::new(values[0]).canonicalize().unwrap(),
+            folder.canonicalize().unwrap()
+        );
+        assert_eq!(
+            &values[1..],
+            &[
+                project_root.as_str(),
+                project_root.as_str(),
+                worktree.as_str(),
+                worktree.as_str()
+            ]
+        );
+        assert_eq!(
+            engine.store.thread(&owner).unwrap()["worktreePath"],
+            worktree
+        );
+        engine.poll_git_actions();
+        engine.poll_git_actions();
+        assert_eq!(std::fs::read_to_string(&count).unwrap(), "x");
+        assert_eq!(engine.store.document("ui-state.json").unwrap(), before_ui);
+        drain_terminals(&mut engine);
+    }
+
+    #[test]
+    fn existing_or_discarded_worktrees_do_not_run_setup_and_frozen_admission_rejects_launch() {
+        let (root, mut engine, owner, other, checkout) = fixture();
+        let marker = root.path().join("must-not-run");
+        let mut project = project(&engine, &owner);
+        script(
+            &mut engine,
+            &mut project,
+            "Setup",
+            format!("printf bad > '{}'", marker.display()),
+            true,
+        );
+        let folder = root.path().join("existing");
+        let result = new_worktree(&checkout, &folder);
+        let path = result["worktree"]["path"].as_str().unwrap().to_owned();
+        let pending = Pending {
+            thread: owner.clone(),
+            started: Instant::now(),
+            progress: Arc::new(Mutex::new(String::new())),
+            completion: Completion::ExistingWorktree(
+                result["worktree"]["branch"].as_str().map(str::to_owned),
+            ),
+            mutation: true,
+        };
+        let mut reused = json!({"path":path});
+        engine.complete_git(&pending, &mut reused);
+        assert!(engine.terminals.is_empty());
+        assert!(reused["setupScripts"].is_null());
+        let mut started = engine.store.thread(&other).unwrap();
+        started["items"] =
+            json!([{"id":Uuid::new_v4().to_string(),"kind":"user","text":"Already started"}]);
+        engine.store.save(&started).unwrap();
+        let mut discarded = new_worktree(&checkout, &root.path().join("discarded"));
+        engine.complete_new_worktree(&other, &mut discarded, "/bin/sh");
+        assert_eq!(discarded["discarded"], true);
+        assert!(discarded["setupScripts"].is_null());
+        settle(&mut engine);
+        assert!(!marker.exists());
+        assert!(engine.terminals.is_empty());
+        engine.freeze_admissions();
+        assert!(
+            engine
+                .run_worktree_setup_scripts(&owner, &path, "/bin/sh")
+                .is_err()
+        );
+        assert!(!marker.exists());
+        engine.request_terminals_shutdown().unwrap();
+        assert!(engine.poll_terminals_shutdown().ready());
+    }
+
+    #[test]
+    fn setup_delivery_failure_reports_error_and_retains_owner_without_changing_primary() {
+        let (root, mut engine, owner, _, checkout) = fixture();
+        let mut project = project(&engine, &owner);
+        script(
+            &mut engine,
+            &mut project,
+            "Oversized imported setup",
+            "true".into(),
+            true,
+        );
+        let mut projects = engine.store.projects().unwrap();
+        let edited = projects
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|p| p["id"] == project["id"])
+            .unwrap();
+        edited["scripts"][0]["command"] = json!("x".repeat(32 * 1024 + 1));
+        engine
+            .store
+            .save_document("projects.json", &projects)
+            .unwrap();
+        let before = engine.store.document("ui-state.json").unwrap();
+        let mut result = new_worktree(&checkout, &root.path().join("setup-failed"));
+        engine.complete_new_worktree(&owner, &mut result, "/bin/sh");
+        assert_eq!(result["setupScripts"]["terminalIds"], json!([]));
+        assert_eq!(
+            result["setupScripts"]["errors"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            result["setupScripts"]["errors"][0]["name"],
+            "Oversized imported setup"
+        );
+        assert!(
+            result["setupScripts"]["errors"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("32 KiB")
+        );
+        assert!(engine.terminals.is_empty());
+        assert_eq!(engine.poll_terminals_shutdown().panes.len(), 1);
+        assert_eq!(engine.store.document("ui-state.json").unwrap(), before);
+        drain_terminals(&mut engine);
+    }
+}

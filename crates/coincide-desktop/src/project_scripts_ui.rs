@@ -151,6 +151,42 @@ impl Coincide {
         cx.notify();
     }
 
+    /// Swift onShowTerminal: only the currently selected thread opens its
+    /// panel; existing hidden workspaces still adopt their new setup tabs.
+    pub(super) fn show_worktree_setup_terminals(
+        &mut self,
+        owner: &str,
+        terminals: &[String],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if terminals.is_empty() || self.media.shutdown_requested || self.media.close_requested {
+            return;
+        }
+        if let Some(workspace) = self.terminal_workspaces.get(owner).cloned() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.adopt_created(owner, terminals, false, window, cx)
+            });
+        }
+        if !self.project_ui_admitted()
+            || self
+                .selected
+                .as_ref()
+                .is_none_or(|thread| thread["id"] != owner)
+        {
+            return;
+        }
+        if !self.terminal_open || self.terminal_visible_thread.as_deref() != Some(owner) {
+            self.terminal_open = false;
+            self.toggle_terminal(None, window, cx);
+        }
+        if let Some(workspace) = self.terminal_workspaces.get(owner).cloned() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.adopt_created(owner, terminals, true, window, cx)
+            });
+        }
+    }
+
     fn open_project_script_editor(
         &mut self,
         project: Value,

@@ -100,6 +100,7 @@ enum Message {
     ToolbarFinished {
         thread: String,
         error: Option<Banner>,
+        setup_terminals: Vec<String>,
     },
 }
 
@@ -294,6 +295,40 @@ fn failure_banner(value: &Value) -> Banner {
         error: true,
         action: None,
     }
+}
+
+/// A worktree was created even when one setup command could not be queued.
+fn setup_result(reply: &Value) -> (Vec<String>, Option<Banner>) {
+    let setup = &reply["setupScripts"];
+    let terminals = setup["terminalIds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .take(32)
+        .map(str::to_owned)
+        .collect();
+    let errors = setup["errors"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let banner = (!errors.is_empty()).then(|| Banner {
+        title: "Worktree created; some setup scripts could not start.".into(),
+        detail: Some(
+            errors
+                .iter()
+                .take(8)
+                .map(|error| {
+                    format!(
+                        "{}: {}",
+                        text(error, "name").chars().take(120).collect::<String>(),
+                        text(error, "error").chars().take(300).collect::<String>()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        error: true,
+        action: None,
+    });
+    (terminals, banner)
 }
 
 fn engine_call(
@@ -749,7 +784,11 @@ impl Coincide {
                     controls.deferred.insert(thread, banner);
                 }
             }
-            Message::ToolbarFinished { thread, error } => {
+            Message::ToolbarFinished {
+                thread,
+                error,
+                setup_terminals,
+            } => {
                 controls.action_thread = None;
                 controls.toolbar_op = None;
                 controls.progress = None;
@@ -757,8 +796,10 @@ impl Coincide {
                 controls.request_refresh();
                 if current.as_deref() == Some(thread.as_str()) {
                     controls.alert = error;
+                } else if let Some(error) = error {
+                    controls.deferred.insert(thread.clone(), error);
                 }
-                let _ = window;
+                self.show_worktree_setup_terminals(&thread, &setup_terminals, window, cx);
             }
         }
     }
@@ -1068,12 +1109,19 @@ impl Coincide {
         params["threadId"] = json!(thread);
         let started = controls.actions.spawn(move |admission| {
             let reply = engine_op(&engine, &admission, method, params, &|_| {});
-            let error = match reply {
-                Ok(reply) if reply["error"].is_null() => None,
-                Ok(reply) => Some(failure_banner(&reply)),
-                Err(error) => Some(failure_banner(&json!({"error":error.to_string()}))),
+            let (setup_terminals, error) = match reply {
+                Ok(reply) if reply["error"].is_null() => setup_result(&reply),
+                Ok(reply) => (vec![], Some(failure_banner(&reply))),
+                Err(error) => (
+                    vec![],
+                    Some(failure_banner(&json!({"error":error.to_string()}))),
+                ),
             };
-            let _ = tx.send(Message::ToolbarFinished { thread, error });
+            let _ = tx.send(Message::ToolbarFinished {
+                thread,
+                error,
+                setup_terminals,
+            });
         });
         if !started {
             controls.action_thread = None;

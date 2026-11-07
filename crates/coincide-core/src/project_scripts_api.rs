@@ -32,10 +32,15 @@ impl Engine {
     /// With `scriptId` it also types that project script, with its locations
     /// in the environment, and remembers it as the project's last-run script.
     pub(super) fn create_terminal(&mut self, p: &Value, shell: &str) -> Result<Value> {
+        self.create_project_terminal(p, shell, true)
+    }
+
+    fn create_project_terminal(&mut self, p: &Value, shell: &str, remember: bool) -> Result<Value> {
+        self.require_admissions()?;
+        ensure!(!self.shutdown, "Application is closing");
         ensure!(self.terminals.len() < 32, "Too many terminal panes");
         let thread = required(p, "threadId")?;
         let v = self.store.thread(thread)?;
-        let cwd = self.working_directory(&v)?;
         let launch = match p.get("scriptId") {
             None | Some(Value::Null) => None,
             Some(id) => Some(self.project_script_launch(&v, id)?),
@@ -43,8 +48,11 @@ impl Engine {
         let environment = launch
             .as_ref()
             .map_or(&[][..], |launch| &launch.environment);
-        let mut terminal =
-            crate::terminal::Terminal::spawn_with_environment(&cwd, shell, 24, 100, environment)?;
+        let mut terminal = if launch.is_some() {
+            self.spawn_thread_terminal_with_environment(thread, &v, shell, environment)?
+        } else {
+            self.spawn_thread_terminal(thread, &v, shell)?
+        };
         let id = Uuid::new_v4().to_string();
         if let Some(launch) = &launch {
             // Swift TerminalSession.run: the command and Return, queued until
@@ -66,7 +74,7 @@ impl Engine {
         }
         self.terminals.insert(id.clone(), (thread.into(), terminal));
         self.revision += 1;
-        if let Some(launch) = &launch {
+        if let Some(launch) = launch.as_ref().filter(|_| remember) {
             // The script already runs; a hint that could not be saved only
             // leaves the toolbar's one-click script as it was.
             let _ = self
@@ -74,6 +82,44 @@ impl Engine {
                 .remember_last_project_script(launch.project, launch.script);
         }
         Ok(json!({"terminalId":id}))
+    }
+
+    /// Swift ProjectScripts.runSetupScripts: only after a newly created
+    /// worktree was admitted to this thread. Each opted-in script gets its own
+    /// numbered pane; automatic setup never changes the one-click last script.
+    pub(super) fn run_worktree_setup_scripts(
+        &mut self,
+        thread: &str,
+        expected_worktree: &str,
+        shell: &str,
+    ) -> Result<Value> {
+        self.require_admissions()?;
+        ensure!(!self.shutdown, "Application is closing");
+        let document = self.store.thread(thread)?;
+        ensure!(
+            document["worktreePath"].as_str() == Some(expected_worktree),
+            "Setup worktree changed before launch"
+        );
+        let project = self
+            .store
+            .project_scripts_target(required(&document, "projectID")?)?;
+        let scripts = project_scripts::scripts(&project)
+            .into_iter()
+            .filter(|script| script.run_on_worktree_create)
+            .collect::<Vec<_>>();
+        let mut terminals = Vec::new();
+        let mut errors = Vec::new();
+        for script in scripts {
+            match self.create_project_terminal(
+                &json!({"threadId":thread,"scriptId":script.id}),
+                shell,
+                false,
+            ) {
+                Ok(created) => terminals.push(created["terminalId"].clone()),
+                Err(error) => errors.push(json!({"name":script.name,"error":error.to_string()})),
+            }
+        }
+        Ok(json!({"terminalIds":terminals,"errors":errors}))
     }
 
     /// Finds `script_id` in the thread's own project. The terminal starts in
@@ -220,6 +266,104 @@ mod tests {
         engine.freeze_admissions();
         engine.request_terminals_shutdown().unwrap();
         assert!(engine.poll_terminals_shutdown().ready());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn script_fallback_numbering_and_restart_keep_locations_without_replaying_command() {
+        let (root, mut engine, project, thread) = fixture();
+        let missing = root.path().join("missing-worktree");
+        let count = root.path().join("launch-count");
+        let marker = root.path().join("restart-locations");
+        let mut saved = engine.store.thread(&thread).unwrap();
+        saved["worktreePath"] = json!(missing.display().to_string());
+        engine.store.save(&saved).unwrap();
+        let original = project_scripts::scripts(&project)[0].clone();
+        engine
+            .native_edit_project_scripts(
+                &project,
+                &ScriptEdit::Save {
+                    id: Some(original.uuid()),
+                    draft: project_scripts::ScriptDraft {
+                        name: "Exit fixture".into(),
+                        command: format!("printf x >> '{}'; exit 3", count.display()),
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        let created = engine
+            .create_terminal(
+                &json!({"threadId":thread,"scriptId":original.id}),
+                "/bin/sh",
+            )
+            .unwrap();
+        let id = created["terminalId"].as_str().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !engine.terminals.get(id).unwrap().1.exited() {
+            engine.terminal_listing(Some(&thread));
+            assert!(
+                Instant::now() < deadline,
+                "private exiting script did not finish"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let terminal = &engine.terminals[id].1;
+        assert_eq!(terminal.number, 1);
+        assert_eq!(
+            terminal.directory().canonicalize().unwrap(),
+            root.path().canonicalize().unwrap()
+        );
+        let frame = engine.terminals.get_mut(id).unwrap().1.snapshot().unwrap();
+        let screen = frame["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(screen.contains("no longer exists. Starting in"));
+        let ui = engine.store.document("ui-state.json").unwrap();
+        engine
+            .restart_terminal(&json!({"terminalId":id}), "/bin/sh")
+            .unwrap();
+        assert_eq!(engine.terminals[id].1.number, 1);
+        let command = format!(
+            r#"printf '%s\n' "$COINCIDE_PROJECT_ROOT" "$T3CODE_PROJECT_ROOT" "$COINCIDE_WORKTREE_PATH" "$T3CODE_WORKTREE_PATH" > '{}'"#,
+            marker.display()
+        );
+        engine
+            .terminals
+            .get_mut(id)
+            .unwrap()
+            .1
+            .write(&(command + "\r"))
+            .unwrap();
+        let root_folder = root.path().canonicalize().unwrap().display().to_string();
+        let missing = missing.display().to_string();
+        let expected = format!("{root_folder}\n{root_folder}\n{missing}\n{missing}\n");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(&marker).ok().as_deref() != Some(expected.as_str()) {
+            assert!(
+                Instant::now() < deadline,
+                "restarted private shell lost project locations"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(std::fs::read_to_string(count).unwrap(), "x");
+        assert_eq!(engine.store.document("ui-state.json").unwrap(), ui);
+        assert_eq!(engine.poll_terminals_shutdown().panes.len(), 1);
+        engine.freeze_admissions();
+        engine.request_terminals_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !engine.poll_terminals_shutdown().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private restart owners did not join: {:?}",
+                engine.poll_terminals_shutdown()
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[cfg(unix)]
