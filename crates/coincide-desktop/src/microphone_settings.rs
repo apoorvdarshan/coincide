@@ -638,9 +638,12 @@ pub struct MicrophoneSettings {
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
-        let (connection, events) = spawn_owner(Box::new(|| {
+        Self::with_factory(Box::new(|| {
             (Box::new(Microphone::new()), Box::new(LocalInference))
-        }));
+        }))
+    }
+    fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
+        let (connection, events) = spawn_owner(factory);
         (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None }, events)
     }
     pub fn set_target(
@@ -1423,3 +1426,7 @@ mod tests {
         assert!(events.try_recv().is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "microphone_ui_tests.rs"]
+mod native_tests;
