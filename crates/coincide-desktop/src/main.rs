@@ -2298,6 +2298,10 @@ impl Coincide {
             Ok((visible, all)) => {
                 self.threads = visible;
                 self.sidebar_all_threads = all;
+                // A transient busy lock must not leave a permanent error line.
+                if self.status.starts_with("Unable to load conversations:") {
+                    self.status.clear();
+                }
             }
             Err(error) => {
                 complete = false;
