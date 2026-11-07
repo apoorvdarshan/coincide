@@ -64,13 +64,24 @@ fn executable(path: &Path) -> Result<PathBuf> {
             "Configured GitHub CLI is not executable"
         );
     }
+    #[cfg(windows)]
+    {
+        use std::io::Read;
+        let mut source = crate::native_file::open_regular(&path, false)?;
+        let mut signature = [0; 2];
+        source.read_exact(&mut signature)?;
+        ensure!(
+            signature == *b"MZ",
+            "Configured GitHub CLI must be a native Windows executable"
+        );
+    }
     Ok(path)
 }
 
 fn resolve(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Result<PathBuf> {
     ensure!(
-        cfg!(unix),
-        "GitHub PR reads are not supported on this platform yet"
+        cfg!(any(unix, windows)),
+        "GitHub PR reads are not supported on this platform"
     );
     if let Some(path) = explicit {
         // An invalid explicit override must never fall back to another binary.
@@ -83,7 +94,8 @@ fn resolve(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Result<PathBuf> 
         );
         for directory in std::env::split_paths(search).take(128) {
             if directory.is_absolute()
-                && let Ok(path) = executable(&directory.join("gh"))
+                && let Ok(path) =
+                    executable(&directory.join(if cfg!(windows) { "gh.exe" } else { "gh" }))
             {
                 return Ok(path);
             }
@@ -146,8 +158,8 @@ impl Engine {
     }
     pub(super) fn github_command(&mut self, method: &str, params: &Value) -> Result<Value> {
         ensure!(
-            cfg!(unix),
-            "GitHub PR reads are not supported on this platform yet"
+            cfg!(any(unix, windows)),
+            "GitHub PR reads are not supported on this platform"
         );
         ensure!(!self.shutdown, "Application is shutting down");
         let keys: &[&str] = match method {

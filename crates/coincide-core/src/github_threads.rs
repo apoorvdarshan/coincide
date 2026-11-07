@@ -58,7 +58,7 @@ impl Scope {
 struct Bound {
     scope: Scope,
     root: PathBuf,
-    identity: (u64, u64),
+    identity: crate::native_file::Identity,
 }
 impl Bound {
     fn new(thread: &str, stored: &Path, params: &Value) -> Result<Self> {
@@ -71,14 +71,7 @@ impl Bound {
             root.is_dir() && Path::new(&scope.expected_root).canonicalize()? == root,
             "Project root changed"
         );
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            let m = std::fs::metadata(&root)?;
-            (m.dev(), m.ino())
-        };
-        #[cfg(not(unix))]
-        let identity = (0, 0);
+        let identity = crate::native_file::path_identity(&root)?;
         ensure!(
             root.to_str() == Some(scope.expected_root.as_str()),
             "Expected canonical stored root"

@@ -36,8 +36,12 @@ fn fake_gh(args: &[String]) {
         .write_all(format!("{}\n", json!({"args":args,"body":body})).as_bytes())
         .unwrap();
     let result = if args.first().map(String::as_str) == Some("pr") {
-        assert_eq!(&args[..3], &["pr", "view", "7"]);
-        serde_json::from_slice::<Value>(&fs::read("snapshot.json").unwrap()).unwrap()
+        if args.get(1).map(String::as_str) == Some("list") {
+            json!([snapshot()])
+        } else {
+            assert_eq!(&args[..3], &["pr", "view", "7"]);
+            serde_json::from_slice::<Value>(&fs::read("snapshot.json").unwrap()).unwrap()
+        }
     } else {
         assert_eq!(args.first().map(String::as_str), Some("api"));
         assert!(
@@ -133,7 +137,68 @@ fn close(service: GithubWriteService) {
     }
     drop(service);
 }
+fn engine_routes(root: &Path) {
+    use coincide_core::{api::Engine, store::Store};
+    let project = root.join("ENGINE");
+    native_file::private_directory(&project).unwrap();
+    let mut engine = Engine::new(Store::open(&root.join("engine.sqlite")).unwrap());
+    fn command(engine: &mut Engine, method: &str, params: Value) -> Value {
+        let reply = engine.dispatch(json!({"id":1,"method":method,"params":params}));
+        assert!(
+            reply.get("error").is_none(),
+            "Synthetic public Engine command failed: {method}"
+        );
+        reply["result"].clone()
+    }
+    let parent = command(&mut engine, "projects.create", json!({"path":project}));
+    let thread = command(
+        &mut engine,
+        "threads.create",
+        json!({"projectId":parent["id"]}),
+    );
+    let thread = thread["id"].as_str().unwrap();
+    assert!(
+        !project.join("calls.jsonl").exists(),
+        "construction must not launch gh"
+    );
+    let operation = command(
+        &mut engine,
+        "github.pr.list",
+        json!({"threadId":thread,"expectedRoot":project,"repository":"owner/project"}),
+    );
+    let started = Instant::now();
+    loop {
+        let response = command(
+            &mut engine,
+            "github.result",
+            json!({"threadId":thread,"expectedRoot":project,"operationId":operation["operationId"]}),
+        );
+        if response["ready"] == true {
+            assert_eq!(response["result"]["pullRequests"][0]["number"], 7);
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    engine.freeze_admissions();
+    engine.request_github_reads_shutdown().unwrap();
+    let started = Instant::now();
+    loop {
+        let states = engine.github_reads_shutdown_status().unwrap();
+        if states.iter().all(|status| {
+            status.closed && status.running == 0 && status.panicked == 0 && status.unclassified == 0
+        }) {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(engine);
+    println!("portable GitHub ENGINE passed");
+}
 fn run(root: &Path) {
+    engine_routes(root);
+
     let exe = std::env::current_exe().unwrap();
     for mode in [
         "COMMENT",
@@ -256,6 +321,7 @@ fn main() {
     let result = command
         .arg("--private-parent")
         .arg(&root)
+        .env("COINCIDE_RUST_GH", std::env::current_exe().unwrap())
         .env("HOME", root.join("home"))
         .env("USERPROFILE", root.join("home"))
         .env("TMPDIR", root.join("tmp"))
@@ -278,7 +344,7 @@ fn main() {
             .lines()
             .filter(|line| line.starts_with("portable GitHub "))
             .count(),
-        6
+        7
     );
     print!("{output}");
     fs::remove_dir_all(root).unwrap();
