@@ -503,8 +503,8 @@ impl BrowserController {
             }
             BrowserAction::Upload { .. } => {
                 ensure!(
-                    !cfg!(windows),
-                    "Browser uploads are disabled on Windows until safe reparse-point handling is implemented"
+                    coincide_core::browser_protocol::upload::available(),
+                    "Windows uploads await native filesystem SDK acceptance; local-drive-only attachment is not enabled"
                 );
                 ensure!(
                     !self.uploads.contains_key(&request.id),
@@ -1802,7 +1802,7 @@ impl BrowserController {
         {
             unsupported.push("native-key-events");
         }
-        if cfg!(windows) {
+        if !coincide_core::browser_protocol::upload::available() {
             unsupported.push("upload");
         }
         if !native_password_manager {
