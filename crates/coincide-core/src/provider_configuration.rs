@@ -1188,7 +1188,7 @@ pub use accounts::{
     NativeAccountAuthentication, NativeAccountRemoval, NativeAdminModel, NativeAdminTokens,
     NativeAdminUsage, NativeAdminUsageReport, NativeCodexKeyEnrollment,
     NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave, NativeLegacyCodexAccount,
-    NativeLoginAccount, NativeProviderAccount, PreparedLegacyCodexRemoval,
+    NativeLoginAccount, NativeProviderAccount, PreparedCodexAuthChange, PreparedLegacyCodexRemoval,
     PreparedLegacyCodexRename, PreparedNativeAccountRemoval, native_account_key_choices,
 };
 

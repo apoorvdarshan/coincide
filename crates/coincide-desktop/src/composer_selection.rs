@@ -1576,7 +1576,7 @@ impl Coincide {
             return;
         };
         let named = &self.selection_ui.capabilities["namedModels"];
-        if named["nativeApiKey"] == true
+        if (named["nativeApiKey"] == true || named["nativeAccount"] == true)
             || !named_models::named_thread(thread)
             || named["threadId"] != thread["id"]
             || named["accountID"] != thread["selection"]["accountID"]

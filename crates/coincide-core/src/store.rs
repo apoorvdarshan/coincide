@@ -1,5 +1,6 @@
 #[path = "store_codex_profile_lifecycle.rs"]
 mod codex_profile_lifecycle;
+pub(crate) use codex_profile_lifecycle::CodexAuthChange;
 #[path = "reply_selection_store.rs"]
 mod reply_selection_store;
 #[path = "store_thread_idle.rs"]

@@ -469,7 +469,16 @@ fn consume_with(
     );
     let mut command = Command::new(&plan.launch.requested);
     let configuration = if plan.action == SetupAction::SignIn {
-        command.args(login(&plan.provider)?);
+        if plan.provider == "codex" && plan.account.is_some() {
+            let mut arguments = crate::codex_login_profiles::subscription_arguments();
+            ensure!(
+                arguments.pop().as_deref() == Some("app-server"),
+                "Codex subscription setup contract changed"
+            );
+            command.args(arguments).arg("login");
+        } else {
+            command.args(login(&plan.provider)?);
+        }
         if let Some(account) = &plan.account {
             if plan.provider == "opencode" {
                 command.arg("--standalone");

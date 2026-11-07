@@ -197,6 +197,10 @@ impl Engine {
         variable: Option<&str>,
     ) -> Result<()> {
         self.require_admissions()?;
+        ensure!(
+            provider != "codex",
+            "Review Codex authentication changes in native Settings"
+        );
         let mode = match auth {
             "login" => {
                 supported(provider)?;

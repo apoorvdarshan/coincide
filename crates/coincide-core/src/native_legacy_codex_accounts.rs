@@ -216,6 +216,10 @@ impl Engine {
     }
 }
 
+#[path = "native_codex_auth_method.rs"]
+mod auth_method;
+pub use auth_method::PreparedCodexAuthChange;
+
 #[cfg(test)]
 mod tests {
     use super::*;

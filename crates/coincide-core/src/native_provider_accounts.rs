@@ -122,6 +122,7 @@ pub(super) struct LoginHome {
 }
 fn supported(provider: &str) -> Result<&'static str> {
     match provider {
+        "codex" => Ok("CODEX_HOME"),
         "claude" => Ok("CLAUDE_CONFIG_DIR"),
         "grok" => Ok("GROK_HOME"),
         "opencode" => Ok("XDG_DATA_HOME"),
@@ -414,6 +415,7 @@ impl LoginHome {
             return Ok(Value::Null);
         }
         let path = match self.account.provider.as_str() {
+            "codex" => self.account.home.join("auth.json"),
             "claude" => self.account.home.join(".credentials.json"),
             "grok" => self.account.home.join("auth.json"),
             "opencode" => self.account.home.join("opencode/auth.json"),
@@ -1051,7 +1053,8 @@ pub(super) fn synthetic_key_configuration(
 #[path = "native_legacy_codex_accounts.rs"]
 mod legacy_codex_accounts;
 pub use legacy_codex_accounts::{
-    NativeLegacyCodexAccount, PreparedLegacyCodexRemoval, PreparedLegacyCodexRename,
+    NativeLegacyCodexAccount, PreparedCodexAuthChange, PreparedLegacyCodexRemoval,
+    PreparedLegacyCodexRename,
 };
 
 #[path = "native_provider_account_removal.rs"]
