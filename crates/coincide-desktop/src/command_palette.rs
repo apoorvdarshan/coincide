@@ -1075,7 +1075,13 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let model = Model::new(snapshot)?;
+        let mut model = Model::new(snapshot)?;
+        // Generations keep counting across openings, so a search an earlier
+        // opening asked for can never deliver into this one.
+        model.generation += self.model.as_ref().map_or(0, |model| model.generation);
+        if let Some(request) = &mut model.request {
+            request.generation = model.generation;
+        }
         if !self.is_open() {
             self.restore = window.focused(cx);
         }
