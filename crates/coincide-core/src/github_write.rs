@@ -65,6 +65,8 @@ struct Scope {
     expected_head: String,
     device: u64,
     inode: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_id: Option<[u8; 16]>,
 }
 impl Scope {
     fn bind(thread: &str, stored: &Path, p: &Value, require_head: bool) -> Result<Self> {
@@ -108,7 +110,11 @@ impl Scope {
             let m = fs::metadata(&root)?;
             (m.dev(), m.ino())
         };
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let (device, file_id) = crate::native_file::path_identity(&root)?;
+        #[cfg(windows)]
+        let inode = u64::from_le_bytes(file_id[..8].try_into().unwrap());
+        #[cfg(not(any(unix, windows)))]
         let (device, inode) = (0, 0);
         Ok(Self {
             thread_id: thread.into(),
@@ -118,6 +124,10 @@ impl Scope {
             expected_head,
             device,
             inode,
+            #[cfg(windows)]
+            file_id: Some(file_id),
+            #[cfg(not(windows))]
+            file_id: None,
         })
     }
     fn key(&self) -> String {
@@ -130,6 +140,7 @@ impl Scope {
             && self.number == other.number
             && self.device == other.device
             && self.inode == other.inode
+            && self.file_id == other.file_id
     }
     fn wire(&self) -> Value {
         json!({"threadId":self.thread_id,"expectedRoot":self.expected_root,"repository":self.repository,"number":self.number,"expectedHead":self.expected_head})
@@ -304,7 +315,12 @@ struct Inner {
     slots: Arc<AtomicUsize>,
     _lease: LedgerLease,
     workers: WriteWorkers,
+    #[cfg(windows)]
+    _windows_custody: windows_ledger::Custody,
 }
+#[cfg(windows)]
+#[path = "github_write_windows_ledger.rs"]
+mod windows_ledger;
 #[derive(Clone)]
 pub struct GithubWriteService(Arc<Inner>);
 struct Slot(Arc<AtomicUsize>);
@@ -316,6 +332,10 @@ struct LedgerLease {
 }
 impl Drop for LedgerLease {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            let _ = File::unlock(&self._file);
+        }
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -352,9 +372,12 @@ impl GithubWriteService {
             ledger_directory.is_absolute(),
             "Absolute trusted ledger directory required"
         );
+        #[cfg(not(windows))]
         if initialize {
             fs::create_dir_all(&ledger_directory)?;
         }
+        #[cfg(windows)]
+        let windows_custody = windows_ledger::Custody::open(&ledger_directory, initialize)?;
         ensure!(
             ledger_directory.is_dir(),
             "Ledger missing; do not recreate automatically"
@@ -375,7 +398,9 @@ impl GithubWriteService {
             fs::set_permissions(&ledger_directory, fs::Permissions::from_mode(0o700))?;
         }
         let lease_path = ledger_directory.join("writer.lock");
+        #[cfg(not(windows))]
         let mut options = fs::OpenOptions::new();
+        #[cfg(not(windows))]
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
         {
@@ -383,7 +408,10 @@ impl GithubWriteService {
             options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
         let lease = LedgerLease {
+            #[cfg(not(windows))]
             _file: options.open(lease_path)?,
+            #[cfg(windows)]
+            _file: windows_ledger::lock(&lease_path)?,
         };
         #[cfg(unix)]
         {
@@ -408,7 +436,9 @@ impl GithubWriteService {
         }
         let identity = if initialize {
             let value = uuid::Uuid::new_v4().to_string();
+            #[cfg(not(windows))]
             let mut options = fs::OpenOptions::new();
+            #[cfg(not(windows))]
             options.write(true).create_new(true);
             #[cfg(unix)]
             {
@@ -416,7 +446,10 @@ impl GithubWriteService {
                 options.mode(0o600);
             }
             use std::io::Write;
+            #[cfg(not(windows))]
             let mut file = options.open(&identity_path)?;
+            #[cfg(windows)]
+            let mut file = crate::private_fs::windows::open_file(&identity_path, true)?;
             file.write_all(value.as_bytes())?;
             file.sync_all()?;
             value
@@ -437,16 +470,25 @@ impl GithubWriteService {
                 "Ledger cannot be symlink"
             );
         } else {
+            #[cfg(not(windows))]
             let mut o = fs::OpenOptions::new();
+            #[cfg(not(windows))]
             o.write(true).create_new(true);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
                 o.mode(0o600);
             }
+            #[cfg(not(windows))]
             o.open(&path)?.sync_all()?;
+            #[cfg(windows)]
+            crate::private_fs::windows::open_file(&path, true)?.sync_all()?;
         }
-        let db = Connection::open(path)?;
+        #[cfg(windows)]
+        let windows_custody = windows_custody.hold_files(&path, &identity_path)?;
+        let db = Connection::open(&path)?;
+        #[cfg(windows)]
+        windows_custody.validate(&path, &identity_path)?;
         db.busy_timeout(Duration::from_secs(1))?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
         if initialize {
@@ -513,6 +555,8 @@ impl GithubWriteService {
             slots: Arc::new(AtomicUsize::new(0)),
             _lease: lease,
             workers: WriteWorkers::default(),
+            #[cfg(windows)]
+            _windows_custody: windows_custody,
         })))
     }
     /// Close admission without cancelling or retrying any dispatched mutation.
@@ -1012,8 +1056,8 @@ fn api(method: &str, endpoint: &str, input: bool) -> Vec<String> {
 fn availability(snapshot: &Value) -> Result<Value> {
     let bytes = serde_json::to_vec(snapshot)?;
     let pr = crate::workspace_github::parse_snapshot(&bytes)?;
-    let merge = cfg!(unix) && pr.preflight(&pr.head_ref_oid)?["eligible"] == true;
-    let review = cfg!(unix) && pr.state == "OPEN";
+    let merge = cfg!(any(unix, windows)) && pr.preflight(&pr.head_ref_oid)?["eligible"] == true;
+    let review = cfg!(any(unix, windows)) && pr.state == "OPEN";
     let reason = if review {
         Value::Null
     } else {
@@ -1045,7 +1089,19 @@ struct Gh {
     _expire_after_dispatch_marker: bool,
 }
 impl Gh {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn run(&self, root: &Path, args: &[String], input: Option<&Value>) -> Result<Vec<u8>> {
+        let mut runner = crate::github_api::GhRunner::new(self.executable.clone())?;
+        runner.timeout = self.timeout;
+        crate::github_api::windows::capture_with_input(
+            &runner,
+            root,
+            args,
+            &std::sync::atomic::AtomicBool::new(false),
+            input.map(serde_json::to_vec).transpose()?,
+        )
+    }
+    #[cfg(not(any(unix, windows)))]
     fn run(&self, _: &Path, _: &[String], _: Option<&Value>) -> Result<Vec<u8>> {
         bail!("Write backend unavailable on this platform")
     }

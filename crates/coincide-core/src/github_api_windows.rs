@@ -3,7 +3,7 @@
 use super::*;
 use std::{
     fs::{File, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     mem::{size_of, size_of_val},
     os::windows::{
         fs::{MetadataExt, OpenOptionsExt},
@@ -46,6 +46,7 @@ fn owned(raw: HANDLE) -> Result<OwnedHandle> {
 struct Process {
     child: Child,
     job: OwnedHandle,
+    writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
 }
 impl Process {
     fn spawn(command: &mut Command) -> Result<Self> {
@@ -72,7 +73,11 @@ impl Process {
             child.wait().context("GitHub child cleanup incomplete")?;
             bail!("GitHub child isolation failed");
         }
-        let mut process = Self { child, job };
+        let mut process = Self {
+            child,
+            job,
+            writer: None,
+        };
         if let Err(error) = process.resume() {
             process.finish()?;
             return Err(error);
@@ -111,6 +116,17 @@ impl Process {
         Ok(Some(code == 0))
     }
     fn finish(&mut self) -> Result<()> {
+        let cleanup = self.drain();
+        let written = self.writer.take().map(|writer| writer.join());
+        cleanup?;
+        if let Some(result) = written {
+            result
+                .map_err(|_| anyhow::anyhow!("GitHub input worker panicked"))?
+                .context("GitHub request input failed")?;
+        }
+        Ok(())
+    }
+    fn drain(&mut self) -> Result<()> {
         ensure!(
             unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
             "GitHub Job cleanup incomplete"
@@ -152,6 +168,9 @@ impl Drop for Process {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
     }
 }
 fn hold_root(root: &Path) -> Result<File> {
@@ -177,6 +196,19 @@ pub(super) fn capture(
     args: &[String],
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>> {
+    capture_with_input(runner, root, args, cancelled, None)
+}
+pub(crate) fn capture_with_input(
+    runner: &GhRunner,
+    root: &Path,
+    args: &[String],
+    cancelled: &AtomicBool,
+    input: Option<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    ensure!(
+        input.as_ref().is_none_or(|body| body.len() <= 256 * 1024),
+        "Request body too large"
+    );
     ensure!(
         !cancelled.load(Ordering::Acquire),
         "GitHub operation cancelled"
@@ -239,7 +271,11 @@ pub(super) fn capture(
         .env("PAGER", "cat")
         .env("NO_COLOR", "1")
         .env("GH_NO_UPDATE_NOTIFIER", "1")
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     ensure!(
@@ -247,6 +283,19 @@ pub(super) fn capture(
         "Configured gh changed"
     );
     let mut process = Process::spawn(&mut command)?;
+    if let Some(body) = input {
+        let mut stdin = process
+            .child
+            .stdin
+            .take()
+            .context("Missing GitHub input pipe")?;
+        process.writer = Some(
+            std::thread::Builder::new()
+                .name("coincide-github-input".into())
+                .spawn(move || stdin.write_all(&body))
+                .context("Unable to own GitHub input worker")?,
+        );
+    }
     let result = (|| -> Result<Vec<u8>> {
         let mut stdout = process.child.stdout.take().context("Missing gh stdout")?;
         let mut bytes = Vec::new();
@@ -375,7 +424,7 @@ mod tests {
         for mode in ["success", "failed", "large", "timeout"] {
             std::fs::write(root.path().join("mode"), mode).unwrap();
             let captured = capture(
-                &runner(Duration::from_secs(2)),
+                &runner(Duration::from_secs(if mode == "timeout" { 2 } else { 15 })),
                 root.path(),
                 &args(FIXTURE),
                 &AtomicBool::new(false),

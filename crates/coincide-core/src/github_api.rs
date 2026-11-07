@@ -24,7 +24,7 @@ mod shutdown_tests;
 #[derive(Clone)]
 pub struct GhRunner {
     executable: PathBuf,
-    timeout: Duration,
+    pub(crate) timeout: Duration,
 }
 impl GhRunner {
     /// Explicit configured executable. Never resolve a page/agent-provided path.
@@ -171,7 +171,7 @@ impl Drop for ProcessGroup {
 
 #[cfg(windows)]
 #[path = "github_api_windows.rs"]
-mod windows;
+pub(crate) mod windows;
 #[derive(Clone)]
 struct Root {
     path: PathBuf,
