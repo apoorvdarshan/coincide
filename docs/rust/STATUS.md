@@ -1418,3 +1418,19 @@ Not verifiable in this pass: keyboard rebinding key capture (the accessibility
 harness cannot deliver keystrokes to the unfocused Settings window), real
 passkey/password-manager sign-in, OS notification delivery, and any workflow
 that mutates live schedules or GitHub state. These remain open acceptance items.
+
+## Acceptance pass 2 (2026-11-07, after #329)
+
+- **Keyboard rebinding passed:** with the Settings window focused, New Thread
+  recorded `⌃⇧F9`, showed `Default: ⌘N`, reported "Keyboard shortcut saved",
+  and Reset to Default restored `⌘N`. This closes the pass-1 gap.
+- **Diff passed:** the Diff tab lists Uncommitted Changes, the changed file and
+  its hunk (`Subproject commit …`, +1 −0).
+- **Defect found:** after opening the Diff tab, the composer area reports
+  "Unable to load conversations: App is busy processing another request" and
+  keeps reporting it; New Bot does not open while it persists. The engine
+  appears to stay locked after the diff/git refresh. This needs a fix before
+  the UI/Git group can be accepted.
+
+Still open: real passkey/password-manager sign-in, OS notifications, and any
+workflow that mutates live schedules or GitHub state.
