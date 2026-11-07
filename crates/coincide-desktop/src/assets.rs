@@ -57,6 +57,11 @@ icon_assets!(
         SquareArrowOutUpRight,
         Clock,
         FolderPlus,
+        // Missing project folder, the toolbar's Diff and Pull Requests, and approvals.
+        FolderX,
+        Diff,
+        GitPullRequest,
+        ShieldAlert,
         Check,
         ChevronDown,
         ChevronLeft,
@@ -207,9 +212,11 @@ mod tests {
             // The Diff inspector's empty states.
             "icons/diff.svg",
             "icons/folder-x.svg",
+            "icons/diff.svg",
+            "icons/git-pull-request.svg",
+            "icons/shield-alert.svg",
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
-            "icons/git-pull-request.svg",
             "icons/git-pull-request-draft.svg",
             "icons/git-merge.svg",
             "icons/circle-dot.svg",

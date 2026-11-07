@@ -79,6 +79,7 @@ impl Coincide {
             self.sidebar_preferences.document["settledThreads"].get(id) == after.as_ref()
         }) {
             self.sidebar_settle_undo = Some(changes);
+            self.inbox_undo.settle_stamp = inbox_undo::stamp();
         }
     }
     pub(super) fn undo_settle(&mut self, cx: &mut Context<Self>) {
