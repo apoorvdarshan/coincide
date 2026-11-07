@@ -49,7 +49,7 @@ fn owned(raw: HANDLE) -> Result<OwnedHandle> {
     );
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
-struct Process {
+pub(crate) struct Process {
     child: Child,
     job: OwnedHandle,
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
@@ -57,7 +57,7 @@ struct Process {
     drained: bool,
 }
 impl Process {
-    fn spawn(command: &mut Command) -> Result<Self> {
+    pub(crate) fn spawn(command: &mut Command) -> Result<Self> {
         let job = owned(unsafe { CreateJobObjectW(null(), null()) })?;
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -98,6 +98,10 @@ impl Process {
         }
         Ok(process)
     }
+    /// Transfer only the output pipe; native child/Job custody stays here.
+    pub(crate) fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.stdout.take()
+    }
     fn resume(&self) -> Result<()> {
         let snapshot = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) })?;
         let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
@@ -118,7 +122,7 @@ impl Process {
         }
         bail!("GitHub child primary thread unavailable")
     }
-    fn exited(&self) -> Result<Option<bool>> {
+    pub(crate) fn exited(&self) -> Result<Option<bool>> {
         if unsafe { WaitForSingleObject(self.child.as_raw_handle(), 0) } != WAIT_OBJECT_0 {
             return Ok(None);
         }
@@ -129,7 +133,7 @@ impl Process {
         );
         Ok(Some(code == 0))
     }
-    fn finish(&mut self) -> Result<()> {
+    pub(crate) fn finish(&mut self) -> Result<()> {
         if self.drained {
             return Ok(());
         }
@@ -414,7 +418,7 @@ pub(crate) fn capture_with_input(
         );
     }
     let result = (|| -> Result<Vec<u8>> {
-        let mut stdout = process.child.stdout.take().context("Missing gh stdout")?;
+        let mut stdout = process.take_stdout().context("Missing gh stdout")?;
         let mut bytes = Vec::new();
         let mut eof = false;
         let started = Instant::now();
