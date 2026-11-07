@@ -22,6 +22,7 @@ pub mod palette_search;
 pub mod schedule_presentation;
 pub mod thread_history;
 
+pub mod cli_session_discovery;
 pub mod cli_session_import;
 pub mod credentials;
 pub mod dictation;
