@@ -51,7 +51,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
 <div id=middle class=block></div><div id=bottom class=block></div>
 <script>window.fixtureReady=true;</script>"#;
     const LAYOUT: &str = r#"JSON.stringify((()=>{const r=id=>{const b=document.getElementById(id).getBoundingClientRect();return {x:b.x+scrollX,y:b.y+scrollY,width:b.width,height:b.height};};return {innerWidth,innerHeight,user:r('user'),pass:r('pass'),otp:r('otp'),search:r('search')};})())"#;
-    const RESTORED: &str = r#"JSON.stringify(scrollY===2950 && [...document.querySelectorAll('input')].every(el=>el.style.opacity===''&&el.style.transition===''))"#;
+    const RESTORED: &str = r#"scrollY===2950 && [...document.querySelectorAll('input')].every(el=>el.style.opacity===''&&el.style.transition==='')"#;
 
     pub type Outcome = Arc<Mutex<Option<Result<Vec<String>, String>>>>;
     #[derive(Clone, Copy, Deserialize)]
@@ -111,6 +111,9 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
             window: &mut gpui_kit::Window,
             cx: &mut Context<Self>,
         ) -> Self {
+            // As in BrowserController::new: WebKitGTK contexts need GTK first.
+            #[cfg(target_os = "linux")]
+            gtk::init().expect("GTK initialization failed");
             let mut context = wry::WebContext::new(Some(root.join("runtime")));
             let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
                 .with_incognito(true)
@@ -234,13 +237,13 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
             }
             match self.stage {
                 Stage::Ready => {
-                    if self.read.is_none() {
+                    if self.read.is_none() && super::native_loaded(self.view.read(cx).raw()) {
                         self.evaluate(
-                            "JSON.stringify(window.fixtureReady===true&&document.readyState==='complete'&&location.href==='https://screenshot-fixture.invalid/page.html')",
+                            "window.fixtureReady===true&&document.readyState==='complete'&&location.href==='https://screenshot-fixture.invalid/page.html'",
                             cx,
                         );
                     } else if let Some(value) = self.evaluated()
-                        && value == "true"
+                        && parsed(&value) == Value::Bool(true)
                     {
                         self.stage = Stage::Layout;
                     }
@@ -281,9 +284,9 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                 }
                 Stage::Scroll => {
                     if self.read.is_none() {
-                        self.evaluate("scrollTo(0,2950);JSON.stringify(scrollY)", cx);
+                        self.evaluate("scrollTo(0,2950);scrollY", cx);
                     } else if let Some(value) = self.evaluated() {
-                        if value == "2950" {
+                        if parsed(&value).as_f64() == Some(2950.) {
                             self.stage = Stage::Scrolled;
                         } else {
                             self.fail(format!("fixture scroll failed: {value}"));
@@ -296,7 +299,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                     if self.read.is_none() {
                         self.evaluate(RESTORED, cx);
                     } else if let Some(value) = self.evaluated() {
-                        if value == "true" {
+                        if parsed(&value) == Value::Bool(true) {
                             self.checks.push("scroll and field styles restored".into());
                             self.stage = Stage::Grow;
                         } else if self.waited.elapsed() > Duration::from_secs(5) {
@@ -307,11 +310,11 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                 Stage::Grow => {
                     if self.read.is_none() {
                         self.evaluate(
-                            "scrollTo(0,0);document.body.style.height='30000px';JSON.stringify(document.documentElement.scrollHeight)",
+                            "scrollTo(0,0);document.body.style.height='30000px';document.documentElement.scrollHeight",
                             cx,
                         );
                     } else if let Some(value) = self.evaluated() {
-                        if value == "30000" {
+                        if parsed(&value).as_f64() == Some(30000.) {
                             self.stage = Stage::Truncated;
                         } else {
                             self.fail(format!("fixture growth failed: {value}"));
@@ -356,8 +359,12 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
             gpui_kit::div().size_full().child(self.view.clone())
         }
     }
+    /// Native evaluation results arrive JSON-encoded on every host.
+    fn parsed(value: &str) -> Value {
+        serde_json::from_str(value).unwrap_or(Value::Null)
+    }
     fn decode<T: for<'de> Deserialize<'de>>(value: &str) -> Option<T> {
-        // Tracked evaluation returns JSON; the fixture scripts return JSON strings.
+        // The layout script returns a JSON string inside that encoding.
         let text = serde_json::from_str::<String>(value).ok()?;
         serde_json::from_str(&text).ok()
     }
@@ -463,6 +470,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Linux Wry queues evaluations before the first commit and drops their
+/// callbacks; evaluate only once the native view finished loading the page.
+#[cfg(target_os = "linux")]
+fn native_loaded(view: &wry::WebView) -> bool {
+    use webkit2gtk::WebViewExt;
+    use wry::WebViewExtUnix;
+    let view = view.webview();
+    !view.is_loading() && view.uri().is_some_and(|uri| uri.as_str() == fixture::URL)
+}
+#[cfg(not(target_os = "linux"))]
+fn native_loaded(_: &wry::WebView) -> bool {
+    true
+}
 #[cfg(target_os = "linux")]
 fn load_fixture(view: &wry::WebView, _: &Path) -> anyhow::Result<()> {
     use webkit2gtk::WebViewExt;
