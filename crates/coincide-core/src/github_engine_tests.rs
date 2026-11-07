@@ -141,6 +141,11 @@ fn invalid_requests_never_execute_or_override_authoritative_root() {
         json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","executable":"/bin/echo"}),
         json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","cwd":directory.path()}),
         json!({"threadId":Uuid::new_v4().to_string(),"expectedRoot":root,"repository":"owner/project"}),
+        json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","involvement":null}),
+        json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","involvement":"mine"}),
+        json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","involvement":"review-requested:@me repo:other/repo"}),
+        json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","search":"review-requested:@me"}),
+        json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","author":"attacker"}),
     ] {
         assert!(call(&engine, "github.pr.list", params).is_err());
     }
@@ -287,4 +292,42 @@ fn windows_missing_or_invalid_cli_does_not_fall_back_or_advertise() {
             .iter()
             .all(|method| !capabilities.as_array().unwrap().contains(&json!(method)))
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn involvement_filter_actual_fake_cli_flags_and_bound_result() {
+    let (_directory, engine, root, owner, _) = fixture();
+    for (filter, flag, value) in [
+        ("all", None, None),
+        ("authored", Some("--author"), Some("@me")),
+        ("assigned", Some("--assignee"), Some("@me")),
+        (
+            "review-requested",
+            Some("--search"),
+            Some("review-requested:@me"),
+        ),
+    ] {
+        let operation=call(&engine,"github.pr.list",json!({"threadId":owner,"expectedRoot":root,"repository":"owner/project","involvement":filter})).unwrap();
+        let result = wait(&engine, &owner, &root, &operation["operationId"]);
+        assert_eq!(result["involvement"], filter);
+        assert_eq!(result["state"], "open");
+        assert_eq!(result["threadId"], owner);
+        let argv = std::fs::read_to_string(root.join("argv.txt")).unwrap();
+        let args = argv.lines().collect::<Vec<_>>();
+        assert_eq!(
+            &args[..6],
+            &["pr", "list", "--state", "open", "--limit", "30"]
+        );
+        if let (Some(flag), Some(value)) = (flag, value) {
+            assert_eq!(&args[8..10], &[flag, value]);
+            assert_eq!(args.len(), 12);
+        } else {
+            assert_eq!(args.len(), 10);
+        }
+        assert_eq!(
+            &args[args.len() - 2..],
+            &["--repo", "github.com/owner/project"]
+        );
+    }
 }
