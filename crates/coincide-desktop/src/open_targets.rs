@@ -243,6 +243,20 @@ pub(super) fn installed() -> Vec<Target> {
     }
     targets
 }
+/// The platform file manager, for the branch toolbar's Reveal / Show item. Finder
+/// selects the folder in its parent, as Swift's activateFileViewerSelecting does.
+pub(super) fn file_manager() -> Option<Target> {
+    let mut target = installed().into_iter().find(|target| {
+        matches!(
+            target.id,
+            "com.apple.finder" | "windows.explorer" | "linux.files"
+        )
+    })?;
+    if target.id == "com.apple.finder" {
+        target.args = vec!["-R".into()];
+    }
+    Some(target)
+}
 /// A conversation's worktree, else its project's folder.
 pub(super) fn folder_of(thread: &Value, projects: &[Value]) -> Option<PathBuf> {
     thread["worktreePath"]

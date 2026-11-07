@@ -51,6 +51,7 @@ mod credential_settings;
 mod credentials;
 mod dictation_preview;
 mod draft_close;
+mod git_controls;
 mod github_actions;
 mod github_review;
 mod github_threads;
@@ -462,6 +463,7 @@ struct Coincide {
     inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    git_controls: git_controls::GitControls,
     github_open: bool,
     github_panel: Entity<github_review::GitHubReviewPanel>,
     github_threads_panel: Entity<github_threads::GitHubThreadsPanel>,
@@ -589,6 +591,7 @@ impl Coincide {
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
+        self.sync_git_controls(cx);
     }
     fn sync_browser_settings_route(&mut self, cx: &mut Context<Self>) {
         let thread = (self.browser_settings_visible() && !self.command_palette.read(cx).is_open())
@@ -1032,6 +1035,7 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let git_controls = git_controls::GitControls::new(engine.clone(), window, cx);
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
         let github_actions =
             cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
@@ -1106,6 +1110,10 @@ impl Coincide {
             }),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
+                // Git may have changed outside Coincide while the window was inactive.
+                if window.is_window_active() {
+                    this.git_controls.request_refresh();
+                }
                 this.sync_terminal_workspace(window, cx);
                 this.sync_transcription_binding(cx);
                 this.sync_notification_activity(window, cx);
@@ -1433,6 +1441,7 @@ impl Coincide {
             inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
+            git_controls,
             github_open: false,
             github_panel,
             github_threads_panel,
@@ -3035,6 +3044,7 @@ impl Coincide {
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.poll_project_defaults(window, cx);
+        self.poll_git_controls(window, cx);
         self.open_target_children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
         if self.sidebar_preferences.retry(&self.engine) {
@@ -4839,7 +4849,8 @@ impl Render for Coincide {
                                                 .text_color(self.color(0xe4e9f2).opacity(0.7))
                                                 .child(self.status.clone()),
                                         )),
-                                ),
+                                )
+                                .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),
                         )
                     }).into_any_element();
         div()
@@ -4880,6 +4891,7 @@ impl Render for Coincide {
             .when_some(self.project_script_editor(cx), |view, form| {
                 view.child(form)
             })
+            .when_some(self.git_modal(cx), |view, modal| view.child(modal))
             .when_some(self.context_details_overlay(cx), |view, details| {
                 view.child(details)
             })

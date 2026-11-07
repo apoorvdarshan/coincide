@@ -21,6 +21,8 @@ mod provider_account_removal;
 mod provider_accounts;
 #[path = "store_follow_up.rs"]
 mod store_follow_up;
+#[path = "store_git_worktrees.rs"]
+mod store_git_worktrees;
 use anyhow::{Context, Result, bail, ensure};
 pub(crate) use project_management::{PreparedProject, ProjectAction};
 use rusqlite::{Connection, OptionalExtension, params};
