@@ -1256,12 +1256,17 @@ name = "coincide-native-host-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atspi",
  "base64 0.23.1",
  "coincide-core",
+ "gtk",
+ "libc",
  "serde_json",
  "uuid",
  "windows 0.61.3",
  "windows-capture",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]
