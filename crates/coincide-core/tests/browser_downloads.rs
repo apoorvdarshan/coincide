@@ -1,4 +1,6 @@
-use coincide_core::browser_protocol::{BrowserRequest, DownloadRegistry, download_filename};
+use coincide_core::browser_protocol::{
+    BrowserRequest, DownloadRegistry, NativeDownloadOutcome, download_filename,
+};
 use serde_json::Value;
 use std::{fs, path::Path};
 use uuid::Uuid;
@@ -58,7 +60,17 @@ fn downloads_have_private_unique_destinations_and_publish_only_verified_paths() 
     fs::write(&path, b"fixture").unwrap();
     registry.complete(&thread, &tab, url, None, true);
     assert_eq!(state(&registry, &thread, 0)["state"], "finished");
-    assert_eq!(state(&registry, &thread, 0)["path"], path.to_str().unwrap());
+    let published =
+        std::path::PathBuf::from(state(&registry, &thread, 0)["path"].as_str().unwrap());
+    // Windows publishes the Win32 spelling of its verbatim canonical root.
+    #[cfg(windows)]
+    assert!(!published.to_str().unwrap().starts_with(r"\\?\"));
+    #[cfg(not(windows))]
+    assert_eq!(published, path);
+    assert_eq!(
+        published.canonicalize().unwrap(),
+        path.canonicalize().unwrap()
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -300,4 +312,214 @@ fn symlink_destinations_and_roots_are_rejected_without_touching_target() {
     let link = temp.path().join("linked-root");
     symlink(temp.path().join("downloads"), &link).unwrap();
     assert!(DownloadRegistry::new(link).is_err());
+}
+
+#[test]
+fn native_object_receipts_correlate_same_url_out_of_order_across_tabs() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut registry = DownloadRegistry::new(temp.path().join("downloads")).unwrap();
+    let (thread, first) = ids();
+    let second = Uuid::new_v4().to_string();
+    let a = registry
+        .start_native(
+            &thread,
+            &first,
+            "https://example.test/same",
+            "https://example.test/page",
+            Path::new("../../same.txt"),
+        )
+        .unwrap();
+    let b = registry
+        .start_native(
+            &thread,
+            &second,
+            "https://example.test/same",
+            "https://example.test/page",
+            Path::new("same.txt"),
+        )
+        .unwrap();
+    let c = registry
+        .start_native(
+            &thread,
+            &first,
+            "https://example.test/same",
+            "https://example.test/page",
+            Path::new("same.txt"),
+        )
+        .unwrap();
+    fs::write(b.destination(), b"second native object").unwrap();
+    registry.complete_native(&b, NativeDownloadOutcome::Finished);
+    assert_eq!(
+        registry.list(&thread, Some(&second))["downloads"][0]["state"],
+        "finished"
+    );
+    assert!(
+        registry.list(&thread, Some(&first))["downloads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["state"] == "downloading")
+    );
+    registry.tab_closed(&thread, &first);
+    registry.complete_native(&a, NativeDownloadOutcome::Failed);
+    fs::write(c.destination(), b"third native object").unwrap();
+    registry.complete_native(&c, NativeDownloadOutcome::Finished);
+    let rows = registry.list(&thread, Some(&first));
+    assert_eq!(rows["downloads"][0]["state"], "failed");
+    assert_eq!(rows["downloads"][1]["state"], "finished");
+    assert_ne!(a.destination(), b.destination());
+    assert_ne!(a.destination(), c.destination());
+    registry.complete_native(&b, NativeDownloadOutcome::Failed);
+    assert_eq!(
+        registry.list(&thread, Some(&second))["downloads"][0]["state"],
+        "finished"
+    );
+}
+
+#[test]
+fn native_blob_receipts_require_document_origin_and_cannot_complete_other_registry() {
+    use coincide_core::browser_protocol::validate_native_download;
+    assert!(
+        validate_native_download(
+            "blob:https://example.test/owned",
+            "https://example.test/page"
+        )
+        .is_ok()
+    );
+    for address in [
+        "blob:null/opaque",
+        "blob:https://other.test/id",
+        "blob:https://user:password@example.test/id",
+        "file:///private/fixture",
+        "data:text/plain,fixture",
+    ] {
+        assert!(validate_native_download(address, "https://example.test/page").is_err());
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let mut first = DownloadRegistry::new(temp.path().join("first")).unwrap();
+    let mut second = DownloadRegistry::new(temp.path().join("second")).unwrap();
+    let (thread, tab) = ids();
+    let receipt = first
+        .start_native(
+            &thread,
+            &tab,
+            "blob:https://example.test/owned",
+            "https://example.test/page",
+            Path::new("owned.txt"),
+        )
+        .unwrap();
+    fs::write(receipt.destination(), b"synthetic blob").unwrap();
+    second.complete_native(&receipt, NativeDownloadOutcome::Finished);
+    assert!(
+        second.list(&thread, None)["downloads"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        first.list(&thread, None)["downloads"][0]["state"],
+        "downloading"
+    );
+    first.complete_native(&receipt, NativeDownloadOutcome::Finished);
+    assert_eq!(
+        first.list(&thread, None)["downloads"][0]["state"],
+        "finished"
+    );
+}
+
+#[test]
+fn refused_native_object_does_not_poison_url_only_callback_correlation() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut registry = DownloadRegistry::new(temp.path().join("downloads")).unwrap();
+    let (thread, tab) = ids();
+    for _ in 0..256 {
+        assert!(
+            registry
+                .start_native(
+                    &thread,
+                    &tab,
+                    "blob:https://wrong.test/id",
+                    "https://example.test/page",
+                    Path::new("fixture.txt")
+                )
+                .is_err()
+        );
+    }
+    let path = registry
+        .start(
+            &thread,
+            &tab,
+            "https://example.test/file",
+            Path::new("fixture.txt"),
+        )
+        .unwrap();
+    fs::write(&path, b"ordinary callback").unwrap();
+    registry.complete(
+        &thread,
+        &tab,
+        "https://example.test/file",
+        Some(&path),
+        true,
+    );
+    assert_eq!(state(&registry, &thread, 0)["state"], "finished");
+}
+
+#[test]
+fn root_is_created_on_first_download_and_cancellation_needs_native_outcome() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("Downloads").join("Coincide");
+    let mut registry = DownloadRegistry::new(root.clone()).unwrap();
+    assert!(
+        !root.exists(),
+        "opening the browser must not create the folder"
+    );
+    let (thread, tab) = ids();
+    let cancelled = registry
+        .start_native(
+            &thread,
+            &tab,
+            "https://example.test/slow",
+            "https://example.test/page",
+            Path::new("slow.bin"),
+        )
+        .unwrap();
+    assert!(root.is_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    let finished = registry
+        .start_native(
+            &thread,
+            &tab,
+            "https://example.test/file",
+            "https://example.test/page",
+            Path::new("file.txt"),
+        )
+        .unwrap();
+    registry.tab_closed(&thread, &tab);
+    assert_eq!(state(&registry, &thread, 0)["state"], "unconfirmed");
+    fs::write(cancelled.destination(), b"partial").unwrap();
+    registry.complete_native(&cancelled, NativeDownloadOutcome::Cancelled);
+    let row = state(&registry, &thread, 0);
+    assert_eq!(row["state"], "cancelled");
+    assert!(row.get("path").is_none());
+    assert!(row["error"].as_str().unwrap().contains("Cancelled"));
+    assert_eq!(fs::read(cancelled.destination()).unwrap(), b"partial");
+    // A terminal record never changes again, even from a late native callback.
+    registry.complete_native(&cancelled, NativeDownloadOutcome::Finished);
+    assert_eq!(state(&registry, &thread, 0)["state"], "cancelled");
+    fs::write(finished.destination(), b"complete").unwrap();
+    registry.complete_native(&finished, NativeDownloadOutcome::Finished);
+    assert_eq!(state(&registry, &thread, 1)["state"], "finished");
+    assert_eq!(
+        Path::new(state(&registry, &thread, 1)["path"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        finished.native_destination().canonicalize().unwrap()
+    );
 }
