@@ -142,14 +142,18 @@ impl Coincide {
                             .ghost()
                             .compact()
                             .selected(self.workspace_open)
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.session_import_open = false;
                                 this.workspace_open = !this.workspace_open;
-                                if this.workspace_open && this.terminal_on_right() {
-                                    this.terminal_open = false;
+                                if this.workspace_open {
+                                    this.ensure_inspector_space(window);
+                                    this.hide_selected_browser_surface(cx);
+                                    if this.terminal_on_right() {
+                                        this.terminal_open = false;
+                                    }
+                                    this.close_schedule_surface();
                                 }
                                 this.settings_open = false;
-                                this.schedules_open = false;
                                 this.sync_transcription_binding(cx);
                                 cx.notify();
                             })),
@@ -229,21 +233,27 @@ impl Coincide {
                         )
                         .child(
                             Button::new("schedules")
-                                .label(if self.schedules_open {
-                                    "Conversation"
-                                } else {
-                                    "Schedules"
-                                })
+                                .label(
+                                    if self.schedules_open
+                                        && !self.schedule_editor.all_conversations
+                                    {
+                                        "Close schedules"
+                                    } else {
+                                        "Schedules"
+                                    },
+                                )
                                 .ghost()
                                 .compact()
-                                .on_click(cx.listener(|this, _, _, cx| {
+                                .on_click(cx.listener(|this, _, window, cx| {
                                     this.settings_open = false;
                                     this.workspace_open = false;
                                     this.session_import_open = false;
-                                    this.schedules_open = !this.schedules_open;
-                                    this.sync_transcription_binding(cx);
-                                    if this.schedules_open {
-                                        this.refresh_schedules(cx);
+                                    if this.schedules_open
+                                        && !this.schedule_editor.all_conversations
+                                    {
+                                        this.close_schedule_surface();
+                                    } else {
+                                        this.open_conversation_schedules(window, cx);
                                     }
                                     cx.notify();
                                 })),

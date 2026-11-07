@@ -179,11 +179,7 @@ impl Coincide {
             .update(cx, |panel, cx| panel.cancel(cx));
         self.sync_transcription_binding(cx);
         if return_focus {
-            let focus = if self.selected.is_some()
-                && !self.schedules_open
-                && !self.workspace_open
-                && !self.session_import_open
-            {
+            let focus = if self.chat_visible() {
                 self.composer.read(cx).focus_handle(cx)
             } else {
                 self.navigation_focus.clone()

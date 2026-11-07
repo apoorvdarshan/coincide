@@ -71,9 +71,7 @@ impl Coincide {
             return;
         }
         let current = !self.settings_open
-            && !self.schedules_open
-            && !self.workspace_open
-            && !self.session_import_open
+            && self.chat_visible()
             && !self.media.close_requested
             && !self.media.shutdown_requested
             && self.context_details.opened.as_ref().is_none_or(|opened| {

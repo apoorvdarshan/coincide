@@ -142,6 +142,7 @@ pub struct Prepared {
 pub(crate) struct LaunchConfiguration {
     stamp: Stamp,
     record: Record,
+    profile: Option<accounts::LoginHome>,
     derived_executable: Option<Binary>,
     derived_companion: Option<Binary>,
 }
@@ -157,6 +158,14 @@ pub(crate) fn enter(configuration: Option<LaunchConfiguration>) -> Scope {
 }
 pub(crate) fn current() -> Option<LaunchConfiguration> {
     CURRENT.with(|slot| slot.borrow().clone())
+}
+pub(crate) fn native_account_matches(selection: &Value) -> bool {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|configuration| configuration.profile.as_ref())
+            .is_some_and(|profile| profile.matches(selection))
+    })
 }
 pub(crate) fn current_stamp() -> Option<Stamp> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
@@ -182,6 +191,9 @@ pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
                 || Path::new(command.get_program()) == binary.canonical,
             "Child executable differs from the approved provider executable"
         );
+    }
+    if let Some(profile) = &configuration.profile {
+        profile.configure_base(command)?;
     }
     for (key, value) in &configuration.record.environment {
         if named {
@@ -859,9 +871,35 @@ impl Engine {
                 digest,
             },
             record,
+            profile: None,
             derived_executable: None,
             derived_companion: None,
         }))
+    }
+    pub(crate) fn provider_launch_configuration_for_thread(
+        &self,
+        thread: &Value,
+    ) -> Result<Option<LaunchConfiguration>> {
+        let provider = text(&thread["selection"], "provider");
+        if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
+            && matches!(provider.as_str(), "claude" | "grok" | "opencode")
+        {
+            let id = thread["id"]
+                .as_str()
+                .context("Native account thread identity is missing")?;
+            ensure!(
+                !self.store.is_imported(id)?,
+                "Imported conversations cannot use native account authority"
+            );
+            self.validate_native_account_selection(thread)?;
+            let account = thread["selection"]["accountID"]
+                .as_str()
+                .context("Native account identity must be text")?;
+            return self
+                .native_login_launch_configuration(&provider, account)
+                .map(Some);
+        }
+        self.provider_launch_configuration(&provider)
     }
     pub(crate) fn native_provider_scope_for_command(
         &self,
@@ -915,6 +953,9 @@ impl LaunchConfiguration {
         Ok(())
     }
     pub(crate) fn validate_launch(&self) -> Result<()> {
+        if let Some(profile) = &self.profile {
+            profile.validate()?;
+        }
         if self.stamp.provider == "antigravity" && self.record.executable.is_some() {
             self.record
                 .companion
@@ -994,27 +1035,28 @@ pub(crate) fn antigravity_runtime_copy(source: &Path, copied: &Path) -> Result<S
 }
 
 pub(crate) fn effective_var(name: &str) -> Option<std::ffi::OsString> {
-    CURRENT
-        .with(|slot| {
-            slot.borrow()
-                .as_ref()
-                .and_then(|scope| {
-                    scope
-                        .record
-                        .environment
-                        .iter()
-                        .find(|(key, _)| {
-                            if cfg!(windows) {
-                                key.eq_ignore_ascii_case(name)
-                            } else {
-                                key.as_str() == name
-                            }
-                        })
-                        .map(|(_, value)| value)
-                })
-                .map(std::ffi::OsString::from)
-        })
-        .or_else(|| std::env::var_os(name))
+    let configuration = current();
+    if let Some(configuration) = &configuration {
+        let matches = |key: &&String| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case(name)
+            } else {
+                key.as_str() == name
+            }
+        };
+        if let Some((_, value)) = configuration
+            .record
+            .environment
+            .iter()
+            .find(|(key, _)| matches(key))
+        {
+            return Some(value.into());
+        }
+        if let Some(profile) = &configuration.profile {
+            return profile.environment_value(name);
+        }
+    }
+    std::env::var_os(name)
 }
 pub(crate) fn current_executable(fallback: PathBuf) -> PathBuf {
     current()
@@ -1068,6 +1110,13 @@ impl Engine {
         owner.write(&payload)
     }
 }
+
+#[path = "provider_account_secret_store.rs"]
+pub mod account_secret_store;
+
+#[path = "native_provider_accounts.rs"]
+mod accounts;
+pub use accounts::{NativeKeyAccount, NativeKeySave, NativeLoginAccount};
 
 #[path = "provider_setup.rs"]
 mod setup;
@@ -1421,6 +1470,32 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+    #[test]
+    fn failed_approval_marker_keeps_the_last_approved_configuration_exact() {
+        let (root, mut engine, binary) = fixture();
+        save(&mut engine, "codex", &binary, "original-synthetic-value");
+        let before = engine.native_provider_configuration("codex").unwrap();
+        let file = directory(&root.path().join("private/state.sqlite"))
+            .unwrap()
+            .join("configuration.json");
+        let bytes = fs::read(&file).unwrap();
+        let plan = engine
+            .prepare_native_provider_configuration(
+                "codex",
+                &before.baseline,
+                Some(&binary),
+                BTreeMap::from([("SYNTHETIC_API_KEY".into(), "new-synthetic-value".into())]),
+            )
+            .unwrap();
+        let database =
+            rusqlite::Connection::open(root.path().join("private/state.sqlite")).unwrap();
+        database.execute_batch("CREATE TRIGGER fail_native_marker BEFORE INSERT ON metadata WHEN NEW.key LIKE 'native-provider-configuration-v1/%' BEGIN SELECT RAISE(ABORT,'synthetic marker failure'); END;").unwrap();
+        assert!(engine.apply_native_provider_configuration(plan).is_err());
+        let after = engine.native_provider_configuration("codex").unwrap();
+        assert_eq!(before.baseline, after.baseline);
+        assert_eq!(before.environment, after.environment);
+        assert_eq!(fs::read(file).unwrap(), bytes);
     }
     #[test]
     fn native_save_cas_keeps_private_values_out_of_settings_and_survives_restart() {

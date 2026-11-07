@@ -16,6 +16,33 @@ pub struct Probe {
     configuration: Option<LaunchConfiguration>,
 }
 impl Engine {
+    pub fn prepare_native_login_account_check(
+        &self,
+        provider: &str,
+        id: &str,
+        expected: &str,
+    ) -> Result<Probe> {
+        self.require_admissions()?;
+        self.require_provider_enabled(provider)?;
+        let account = self
+            .native_login_accounts(provider)?
+            .into_iter()
+            .find(|account| account.id == id)
+            .context("Native account is not configured")?;
+        ensure!(
+            account.revision == expected,
+            "Account changed; reload before checking"
+        );
+        let configuration = self.native_login_launch_configuration(provider, id)?;
+        let executable = configuration
+            .approved_executable()
+            .context("Install this provider or approve its executable first")?;
+        Ok(Probe {
+            provider: provider.into(),
+            binary: Binary::capture(&executable)?,
+            configuration: Some(configuration),
+        })
+    }
     pub fn prepare_native_provider_check(&self, provider: &str) -> Result<Probe> {
         self.require_admissions()?;
         provider_id(provider)?;
@@ -216,6 +243,40 @@ fn version(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn named_check_captures_only_native_profile_and_rejects_stale_review() {
+        let (_root, mut engine, binary) = super::super::tests::fixture();
+        super::super::tests::save(&mut engine, "claude", &binary, "synthetic");
+        let account = engine
+            .create_native_login_account("claude", "Work")
+            .unwrap();
+        let probe = engine
+            .prepare_native_login_account_check("claude", &account.id, &account.revision)
+            .unwrap();
+        let _scope = enter(probe.configuration.clone());
+        assert_eq!(
+            effective_var("CLAUDE_CONFIG_DIR"),
+            Some(account.home.as_os_str().to_owned())
+        );
+        assert!(effective_var("ANTHROPIC_API_KEY").is_none());
+        engine
+            .rename_native_login_account("claude", &account.id, &account.revision, "Changed")
+            .unwrap();
+        assert!(
+            engine
+                .prepare_native_login_account_check("claude", &account.id, &account.revision)
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_native_login_account_check(
+                    "claude",
+                    &Uuid::new_v4().to_string(),
+                    &account.revision
+                )
+                .is_err()
+        );
+    }
     #[test]
     fn cursor_cli_models_keep_reported_order_and_names_without_granting_options() {
         let rows = cursor_models(b"Available models:\n\x1b[32mreported-a - First model (default)\x1b[0m\nreported-b - Second model (current)\nreported-a - Duplicate\n--bad - Not a model\n");
