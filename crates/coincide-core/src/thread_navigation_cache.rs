@@ -23,11 +23,14 @@ pub(super) fn install(db: &mut Connection) -> Result<()> {
         CREATE TRIGGER IF NOT EXISTS thread_navigation_delete_v1 AFTER DELETE ON threads BEGIN
         DELETE FROM thread_navigation WHERE id=OLD.id; END;")?;
     {
-        // A warm launch checks scalar IDs only. Decode a document only when an
-        // older writer invalidated its derived metadata or this cache is new.
+        // A warm launch checks IDs and cached metadata only. Decode a document
+        // only when an older writer invalidated its derived metadata, this cache
+        // is new, or its metadata predates the provider. `write` records a null
+        // provider for threads without one, so each is decoded once.
         let mut rows = tx.prepare(
             "SELECT id,document FROM threads WHERE NOT EXISTS(
-            SELECT 1 FROM thread_navigation WHERE thread_navigation.id=threads.id COLLATE NOCASE)",
+            SELECT 1 FROM thread_navigation WHERE thread_navigation.id=threads.id COLLATE NOCASE
+            AND (metadata IS NULL OR json_type(metadata,'$.provider') IS NOT NULL))",
         )?;
         let records = rows.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -69,6 +72,10 @@ fn metadata(thread: &Value) -> Option<ThreadNavigation> {
         })
     });
     let value = ThreadNavigation {
+        provider: thread["selection"]["provider"]
+            .as_str()
+            .filter(|provider| !provider.is_empty())
+            .map(|provider| provider.chars().take(64).collect()),
         bot_id,
         branch: thread["branch"]
             .as_str()
@@ -92,15 +99,23 @@ fn metadata(thread: &Value) -> Option<ThreadNavigation> {
     (value.bot_id.is_some()
         || value.branch.is_some()
         || value.created_at.is_some()
-        || value.updated_at.is_some())
+        || value.updated_at.is_some()
+        || value.provider.is_some())
     .then_some(value)
 }
 
 pub(super) fn write(db: &Connection, thread: &Value) -> Result<()> {
     let id = validate_thread(thread)?;
     let metadata = metadata(thread)
-        .as_ref()
-        .map(serde_json::to_string)
+        .map(|value| {
+            // An explicit null marks metadata that already knows the provider,
+            // so the launch backfill above never decodes this thread again.
+            let mut fields = serde_json::to_value(value)?;
+            if fields.get("provider").is_none() {
+                fields["provider"] = Value::Null;
+            }
+            serde_json::to_string(&fields)
+        })
         .transpose()?;
     db.execute(
         "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2)
@@ -169,6 +184,64 @@ mod tests {
                 .unwrap()
                 .preview,
             navigation.preview
+        );
+    }
+
+    #[test]
+    fn provider_backfills_once_for_metadata_written_before_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("provider.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let mut thread = store.new_thread("").unwrap();
+        thread["selection"]["provider"] = json!("codex");
+        thread["updatedAt"] = json!(100.);
+        store.save(&thread).unwrap();
+        let mut bare = store.new_thread("").unwrap();
+        bare["selection"] = json!({});
+        bare["updatedAt"] = json!(50.);
+        store.save(&bare).unwrap();
+        let provider = |store: &Store, id: &Value| {
+            store
+                .summaries("", false)
+                .unwrap()
+                .into_iter()
+                .find(|summary| summary.id == text(id, "id"))
+                .and_then(|summary| summary.navigation?.provider)
+        };
+        assert_eq!(provider(&store, &thread).as_deref(), Some("codex"));
+        assert_eq!(provider(&store, &bare), None);
+        let cached = |store: &Store, id: &Value| -> String {
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT metadata FROM thread_navigation WHERE id=?1",
+                    [text(id, "id")],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert!(cached(&store, &bare).contains("\"provider\":null"));
+        // Metadata from before providers were cached, and a marked thread that
+        // must not be decoded again (its marker would otherwise be rewritten).
+        let db = store.connection().unwrap();
+        db.execute(
+            "UPDATE thread_navigation SET metadata='{\"updated_at\":100.0}' WHERE id=?1",
+            [text(&thread, "id")],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE thread_navigation SET metadata='{\"updated_at\":7.0,\"provider\":null}' WHERE id=?1",
+            [text(&bare, "id")],
+        )
+        .unwrap();
+        assert_eq!(provider(&store, &thread), None);
+        store.close_for_shutdown().unwrap();
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(provider(&reopened, &thread).as_deref(), Some("codex"));
+        assert_eq!(
+            cached(&reopened, &bare),
+            "{\"updated_at\":7.0,\"provider\":null}"
         );
     }
 }

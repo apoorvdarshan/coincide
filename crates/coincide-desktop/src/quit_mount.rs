@@ -51,6 +51,7 @@ impl Coincide {
     pub(super) fn poll_global_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // Only committed source may enter the normal draft-flush custody.
         self.close_dictation_preview(cx);
+        self.palette_search.shutdown();
         // Admission closure is one in-memory flag, even if the off-UI drain
         // worker cannot start. Busy Engine is retried without blocking GPUI.
         if let Ok(mut engine) = self.engine.try_lock() {
@@ -113,6 +114,7 @@ impl Coincide {
             .update(cx, |panel, _| panel.request_shutdown());
         self.workspace_panel
             .update(cx, |panel, _| panel.request_shutdown());
+        self.git_controls.request_shutdown();
         self.diff_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.browser_settings_panel
@@ -139,6 +141,7 @@ impl Coincide {
         self.request_media_owner_shutdown(cx);
         let media = self.poll_media_owner_shutdown(cx);
         let statuses = [
+            self.palette_search.status(),
             self.voice_credentials
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.provider_configuration_panel
@@ -161,6 +164,7 @@ impl Coincide {
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.workspace_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
+            self.git_controls.shutdown_status(),
             self.diff_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.browser_settings_panel

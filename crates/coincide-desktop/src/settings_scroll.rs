@@ -11,12 +11,15 @@ pub(super) struct State {
     handles: RefCell<HashMap<&'static str, ScrollHandle>>,
 }
 impl State {
+    pub(super) fn handle(&self, key: &'static str) -> ScrollHandle {
+        self.handles.borrow_mut().entry(key).or_default().clone()
+    }
     pub(super) fn frame<E: StatefulInteractiveElement + Styled + IntoElement>(
         &self,
         key: &'static str,
         viewport: E,
     ) -> AnyElement {
-        let handle = self.handles.borrow_mut().entry(key).or_default().clone();
+        let handle = self.handle(key);
         div()
             .id(SharedString::from(format!("settings-scroll-frame/{key}")))
             .relative()

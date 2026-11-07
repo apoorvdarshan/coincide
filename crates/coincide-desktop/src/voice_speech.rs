@@ -18,6 +18,19 @@ pub(super) enum Error {
 pub(super) fn compiled() -> bool {
     cfg!(all(target_os = "macos", feature = "native-microphone"))
 }
+/// The engine that actually dictates: Swift's default Apple Speech exists only
+/// on macOS, so elsewhere a saved Apple choice uses Local Whisper, which also
+/// keeps audio on this device. The saved setting itself is not changed.
+pub(super) fn effective_engine(
+    engine: coincide_core::voice::Engine,
+) -> coincide_core::voice::Engine {
+    use coincide_core::voice::Engine;
+    if engine == Engine::Apple && !compiled() {
+        Engine::Whisper
+    } else {
+        engine
+    }
+}
 #[cfg(all(target_os = "macos", feature = "native-microphone"))]
 mod native {
     use super::*;
@@ -343,6 +356,19 @@ fn pcm_samples(wav: &[u8]) -> Result<Vec<f32>, Error> {
 #[cfg(test)]
 mod tests {
     use super::pcm_samples;
+    #[test]
+    fn saved_apple_speech_dictates_with_local_whisper_where_apple_is_missing() {
+        use coincide_core::voice::Engine;
+        let apple = super::effective_engine(Engine::Apple);
+        if super::compiled() {
+            assert_eq!(apple, Engine::Apple);
+        } else {
+            assert_eq!(apple, Engine::Whisper);
+        }
+        for engine in [Engine::Whisper, Engine::OpenAi, Engine::Groq] {
+            assert_eq!(super::effective_engine(engine), engine);
+        }
+    }
     #[test]
     fn ffi_audio_codec_accepts_only_bounded_canonical_native_pcm() {
         let wav =

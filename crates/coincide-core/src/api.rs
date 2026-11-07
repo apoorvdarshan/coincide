@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 #[path = "appshots_api.rs"]
 mod appshots_api;
+#[path = "git_actions_api.rs"]
+mod git_actions_api;
 #[path = "checkpoint_api.rs"]
 mod checkpoint_api;
 #[cfg(test)]
@@ -52,10 +54,14 @@ mod attachment_completion_tests;
 mod background_workers;
 #[path = "bot_engine.rs"]
 mod bot_engine;
+#[path = "bot_starters.rs"]
+mod bot_starters;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
 mod browser_history_api;
+#[path = "browser_settings_api.rs"]
+mod browser_settings_api;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
 #[cfg(test)]
@@ -76,6 +82,8 @@ mod codex_tool_metadata;
 mod composer_choices_api;
 #[path = "project_management_api.rs"]
 mod project_management_api;
+#[path = "project_scripts_api.rs"]
+mod project_scripts_api;
 #[path = "provider_restore_api.rs"]
 mod provider_restore_api;
 #[path = "provider_switch_api.rs"]
@@ -94,6 +102,8 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
+#[path = "terminal_activity_api.rs"]
+mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
 mod terminal_context_api;
 #[cfg(test)]
@@ -137,6 +147,8 @@ pub use shutdown_owner::CoreOwnerShutdownStatus;
 mod steering_api;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
+#[path = "thread_activity_api.rs"]
+mod thread_activity_api;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
@@ -241,6 +253,8 @@ pub struct Engine {
     provider_worker_outcomes: ProviderWorkersStatus,
     pub revision: u64,
     pub requested_open: Option<String>,
+    /// `app.activate`: another copy of the app asked this one to come forward.
+    pub activation_requested: bool,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
     terminal_shutdown: terminal_shutdown::State,
     pub shutdown: bool,
@@ -250,7 +264,10 @@ pub struct Engine {
     bookmark_owner: Uuid,
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
+    /// Operations that wait longer than the usual 30 seconds (ask-user).
+    browser_timeouts: HashMap<String, Duration>,
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
+    git_actions: git_actions_api::State,
     workspace_pending: HashMap<String, (String, Instant)>,
     workspace_results: HashMap<String, Value>,
     workspace_git_operations: HashSet<String>,
@@ -271,6 +288,7 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    turn_results: thread_activity_api::TurnResults,
     turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
@@ -329,6 +347,7 @@ impl Engine {
             provider_worker_outcomes: ProviderWorkersStatus::default(),
             revision: 0,
             requested_open: None,
+            activation_requested: false,
             terminals: HashMap::new(),
             terminal_shutdown: terminal_shutdown::State::default(),
             shutdown: false,
@@ -338,7 +357,9 @@ impl Engine {
             bookmark_owner: Uuid::new_v4(),
             browser_requests: VecDeque::new(),
             browser_pending: HashMap::new(),
+            browser_timeouts: HashMap::new(),
             browser_results: HashMap::new(),
+            git_actions: git_actions_api::State::default(),
             workspace_pending: HashMap::new(),
             workspace_results: HashMap::new(),
             workspace_git_operations: HashSet::new(),
@@ -357,6 +378,7 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            turn_results: Default::default(),
             turn_checkpoints: checkpoint_api::State::default(),
             composer_commands: Default::default(),
         }
@@ -411,6 +433,9 @@ impl Engine {
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
         }
+        if git_actions_api::METHODS.contains(&method) {
+            return self.git_actions_command(method, p);
+        }
         if checkpoint_api::METHODS.contains(&method) {
             return self.checkpoint_command(method, p);
         }
@@ -424,7 +449,9 @@ impl Engine {
             "cli.sessions.import" => {
                 ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
                 let result = session_import_api::import(&mut self.store, p)?;
-                self.revision += 1;
+                if result["existing"] != true {
+                    self.revision += 1;
+                }
                 Ok(result)
             }
             "providers.codex.profiles.limits.refresh" | "providers.codex.profiles.limits.status" => self.codex_profile_limits_command(method,p),
@@ -536,6 +563,7 @@ impl Engine {
                 Ok(json!({"ready":false}))
             }
             "browser.bookmarks.list" | "browser.bookmarks.import" | "browser.bookmarks.open" => self.browser_bookmarks_command(method,p),
+            "browser.settings.read" | "browser.settings.patch" => self.browser_settings_command(method,p),
             "browser.request"=>{
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
@@ -543,9 +571,12 @@ impl Engine {
                 crate::browser_protocol::validate_screenshot_parameters(p)?;
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
-                let request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
+                let mut request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
                 request.validate()?;self.store.thread(&request.thread_id)?;
+                self.resolve_browser_search(&mut request)?;
                 let id=request.id.clone();
+                let timeout=request.action.result_timeout();
+                if timeout>Duration::from_secs(30){self.browser_timeouts.insert(id.clone(),timeout);}
                 self.browser_pending.insert(id.clone(),(request.thread_id.clone(),Instant::now()));
                 self.browser_requests.push_back(request);self.revision+=1;
                 Ok(json!({"operationId":id}))
@@ -557,7 +588,7 @@ impl Engine {
                 if let Some(reply)=self.browser_results.remove(id){
                     self.browser_pending.remove(id);return Ok(json!({"ready":true,"result":reply.result}));
                 }
-                if started.elapsed()>Duration::from_secs(30){
+                if started.elapsed()>self.browser_timeouts.get(id).copied().unwrap_or(Duration::from_secs(30)){
                     self.browser_pending.remove(id);
                     self.browser_requests.retain(|r|r.id!=id);
                     return Ok(json!({"ready":true,"result":{"error":"Browser operation timed out; read current page state before retrying"}}));
@@ -565,15 +596,10 @@ impl Engine {
                 Ok(json!({"ready":false}))
             }
             "app.quit"=>{ensure!(self.native_ui_editors.pending() == 0,"Unsaved native editor changes require Save or Discard before quitting");ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.activate"=>{self.activation_requested=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
-                ensure!(self.terminals.len()<32,"Too many terminal panes");
-                let thread=required(p,"threadId")?;
-                let v=self.store.thread(thread)?;
-                let cwd=self.working_directory(&v)?;
                 let shell=std::env::var("SHELL").unwrap_or_else(|_|if cfg!(windows){"powershell.exe".into()}else{"/bin/sh".into()});
-                let terminal=crate::terminal::Terminal::spawn(&cwd,&shell,24,100)?;
-                let id=Uuid::new_v4().to_string();self.terminals.insert(id.clone(),(thread.into(),terminal));self.revision+=1;
-                Ok(json!({"terminalId":id}))
+                self.create_terminal(p,&shell)
             }
             "terminal.list"=>Ok(json!(self.terminals.iter().filter(|(_, (thread,_))|p["threadId"].as_str().is_none_or(|id|thread==id)).map(|(id,(thread,terminal))|json!({"terminalId":id,"threadId":thread,"title":terminal.title})).collect::<Vec<_>>())),
             "terminal.read"=>{
@@ -643,12 +669,12 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
-                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.status", "app.quit", "app.activate", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
+                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "browser.settings.read", "browser.settings.patch", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",
                 "threads.list", "threads.resolve_id",
@@ -671,6 +697,7 @@ impl Engine {
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(git_actions_api::METHODS);
                 methods.extend_from_slice(checkpoint_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
@@ -1805,7 +1832,9 @@ impl Engine {
             .get(&reply.id)
             .is_some_and(|(thread, _)| thread == &reply.thread_id)
         {
-            self.browser_results.insert(reply.id.clone(), reply);
+            self.browser_results
+                .entry(reply.id.clone())
+                .or_insert(reply);
             self.revision += 1;
         }
     }
@@ -1913,11 +1942,17 @@ impl Engine {
             self.revision += 1;
         }
         self.poll_workspace_completions();
+        self.poll_git_actions();
         self.poll_turn_checkpoints();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
-        self.browser_pending
-            .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
+        let timeouts = &self.browser_timeouts;
+        self.browser_pending.retain(|id, (_, started)| {
+            started.elapsed()
+                < Duration::from_secs(300) + timeouts.get(id).copied().unwrap_or_default()
+        });
+        self.browser_timeouts
+            .retain(|id, _| self.browser_pending.contains_key(id));
         self.browser_requests
             .retain(|r| self.browser_pending.contains_key(&r.id));
         self.browser_results
@@ -2313,6 +2348,7 @@ impl Engine {
             }
             self.revision += 1;
             if finished {
+                self.record_turn_result(&id, failure.is_some());
                 self.finish_turn_checkpoint(&id);
             }
             if finished

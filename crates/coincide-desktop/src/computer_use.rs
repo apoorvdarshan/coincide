@@ -240,6 +240,16 @@ impl Handle {
         }
         Ok(id)
     }
+    /// Threads allowed this session, and those with a request running now.
+    /// Never blocks: a contended reservation set reads as nothing in use.
+    pub fn activity(&self) -> (Vec<Uuid>, Vec<Uuid>) {
+        let in_use = self
+            .in_flight
+            .try_lock()
+            .map(|threads| threads.iter().copied().collect())
+            .unwrap_or_default();
+        (self.authority.granted(), in_use)
+    }
     pub fn try_status(&self) -> Option<Status> {
         self.status.try_lock().ok().map(|s| {
             let mut status = s.clone();

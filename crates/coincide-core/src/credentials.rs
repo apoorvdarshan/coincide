@@ -1,6 +1,12 @@
 //! Trusted native boundary. Never expose this module's sink or CLI output through
 //! agent JSON APIs. Approval must originate in native UI, not page content.
 use serde_json::Value;
+#[cfg(any(windows, test))]
+#[path = "credentials_process_custody.rs"]
+mod process_custody;
+#[cfg(windows)]
+#[path = "credentials_windows.rs"]
+mod windows_capture;
 #[cfg(unix)]
 use std::{
     io::Read,
@@ -95,6 +101,19 @@ fn origin(page: &str) -> Result<String, Failure> {
 /// Runner injection permits synthetic fixtures; no fixture may query live vaults.
 pub trait VaultCommand {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure>;
+    /// `input` goes to the command's stdin, never its arguments: process lists
+    /// show arguments to other processes, and an edited item holds its secrets.
+    fn run_with_input(&self, _args: &[&str], _input: &[u8]) -> Result<Vec<u8>, Failure> {
+        Err(Failure::Unavailable)
+    }
+}
+impl<T: VaultCommand + ?Sized> VaultCommand for std::sync::Arc<T> {
+    fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
+        (**self).run(args)
+    }
+    fn run_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>, Failure> {
+        (**self).run_with_input(args, input)
+    }
 }
 /// Uses an explicitly selected absolute executable, never a shell. Session comes
 /// from BW_SESSION inherited from the authorized app; this adapter never unlocks,
@@ -104,7 +123,15 @@ pub struct CliCommand {
 }
 impl CliCommand {
     pub fn new(executable: PathBuf) -> Result<Self, Failure> {
-        if !executable.is_absolute() || !executable.is_file() {
+        if !executable.is_absolute()
+            || !executable.is_file()
+            || (cfg!(windows)
+                && !executable.extension().is_some_and(|extension| {
+                    extension
+                        .to_str()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+                }))
+        {
             return Err(Failure::Unavailable);
         }
         Ok(Self { executable })
@@ -114,20 +141,58 @@ impl VaultCommand for CliCommand {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
         self.capture(args, Duration::from_secs(30))
     }
+    fn run_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>, Failure> {
+        self.capture_with_input(args, Some(input), Duration::from_secs(30))
+    }
 }
 impl CliCommand {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn capture(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>, Failure> {
+        windows_capture::capture(self, args, None, timeout)
+    }
+    #[cfg(windows)]
+    fn capture_with_input(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, Failure> {
+        windows_capture::capture(self, args, input, timeout)
+    }
+    #[cfg(not(any(unix, windows)))]
     fn capture(&self, _args: &[&str], _timeout: Duration) -> Result<Vec<u8>, Failure> {
-        // Windows needs Job Object ownership and cancellable pipe I/O first.
+        // Other hosts need an owned, bounded subprocess transport first.
+        Err(Failure::Unavailable)
+    }
+    #[cfg(not(any(unix, windows)))]
+    fn capture_with_input(
+        &self,
+        _args: &[&str],
+        _input: Option<&[u8]>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, Failure> {
         Err(Failure::Unavailable)
     }
     #[cfg(unix)]
     fn capture(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>, Failure> {
+        self.capture_with_input(args, None, timeout)
+    }
+    #[cfg(unix)]
+    fn capture_with_input(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, Failure> {
         use std::os::{fd::AsRawFd, unix::process::CommandExt};
         let child = Command::new(&self.executable)
             .args(args)
             .process_group(0)
-            .stdin(Stdio::null())
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -141,11 +206,45 @@ impl CliCommand {
         if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
             return Err(Failure::Unavailable);
         }
+        // Stdin is written nonblocking between reads, so a command that writes
+        // before draining its input can't deadlock against a full pipe.
+        let mut stdin = match input {
+            Some(_) => {
+                let stdin = group.0.stdin.take().ok_or(Failure::Unavailable)?;
+                let fd = stdin.as_raw_fd();
+                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                if flags < 0
+                    || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+                {
+                    return Err(Failure::Unavailable);
+                }
+                Some(stdin)
+            }
+            None => None,
+        };
+        let mut remaining_input = input.unwrap_or_default();
         let start = Instant::now();
         let mut bytes = Vec::new();
         loop {
             if start.elapsed() >= timeout {
                 return Err(Failure::Unavailable);
+            }
+            if let Some(pipe) = stdin.as_mut() {
+                use std::io::Write;
+                match pipe.write(remaining_input) {
+                    Ok(n) => remaining_input = &remaining_input[n..],
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                        ) => {}
+                    // The command closed its input early; its exit status decides.
+                    Err(_) => remaining_input = &[],
+                }
+                if remaining_input.is_empty() {
+                    // Closing stdin is the command's end-of-input.
+                    stdin = None;
+                }
             }
             let mut chunk = [0_u8; 8192];
             match stdout.read(&mut chunk) {
@@ -442,15 +541,16 @@ fn matches_origin(urls: &Value, key: &str, expected: &str) -> bool {
             .any(|u| u[key].as_str().and_then(|s| origin(s).ok()).as_deref() == Some(expected))
     })
 }
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
         && id.len() <= 128
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
-/// Neither CLI provides WebAuthn browser ceremonies through this adapter.
+/// Neither CLI provides WebAuthn browser ceremonies through this adapter. Sign-in
+/// with Bitwarden passkeys is `passkeys`, behind the browser's own native bridge.
 pub fn passkey_capability() -> Result<(), &'static str> {
     Err(
-        "Passkey creation/assertion requires a native WebAuthn bridge; unavailable on all Rust targets",
+        "Passkey ceremonies aren't part of password filling; Bitwarden passkey sign-in goes through the browser's passkey bridge, and registration is unavailable",
     )
 }
 
@@ -682,7 +782,36 @@ mod tests {
             Some(libc::ECHILD)
         );
     }
-    #[cfg(not(unix))]
+    #[cfg(unix)]
+    #[test]
+    fn input_goes_through_stdin_and_never_blocks_on_a_full_pipe() {
+        let cli = CliCommand::new(PathBuf::from("/bin/sh")).unwrap();
+        // The script sees no input in its arguments; `cat` echoes stdin back.
+        assert_eq!(
+            cli.capture_with_input(
+                &["-c", "test $# -eq 0 && cat"],
+                Some(b"synthetic-encoded-item"),
+                Duration::from_secs(2)
+            ),
+            Ok(b"synthetic-encoded-item".to_vec())
+        );
+        // Larger than any pipe buffer, echoed while it is still being written.
+        let large = vec![b'x'; 1024 * 1024];
+        assert_eq!(
+            cli.capture_with_input(&["-c", "cat"], Some(&large), Duration::from_secs(5)),
+            Ok(large)
+        );
+        // A command that ignores its input still finishes on its own status.
+        assert_eq!(
+            cli.capture_with_input(
+                &["-c", "exec 0<&-; printf done"],
+                Some(&vec![b'y'; 1024 * 1024]),
+                Duration::from_secs(5)
+            ),
+            Ok(b"done".to_vec())
+        );
+    }
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn unsupported_process_capture_fails_closed() {
         let cli = CliCommand::new(std::env::current_exe().unwrap()).unwrap();

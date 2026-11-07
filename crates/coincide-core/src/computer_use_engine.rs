@@ -30,6 +30,7 @@ pub(super) struct State {
     bridge: Option<Arc<Bridge>>,
     queue: VecDeque<Pending>,
     operations: HashMap<Uuid, Operation>,
+    screenshots: crate::computer_use_screenshots::Screenshots,
 }
 impl State {
     fn expire(&mut self) -> bool {
@@ -77,6 +78,10 @@ impl State {
         }
         self.queue
             .retain(|queued| thread.is_some_and(|thread| queued.thread != thread));
+        match thread {
+            Some(thread) => self.screenshots.remove(thread),
+            None => self.screenshots.remove_all(),
+        }
         changed
     }
 }
@@ -311,6 +316,14 @@ impl Engine {
         if op.thread != thread || op.result.is_some() {
             return false;
         }
+        // Swift returns screenshots as private files the agent opens.
+        let result = result.map(|mut value| {
+            self.computer_use.screenshots.deliver(thread, &mut value);
+            value
+        });
+        let Some(op) = self.computer_use.operations.get_mut(&id) else {
+            return false;
+        };
         op.result = Some(match result {
             Ok(value)
                 if serde_json::to_vec(&value)

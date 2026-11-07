@@ -49,13 +49,15 @@ fn owned(raw: HANDLE) -> Result<OwnedHandle> {
     );
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
-struct Process {
+pub(crate) struct Process {
     child: Child,
     job: OwnedHandle,
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+    members: process_members::Members<OwnedHandle>,
+    drained: bool,
 }
 impl Process {
-    fn spawn(command: &mut Command) -> Result<Self> {
+    pub(crate) fn spawn(command: &mut Command) -> Result<Self> {
         let job = owned(unsafe { CreateJobObjectW(null(), null()) })?;
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -70,25 +72,35 @@ impl Process {
             } != 0,
             "GitHub Job setup failed"
         );
-        let mut child = command
+        let child = command
             .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
             .spawn()
             .context("Unable to start configured gh")?;
-        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0 {
-            let _ = child.kill();
-            child.wait().context("GitHub child cleanup incomplete")?;
-            bail!("GitHub child isolation failed");
-        }
-        let mut process = Self {
+        let process = Self {
             child,
             job,
             writer: None,
+            members: Default::default(),
+            drained: false,
         };
+        let mut process = process_members::assign_or_retain(
+            process,
+            |process| unsafe {
+                AssignProcessToJobObject(process.job.as_raw_handle(), process.child.as_raw_handle())
+                    != 0
+            },
+            |process| process.finish().is_ok(),
+        )
+        .context("GitHub child isolation failed")?;
         if let Err(error) = process.resume() {
             process.finish()?;
             return Err(error);
         }
         Ok(process)
+    }
+    /// Transfer only the output pipe; native child/Job custody stays here.
+    pub(crate) fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.stdout.take()
     }
     fn resume(&self) -> Result<()> {
         let snapshot = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) })?;
@@ -110,7 +122,7 @@ impl Process {
         }
         bail!("GitHub child primary thread unavailable")
     }
-    fn exited(&self) -> Result<Option<bool>> {
+    pub(crate) fn exited(&self) -> Result<Option<bool>> {
         if unsafe { WaitForSingleObject(self.child.as_raw_handle(), 0) } != WAIT_OBJECT_0 {
             return Ok(None);
         }
@@ -121,10 +133,17 @@ impl Process {
         );
         Ok(Some(code == 0))
     }
-    fn finish(&mut self) -> Result<()> {
-        let cleanup = self.drain();
+    pub(crate) fn finish(&mut self) -> Result<()> {
+        if self.drained {
+            return Ok(());
+        }
+        // An error is no native release receipt. Keep this exact Process, Job,
+        // member handles and unknown observations owned by the read worker.
+        while self.drain().is_err() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let written = self.writer.take().map(|writer| writer.join());
-        cleanup?;
+        self.drained = true;
         if let Some(result) = written {
             result
                 .map_err(|_| anyhow::anyhow!("GitHub input worker panicked"))?
@@ -135,7 +154,7 @@ impl Process {
     /// A process leaves the Job's count before its own handles (one on the
     /// root, say) are closed, so each member the Job lists is held open and
     /// counts as stopped only once signalled.
-    fn hold_members(&self, members: &mut Vec<(u32, OwnedHandle)>) -> Result<()> {
+    fn member_ids(&self) -> Result<Vec<u32>> {
         let offset = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
             / size_of::<usize>();
         let mut capacity = 64;
@@ -163,44 +182,74 @@ impl Process {
         };
         let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
         let listed = (list.NumberOfProcessIdsInList as usize).min(capacity);
-        for &id in &buffer[offset..offset + listed] {
-            let Ok(id) = u32::try_from(id) else {
-                continue;
-            };
-            if members.iter().any(|(held, _)| *held == id) {
+        buffer[offset..offset + listed]
+            .iter()
+            .map(|id| {
+                let id = u32::try_from(*id).context("GitHub member ID unavailable")?;
+                ensure!(id != 0, "GitHub member ID unavailable");
+                Ok(id)
+            })
+            .collect()
+    }
+    fn hold_members(&mut self) -> Result<()> {
+        let listed = match self.member_ids() {
+            Ok(ids) => ids,
+            Err(error) => {
+                // An unseen member may have left the Job list without signalling.
+                self.members.snapshot_failed();
+                return Err(error);
+            }
+        };
+        for id in self.members.pending(listed) {
+            let index =
+                if let Some(index) = self.members.held.iter().position(|(held, _)| *held == id) {
+                    if !self.members.unverified.contains(&id) {
+                        continue;
+                    }
+                    index
+                } else {
+                    let raw = unsafe {
+                        OpenProcess(
+                            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                            0,
+                            id,
+                        )
+                    };
+                    let error = unsafe { GetLastError() };
+                    if raw.is_null() {
+                        self.members.open_failed(id, error);
+                        continue;
+                    }
+                    // The opened handle is owned BEFORE any fallible membership query.
+                    self.members.opened(id, owned(raw)?)
+                };
+            let handle = self.members.held[index].1.as_raw_handle();
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                self.members.signaled(index);
                 continue;
             }
-            let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
-            // Unopenable means already gone: signalled before its ID was free.
-            let Ok(member) = owned(unsafe { OpenProcess(access, 0, id) }) else {
-                continue;
-            };
             let mut ours = 0;
-            if unsafe {
-                IsProcessInJob(member.as_raw_handle(), self.job.as_raw_handle(), &mut ours)
-            } != 0
-                && ours != 0
-            {
-                members.push((id, member));
-            }
+            let queried =
+                unsafe { IsProcessInJob(handle, self.job.as_raw_handle(), &mut ours) } != 0;
+            self.members.queried(index, queried, ours != 0);
         }
         Ok(())
     }
     fn drain(&mut self) -> Result<()> {
         // Held before termination, while every member is still listed.
-        let mut members = Vec::new();
-        let held = self.hold_members(&mut members);
-        ensure!(
-            unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
-            "GitHub Job cleanup incomplete"
-        );
+        let held = self.hold_members();
+        let terminated = unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0;
+        // Assignment may have failed while the child was still suspended. It is
+        // directly owned even when no Job membership receipt was obtained.
+        let _ = self.child.kill();
+        ensure!(terminated, "GitHub Job cleanup incomplete");
         held?;
         self.child
             .wait()
             .context("GitHub child cleanup incomplete")?;
         let started = Instant::now();
         loop {
-            self.hold_members(&mut members)?;
+            self.hold_members()?;
             let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
                 unsafe { std::mem::zeroed() };
             ensure!(
@@ -215,7 +264,10 @@ impl Process {
                 } != 0,
                 "GitHub Job cleanup unconfirmed"
             );
-            if accounting.ActiveProcesses == 0 {
+            if self
+                .members
+                .may_wait_for_release(accounting.ActiveProcesses)
+            {
                 break;
             }
             ensure!(
@@ -224,7 +276,7 @@ impl Process {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        for (_, member) in &members {
+        for (_, member) in &self.members.held {
             let left = Duration::from_secs(5).saturating_sub(started.elapsed());
             ensure!(
                 unsafe { WaitForSingleObject(member.as_raw_handle(), left.as_millis() as u32) }
@@ -237,13 +289,8 @@ impl Process {
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        unsafe {
-            TerminateJobObject(self.job.as_raw_handle(), 1);
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(writer) = self.writer.take() {
-            let _ = writer.join();
+        if !self.drained {
+            let _ = self.finish();
         }
     }
 }
@@ -371,7 +418,7 @@ pub(crate) fn capture_with_input(
         );
     }
     let result = (|| -> Result<Vec<u8>> {
-        let mut stdout = process.child.stdout.take().context("Missing gh stdout")?;
+        let mut stdout = process.take_stdout().context("Missing gh stdout")?;
         let mut bytes = Vec::new();
         let mut eof = false;
         let started = Instant::now();

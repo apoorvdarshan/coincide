@@ -17,24 +17,38 @@ mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
 mod voice_speech;
+mod voice_system;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
+mod app_commands;
 mod app_menu;
 mod app_menu_mount;
+mod app_shell;
+mod app_shell_mount;
 mod approval_banner;
 mod archive_settings;
 mod assets;
 mod bot_avatar;
 mod bot_settings;
 mod browser;
+mod browser_address_bar;
+mod browser_controls;
 mod browser_dialog_ui;
+mod browser_login_mount;
+mod browser_passkey_ui;
 mod browser_settings;
+mod browser_tab_shortcuts;
+mod browser_tab_shortcuts_mount;
+mod browser_user_turn_ui;
+#[cfg(any(target_os = "windows", test))]
+mod browser_viewport_geometry;
 mod chat_inspector;
 mod chat_layout;
 mod chat_rewind;
 mod chat_turns;
 mod command_palette;
+mod community_links;
 mod composer_attachments;
 mod composer_commands;
 mod composer_context_mount;
@@ -58,6 +72,7 @@ mod dictation_preview;
 mod diff_mount;
 mod diff_panel;
 mod draft_close;
+mod git_controls;
 mod general_settings;
 mod github_actions;
 mod github_review;
@@ -90,14 +105,19 @@ mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
+mod palette_actions;
+mod palette_catalog;
+mod palette_search_owner;
 mod presentation;
 mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
+mod project_scripts_ui;
 mod provider_configuration_ui;
 mod provider_settings;
 mod provider_setup_terminal;
 mod queue;
+mod quit_confirmation;
 mod quit_mount;
 mod quit_shortcut;
 mod remote_settings;
@@ -107,6 +127,7 @@ mod session_import;
 mod settings;
 mod settings_navigation;
 mod settings_scroll;
+mod settings_search;
 mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
@@ -119,6 +140,7 @@ mod sidebar_preferences;
 mod sidebar_rename;
 mod sidebar_search;
 mod sidebar_settle;
+mod sidebar_thread_status;
 mod terminal_context_mount;
 mod terminal_layout;
 mod terminal_selection;
@@ -213,8 +235,6 @@ struct ImagePreview {
     rows: Vec<(String, usize)>,
 }
 
-const TERMINAL_PAGE_ROWS: usize = 40;
-
 fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     let Some(parts) = value.as_array().filter(|v| v.len() == 3) else {
         return rgb(fallback);
@@ -227,64 +247,28 @@ fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     }
 }
 
-/// Publish pages only as one coherent bounded viewport. New output between API
-/// calls invalidates the candidate frame; the last complete frame stays visible.
-fn read_terminal_frame(engine: &SharedEngine, id: &str, offset: usize) -> Result<Option<Value>> {
-    let mut frame = call(
-        engine,
-        "terminal.read",
-        json!({"terminalId":id,"styled":true,"rowOffset":offset,"rowLimit":10}),
-    )?;
+/// One coherent viewport, every visible row read under one Engine lock, so a
+/// tall pane never mixes revisions. Busy means the last frame stays visible.
+fn read_terminal_frame(
+    engine: &SharedEngine,
+    id: &str,
+    palette: &coincide_core::terminal::Palette,
+) -> Result<Option<Value>> {
+    let mut frame = try_state(engine)?.read_terminal_viewport(id, palette)?;
     let rows = frame["rows"].as_u64().unwrap_or(0) as usize;
     let cols = frame["cols"].as_u64().unwrap_or(0) as usize;
+    anyhow::ensure!(rows <= 300 && cols <= 500, "Invalid terminal viewport");
+    let grid = frame["grid"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Terminal page has no cells"))?;
     anyhow::ensure!(
-        rows <= 300 && cols <= 500 && offset <= rows,
-        "Invalid terminal viewport"
+        grid.len() == rows
+            && grid
+                .iter()
+                .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
+        "Invalid terminal page dimensions"
     );
-    let end = (offset + TERMINAL_PAGE_ROWS).min(rows);
-    let revision = frame["revision"].clone();
-    let mut grid = Vec::new();
-    let mut truncated = false;
-    let mut next = offset;
-    loop {
-        anyhow::ensure!(
-            frame["rowOffset"].as_u64() == Some(next as u64),
-            "Invalid terminal page offset"
-        );
-        let page = frame["grid"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Terminal page has no cells"))?;
-        anyhow::ensure!(
-            page.len() == 10.min(end - next)
-                && page
-                    .iter()
-                    .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
-            "Invalid terminal page dimensions"
-        );
-        grid.extend(page.iter().cloned());
-        truncated |= frame["truncated"] == true;
-        next += page.len();
-        if next >= end {
-            break;
-        }
-        let page = call(
-            engine,
-            "terminal.read",
-            json!({"terminalId":id,"styled":true,"rowOffset":next,"rowLimit":10.min(end-next)}),
-        )?;
-        if page["revision"] != revision
-            || page["rows"].as_u64() != Some(rows as u64)
-            || page["cols"].as_u64() != Some(cols as u64)
-        {
-            return Ok(None);
-        }
-        frame = page;
-    }
     frame.as_object_mut().unwrap().remove("lines");
-    frame["grid"] = json!(grid);
-    frame["rowOffset"] = json!(offset);
-    frame["rowCount"] = json!(end - offset);
-    frame["truncated"] = json!(truncated);
     Ok(Some(frame))
 }
 
@@ -402,7 +386,9 @@ struct Coincide {
     find_revealed: Option<(String, String, u64)>,
     find_last_serial: u64,
     palette_revision: u64,
+    palette_search: palette_search_owner::State,
     palette_entries: Vec<command_palette::PaletteEntry>,
+    palette_menus: Vec<command_palette::PaletteMenu>,
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
@@ -431,12 +417,17 @@ struct Coincide {
     provider_configuration_panel: Entity<provider_configuration_ui::Panel>,
     provider_enable_prompt: Option<Task<()>>,
     models_settings: models_settings::ModelsSettings,
-    general_settings: general_settings::GeneralSettings,
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
+    /// The open "Quit Coincide?" prompt.
+    quit_confirmation: Option<Task<()>>,
+    /// Whether this launch already offered the starter bots.
+    starter_bots_checked: bool,
     settings_section: settings::SettingsSection,
     settings_scroll: settings_scroll::State,
+    settings_reveal: settings_search::Reveal,
+    general_settings: general_settings::State,
     settings_window: Option<gpui_kit::AnyWindowHandle>,
     settings_window_pending: bool,
     main_window: gpui_kit::AnyWindowHandle,
@@ -469,6 +460,7 @@ struct Coincide {
     microphone_settings_active: bool,
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
+    updater_settings: Entity<updater_settings::UpdaterSettingsView>,
     credentials_open: bool,
     browser_settings_open: bool,
     browser_settings_panel: Entity<browser_settings::BrowserSettings>,
@@ -478,6 +470,7 @@ struct Coincide {
     inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    git_controls: git_controls::GitControls,
     diff_panel: Entity<diff_panel::DiffPanel>,
     /// The Local Git tab shows the Rust-only checkpoint and worktree tools, not the diff.
     git_tools_open: bool,
@@ -527,6 +520,7 @@ struct Coincide {
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
+    thread_activity: sidebar_thread_status::ThreadActivity,
     sidebar_renaming: Option<sidebar_rename::Renaming>,
     sidebar_rename_candidate: Option<String>,
     sidebar_type_select: sidebar_keys::TypeSelect,
@@ -534,6 +528,7 @@ struct Coincide {
     archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
     project_defaults: project_defaults_ui::State,
+    project_scripts: project_scripts_ui::State,
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
@@ -562,8 +557,14 @@ struct Coincide {
     show_archived: bool,
     browser: Option<BrowserController>,
     browser_address: Entity<InputState>,
+    browser_focus: FocusHandle,
     browser_address_page: Option<(String, String)>,
+    browser_completion: browser_address_bar::Completion,
+    /// The page area's bounds from the last layout, for fixed test viewports.
+    browser_page_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     browser_panels: std::collections::HashSet<String>,
+    browser_library_thread: Option<String>,
+    browser_control: Value,
     browser_ui_operations: std::collections::HashMap<String, String>,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
     link_menu: Option<transcript_links::LinkMenu>,
@@ -583,8 +584,21 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|selected| selected["id"] == *thread)
             });
+        // The pull request panel finds its repository from the conversation's
+        // own folder, as Swift does, not from the local Git workspace.
+        let selection = self
+            .selected
+            .as_ref()
+            .map(|selected| github_review::Selection {
+                thread: text(selected, "id"),
+                project: text(selected, "projectID"),
+                root_hint: self.selected_root_hint(),
+            });
+        let visible = self.chat_inspector_panel() == Some(chat_inspector::Panel::Workspace)
+            && self.github_open
+            && !self.github_threads_open;
         self.github_panel
-            .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
+            .update(cx, |panel, cx| panel.set_context(selection, visible, cx));
         let threads_context = if self.chat_inspector_panel()
             == Some(chat_inspector::Panel::Workspace)
             && self.github_threads_open
@@ -598,9 +612,9 @@ impl Coincide {
         self.github_threads_panel
             .update(cx, |panel, cx| panel.set_context(threads_context, cx));
     }
-    fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
-        let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
-        let root_hint = self.selected.as_ref().and_then(|selected| {
+    /// The selected conversation's stored worktree or project folder.
+    fn selected_root_hint(&self) -> Option<String> {
+        self.selected.as_ref().and_then(|selected| {
             selected["worktreePath"]
                 .as_str()
                 .map(str::to_owned)
@@ -611,7 +625,11 @@ impl Coincide {
                         .and_then(|project| project["path"].as_str())
                         .map(str::to_owned)
                 })
-        });
+        })
+    }
+    fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
+        let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
+        let root_hint = self.selected_root_hint();
         self.diff_panel.update(cx, |panel, cx| {
             panel.set_context(thread.clone(), root_hint.clone(), cx)
         });
@@ -619,15 +637,40 @@ impl Coincide {
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
+        self.sync_git_controls(cx);
     }
     fn sync_browser_settings_route(&mut self, cx: &mut Context<Self>) {
-        let thread = (self.browser_settings_visible() && !self.command_palette.read(cx).is_open())
-            .then(|| self.selected.as_ref().map(|thread| text(thread, "id")))
+        if self
+            .browser_library_thread
+            .as_deref()
+            .is_some_and(|thread| {
+                self.selected
+                    .as_ref()
+                    .and_then(|selected| selected["id"].as_str())
+                    != Some(thread)
+            })
+            || self.settings_open
+            || !self.chat_visible()
+        {
+            self.browser_library_thread = None;
+        }
+        let route = (!self.command_palette.read(cx).is_open())
+            .then(|| {
+                let thread = self.selected.as_ref().map(|thread| text(thread, "id"))?;
+                if self.browser_settings_visible() {
+                    Some(format!("settings:{thread}"))
+                } else if self.browser_pane_controls_visible() {
+                    Some(format!("pane:{}:{thread}", self.browser_library_visible()))
+                } else {
+                    None
+                }
+            })
             .flatten();
         self.browser_settings_panel.update(cx, |panel, cx| {
-            panel.sync_route_context(thread.as_deref(), cx);
+            panel.sync_route_context(route.as_deref(), cx);
         });
     }
+
     fn sync_transcription_binding(
         &mut self,
         cx: &mut Context<Self>,
@@ -692,7 +735,7 @@ impl Coincide {
             && !self.microphone_settings_active
         {
             use coincide_core::{dictation::transcription::Provider, voice::Engine as VoiceEngine};
-            match voice.engine {
+            match voice_speech::effective_engine(voice.engine) {
                 VoiceEngine::OpenAi | VoiceEngine::Groq => {
                     let provider = if voice.engine == VoiceEngine::OpenAi {
                         Provider::OpenAi
@@ -720,12 +763,12 @@ impl Coincide {
                 VoiceEngine::Whisper => {
                     configuration.map(microphone_settings::RecordingConfig::Local)
                 }
-                VoiceEngine::Apple => voice_speech::compiled().then(|| {
-                    microphone_settings::RecordingConfig::Apple(voice_speech::Configuration {
+                VoiceEngine::Apple => Some(microphone_settings::RecordingConfig::Apple(
+                    voice_speech::Configuration {
                         locale: voice.language.clone(),
                         maximum_seconds: 60,
-                    })
-                }),
+                    },
+                )),
             }
         } else {
             configuration.map(microphone_settings::RecordingConfig::Local)
@@ -1040,8 +1083,9 @@ impl Coincide {
             )
         });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
-        let general_settings = general_settings::GeneralSettings::new(&settings, window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
+        let general_settings = general_settings::State::new(cx);
+        let project_scripts = project_scripts_ui::State::new(window, cx);
         let model_picker_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
@@ -1049,10 +1093,27 @@ impl Coincide {
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
         let session_import_panel =
             cx.new(|cx| session_import::SessionImportPanel::new(engine.clone(), window, cx));
+        // No update channel or signed helper is configured for this build, so
+        // the section shows its unavailable state and never checks a feed.
+        let updater_settings = cx.new(|cx| {
+            updater_settings::UpdaterSettingsView::new(
+                Default::default(),
+                None,
+                Box::new(updater_lifecycle::UnavailableHelper),
+                engine.clone(),
+                cx,
+            )
+        });
         // Discovery checks executable metadata only. Vault reads require a
         // password-manager button click in this native panel.
+        // Discovery checks executable metadata only. Vault reads for filling
+        // require a password-manager button click in this native panel; a page's
+        // passkey request lists Bitwarden's passkeys only while "Use passkeys
+        // from Bitwarden" is on and Bitwarden is unlocked (browser_passkeys.rs).
+        let credential_sources = credential_settings::installed_sources();
+        let passkey_vault = credential_settings::bitwarden_passkeys(&credential_sources);
         let (credential_settings, credential_jobs) =
-            credential_settings::CredentialSettings::new(credential_settings::installed_sources());
+            credential_settings::CredentialSettings::new(credential_sources);
         let credential_panel = cx.new(|_| credential_settings);
         let mut browser_profile_requests = None;
         let browser_settings_panel = cx.new(|cx| {
@@ -1064,6 +1125,7 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let git_controls = git_controls::GitControls::new(engine.clone(), window, cx);
         let prefix = general_settings::branch_prefix(&settings);
         workspace_panel.update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let diff_panel = cx.new(|cx| diff_panel::DiffPanel::new(engine.clone(), window, cx));
@@ -1095,11 +1157,15 @@ impl Coincide {
         let project_path =
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
-            cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(browser_address_bar::PLACEHOLDER));
         let (browser, browser_error) = match control::download_directory()
             .and_then(|downloads| BrowserController::new(profile_dir, downloads))
         {
-            Ok(browser) => (Some(browser), None),
+            Ok(mut browser) => {
+                // `bw` runs only after a page asks and, for the key, after Sign In.
+                browser.set_passkey_vault(passkey_vault);
+                (Some(browser), None)
+            }
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
         if let Ok(mut engine) = engine.try_lock() {
@@ -1116,6 +1182,11 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| match event {
+                github_review::ReviewPanelEvent::Mention(mention) => {
+                    this.mention_pull_request(mention, window, cx)
+                }
+            }),
             cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
                 this.open_github_checkout(event, window, cx);
             }),
@@ -1136,14 +1207,30 @@ impl Coincide {
                 if matches!(event, InputEvent::Change) { this.selection_model_changed(cx); }
             }),
             cx.subscribe_in(&command_palette, window, |this, _, event, window, cx| {
-                if let command_palette::PaletteEvent::Activated { revision, command } = event {
-                    this.activate_palette(*revision, command.clone(), window, cx);
+                match event {
+                    command_palette::PaletteEvent::Activated { revision, command } => {
+                        this.palette_search.cancel();
+                        this.activate_palette(*revision, command.clone(), window, cx)
+                    }
+                    command_palette::PaletteEvent::Search(request) => {
+                        this.run_palette_search(request.clone(), cx)
+                    }
+                    command_palette::PaletteEvent::Dismissed
+                    | command_palette::PaletteEvent::SearchInvalidated => this.palette_search.cancel(),
                 }
                 this.sync_transcription_binding(cx);
                 cx.notify();
             }),
             cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.github_panel.update(cx, |panel, cx| panel.app_activated(cx));
+                    this.appshots.app_activated();
+                }
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
+                // Git may have changed outside Coincide while the window was inactive.
+                if window.is_window_active() {
+                    this.git_controls.request_refresh();
+                }
                 this.sync_terminal_workspace(window, cx);
                 this.sync_transcription_binding(cx);
                 this.sync_notification_activity(window, cx);
@@ -1292,9 +1379,16 @@ impl Coincide {
                     this.send(window, cx);
                 }
             }),
-            cx.subscribe(&browser_address, |this, _, event, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.browser_go(cx);
+            cx.subscribe_in(&browser_address, window, |this, input, event, window, cx| {
+                match event {
+                    InputEvent::PressEnter { .. } => this.browser_go(window, cx),
+                    InputEvent::Focus => this.begin_browser_address(cx),
+                    InputEvent::Change => {
+                        let thread = this.selected.as_ref().map(|thread| text(thread, "id"));
+                        this.browser_completion
+                            .changed(input, thread.as_deref(), window, cx);
+                    }
+                    _ => {}
                 }
             }),
             cx.subscribe(&search, |this, search, event, cx| {
@@ -1336,8 +1430,9 @@ impl Coincide {
             }
         }));
         subscriptions.extend(models_settings.subscriptions(window, cx));
-        subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
+        subscriptions.extend(general_settings.subscriptions(window, cx));
+        subscriptions.extend(project_scripts.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
@@ -1398,6 +1493,10 @@ impl Coincide {
                 .ok()
                 .and_then(|engine| window_chrome::saved_frame(&engine.store)),
         );
+        let browser_control = engine
+            .try_lock()
+            .map(|engine| engine.browser_agent_control_settings())
+            .unwrap_or(json!({"agentControlByDefault":false}));
         let mut this = Self {
             engine,
             quit_requested,
@@ -1417,7 +1516,9 @@ impl Coincide {
             find_revealed: None,
             find_last_serial: 0,
             palette_revision: 0,
+            palette_search: Default::default(),
             palette_entries: Vec::new(),
+            palette_menus: Vec::new(),
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
@@ -1444,6 +1545,7 @@ impl Coincide {
             settings_navigation: Default::default(),
             settings_section: Default::default(),
             settings_scroll: Default::default(),
+            settings_reveal: Default::default(),
             instructions_panel,
             provider_configuration_panel,
             provider_enable_prompt: None,
@@ -1452,6 +1554,8 @@ impl Coincide {
             archive_settings,
             instruction_quit_prompt_pending: false,
             instruction_quit_task: None,
+            quit_confirmation: None,
+            starter_bots_checked: false,
             settings_window: None,
             settings_window_pending: false,
             main_window: window.window_handle(),
@@ -1484,6 +1588,7 @@ impl Coincide {
             microphone_settings_active: false,
             session_import_open: false,
             session_import_panel,
+            updater_settings,
             credentials_open: false,
             browser_settings_open: false,
             browser_settings_panel,
@@ -1493,6 +1598,7 @@ impl Coincide {
             inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
+            git_controls,
             diff_panel,
             git_tools_open: false,
             github_open: false,
@@ -1540,6 +1646,7 @@ impl Coincide {
             expanded_sidebar_lists: std::collections::HashSet::new(),
             collapsed_projects,
             navigation_last_clock: Instant::now(),
+            thread_activity: Default::default(),
             sidebar_renaming: None,
             sidebar_rename_candidate: None,
             sidebar_type_select: Default::default(),
@@ -1547,6 +1654,7 @@ impl Coincide {
             archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
             project_defaults: project_defaults_ui::State::new(window, cx),
+            project_scripts,
             project_picker_open: false,
             project_path,
             selected: None,
@@ -1574,8 +1682,13 @@ impl Coincide {
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
             browser_address,
+            browser_focus: cx.focus_handle(),
             browser_address_page: None,
+            browser_completion: Default::default(),
+            browser_page_bounds: Default::default(),
             browser_panels: Default::default(),
+            browser_library_thread: None,
+            browser_control,
             browser_ui_operations: Default::default(),
             browser_replies: Vec::new(),
             link_menu: None,
@@ -1661,6 +1774,23 @@ impl Coincide {
         } else {
             false
         }; // guard released before Mount/panel/runtime submission
+        if self.computer_use_settings_visible()
+            && let Some(mount) = &self.computer_use_mount
+        {
+            let titles = self
+                .threads
+                .iter()
+                .filter_map(|thread| {
+                    Some((
+                        uuid::Uuid::parse_str(&thread.id).ok()?,
+                        thread.title.clone(),
+                    ))
+                })
+                .collect();
+            mount
+                .panel()
+                .update(cx, |panel, cx| panel.set_titles(titles, cx));
+        }
         if ready && let Some(mount) = &mut self.computer_use_mount {
             mount.poll(&self.engine, cx);
             if let Some(error) = mount.last_error() {
@@ -1741,9 +1871,52 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn browser_go(&mut self, cx: &mut Context<Self>) {
-        let url = self.browser_address.read(cx).value().to_string();
-        self.browser_action(BrowserAction::Navigate { url }, None, cx);
+    /// What the user typed: an address, a local file, or a search with their
+    /// engine, as Swift's `PreviewSession.navigate(_:)`.
+    fn browser_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.browser_address.read(cx).value().to_string();
+        let engine = self
+            .engine
+            .try_lock()
+            .map(|engine| engine.browser_search_engine())
+            .unwrap_or_default();
+        match browser_address_bar::destination(&typed, engine) {
+            Some(
+                coincide_core::browser_address::Destination::Web(url)
+                | coincide_core::browser_address::Destination::Search(url),
+            ) => self.browser_action(BrowserAction::Navigate { url: url.into() }, None, cx),
+            Some(coincide_core::browser_address::Destination::File(file)) => {
+                let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+                    return;
+                };
+                if let Some(browser) = &mut self.browser
+                    && let Err(error) = browser.open_local_file(&thread, &file, window, cx)
+                {
+                    self.status = format!("Browser: {error}");
+                }
+                cx.notify();
+            }
+            None => {
+                self.status = format!("Browser: {}", browser_address_bar::INVALID_ADDRESS);
+                cx.notify();
+            }
+        }
+    }
+    /// Loads completion for the selected thread's profile as editing begins.
+    fn begin_browser_address(&mut self, cx: &mut Context<Self>) {
+        let value = self.browser_address.read(cx).value().to_string();
+        self.browser_completion.begin_editing(&value);
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        let profile = self.browser.as_ref().and_then(|browser| {
+            match browser.profile_snapshot(&thread).selected {
+                browser_settings::ProfileChoice::Persistent(id) => Some(id),
+                browser_settings::ProfileChoice::Private => None,
+            }
+        });
+        self.browser_completion
+            .load(&self.engine, &thread, profile, cx);
     }
     fn toggle_browser(&mut self, cx: &mut Context<Self>) {
         if self.global_schedules_route() {
@@ -1765,10 +1938,35 @@ impl Coincide {
             .try_lock()
             .map(|mut engine| engine.browser_requests.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
+        let mut ordinary_requests = Vec::with_capacity(requests.len());
+        let requested_login = requests
+            .iter()
+            .any(|r| matches!(r.action, BrowserAction::FillLogin { .. }));
+        for request in requests {
+            if !browser_controls::agent_request_allowed(
+                &self.browser_control,
+                &request.thread_id,
+                self.browser_ui_operations.contains_key(&request.id),
+            ) {
+                self.browser_replies
+                    .push(coincide_core::browser_protocol::BrowserReply {
+                        id: request.id,
+                        thread_id: request.thread_id,
+                        result: json!({"error":"Agent Control is off for this conversation"}),
+                    });
+                continue;
+            }
+            if matches!(request.action, BrowserAction::FillLogin { .. }) {
+                self.request_browser_login(request, window, cx);
+            } else {
+                ordinary_requests.push(request);
+            }
+        }
+        let requests = ordinary_requests;
         let image_viewer_open = self.historical_image_is_open();
         let terminal_right = self.terminal_on_right();
         let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
-        let mut changed = !requests.is_empty();
+        let mut changed = requested_login || !requests.is_empty();
         let mut browser_note: Option<Option<inspector_follow::SavedPanel>> = None;
         let selected_closes_last = requests.iter().any(|request| {
             matches!(&request.action, BrowserAction::CloseTab)
@@ -1779,7 +1977,9 @@ impl Coincide {
         // for a background thread cannot replace the foreground chat route.
         for request in &requests {
             match &request.action {
-                BrowserAction::Show => {
+                // An agent handing the user a step opens the browser, as
+                // Swift's `reveal` does for ask-user.
+                BrowserAction::Show | BrowserAction::AskUser { .. } => {
                     if selected_id.as_deref() == Some(request.thread_id.as_str())
                         && self.chat_visible()
                     {
@@ -1806,8 +2006,10 @@ impl Coincide {
             }
         }
         if requests.iter().any(|request| {
-            matches!(&request.action, BrowserAction::Show)
-                && selected_id.as_deref() == Some(request.thread_id.as_str())
+            matches!(
+                &request.action,
+                BrowserAction::Show | BrowserAction::AskUser { .. }
+            ) && selected_id.as_deref() == Some(request.thread_id.as_str())
         }) && self.chat_visible()
         {
             self.ensure_inspector_space(window);
@@ -1815,12 +2017,21 @@ impl Coincide {
         let browser_is_panel = self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
         let close_visible_last_tab = selected_closes_last && browser_is_panel;
         let Some(browser) = &mut self.browser else {
+            if let Ok(mut engine) = self.engine.try_lock() {
+                for reply in self.browser_replies.drain(..) {
+                    engine.browser_reply(reply);
+                }
+            }
             return;
         };
         for request in requests {
             browser.execute(request, window, cx);
         }
+        changed |= browser.set_passkey_preferences(browser::passkeys::Preferences::from_settings(
+            &self.settings,
+        ));
         changed |= browser.poll(window, cx);
+        self.browser_completion.poll();
         if close_visible_last_tab
             && selected_id
                 .as_deref()
@@ -1841,6 +2052,7 @@ impl Coincide {
         // before yielding to the run loop so it never covers this conversation.
         browser.set_thread_visible(visible, cx);
         self.browser_replies.extend(browser.drain_replies());
+        let native_tab_shortcuts = browser.drain_tab_shortcuts();
         if let Ok(mut engine) = self.engine.try_lock() {
             for reply in self.browser_replies.drain(..) {
                 engine.browser_reply(reply);
@@ -1899,6 +2111,10 @@ impl Coincide {
         if let Some(choice) = browser_note {
             self.remember_inspector_choice(choice, cx);
         }
+        for (source, command) in native_tab_shortcuts {
+            self.perform_browser_tab_shortcut(source, command, true, window, cx);
+            changed = true;
+        }
         if changed {
             cx.notify();
         }
@@ -1937,9 +2153,17 @@ impl Coincide {
             })
             .collect::<Vec<_>>();
         let active_id = active.as_ref().map(|tab| text(tab, "id"));
+        let pane_controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
+        let library_popup = self
+            .browser_library_visible()
+            .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
+        let user_turn_banner = self.browser_user_turn_banner(cx);
+        let page = self.browser_page(&thread, webview, cx);
+        let passkey_banner = self.browser_passkey_banner(cx);
         Some(
             div()
+                .track_focus(&self.browser_focus)
                 .flex()
                 .flex_col()
                 .flex_1()
@@ -2019,11 +2243,9 @@ impl Coincide {
                                 .min_w_0()
                                 .child(Input::new(&self.browser_address)),
                         )
-                        .child(
-                            Button::new("browser-go")
-                                .label("Go")
-                                .on_click(cx.listener(|this, _, _, cx| this.browser_go(cx))),
-                        ),
+                        .child(Button::new("browser-go").label("Go").on_click(
+                            cx.listener(|this, _, window, cx| this.browser_go(window, cx)),
+                        )),
                 )
                 .child(
                     div()
@@ -2034,7 +2256,12 @@ impl Coincide {
                         .text_xs()
                         .child(url),
                 )
+                .child(pane_controls)
+                .children(library_popup)
                 .children(dialog_banner)
+                .children(user_turn_banner)
+                .child(page)
+                .children(passkey_banner)
                 .child(
                     div()
                         .flex_1()
@@ -2045,13 +2272,26 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Ok(engine) = self.engine.try_lock() {
+            self.browser_control = engine.browser_agent_control_settings();
+        }
         let mut complete = true;
         self.refresh_queue(cx);
         if self.schedules_open {
             self.refresh_schedules(cx);
         }
+        // Settings › Archive stays current as threads are archived and deleted.
+        if self.settings_open && self.settings_section == settings::SettingsSection::Archive {
+            self.refresh_archive_settings(cx);
+        }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
+            // The project scripts' one-click script (Swift UIState lastScripts).
+            if let Ok(engine) = try_state(&self.engine)
+                && let Ok(document) = engine.store.native_inspector_document()
+            {
+                self.project_scripts.remember(document.as_ref());
+            }
             self.collapsed_projects = self
                 .projects
                 .iter()
@@ -2477,64 +2717,6 @@ impl Coincide {
         }
         transcript::markdown(thread, item, source, window, cx)
     }
-    fn palette_catalog(&self) -> Vec<command_palette::PaletteEntry> {
-        use command_palette::{PaletteCommand as C, PaletteEntry as E};
-        let entry = |command, title, subtitle| E {
-            command,
-            title,
-            subtitle,
-            keywords: Vec::new(),
-            enabled: true,
-            disabled_reason: None,
-        };
-        let mut entries = vec![
-            entry(
-                C::NewThread { project_id: None },
-                "New projectless conversation".into(),
-                None,
-            ),
-            entry(C::OpenSettings, "Open settings".into(), None),
-            entry(C::ShowSchedules, "Show schedules".into(), None),
-            entry(
-                C::SelectProject { project_id: None },
-                "All projects".into(),
-                None,
-            ),
-        ];
-        for project in &self.projects {
-            let id = text(project, "id");
-            if id.is_empty() {
-                continue;
-            }
-            let name = text(project, "name");
-            entries.push(entry(
-                C::SelectProject {
-                    project_id: Some(id.clone()),
-                },
-                format!("Show project: {name}"),
-                None,
-            ));
-            if !id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
-                entries.push(entry(
-                    C::NewThread {
-                        project_id: Some(id),
-                    },
-                    format!("New conversation in {name}"),
-                    None,
-                ));
-            }
-        }
-        for thread in &self.threads {
-            entries.push(entry(
-                C::OpenThread {
-                    thread_id: thread.id.clone(),
-                },
-                thread.title.clone(),
-                Some("Conversation".into()),
-            ));
-        }
-        entries
-    }
     fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.command_palette
             .update(cx, |palette, cx| palette.dismiss(window, cx));
@@ -2547,15 +2729,14 @@ impl Coincide {
             self.credential_panel
                 .update(cx, |panel, cx| panel.cancel(cx));
             self.palette_revision = self.palette_revision.saturating_add(1);
-            self.palette_entries = self.palette_catalog();
-            let snapshot = command_palette::PaletteSnapshot {
-                revision: self.palette_revision,
-                entries: self.palette_entries.clone(),
-            };
-            if let Err(error) = self
-                .command_palette
-                .update(cx, |palette, cx| palette.open(snapshot, window, cx))
-            {
+            let snapshot = self.palette_snapshot();
+            self.palette_entries = snapshot.entries.clone();
+            self.palette_menus = snapshot.menus.clone();
+            let colors = self.palette_colors();
+            if let Err(error) = self.command_palette.update(cx, |palette, cx| {
+                palette.set_colors(colors);
+                palette.open(snapshot, window, cx)
+            }) {
                 self.status = format!("Palette unavailable: {error}");
             }
         }
@@ -2570,19 +2751,20 @@ impl Coincide {
             self.dismiss_palette(window, cx);
             return;
         }
-        let entries = self.palette_catalog();
-        if !palette_entries_equal(&entries, &self.palette_entries) {
+        let mut snapshot = self.palette_snapshot();
+        if snapshot.entries != self.palette_entries || snapshot.menus != self.palette_menus {
             self.palette_revision = self.palette_revision.saturating_add(1);
-            let snapshot = command_palette::PaletteSnapshot {
-                revision: self.palette_revision,
-                entries: entries.clone(),
-            };
+            snapshot.revision = self.palette_revision;
+            let (entries, menus) = (snapshot.entries.clone(), snapshot.menus.clone());
             if self
                 .command_palette
-                .update(cx, |palette, cx| palette.replace_snapshot(snapshot, cx))
+                .update(cx, |palette, cx| {
+                    palette.replace_snapshot(snapshot, window, cx)
+                })
                 .is_ok()
             {
                 self.palette_entries = entries;
+                self.palette_menus = menus;
             } else {
                 self.dismiss_palette(window, cx);
             }
@@ -2596,12 +2778,29 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         use command_palette::PaletteCommand as C;
-        let current = self.palette_catalog();
-        if revision != self.palette_revision
-            || !palette_entries_equal(&current, &self.palette_entries)
-            || !current
+        let (current, menus) = self.palette_catalog();
+        // Search results are checked against the open thread's folder and the
+        // disk instead of the catalog.
+        let listed = match &command {
+            C::OpenFile { root, path, .. } => self.palette_file(root, path).is_some(),
+            C::AddProject { path } => {
+                std::path::Path::new(path).is_absolute() && std::path::Path::new(path).is_dir()
+            }
+            C::OpenMenu { .. } => false,
+            command => current
                 .iter()
-                .any(|entry| entry.enabled && entry.command == command)
+                .chain(menus.iter().flat_map(|menu| match &menu.content {
+                    command_palette::MenuContent::Lists(lists) => {
+                        lists.iter().flat_map(|list| list.entries.iter()).collect()
+                    }
+                    command_palette::MenuContent::Search(_) => Vec::new(),
+                }))
+                .any(|entry| entry.enabled && &entry.command == command),
+        };
+        if revision != self.palette_revision
+            || current != self.palette_entries
+            || menus != self.palette_menus
+            || !listed
         {
             self.status = "Palette context changed; reopen it to choose again".into();
             return;
@@ -2618,11 +2817,22 @@ impl Coincide {
             ),
             C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
-                self.hide_inline_settings();
-                self.workspace_open = false;
-                self.session_import_open = false;
-                self.open_global_schedules(cx);
+                self.run_keyboard_command(keyboard_settings::Command::Schedules, window, cx)
             }
+            C::Action { id } => self.run_palette_action(&id, window, cx),
+            C::AddProject { path } => {
+                if self.project_ui_admitted()
+                    && let Err((_, error)) = self.add_project_paths(&[path.into()], window, cx)
+                {
+                    self.status = format!("The folder was not added: {error}");
+                }
+            }
+            C::OpenFile { root, path, line } => {
+                if let Some(file) = self.palette_file(&root, &path) {
+                    self.open_file_at_line(file, line, cx);
+                }
+            }
+            C::OpenMenu { .. } => {}
         }
         self.sync_transcription_binding(cx);
         cx.notify();
@@ -2784,10 +2994,29 @@ impl Coincide {
         if paths.is_empty() {
             return;
         }
+        match self.add_project_paths(&paths, window, cx) {
+            Ok(()) => self.close_project_form(window, cx),
+            Err((added, error)) => {
+                self.project_management.session.error = format!(
+                    "Added {added} of {} folders. The remaining folder was not added: {error}. Already-added folders will be reused on review.",
+                    paths.len()
+                )
+            }
+        }
+        cx.notify();
+    }
+    /// Adds folders as projects and opens the first one's latest thread, or a
+    /// new one. On failure, how many were added and why the next one was not.
+    fn add_project_paths(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> std::result::Result<(), (usize, String)> {
         let mut first = None;
         let mut added = 0;
         let mut failure = None;
-        for path in &paths {
+        for path in paths {
             match call(&self.engine, "projects.create", json!({"path":path})) {
                 Ok(project) => {
                     if first.is_none() {
@@ -2825,15 +3054,8 @@ impl Coincide {
                 }
             }
         }
-        if let Some(error) = failure {
-            self.project_management.session.error = format!(
-                "Added {added} of {} folders. The remaining folder was not added: {error}. Already-added folders will be reused on review.",
-                paths.len()
-            );
-        } else {
-            self.close_project_form(window, cx);
-        }
         cx.notify();
+        failure.map_or(Ok(()), |error| Err((added, error)))
     }
     fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {
@@ -2872,10 +3094,15 @@ impl Coincide {
     }
     fn sync_browser_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_browser_settings_route(cx);
-        let visible = self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
+        let pane_library = self.browser_library_visible();
+        let pane_visible = self.browser_pane_controls_visible();
+        let settings_visible =
+            self.browser_settings_visible() && !self.command_palette.read(cx).is_open();
+        let visible =
+            (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         for request in self.browser_profile_requests.try_iter().take(8) {
-            let result = if visible {
+            let result = if settings_visible {
                 selected_thread
                     .as_deref()
                     .ok_or_else(|| "No selected thread".to_owned())
@@ -2905,7 +3132,7 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let history_binding = if visible {
+        let history_binding = if settings_visible {
             selected_thread.as_deref().and_then(|thread| {
                 self.browser
                     .as_ref()
@@ -2917,9 +3144,13 @@ impl Coincide {
         let (bookmark, reservation, prepared, history) =
             self.browser_settings_panel.update(cx, |panel, cx| {
                 // Idempotent injection: only the first binding initializes context.
+                panel.pane_mode = !settings_visible;
                 panel.set_library_engine(engine);
                 panel.set_snapshot(snapshot, cx);
                 panel.set_history_binding(history_binding, cx);
+                if pane_visible {
+                    panel.ensure_pane_library(cx);
+                }
                 panel.poll(cx);
                 (
                     panel.take_bookmark_open(),
@@ -2975,7 +3206,7 @@ impl Coincide {
         if let Some(history) = history {
             let result = (|| -> Result<()> {
                 anyhow::ensure!(
-                    visible
+                    settings_visible
                         && !self.media.shutdown_requested
                         && !self.media.close_requested
                         && !self.historical_image_is_open()
@@ -3016,6 +3247,7 @@ impl Coincide {
         }
         if let Some(bookmark) = bookmark
             && visible
+            && (settings_visible || pane_library)
             && selected_thread.as_deref() == Some(bookmark.thread.as_str())
         {
             // Preparation read the saved library off UI. Admission is memory-only
@@ -3039,6 +3271,7 @@ impl Coincide {
                         .insert(queued.show_operation, queued.thread);
                     self.browser_settings_open = false;
                     self.settings_open = false;
+                    self.browser_library_thread = None;
                     self.sync_browser_settings_route(cx);
                     cx.notify();
                 }
@@ -3080,7 +3313,7 @@ impl Coincide {
         };
         // Revocation precedes polling or delivery: closing the panel, changing
         // documents, or losing the selection cannot retain a prior approval.
-        self.credential_panel.update(cx, |panel, cx| {
+        let credential_replies = self.credential_panel.update(cx, |panel, cx| {
             panel.set_context(
                 visible.then(|| thread.clone()).flatten(),
                 page,
@@ -3088,7 +3321,9 @@ impl Coincide {
                 cx,
             );
             panel.poll(cx);
+            panel.browser_replies()
         });
+        self.browser_replies.extend(credential_replies);
         if let Some(browser) = &mut self.browser {
             browser.drain_credential_fills(
                 thread.as_deref().unwrap_or(""),
@@ -3130,6 +3365,7 @@ impl Coincide {
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.poll_project_defaults(window, cx);
         self.tick_schedule_times(cx);
+        self.poll_git_controls(window, cx);
         self.open_target_children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
         if self.sidebar_preferences.retry(&self.engine) {
@@ -3142,6 +3378,7 @@ impl Coincide {
             .swap(false, std::sync::atomic::Ordering::AcqRel);
         self.image_validation_tasks.retain(|task| !task.is_ready());
         self.navigation_tasks.retain(|task| !task.is_ready());
+        self.poll_palette_search(cx);
         let native_quit = self
             .native_quit
             .as_ref()
@@ -3154,11 +3391,7 @@ impl Coincide {
             && !self.block_voice_close(window, cx)
             && !self.block_provider_configuration_close(window, cx)
         {
-            if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
-                self.prompt_instruction_close(true, window, cx);
-            } else {
-                self.media.shutdown_requested = true;
-            }
+            self.request_quit(window, cx);
         }
         // Persistence must precede either close path, including API app.quit.
         let drafts_saved = self.flush_pending_drafts();
@@ -3259,6 +3492,7 @@ impl Coincide {
             return;
         }
         self.poll_app_menu(window, cx);
+        self.poll_app_shell(window, cx);
         self.poll_appshots(window, cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
@@ -3402,6 +3636,7 @@ impl Coincide {
                     .splice(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
+            self.observe_thread_activity(&status, window, cx);
             if was_running
                 && selected_thread
                     .as_ref()
@@ -3411,6 +3646,7 @@ impl Coincide {
                 self.status = "Agent turn ended.".into();
                 cx.notify();
             }
+            app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
                 self.refresh_settings(window, cx);
@@ -4419,6 +4655,16 @@ impl Coincide {
         self.turn_decorated(index, row, plan.header, cx)
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_terminal(None, window, cx);
+    }
+    /// With `script`, the panel this opens runs that project script in a new
+    /// tab instead of showing or starting a plain shell.
+    fn toggle_terminal(
+        &mut self,
+        script: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_inspector_placeholders();
         if self.selected.is_none() {
             return;
@@ -4447,7 +4693,10 @@ impl Coincide {
             && let Some(id) = &self.terminal_visible_thread
             && let Some(workspace) = self.terminal_workspaces.get(id).cloned()
         {
-            workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
+            workspace.update(cx, |workspace, cx| match script {
+                Some(script) => workspace.run_script(script, window, cx),
+                None => workspace.activate(window, cx),
+            });
         }
         if self.terminal_on_right() {
             self.remember_current_inspector(cx);
@@ -4576,6 +4825,8 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Swift's palette floats about a sixth of the way down the window.
+        let palette_top = (f32::from(window.viewport_size().height) * 0.16).max(64.);
         self.sync_context_details();
         // Revoke image-modal input immediately on either close path, before its
         // ordinary conversation surface is replaced by cleanup-only controls.
@@ -4981,7 +5232,8 @@ impl Render for Coincide {
                                                 .text_color(self.color(0xe4e9f2).opacity(0.7))
                                                 .child(self.status.clone()),
                                         )),
-                                ),
+                                )
+                                .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),
                         )
                     }).into_any_element();
         div()
@@ -4998,6 +5250,7 @@ impl Render for Coincide {
                     && !this.inbox_undo_shortcut(event, window, cx)
                     && !this.context_details_shortcut(event, window, cx)
                     && !this.project_defaults_key(event, window, cx)
+                    && !this.project_script_editor_key(event, window, cx)
                     && !this.historical_image_shortcut(event, window, cx)
                     && !this.reply_selection_shortcut(event, window, cx)
                 {
@@ -5020,6 +5273,10 @@ impl Render for Coincide {
             .when_some(self.project_defaults_form(cx), |view, form| {
                 view.child(form)
             })
+            .when_some(self.project_script_editor(cx), |view, form| {
+                view.child(form)
+            })
+            .when_some(self.git_modal(cx), |view, modal| view.child(modal))
             .when_some(self.context_details_overlay(cx), |view, details| {
                 view.child(details)
             })
@@ -5031,37 +5288,28 @@ impl Render for Coincide {
                         .inset_0()
                         .flex()
                         .justify_center()
-                        .pt_16()
-                        .bg(rgba(0x00000080))
+                        .pt(px(palette_top))
+                        .px(px(24.))
+                        // A click beside the palette closes it, as the Swift
+                        // panel closes when it loses focus.
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                            cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.dismiss_palette(window, cx);
+                            }),
                         )
                         .child(
                             div()
                                 .w_full()
-                                .max_w(px(680.))
-                                .h(px(580.))
+                                .max_w(px(640.))
                                 .max_h_full()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .child(self.command_palette.clone()),
                         ),
                 )
             })
     }
-}
-fn palette_entries_equal(
-    a: &[command_palette::PaletteEntry],
-    b: &[command_palette::PaletteEntry],
-) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(a, b)| {
-            a.command == b.command
-                && a.title == b.title
-                && a.subtitle == b.subtitle
-                && a.keywords == b.keywords
-                && a.enabled == b.enabled
-                && a.disabled_reason == b.disabled_reason
-        })
 }
 fn schedule_date(value: &Value) -> String {
     if value.is_null() {
@@ -5087,6 +5335,11 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
     let data = control::data_directory()?;
+    // A second copy hands over to the one already running and quits, as
+    // Swift's SecondInstance does.
+    if app_shell::hand_off(&data.join("control.sock")) {
+        return Ok(());
+    }
     let store = Store::open(&data.join("coincide.sqlite"))?;
     let saved_frame = window_chrome::saved_frame(&store);
     let media_data = store.data_directory()?;
@@ -5108,48 +5361,100 @@ fn main() -> Result<()> {
     let application = gpui_kit::platform::linux(WindowingModes::X11);
     #[cfg(not(target_os = "linux"))]
     let application = gpui_kit::application();
-    application
-        .with_assets(assets::CoincideAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            composer_file_picker::init(cx);
-            sidebar_keys::init(cx);
-            composer_follow_up_mount::init(cx);
-            let quit_requested = app_menu::install(cx);
-            transcript::init(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
-            let (bounds, display_id) = window_chrome::opening_bounds(saved_frame.as_ref(), cx);
-            gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(bounds),
-                    display_id,
-                    window_min_size: Some(size(
-                        px(window_chrome::MIN_SIZE.0),
-                        px(window_chrome::MIN_SIZE.1),
-                    )),
-                    ..Default::default()
-                },
-                cx,
-                |window, cx| {
-                    window.set_window_title("Coincide Rust Preview");
-                    cx.new(|cx| {
-                        Coincide::new(
-                            engine,
-                            native_editors,
-                            quit_requested,
-                            control_owner,
-                            data.join("browser-profile"),
-                            media_config,
-                            window,
-                            cx,
-                        )
-                    })
-                },
-            )
-            .expect("Unable to open Coincide window");
-            cx.activate(true);
+    let application = application.with_assets(assets::CoincideAssets);
+    // Clicking the Dock icon brings the main window back after it was closed.
+    application.on_reopen(reopen_main_window);
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        composer_file_picker::init(cx);
+        sidebar_keys::init(cx);
+        composer_follow_up_mount::init(cx);
+        let quit_requested = app_menu::install(cx);
+        app_shell::install(cx);
+        transcript::init(cx);
+        Theme::change(ThemeMode::Dark, None, cx);
+        cx.set_global(Launch {
+            engine,
+            native_editors,
+            quit_requested,
+            control_owner,
+            profile_dir: data.join("browser-profile"),
+            media_config,
+            saved_frame,
         });
+        open_main_window(cx).expect("Unable to open Coincide window");
+        cx.activate(true);
+    });
     Ok(())
+}
+
+/// What a main window is made from, kept so the Dock can open it again.
+#[derive(Clone)]
+struct Launch {
+    engine: SharedEngine,
+    native_editors: coincide_core::native_ui_edits::NativeUiEditors,
+    quit_requested: Arc<std::sync::atomic::AtomicBool>,
+    control_owner: Arc<Mutex<control::Server>>,
+    profile_dir: std::path::PathBuf,
+    media_config: coincide_core::legacy_media_service::ServiceConfig,
+    saved_frame: Option<window_chrome::SavedFrame>,
+}
+impl Global for Launch {}
+/// The open main window, for the Dock to bring forward.
+struct MainWindow(AnyWindowHandle, WeakEntity<Coincide>);
+impl Global for MainWindow {}
+
+fn open_main_window(cx: &mut App) -> Result<()> {
+    let launch = cx
+        .try_global::<Launch>()
+        .cloned()
+        .context("Coincide has not launched")?;
+    let (bounds, display_id) = window_chrome::opening_bounds(launch.saved_frame.as_ref(), cx);
+    let (handle, root) = gpui_kit::open_window(
+        WindowOptions {
+            window_bounds: Some(bounds),
+            display_id,
+            window_min_size: Some(size(px(820.), px(520.))),
+            ..Default::default()
+        },
+        cx,
+        |window, cx| {
+            window.set_window_title("Coincide Rust Preview");
+            cx.new(|cx| {
+                Coincide::new(
+                    launch.engine,
+                    launch.native_editors,
+                    launch.quit_requested,
+                    launch.control_owner,
+                    launch.profile_dir,
+                    launch.media_config,
+                    window,
+                    cx,
+                )
+            })
+        },
+    )?;
+    cx.set_global(MainWindow(handle, root.downgrade()));
+    Ok(())
+}
+
+/// Swift `applicationShouldHandleReopen`: the main window comes forward, or a
+/// new one opens when it was closed. Never while quitting.
+fn reopen_main_window(cx: &mut App) {
+    let open = cx.try_global::<MainWindow>().and_then(|main| {
+        (main.1.upgrade().is_some() && cx.windows().contains(&main.0)).then_some(main.0)
+    });
+    if let Some(main) = open {
+        let _ = main.update(cx, |_, window, _| window.activate_window());
+    } else if !cx
+        .try_global::<Launch>()
+        .is_some_and(|launch| launch.engine.try_lock().is_ok_and(|engine| engine.shutdown))
+        && let Err(error) = open_main_window(cx)
+    {
+        eprintln!("Unable to reopen the Coincide window: {error}");
+        return;
+    }
+    cx.activate(true);
 }
 
 #[cfg(test)]

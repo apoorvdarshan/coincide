@@ -139,8 +139,15 @@ fn malformed_envelopes_duplicate_ids_and_unsafe_patches_fail_without_writes() {
         json!({"name":"new","persona":"x".repeat(20_001)}),
         json!({"name":"new","persona":"bad\u{0000}"}),
         json!({"name":"new","instructions":"global"}),
-        json!({"name":"new","folder":"/tmp"}),
+        json!({"name":"new","folder":"relative/folder"}),
+        json!({"name":"new","folder":"/bad\nfolder"}),
         json!({"name":"new","accessMode":"fullAccess"}),
+        json!({"name":"new","avatar":{"shape":"blob","tint":"leaf"}}),
+        json!({"name":"new","avatar":{"shape":"alien","tint":"black"}}),
+        json!({"name":"new","avatar":{"shape":"alien","tint":"leaf","future":1}}),
+        json!({"name":"new","personality":{"preset":"unknown-future-preset"}}),
+        json!({"name":"new","personality":{"custom":"x".repeat(4_001)}}),
+        json!({"name":"new","personality":{"custom":"calm","mood":"x"}}),
         json!({"id":ID,"name":"new"}),
         json!({}),
     ] {
@@ -248,4 +255,68 @@ fn native_bot_reorder_is_a_baseline_checked_permutation_preserving_every_record_
             .is_err()
     );
     assert_eq!(engine.store.document(DOCUMENT).unwrap(), Some(reordered));
+}
+
+#[test]
+fn look_personality_and_folder_edits_are_normalized_like_swift_and_keep_other_fields() {
+    let (_root, mut engine) = fixture();
+    engine.store.save_document(DOCUMENT, &envelope()).unwrap();
+    // Absolute on this platform; existence is checked when a conversation starts.
+    let folder = if cfg!(windows) {
+        r"C:\synthetic\bot-folder"
+    } else {
+        "/synthetic/bot-folder"
+    };
+    let read = engine.execute("bots.read", &json!({"botId":ID})).unwrap();
+    let saved = engine
+        .execute(
+            "bots.patch",
+            &json!({"botId":ID,"baseline":read["baseline"],"patch":{
+                "avatar":{"shape":"teddy","tint":"sky"},
+                "personality":{"preset":"calm","custom":"  kept beside the preset \n"},
+                "folder":folder}}),
+        )
+        .unwrap();
+    let bot = &saved["bot"];
+    assert_eq!(bot["avatar"], json!({"shape":"teddy","tint":"sky"}));
+    assert_eq!(
+        bot["personality"],
+        json!({"preset":"calm","custom":"kept beside the preset"})
+    );
+    assert_eq!(bot["folder"], folder);
+    assert_eq!(bot["futureBot"], envelope()["bots"][0]["futureBot"]);
+    assert_eq!(bot["selection"], envelope()["bots"][0]["selection"]);
+    // No personality and the home folder are saved as missing keys, as Swift does;
+    // a custom personality without text is none.
+    let cleared = engine
+        .execute(
+            "bots.patch",
+            &json!({"botId":ID,"baseline":saved["baseline"],"patch":{
+                "personality":{"custom":"   "},"folder":null}}),
+        )
+        .unwrap();
+    assert!(cleared["bot"].get("personality").is_none());
+    assert!(cleared["bot"].get("folder").is_none());
+    let custom = engine
+        .execute(
+            "bots.patch",
+            &json!({"botId":ID,"baseline":cleared["baseline"],"patch":{
+                "personality":{"custom":"Speak like a pirate."},"folder":"~/work"}}),
+        )
+        .unwrap();
+    assert_eq!(
+        custom["bot"]["personality"],
+        json!({"custom":"Speak like a pirate."})
+    );
+    assert_eq!(custom["bot"]["folder"], "~/work");
+    let created = engine
+        .execute(
+            "bots.save",
+            &json!({"baseline":custom["baseline"],"patch":{"name":"Teddy","persona":"",
+                "avatar":{"shape":"teddy","tint":"caramel"},"personality":{"preset":"mentor","custom":""}}}),
+        )
+        .unwrap();
+    assert_eq!(created["bot"]["avatar"]["shape"], "teddy");
+    assert_eq!(created["bot"]["personality"]["preset"], "mentor");
+    assert_eq!(created["bot"]["accessMode"], "approval");
 }

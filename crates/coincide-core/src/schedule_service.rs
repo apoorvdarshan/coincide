@@ -139,17 +139,27 @@ impl<'a> ScheduleService<'a> {
             .context("Schedule patch must be an object")?;
         for key in fields.keys() {
             ensure!(
-                ["name", "prompt", "recurrence"].contains(&key.as_str()),
+                ["name", "prompt", "recurrence", "projectID"].contains(&key.as_str()),
                 "Unsupported schedule patch field: {key}"
             );
         }
         let mut doc = self.load()?;
         let value = find_mut(&mut doc, id)?;
         let old_recurrence = value["recurrence"].clone();
+        let old_project = value["projectID"].clone();
         for (key, next) in fields {
             value[key] = next.clone();
         }
         let typed = task(value)?;
+        if value["projectID"] != old_project {
+            // A thread schedule belongs to its thread's project; only a
+            // project task, which starts a new thread each run, can move.
+            ensure!(
+                value["threadID"].is_null(),
+                "A thread schedule stays in its thread's project"
+            );
+            self.check_target(value)?;
+        }
         if fields.contains_key("recurrence") && old_recurrence != value["recurrence"] {
             check_future_once(&typed, now)?;
             value["nextRunAt"] = json!(typed.recurrence.next_after(now)?);
@@ -191,16 +201,20 @@ impl<'a> ScheduleService<'a> {
             }
         }
         let typed = task(value)?;
-        check_future_once(&typed, now)?;
+        // A one-time task that already ran keeps its spent date when only its
+        // name or prompt changes, as the macOS editor allows; it never rearms.
+        let spent_once = typed.recurrence.kind == "once"
+            && previous_recurrence == value["recurrence"]
+            && value["nextRunAt"].is_null()
+            && date_field(value, "lastFiredOccurrence")?.is_some();
+        if !spent_once {
+            check_future_once(&typed, now)?;
+        }
         self.check_target(value)?;
         value["awaitingApproval"] = json!(false);
         value["proposal"] = Value::Null;
         value["pendingDelivery"] = Value::Null;
-        value["nextRunAt"] = if typed.recurrence.kind == "once"
-            && previous_recurrence == value["recurrence"]
-            && value["nextRunAt"].is_null()
-            && date_field(value, "lastFiredOccurrence")?.is_some()
-        {
+        value["nextRunAt"] = if spent_once {
             Value::Null
         } else {
             json!(typed.recurrence.next_after(now)?)

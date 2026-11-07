@@ -92,6 +92,8 @@ pub(super) struct ScheduleEditor {
     // Validate/preview after timing changes or a minute passes; ordinary 150ms
     // UI polls must not repeat a potentially multi-year cron search.
     preview_key: Option<Value>,
+    /// The open Delete confirmation; a second Delete waits for its answer.
+    delete_prompt: Option<Task<()>>,
 }
 impl ScheduleEditor {
     pub fn subscriptions(&self, cx: &mut Context<Coincide>) -> Vec<Subscription> {
@@ -165,6 +167,7 @@ impl ScheduleEditor {
             interval: cx.new(|cx| InputState::new(window, cx).placeholder("30")),
             cron: cx.new(|cx| InputState::new(window, cx).placeholder("0 9 * * 1-5")),
             preview: String::new(),
+            delete_prompt: None,
             preview_key: None,
         }
     }
@@ -407,6 +410,48 @@ impl Coincide {
             self.schedule_editor.open = false;
         }
         self.refresh_schedules(cx);
+    }
+    /// Swift's ScheduleActions.confirmDelete: nothing is deleted until the
+    /// user picks Delete, and the guard snapshot is checked again then.
+    fn confirm_schedule_delete(
+        &mut self,
+        id: String,
+        expected: Value,
+        scope_epoch: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .schedule_editor
+            .delete_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+        {
+            return;
+        }
+        let Some(task) = self.schedules.iter().find(|task| task["id"] == id) else {
+            self.schedule_status = "Schedule no longer exists. Refresh and try again.".into();
+            cx.notify();
+            return;
+        };
+        let (message, detail) =
+            delete_confirmation(&text(task, "name"), task["threadID"].is_string());
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some(detail),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        self.schedule_editor.delete_prompt = Some(cx.spawn_in(window, async move |this, cx| {
+            if answer.await.unwrap_or(1) != 0 {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                this.schedule_action(&id, "schedules.delete", &expected, scope_epoch, cx)
+            })
+            .ok();
+        }));
     }
     pub(super) fn open_schedule_editor(
         &mut self,
@@ -1457,6 +1502,62 @@ impl Coincide {
                         "No schedules match."
                     }),
             );
+            if !approved {
+                let id = id.clone();
+                let expected = schedule_guard_snapshot(schedule);
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
+                        .label("Approve in Rust")
+                        .disabled(editing)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.schedule_action(&id, "approve", &expected, scope_epoch, cx)
+                        })),
+                );
+            }
+            for (action, label) in [
+                (
+                    if schedule["isPaused"] == true {
+                        "schedules.resume"
+                    } else {
+                        "schedules.pause"
+                    },
+                    if schedule["isPaused"] == true {
+                        "Resume"
+                    } else {
+                        "Pause"
+                    },
+                ),
+                ("schedules.run-now", "Run now"),
+                ("schedules.delete", "Delete…"),
+            ] {
+                if action == "schedules.run-now" && !approved {
+                    continue;
+                }
+                let id = id.clone();
+                let expected = schedule_guard_snapshot(schedule);
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("schedule-{action}-{id}")))
+                        .label(label)
+                        .disabled(
+                            action == "schedules.run-now"
+                                && (editing || schedule["isPaused"] == true),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if action == "schedules.delete" {
+                                this.confirm_schedule_delete(
+                                    id.clone(),
+                                    expected.clone(),
+                                    scope_epoch,
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                this.schedule_action(&id, action, &expected, scope_epoch, cx)
+                            }
+                        })),
+                );
+            }
+            content = content.child(card.child(actions));
         }
         let local_zone = coincide_core::scheduling::local_time_zone();
         let now = chrono::Utc::now();
@@ -1492,10 +1593,82 @@ fn check_schedule_revision(
     );
     Ok(())
 }
+/// The Delete alert's title and explanation, worded as Swift's. A task bound
+/// to one conversation keeps it; a project task keeps the threads it made.
+fn delete_confirmation(name: &str, has_thread: bool) -> (String, &'static str) {
+    (
+        format!("Delete scheduled task “{name}”?"),
+        if has_thread {
+            "The thread and the messages it already sent are kept. A running turn continues until you stop it."
+        } else {
+            "Existing threads are kept. A running thread continues until you stop it."
+        },
+    )
+}
+fn schedule_timing(recurrence: &Value) -> String {
+    let zone = text(recurrence, "timeZoneID");
+    let time = format!(
+        "{:02}:{:02} ({zone})",
+        recurrence["hour"].as_u64().unwrap_or(0),
+        recurrence["minute"].as_u64().unwrap_or(0)
+    );
+    let weekday = |day: u64| {
+        [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+        ]
+        .get(day.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("Unknown day")
+    };
+    match recurrence["kind"].as_str().unwrap_or("") {
+        "once" => format!("Once at {} · {zone}", schedule_date(&recurrence["date"])),
+        "interval" => format!(
+            "Every {} minutes · first run {}",
+            recurrence["intervalMinutes"],
+            schedule_date(&recurrence["date"])
+        ),
+        "daily" => format!("Daily at {time}"),
+        "weekly" => format!(
+            "Every {} at {time}",
+            weekday(recurrence["weekday"].as_u64().unwrap_or(0))
+        ),
+        "weekdays" => format!("Monday–Friday at {time}"),
+        "days" => format!(
+            "{} at {time}",
+            recurrence["weekdays"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .map(weekday)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        "cron" => format!("Cron {} ({zone})", text(recurrence, "cron")),
+        _ => "Unsupported timing".into(),
+    }
+}
 
 #[cfg(test)]
 mod global_schedule_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn delete_confirmation_names_the_task_and_says_what_is_kept() {
+        let (title, detail) = delete_confirmation("Morning review", true);
+        assert_eq!(title, "Delete scheduled task “Morning review”?");
+        assert!(detail.starts_with("The thread and the messages it already sent are kept."));
+        let (_, detail) = delete_confirmation("Weekly", false);
+        assert_eq!(
+            detail,
+            "Existing threads are kept. A running thread continues until you stop it."
+        );
+    }
     #[::core::prelude::v1::test]
     fn global_api_read_keeps_targets_and_native_cas_rejects_revision_or_target_changes() {
         let root = std::env::temp_dir().join(format!(

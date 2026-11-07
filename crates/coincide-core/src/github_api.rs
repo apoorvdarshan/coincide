@@ -1,12 +1,14 @@
 //! Bounded, read-only `gh pr list/view` service. Parent registers Engine routes.
 //! Never add writes or forward arbitrary argv, hostnames, queries or URLs here.
+//! Availability reads local Git and runs the fixed `gh auth status` for github.com.
+use crate::github_repository::Availability;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -42,6 +44,16 @@ impl GhRunner {
             executable,
             timeout: Duration::from_secs(15),
         })
+    }
+    /// Swift `GitHubCLI.isReady`: whether `gh auth status` succeeds for github.com.
+    /// Its output is discarded; only the exit status counts.
+    fn signed_in(&self, root: &Path, cancelled: &AtomicBool) -> Result<bool> {
+        let args = ["auth", "status", "--hostname", "github.com"].map(String::from);
+        match self.capture(root, &args, cancelled) {
+            Ok(_) => Ok(true),
+            Err(_) if cancelled.load(Ordering::Acquire) => bail!("GitHub operation cancelled"),
+            Err(_) => Ok(false),
+        }
     }
     #[cfg(windows)]
     pub(crate) fn capture(
@@ -132,10 +144,22 @@ impl GhRunner {
     }
 }
 #[cfg(unix)]
-struct ProcessGroup(std::process::Child);
+pub(crate) struct ProcessGroup(std::process::Child);
 #[cfg(unix)]
 impl ProcessGroup {
-    fn exited(&self) -> Result<Option<bool>> {
+    pub(crate) fn spawn(command: &mut std::process::Command) -> Result<Self> {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        Ok(Self(
+            command
+                .spawn()
+                .context("Unable to start owned local process")?,
+        ))
+    }
+    pub(crate) fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.0.stdout.take()
+    }
+    pub(crate) fn exited(&self) -> Result<Option<bool>> {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let result = unsafe {
             libc::waitid(
@@ -170,6 +194,13 @@ impl Drop for ProcessGroup {
     }
 }
 
+// Share native error interpretation with the Windows credential process owner.
+#[cfg(any(windows, test))]
+#[path = "credentials_process_custody.rs"]
+mod process_custody;
+#[cfg(any(windows, test))]
+#[path = "github_process_members.rs"]
+mod process_members;
 #[cfg(windows)]
 #[path = "github_api_windows.rs"]
 pub(crate) mod windows;
@@ -294,6 +325,10 @@ impl Read {
         args
     }
 }
+/// An `owner/name` the read service accepts for `--repo github.com/…`.
+pub(crate) fn valid_repository(value: &str) -> bool {
+    repository(value).is_ok()
+}
 fn repository(value: &str) -> Result<()> {
     let parts: Vec<_> = value.split('/').collect();
     ensure!(
@@ -324,7 +359,8 @@ struct Operation {
     result: Option<Value>,
 }
 /// Joined Rust read-worker ownership, independent of retained UI results.
-/// Process cleanup errors and the desktop write service are separate owners.
+/// Unknown native process cleanup keeps its read worker running; desktop writes
+/// remain independently owned.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReadShutdownStatus {
     pub closed: bool,
@@ -380,17 +416,36 @@ impl ReadWorkers {
 /// At most two executing workers, 32 retained operations, 120-second retention.
 /// Completion is collected only by the owning thread with the same stored root.
 pub struct GithubService {
-    runner: GhRunner,
+    runner: Option<GhRunner>,
+    /// Why there is no runner, reported by every read that needs `gh`.
+    unavailable: String,
+    /// When `gh auth status` last succeeded; Swift trusts it for five minutes.
+    signed_in: Arc<Mutex<Option<Instant>>>,
     operations: HashMap<String, Operation>,
     workers: ReadWorkers,
 }
 impl GithubService {
-    pub(crate) fn executable(&self) -> &Path {
-        &self.runner.executable
+    pub(crate) fn executable(&self) -> Result<&Path> {
+        Ok(&self.runner()?.executable)
+    }
+    fn runner(&self) -> Result<&GhRunner> {
+        self.runner
+            .as_ref()
+            .with_context(|| self.unavailable.clone())
     }
     pub fn new(runner: GhRunner) -> Self {
+        Self::with_runner(Some(runner), String::new())
+    }
+    /// Without `gh`, availability still reads the folder and reports that the
+    /// GitHub CLI is needed; list and detail reads fail with `reason`.
+    pub fn without_cli(reason: String) -> Self {
+        Self::with_runner(None, reason)
+    }
+    fn with_runner(runner: Option<GhRunner>, unavailable: String) -> Self {
         Self {
             runner,
+            unavailable,
+            signed_in: Arc::new(Mutex::new(None)),
             operations: HashMap::new(),
             workers: ReadWorkers::default(),
         }
@@ -492,6 +547,73 @@ impl GithubService {
             "github.repo.merge-methods" => Read::MergeMethods,
             _ => bail!("Unsupported read-only GitHub method"),
         };
+        let runner = self.runner()?.clone();
+        let owner = thread_id.to_owned();
+        self.spawn(thread_id, root, activity, move |root, cancel| {
+            let bytes = runner.capture(&root.path, &read.arguments(&repo), cancel)?;
+            // Detect directory replacement during the read, before accepting output.
+            ensure!(
+                root.same(&Root::bind(&root.path, &root.path)?),
+                "Project root changed"
+            );
+            snapshot(&bytes, &read, &repo, &owner, &root.path)
+        })
+    }
+    /// Swift `PullRequestService.availability` for the stored root, which the
+    /// parent has already found to be a directory: which github.com repository
+    /// it lists, or why it can't. Local Git and `gh auth status` run in a worker;
+    /// the reply's `expectedRoot` binds the result and every later read.
+    pub(crate) fn start_availability<G: Send + 'static>(
+        &mut self,
+        thread_id: &str,
+        stored_root: &Path,
+        activity: G,
+    ) -> Result<Value> {
+        self.workers.require_open()?;
+        uuid::Uuid::parse_str(thread_id)?;
+        let root = Root::bind(stored_root, stored_root)?;
+        let expected = root
+            .path
+            .to_str()
+            .context("Working directory is not UTF-8")?
+            .to_owned();
+        let runner = self.runner.clone();
+        let signed_in = self.signed_in.clone();
+        let owner = thread_id.to_owned();
+        let bound = expected.clone();
+        let mut reply = self.spawn(thread_id, root, activity, move |root, cancel| {
+            let mut availability = crate::github_repository::inspect(&root.path);
+            ensure!(
+                !cancel.load(Ordering::Acquire),
+                "GitHub operation cancelled"
+            );
+            if matches!(availability, Availability::Ready(_))
+                && !gh_ready(runner.as_ref(), &signed_in, &root.path, cancel)?
+            {
+                availability = Availability::NeedsGitHubCli;
+            }
+            ensure!(
+                root.same(&Root::bind(&root.path, &root.path)?),
+                "Project root changed"
+            );
+            let mut value = availability.to_json();
+            value["kind"] = json!("availability");
+            value["threadId"] = json!(owner);
+            value["expectedRoot"] = json!(bound);
+            Ok(value)
+        })?;
+        reply["expectedRoot"] = json!(expected);
+        Ok(reply)
+    }
+    /// Runs `work` in a tracked worker whose one result only `thread_id`, with the
+    /// same root, can collect.
+    fn spawn<G: Send + 'static>(
+        &mut self,
+        thread_id: &str,
+        root: Root,
+        activity: G,
+        work: impl FnOnce(&Root, &AtomicBool) -> Result<Value> + Send + 'static,
+    ) -> Result<Value> {
         self.collect();
         ensure!(
             self.operations.len() < 32,
@@ -505,27 +627,12 @@ impl GithubService {
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        let runner = self.runner.clone();
         let worker_root = root.clone();
-        let owner = thread_id.to_owned();
         let worker = std::thread::Builder::new()
             .name("github-read".into())
             .spawn(move || {
                 let _activity = activity;
-                let result = (|| {
-                    let bytes = runner.capture(
-                        &worker_root.path,
-                        &read.arguments(&repo),
-                        &worker_cancel,
-                    )?;
-                    // Detect directory replacement during the read, before accepting output.
-                    ensure!(
-                        worker_root.same(&Root::bind(&worker_root.path, &worker_root.path)?),
-                        "Project root changed"
-                    );
-                    snapshot(&bytes, &read, &repo, &owner, &worker_root.path)
-                })();
-                let value = match result {
+                let value = match work(&worker_root, &worker_cancel) {
                     Ok(value) => value,
                     Err(error) => failure(&error),
                 };
@@ -588,6 +695,28 @@ impl Drop for GithubService {
         }
     }
 }
+/// `gh auth status` for github.com, trusted for five minutes once it succeeds, as
+/// Swift caches it. A signed-out answer is asked again next time.
+fn gh_ready(
+    runner: Option<&GhRunner>,
+    cache: &Mutex<Option<Instant>>,
+    root: &Path,
+    cancelled: &AtomicBool,
+) -> Result<bool> {
+    let Some(runner) = runner else {
+        return Ok(false);
+    };
+    let fresh = |at: &Option<Instant>| at.is_some_and(|at| at.elapsed() < SIGNED_IN_AGE);
+    if cache.lock().is_ok_and(|at| fresh(&at)) {
+        return Ok(true);
+    }
+    let ready = runner.signed_in(root, cancelled)?;
+    if ready && let Ok(mut at) = cache.lock() {
+        *at = Some(Instant::now());
+    }
+    Ok(ready)
+}
+const SIGNED_IN_AGE: Duration = Duration::from_secs(300);
 fn failure(error: &anyhow::Error) -> Value {
     // Never expose raw child stderr, command output, URLs/configuration or OS errors.
     let message = error.to_string();
@@ -1010,7 +1139,6 @@ mod tests {
         let runner = GhRunner::new(path).unwrap();
         (dir, runner)
     }
-    #[cfg(unix)]
     fn wait(service: &mut GithubService, owner: &str, root: &Path, id: &str) -> Value {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
@@ -1125,6 +1253,101 @@ mod tests {
             wait(&mut service, &owner, &root, &id)["code"],
             "head_changed"
         );
+    }
+    fn availability(service: &mut GithubService, owner: &str, root: &Path) -> Value {
+        let reply = service.start_availability(owner, root, ()).unwrap();
+        assert_eq!(reply["expectedRoot"], root.to_str().unwrap());
+        wait(service, owner, root, reply["operationId"].as_str().unwrap())
+    }
+    #[cfg(unix)]
+    #[test]
+    fn availability_asks_gh_auth_status_last_and_remembers_a_sign_in() {
+        let (dir, runner) = fake("printf '%s\\n' \"$@\" >> argv.txt\ntest -f signed-in");
+        let root = dir.path().canonicalize().unwrap();
+        let mut service = GithubService::new(runner);
+        let owner = uuid::Uuid::new_v4().to_string();
+        // Git decides first; gh is never asked about a folder it can't list.
+        assert_eq!(
+            availability(&mut service, &owner, &root)["state"],
+            "notRepository"
+        );
+        assert!(!root.join("argv.txt").exists());
+        crate::workspace::git(&root, &["init", "-q"]).unwrap();
+        let remote = [
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/project.git",
+        ];
+        crate::workspace::git(&root, &remote).unwrap();
+        let result = availability(&mut service, &owner, &root);
+        assert_eq!(result["state"], "needsGitHubCli");
+        assert_eq!(
+            std::fs::read_to_string(root.join("argv.txt")).unwrap(),
+            "auth\nstatus\n--hostname\ngithub.com\n"
+        );
+        std::fs::write(root.join("signed-in"), "").unwrap();
+        let result = availability(&mut service, &owner, &root);
+        assert_eq!(
+            result,
+            json!({"kind":"availability","threadId":owner,"expectedRoot":root,
+                "state":"ready","repository":"owner/project"})
+        );
+        // A sign-in is trusted for five minutes without running gh again.
+        std::fs::remove_file(root.join("argv.txt")).unwrap();
+        assert_eq!(availability(&mut service, &owner, &root)["state"], "ready");
+        assert!(!root.join("argv.txt").exists());
+        // Only the owning thread collects it.
+        let reply = service.start_availability(&owner, &root, ()).unwrap();
+        let other = uuid::Uuid::new_v4().to_string();
+        let id = reply["operationId"].as_str().unwrap();
+        assert!(service.result(&other, &root, &root, id).is_err());
+    }
+    #[test]
+    fn availability_without_gh_still_reads_git_and_says_gh_is_needed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let reason = "GitHub CLI not found; install gh";
+        let mut service = GithubService::without_cli(reason.into());
+        let owner = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            availability(&mut service, &owner, &root)["state"],
+            "notRepository"
+        );
+        crate::workspace::git(&root, &["init", "-q"]).unwrap();
+        assert_eq!(
+            availability(&mut service, &owner, &root)["state"],
+            "noRemote"
+        );
+        let remote = [
+            "remote",
+            "add",
+            "origin",
+            "git@gitlab.com:group/project.git",
+        ];
+        crate::workspace::git(&root, &remote).unwrap();
+        assert_eq!(
+            availability(&mut service, &owner, &root),
+            json!({"kind":"availability","threadId":owner,"expectedRoot":root,
+                "state":"unsupportedHost","host":"GitLab","selfHosted":false})
+        );
+        crate::workspace::git(
+            &root,
+            &["remote", "set-url", "origin", "git@github.com:o/p.git"],
+        )
+        .unwrap();
+        assert_eq!(
+            availability(&mut service, &owner, &root)["state"],
+            "needsGitHubCli"
+        );
+        let params = json!({"threadId":owner,"expectedRoot":root,"repository":"o/p"});
+        let error = service
+            .start(&owner, &root, "github.pr.list", &params)
+            .unwrap_err();
+        assert_eq!(error.to_string(), reason);
+        assert_eq!(service.executable().unwrap_err().to_string(), reason);
+        let missing = root.join("missing");
+        assert!(service.start_availability(&owner, &missing, ()).is_err());
     }
     #[cfg(unix)]
     #[test]

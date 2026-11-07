@@ -3,7 +3,7 @@
 use super::*;
 use crate::inspector_preferences::{self as preferences, Panel};
 const DOCUMENT: &str = "ui-state.json";
-fn read_ui_state(db: &Connection) -> Result<Option<Value>> {
+pub(super) fn read_ui_state(db: &Connection) -> Result<Option<Value>> {
     const LIMIT: i64 = 2 * 1024 * 1024;
     let local:Option<(Option<Vec<u8>>,i64)>=db.query_row("SELECT CASE WHEN length(CAST(document AS BLOB))<=?1 THEN CAST(document AS BLOB) ELSE NULL END,length(CAST(document AS BLOB)) FROM documents WHERE name='ui-state.json'",[LIMIT],|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
     let captured = if local.is_some() {

@@ -4,7 +4,7 @@
 an acknowledged private sink. It is compiled by the desktop integration test
 harness and mounted in main.rs/browser.rs. The macOS WebKit bridge has passed
 synthetic native renderer acceptance; see [the evidence](NATIVE_CREDENTIAL_ACCEPTANCE.md).
-Native manager/approval visual acceptance remains separate. Passkeys remain unavailable.
+Native manager/approval visual acceptance remains separate. Passkeys are separate; see PASSKEYS.md.
 
 Owner integration steps:
 
@@ -49,7 +49,8 @@ Coordinator validation requested:
 
 Native approval accessibility/keyboard acceptance remains pending. Actual macOS, WebKitGTK and WebView2 filling passed the linked synthetic
 acceptance; supported private browser sinks are enabled. Windows vault CLI
-execution remains a separate platform limitation. This is not real-account or complete workflow acceptance.
+execution has a separate owned-process transport and synthetic helper gates, documented
+in [WINDOWS_VAULT_CLI.md](WINDOWS_VAULT_CLI.md). This is not real-account or complete workflow acceptance.
 
 ## Native manager/account panel
 

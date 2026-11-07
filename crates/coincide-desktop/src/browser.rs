@@ -22,6 +22,12 @@ mod native_downloads;
 mod native_history;
 #[path = "browser_native_keys.rs"]
 mod native_keys;
+#[path = "browser_tab_shortcuts_native.rs"]
+mod native_tab_shortcuts;
+// WebView2 and WebKitGTK get no Coincide passkey script; see the module.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[path = "browser_passkeys.rs"]
+pub(crate) mod passkeys;
 #[path = "browser_press.rs"]
 mod press;
 #[path = "browser_private_profiles.rs"]
@@ -32,6 +38,8 @@ mod screenshot_native;
 mod screenshots;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
+#[path = "browser_user_turn.rs"]
+pub mod user_turn;
 pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
 pub use shutdown::BrowserShutdownStatus;
 use shutdown::TrackedEvaluation;
@@ -59,22 +67,45 @@ use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
 };
+
+/// The folder a local file the user opened in a tab may read, as Swift's
+/// `fileRoot`: native navigation allows file URLs inside it only.
+type FileRoot = Arc<Mutex<Option<PathBuf>>>;
+
+fn file_navigation_allowed(root: &FileRoot, address: &str) -> bool {
+    root.lock().ok().is_some_and(|mut root| {
+        // Remote documents must not inherit the user's local folder grant.
+        if coincide_core::browser_protocol::allow_native_navigation(address) {
+            *root = None;
+            return false;
+        }
+        root.as_deref().is_some_and(|root| {
+            coincide_core::browser_address::file_navigation_allowed(address, root)
+        })
+    })
+}
 use uuid::Uuid;
 #[cfg(target_os = "macos")]
-use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
+use wry::{WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
     credential: Option<credential_bridge::NativeCredentialTarget>,
+    /// The navigation epoch plus one of the document that last asked for a
+    /// passkey Coincide couldn't provide, for the agent's `read`.
+    passkey_requested: Arc<AtomicU64>,
+    #[cfg(target_os = "macos")]
+    _passkeys: Option<passkeys::Bridge>,
     keys: native_keys::Target,
+    tab_shortcuts: Option<native_tab_shortcuts::Target>,
     dialogs: dialogs::Dialogs,
     id: String,
     view: Entity<WebView>,
@@ -88,6 +119,9 @@ struct Tab {
     /// Linux Wry queues scripts before the first commit and drops their
     /// callbacks, so tracked evaluations wait for that commit.
     scripts_ready: Arc<AtomicBool>,
+    file_root: FileRoot,
+    /// A fixed CSS viewport an agent asked for; None fills the panel.
+    viewport: Option<(u32, u32)>,
 }
 impl Tab {
     fn ensure_scripts_ready(&self) -> Result<()> {
@@ -130,8 +164,13 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    TabShortcut {
+        source: crate::browser_tab_shortcuts::Source,
+        command: crate::browser_tab_shortcuts::Command,
+    },
     Press(press::Event),
     DialogChanged,
+    PasskeysChanged,
     DownloadsChanged,
     UploadProbe {
         id: String,
@@ -191,11 +230,17 @@ pub struct BrowserController {
     native_downloads: Vec<Rc<native_downloads::Owner>>,
     dialog_inputs: HashMap<String, Entity<InputState>>,
     credential_targets: Vec<credential_bridge::NativeCredentialTarget>,
+    passkeys: passkeys::Passkeys,
     presses: HashMap<String, press::Pending>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
+    user_turns: user_turn::UserTurns,
+    tab_shortcuts: VecDeque<(
+        crate::browser_tab_shortcuts::Source,
+        crate::browser_tab_shortcuts::Command,
+    )>,
     screenshots: screenshots::Owner,
     shutdown: shutdown::Shutdown,
 }
@@ -243,6 +288,14 @@ impl BrowserController {
         let default_id = None;
         let profiles = ProfileCatalog::open(profile_dir.clone(), default_id)?;
         let (sender, events) = mpsc::sync_channel(512);
+        let passkey_sender = sender.clone();
+        let shutdown = shutdown::Shutdown::default();
+        let passkeys = passkeys::Passkeys::new(
+            move || {
+                let _ = passkey_sender.try_send(NativeEvent::PasskeysChanged);
+            },
+            shutdown.callbacks.clone(),
+        );
         Ok(Self {
             tabs: HashMap::new(),
             active: HashMap::new(),
@@ -261,13 +314,16 @@ impl BrowserController {
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(download_dir)?)),
             dialog_inputs: HashMap::new(),
             credential_targets: Vec::new(),
+            passkeys,
             presses: HashMap::new(),
             scripts: HashMap::new(),
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
+            user_turns: user_turn::UserTurns::default(),
+            tab_shortcuts: VecDeque::new(),
             screenshots: screenshots::Owner::new(profile_dir.join("screenshots")),
-            shutdown: shutdown::Shutdown::default(),
+            shutdown,
         })
     }
 
@@ -277,6 +333,9 @@ impl BrowserController {
             return;
         }
         self.shutdown.close();
+        self.tab_shortcuts.clear();
+        // Waiting pages are refused now; `bw` workers stay tracked until joined.
+        self.passkeys.shutdown();
         self.screenshots.close();
         for owner in &self.native_downloads {
             owner.close();
@@ -288,6 +347,7 @@ impl BrowserController {
         for tabs in self.tabs.values_mut() {
             for tab in tabs {
                 tab.keys.close();
+                tab.tab_shortcuts.take();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
                 if let Some(target) = &tab.credential {
@@ -305,6 +365,7 @@ impl BrowserController {
         self.uploads.clear();
         self.waits.clear();
         self.presses.clear();
+        let _ = self.user_turns.cancel_all();
         self.replies.clear();
         for _ in self.events.try_iter() {}
     }
@@ -332,6 +393,36 @@ impl BrowserController {
             views,
             self.contexts.len() + self.private_profiles.owned_contexts(),
         )
+    }
+    /// Native user revocation invalidates staged work without pretending that
+    /// already-dispatched renderer actions or callbacks have been undone/drained.
+    pub(super) fn revoke_agent_control(&mut self, thread: &str) {
+        if let Some(finished) = self
+            .user_turns
+            .finish(thread, user_turn::Outcome::Cancelled)
+        {
+            self.finish_user_turn(finished);
+        }
+        if let Some(tabs) = self.tabs.get_mut(thread) {
+            for tab in tabs {
+                tab.navigation.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        for (id, wait) in std::mem::take(&mut self.waits) {
+            if wait.request.thread_id == thread {
+                self.finish_wait(wait, json!({"error":"Agent Control was turned off"}));
+            } else {
+                self.waits.insert(id, wait);
+            }
+        }
+        for (id, upload) in std::mem::take(&mut self.uploads) {
+            if upload.request.thread_id == thread {
+                self.replies.push_back(BrowserReply { id: upload.request.id.clone(), thread_id: thread.into(), result: json!({"error":"Agent Control was turned off; upload completion is unconfirmed"}) });
+                // Drop cancels the owned upload worker; its real custody remains tracked.
+            } else {
+                self.uploads.insert(id, upload);
+            }
+        }
     }
     pub fn execute(&mut self, request: BrowserRequest, window: &mut Window, cx: &mut App) {
         if self.shutdown.callbacks.closed() {
@@ -391,6 +482,28 @@ impl BrowserController {
                     self.set_thread_visible(None, cx);
                 }
                 return Ok(Some(json!({"visible":false})));
+            }
+            BrowserAction::AskUser { message, timeout } => {
+                // The banner needs a browser to show in, as Swift's session.
+                if self.tabs.get(thread).is_none_or(Vec::is_empty) {
+                    self.create_tab(thread, "about:blank", window, cx)?;
+                }
+                if let Some(old) = self.user_turns.ask(
+                    request.id.clone(),
+                    thread,
+                    message,
+                    *timeout,
+                    Instant::now(),
+                ) {
+                    self.finish_user_turn(old);
+                }
+                return Ok(None);
+            }
+            BrowserAction::FillLogin { .. } => {
+                anyhow::bail!("Saved login requests require the native approval workflow")
+            }
+            BrowserAction::Search { .. } => {
+                anyhow::bail!("Search must be resolved by the engine before reaching the browser")
             }
             _ => {}
         }
@@ -590,6 +703,28 @@ impl BrowserController {
                 );
                 Ok(None)
             }
+            BrowserAction::Viewport { .. } => {
+                let size = request.action.viewport_size().context("Invalid viewport")?;
+                let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
+                tab.viewport = size;
+                if let Some((width, height)) = size
+                    && self.visible.as_deref() != Some(thread.as_str())
+                {
+                    // A hidden page still gets its testing size, as Swift's
+                    // parked web view does; the panel lays out a visible one.
+                    let _ = tab.view.read(cx).set_bounds(wry::Rect {
+                        position: wry::dpi::LogicalPosition::new(0., 0.).into(),
+                        size: wry::dpi::LogicalSize::new(f64::from(width), f64::from(height))
+                            .into(),
+                    });
+                }
+                Ok(Some(match size {
+                    Some((width, height)) => {
+                        json!({"width":width,"height":height,"mode":"fixed","tab":target})
+                    }
+                    None => json!({"mode":"panel","tab":target}),
+                }))
+            }
             BrowserAction::Console { clear } => {
                 let tab = &self.tabs[thread][index];
                 let mut result = tab.console.borrow_mut().read(*clear);
@@ -633,6 +768,10 @@ impl BrowserController {
                 let tabs = self.tabs.get_mut(thread).context("No such thread")?;
                 let removed = tabs.remove(index);
                 removed.navigation.fetch_add(1, Ordering::AcqRel);
+                if let Ok(mut root) = removed.file_root.lock() {
+                    *root = None;
+                }
+                self.passkeys.closed(thread, &target);
                 removed.view.update(cx, |view, _| view.hide());
                 if self.active.get(thread) == Some(&target) {
                     if let Some(tab) = tabs.last() {
@@ -670,6 +809,8 @@ impl BrowserController {
                 let navigation = self.tabs[thread][index].navigation.clone();
                 let epoch = navigation.load(Ordering::Acquire);
                 let click = matches!(&request.action, BrowserAction::Click { .. });
+                let read = matches!(&request.action, BrowserAction::Read { .. });
+                let passkey_requested = self.tabs[thread][index].passkey_requested.clone();
                 let mutating = !matches!(
                     &request.action,
                     BrowserAction::Read { .. } | BrowserAction::Frames
@@ -684,12 +825,18 @@ impl BrowserController {
                         if callback_completed.swap(true, Ordering::AcqRel) {
                             return;
                         }
-                        let result = public_script_reply(
+                        let mut result = public_script_reply(
                             &payload,
                             navigation.load(Ordering::Acquire) == epoch,
                             protected.load(Ordering::Acquire),
                             click,
                         );
+                        if read
+                            && result.get("error").is_none()
+                            && passkey_requested.load(Ordering::Acquire) == epoch + 1
+                        {
+                            result["passkey"] = json!(coincide_core::passkeys::AGENT_NOTE);
+                        }
                         let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
                             id: id.clone(),
                             thread_id: thread_id.clone(),
@@ -762,8 +909,12 @@ impl BrowserController {
         let navigation_handler = navigation.clone();
         #[cfg(not(target_os = "linux"))]
         let navigation_closed = self.shutdown.callbacks.closed.clone();
+        let file_root: FileRoot = Arc::new(Mutex::new(None));
+        #[cfg(not(target_os = "linux"))]
+        let navigation_root = file_root.clone();
         let load_navigation = navigation.clone();
         let load_closed = self.shutdown.callbacks.closed.clone();
+        let passkey_requested = Arc::new(AtomicU64::new(0));
         let profile = self.profiles.selected(thread);
         let profile_key = profile.key(thread);
         if let ProfileChoice::Persistent(id) = &profile {
@@ -882,8 +1033,9 @@ impl BrowserController {
             });
         #[cfg(not(target_os = "linux"))]
         let builder = builder.with_navigation_handler(move |url| {
-            let allowed =
-                !navigation_closed.load(Ordering::Acquire) && allow_native_navigation(&url);
+            let allowed = !navigation_closed.load(Ordering::Acquire)
+                && (file_navigation_allowed(&navigation_root, &url)
+                    || allow_native_navigation(&url));
             if allowed {
                 navigation_handler.fetch_add(1, Ordering::AcqRel);
             }
@@ -898,47 +1050,109 @@ impl BrowserController {
                 builder
             }
         };
+        // A configuration of Coincide's own for every profile, so the passkey
+        // scripts and handlers exist before WebKit creates the first document.
+        // Wry then takes this configuration's store instead of choosing one, so
+        // the store is chosen here as Wry chooses it.
         #[cfg(target_os = "macos")]
-        let builder = match &profile {
-            ProfileChoice::Persistent(id) => builder.with_data_store_identifier(*id.as_bytes()),
-            ProfileChoice::Private => {
-                let mtm = MainThreadMarker::new()
-                    .context("Private browser store requires the native UI thread")?;
+        let (builder, passkey_bridge, expected_store) = {
+            let mtm = MainThreadMarker::new()
+                .context("Native browser views require the native UI thread")?;
+            let store = match &profile {
+                ProfileChoice::Persistent(id) if persistent_profiles_available() => unsafe {
+                    WKWebsiteDataStore::dataStoreForIdentifier(
+                        &objc2_foundation::NSUUID::from_bytes(*id.as_bytes()),
+                        mtm,
+                    )
+                },
+                ProfileChoice::Persistent(_) => unsafe {
+                    WKWebsiteDataStore::defaultDataStore(mtm)
+                },
                 // Wry's ordinary incognito option creates a separate store per
                 // view. Retain one native ephemeral store for this thread.
-                let store = self
+                ProfileChoice::Private => self
                     .private_stores
                     .entry(profile_key.clone())
-                    .or_insert_with(|| unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) });
-                let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
-                unsafe {
-                    configuration.setWebsiteDataStore(store);
-                }
-                builder.with_webview_configuration(configuration)
+                    .or_insert_with(|| unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) })
+                    .clone(),
+            };
+            let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
+            unsafe {
+                configuration.setWebsiteDataStore(&store);
             }
+            // Apps signed with Apple's browser passkey entitlement reach the
+            // system's passkey sheet instead, as in the Swift app.
+            let bridge = if passkeys::platform_passkeys_available() {
+                None
+            } else {
+                passkeys::install(
+                    &configuration,
+                    &id,
+                    self.passkeys.channel(),
+                    navigation.clone(),
+                    passkey_requested.clone(),
+                )
+            };
+            (
+                builder.with_webview_configuration(configuration),
+                bridge,
+                store,
+            )
         };
         // Failed native construction may have created SDK resources. Keep
         // release Unknown; neither an error nor private verification is teardown.
         self.shutdown.ever_native = true;
         let view = WebView::build(builder, window, cx)?;
+        // Every profile's view must use exactly the store chosen above.
+        #[cfg(target_os = "macos")]
+        unsafe {
+            let actual = view.raw().webview().configuration().websiteDataStore();
+            ensure!(
+                Retained::as_ptr(&actual) == Retained::as_ptr(&expected_store),
+                "Native browser changed this thread's store"
+            );
+        }
         if matches!(profile, ProfileChoice::Private) {
             self.private_profiles.verify(thread, view.raw())?;
-            #[cfg(target_os = "macos")]
-            unsafe {
-                let actual = view.raw().webview().configuration().websiteDataStore();
-                let expected = self
-                    .private_stores
-                    .get(&profile_key)
-                    .context("Private native browser store missing")?;
-                ensure!(
-                    Retained::as_ptr(&actual) == Retained::as_ptr(expected),
-                    "Native private browser changed this thread's store"
-                );
-            }
         }
         let credential =
             credential_bridge::NativeCredentialTarget::new(view.raw(), navigation.clone())
                 .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()));
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::glib::prelude::Cast;
+            use webkit2gtk::{
+                NavigationPolicyDecision, NavigationPolicyDecisionExt, PolicyDecisionExt,
+                PolicyDecisionType, URIRequestExt, WebViewExt,
+            };
+            use wry::WebViewExtUnix;
+            // Connected before the downloads owner's policy, which refuses
+            // every non-HTTP(S) navigation: admit only file URLs inside the
+            // folder of a file the user opened, and defer everything else.
+            let root = file_root.clone();
+            let closed = self.shutdown.callbacks.closed.clone();
+            let file_navigation = navigation.clone();
+            view.raw()
+                .webview()
+                .connect_decide_policy(move |_, decision, kind| {
+                    if kind != PolicyDecisionType::NavigationAction
+                        || closed.load(Ordering::Acquire)
+                    {
+                        return false;
+                    }
+                    let address = decision
+                        .downcast_ref::<NavigationPolicyDecision>()
+                        .and_then(|policy| policy.navigation_action())
+                        .and_then(|action| action.request())
+                        .and_then(|request| request.uri());
+                    if address.is_some_and(|address| file_navigation_allowed(&root, &address)) {
+                        file_navigation.fetch_add(1, Ordering::AcqRel);
+                        decision.use_();
+                        return true;
+                    }
+                    false
+                });
+        }
         {
             let sender = self.sender.clone();
             self.native_downloads.push(native_downloads::Owner::install(
@@ -955,6 +1169,28 @@ impl BrowserController {
             )?);
         }
         let keys = native_keys::Target::install(view.raw(), &self.shutdown.callbacks);
+        let shortcut_sender = self.sender.clone();
+        let shortcut_thread = thread.to_owned();
+        let shortcut_tab = id.clone();
+        let tab_shortcuts = native_tab_shortcuts::Target::install(
+            view.raw(),
+            &self.shutdown.callbacks,
+            navigation.clone(),
+            move |command, epoch, url| {
+                shortcut_sender
+                    .try_send(NativeEvent::TabShortcut {
+                        source: crate::browser_tab_shortcuts::Source {
+                            thread: shortcut_thread.clone(),
+                            tab: shortcut_tab.clone(),
+                            epoch,
+                            url,
+                        },
+                        command,
+                    })
+                    .is_ok()
+            },
+        )
+        .ok();
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
             view.raw(),
@@ -985,7 +1221,11 @@ impl BrowserController {
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
             credential,
+            passkey_requested,
+            #[cfg(target_os = "macos")]
+            _passkeys: passkey_bridge,
             keys,
+            tab_shortcuts,
             dialogs,
             id: id.clone(),
             view,
@@ -997,6 +1237,8 @@ impl BrowserController {
             snapshot_console_suppressed,
             navigation,
             scripts_ready,
+            file_root,
+            viewport: None,
         });
         self.shutdown.ever_native = true;
         self.active.insert(thread.into(), id.clone());
@@ -1034,8 +1276,15 @@ impl BrowserController {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::TabShortcut { source, command } => {
+                    if self.tab_shortcuts.len() < 32 && self.shortcut_source_current(&source, cx) {
+                        self.tab_shortcuts.push_back((source, command));
+                    }
+                }
                 NativeEvent::Press(event) => self.press_event(event),
-                NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
+                NativeEvent::DialogChanged
+                | NativeEvent::DownloadsChanged
+                | NativeEvent::PasskeysChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
                     if let Some(upload) = self.uploads.get_mut(&id) {
                         if upload.ticket != ticket {
@@ -1117,13 +1366,16 @@ impl BrowserController {
                     url,
                     loading,
                 } => {
-                    if let Some(tab) = self
+                    if let Some(entry) = self
                         .tabs
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
-                        tab.url = url;
-                        tab.loading = loading;
+                        if !loading {
+                            self.passkeys.navigated(&thread, &tab, &url);
+                        }
+                        entry.url = url;
+                        entry.loading = loading;
                     }
                 }
                 NativeEvent::Popup { thread, url } => {
@@ -1131,6 +1383,11 @@ impl BrowserController {
                 }
             }
         }
+        for finished in self.user_turns.expire(Instant::now()) {
+            self.finish_user_turn(finished);
+            changed = true;
+        }
+        changed |= self.poll_passkeys();
         changed |= self.poll_dialogs(window, cx);
         changed |= self.poll_presses(cx);
         changed |= self.poll_uploads(cx);
@@ -1506,6 +1763,75 @@ impl BrowserController {
         Ok(())
     }
 
+    /// The page scripts' reports and the `bw` workers' results, for every tab.
+    fn poll_passkeys(&mut self) -> bool {
+        let Self {
+            tabs,
+            active,
+            visible,
+            passkeys,
+            shutdown,
+            ..
+        } = self;
+        let (active, visible) = (&*active, &*visible);
+        let states: Vec<passkeys::TabState> = tabs
+            .iter()
+            .flat_map(|(thread, list)| {
+                list.iter().map(move |tab| passkeys::TabState {
+                    thread,
+                    tab: &tab.id,
+                    url: &tab.url,
+                    shown: visible.as_deref() == Some(thread.as_str())
+                        && active.get(thread) == Some(&tab.id),
+                })
+            })
+            .collect();
+        passkeys.poll(&states, &mut |worker| shutdown.track(worker))
+    }
+
+    /// Settings › Browser › Passwords and the notice's ×. True when the pane
+    /// should redraw.
+    pub fn set_passkey_preferences(&mut self, preferences: passkeys::Preferences) -> bool {
+        self.passkeys.set_preferences(preferences)
+    }
+    pub fn set_passkey_vault(
+        &mut self,
+        vault: Option<Arc<dyn coincide_core::passkeys::PasskeyVault + Send + Sync>>,
+    ) {
+        self.passkeys.set_vault(vault);
+    }
+    /// The Bitwarden sign-in prompt for the thread's shown tab.
+    pub fn passkey_prompt(&self, thread: &str) -> Option<passkeys::PromptView> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
+        self.passkeys.prompt(thread, self.active.get(thread)?)
+    }
+    pub fn select_passkey_account(&mut self, id: u64, index: usize) -> bool {
+        self.passkeys.select(id, index)
+    }
+    pub fn answer_passkey_prompt(&mut self, id: u64, accept: bool) -> bool {
+        let Self {
+            passkeys, shutdown, ..
+        } = self;
+        passkeys.answer(id, accept, &mut |worker| shutdown.track(worker))
+    }
+    pub fn passkey_notice(&self, thread: &str) -> Option<(String, Option<&'static str>)> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
+        self.passkeys.notice(thread, self.active.get(thread)?)
+    }
+    /// "Open in Default Browser": the page to open, an http(s) address only.
+    pub fn open_passkey_notice(&mut self, thread: &str) -> Option<String> {
+        let tab = self.passkeys.open_notice(thread)?;
+        let url = &self.tabs.get(thread)?.iter().find(|t| t.id == tab)?.url;
+        coincide_core::passkeys::page_host(url).map(|_| url.clone())
+    }
+    pub fn dismiss_passkey_notice(&mut self, thread: &str) {
+        self.passkeys.dismiss_notice(thread);
+    }
+
     /// Native parent hook only. Do not register this capability as an agent action.
     pub fn credential_fill_available(&self) -> bool {
         !self.shutdown.callbacks.closed() && credential_bridge::credential_fill_available()
@@ -1533,7 +1859,9 @@ impl BrowserController {
     }
 
     /// Drain only the selected thread's native workflow receiver. Never return
-    /// FillJob or completion errors through BrowserReply or console machinery.
+    /// FillJob, secrets or raw completion errors through BrowserReply or console
+    /// machinery. The native approval owner separately emits only a fixed,
+    /// coarse browser-request result after actual acknowledgement.
     pub fn drain_credential_fills(
         &mut self,
         thread: &str,
@@ -1631,6 +1959,115 @@ impl BrowserController {
     pub fn drain_replies(&mut self) -> Vec<BrowserReply> {
         self.replies.drain(..).collect()
     }
+    pub fn shortcut_source(
+        &self,
+        thread: &str,
+        cx: &App,
+    ) -> Option<crate::browser_tab_shortcuts::Source> {
+        if self.shutdown.callbacks.closed() || self.visible.as_deref() != Some(thread) {
+            return None;
+        }
+        let active = self.active.get(thread)?;
+        let tab = self
+            .tabs
+            .get(thread)?
+            .iter()
+            .find(|tab| &tab.id == active)?;
+        Some(crate::browser_tab_shortcuts::Source {
+            thread: thread.into(),
+            tab: tab.id.clone(),
+            epoch: tab.navigation.load(Ordering::Acquire),
+            url: shortcut_native_address(tab.view.read(cx).raw()),
+        })
+    }
+    pub fn shortcut_source_current(
+        &self,
+        source: &crate::browser_tab_shortcuts::Source,
+        cx: &App,
+    ) -> bool {
+        self.shortcut_source(&source.thread, cx)
+            .is_some_and(|current| {
+                source.matches(
+                    &current.thread,
+                    &current.tab,
+                    current.epoch,
+                    current.url.as_deref(),
+                )
+            })
+    }
+    pub fn focus_active_native(&self, thread: &str, cx: &App) -> Result<()> {
+        let view = self
+            .active_view(thread)
+            .ok_or_else(|| anyhow::anyhow!("Browser tab unavailable"))?;
+        native_tab_shortcuts::focus(view.read(cx).raw())
+    }
+    pub fn native_shortcut_focused(
+        &self,
+        source: &crate::browser_tab_shortcuts::Source,
+        cx: &App,
+    ) -> bool {
+        self.shortcut_source_current(source, cx)
+            && self
+                .tabs
+                .get(&source.thread)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == source.tab))
+                .is_some_and(|tab| {
+                    tab.tab_shortcuts
+                        .as_ref()
+                        .is_some_and(|target| target.focused(tab.view.read(cx).raw()))
+                })
+    }
+    pub fn drain_tab_shortcuts(
+        &mut self,
+    ) -> Vec<(
+        crate::browser_tab_shortcuts::Source,
+        crate::browser_tab_shortcuts::Command,
+    )> {
+        self.tab_shortcuts.drain(..).collect()
+    }
+    /// A native/chrome user key applies synchronously through the same typed
+    /// owner path as the UI/API. No queued action can outlive its source binding.
+    pub fn apply_tab_shortcut(
+        &mut self,
+        source: &crate::browser_tab_shortcuts::Source,
+        command: crate::browser_tab_shortcuts::Command,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<bool> {
+        use crate::browser_tab_shortcuts::{self as shortcuts, Command};
+        ensure!(
+            self.shortcut_source_current(source, cx),
+            "Browser shortcut source changed"
+        );
+        let ids = self.tabs[&source.thread]
+            .iter()
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        let last = ids.len() == 1;
+        let (action, tab) = match command {
+            Command::New => (BrowserAction::NewTab { url: None }, None),
+            Command::Close => (BrowserAction::CloseTab, Some(source.tab.clone())),
+            Command::Next | Command::Previous => {
+                let Some(next) = shortcuts::adjacent(&ids, &source.tab, command == Command::Next)
+                else {
+                    return Ok(false);
+                };
+                (BrowserAction::SelectTab, Some(next.to_owned()))
+            }
+        };
+        self.handle(
+            BrowserRequest {
+                id: Uuid::new_v4().to_string(),
+                thread_id: source.thread.clone(),
+                tab,
+                frame: None,
+                action,
+            },
+            window,
+            cx,
+        )?;
+        Ok(command == Command::Close && last)
+    }
     pub fn active_view(&self, thread: &str) -> Option<Entity<WebView>> {
         if self.shutdown.callbacks.closed() {
             return None;
@@ -1663,14 +2100,117 @@ impl BrowserController {
             }
         }
     }
+    fn finish_user_turn(&mut self, finished: user_turn::Finished) {
+        self.replies.push_back(BrowserReply {
+            id: finished.operation,
+            thread_id: finished.thread,
+            result: json!({"result":finished.outcome.id()}),
+        });
+    }
+    /// The agent's "Your turn" message for this thread's browser, while open.
+    pub fn user_turn(&self, thread: &str) -> Option<&str> {
+        self.user_turns.message(thread)
+    }
+    /// The user's Done or Not Now in the banner.
+    pub fn answer_user_turn(&mut self, thread: &str, done: bool) {
+        let outcome = if done {
+            user_turn::Outcome::Done
+        } else {
+            user_turn::Outcome::Declined
+        };
+        if let Some(finished) = self.user_turns.finish(thread, outcome) {
+            self.finish_user_turn(finished);
+        }
+    }
+    /// The fixed viewport of the thread's active tab, if an agent set one.
+    pub fn active_viewport(&self, thread: &str) -> Option<(u32, u32)> {
+        let id = self.active.get(thread)?;
+        self.tabs
+            .get(thread)?
+            .iter()
+            .find(|tab| &tab.id == id)?
+            .viewport
+    }
+    /// A local file the user typed the path of, in the active tab. Only the
+    /// native address field calls this; agents never open files. The page may
+    /// read the files beside it, as Swift's `loadFileURL(allowingReadAccessTo:)`.
+    pub fn open_local_file(
+        &mut self,
+        thread: &str,
+        file: &Path,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        ensure!(
+            !self.shutdown.callbacks.closed(),
+            "Browser is shutting down"
+        );
+        ensure!(
+            coincide_core::browser_address::is_regular_file(file),
+            "{} isn't a readable file.",
+            file.display()
+        );
+        let root =
+            coincide_core::browser_address::file_root(file).context("The file has no folder")?;
+        let address = coincide_core::browser_address::Url::from_file_path(file)
+            .map_err(|_| anyhow::anyhow!("{} isn't a local file path.", file.display()))?
+            .to_string();
+        if self.tabs.get(thread).is_none_or(Vec::is_empty) {
+            self.create_tab(thread, "about:blank", window, cx)?;
+        }
+        let active = self
+            .active
+            .get(thread)
+            .cloned()
+            .context("No active browser tab")?;
+        let tab = self
+            .tabs
+            .get_mut(thread)
+            .and_then(|tabs| tabs.iter_mut().find(|tab| tab.id == active))
+            .context("No active browser tab")?;
+        ensure!(
+            tab.dialogs.snapshot().is_none(),
+            "Answer the page dialog before opening a file"
+        );
+        *tab.file_root
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Browser file access is unavailable"))? =
+            Some(root.clone());
+        tab.navigation.fetch_add(1, Ordering::AcqRel);
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_foundation::{NSString, NSURL};
+            MainThreadMarker::new().context("Opening a file requires the native UI thread")?;
+            let page = NSURL::fileURLWithPath(&NSString::from_str(&file.to_string_lossy()));
+            let folder = NSURL::fileURLWithPath_isDirectory(
+                &NSString::from_str(&root.to_string_lossy()),
+                true,
+            );
+            // SAFETY: native UI thread and a retained WebKit view.
+            unsafe {
+                tab.view
+                    .read(cx)
+                    .raw()
+                    .webview()
+                    .loadFileURL_allowingReadAccessToURL(&page, &folder);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        tab.view.read(cx).raw().load_url(&address)?;
+        tab.url = address;
+        tab.loading = true;
+        Ok(())
+    }
     pub fn tab_list(&self, thread: &str) -> Value {
         let native_password_manager = credential_bridge::credential_fill_available();
+        let native_tab_shortcuts = self.tabs.get(thread).is_some_and(|tabs| {
+            !tabs.is_empty() && tabs.iter().all(|tab| tab.tab_shortcuts.is_some())
+        });
         let mut unsupported = vec![
             "download-progress",
             "download-cancel",
             "download-resume",
             "cross-origin-frame-actions",
-            "passkeys",
         ];
         if !cfg!(any(
             target_os = "macos",
@@ -1678,6 +2218,12 @@ impl BrowserController {
             target_os = "windows"
         )) {
             unsupported.push("screenshots");
+        }
+        match passkeys::support() {
+            // Bitwarden answers sign-in only, as in the Swift app.
+            "bitwarden-sign-in" => unsupported.push("passkey-registration"),
+            "unavailable" => unsupported.push("passkeys"),
+            _ => {}
         }
         if self
             .tabs
@@ -1703,6 +2249,9 @@ impl BrowserController {
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
             "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
+            "nativeTabShortcutsAvailable":native_tab_shortcuts,
+            "nativeTabShortcutPolicy":"focused native user keys only; agent page-key host chords remain denied",
+            "passkeys":passkeys::support(),
             "passwordManagerRequiresNativeApproval":true})
     }
 }
@@ -1710,6 +2259,24 @@ impl BrowserController {
 /// Wry 0.53.3's macOS url() unwraps nullable WKWebView.URL/absoluteString.
 /// A newly created or provisionally loading view may have neither. Absence is
 /// ineligible metadata, never a cached URL or a page-script location fallback.
+fn shortcut_native_address(view: &wry::WebView) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        MainThreadMarker::new()?;
+        let native = view.webview();
+        unsafe {
+            native
+                .URL()?
+                .absoluteString()
+                .filter(|url| url.length() <= 16384)
+                .map(|url| url.to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        view.url().ok().filter(|url| url.len() <= 16384)
+    }
+}
 fn credential_native_address(view: &wry::WebView) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
@@ -1921,5 +2488,25 @@ mod dialog_privacy_tests {
         assert!(!reply.contains(dialog.default_text.as_ref().unwrap()));
         assert!(!reply.contains(&dialog.id));
         assert!(public_dialog_reply(&dialog, "owned-tab", false)["dialog"]["id"] == dialog.id);
+    }
+}
+
+#[cfg(test)]
+mod local_navigation_tests {
+    use super::{FileRoot, file_navigation_allowed};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn remote_navigation_revokes_the_local_folder_grant() {
+        let directory = tempfile::tempdir().unwrap();
+        let page = directory.path().join("index.html");
+        let address = coincide_core::browser_address::Url::from_file_path(&page)
+            .unwrap()
+            .to_string();
+        let root: FileRoot = Arc::new(Mutex::new(Some(directory.path().to_owned())));
+        assert!(file_navigation_allowed(&root, &address));
+        assert!(!file_navigation_allowed(&root, "https://example.com/"));
+        assert!(!file_navigation_allowed(&root, &address));
+        assert!(root.lock().unwrap().is_none());
     }
 }

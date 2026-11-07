@@ -159,7 +159,7 @@ impl Engine {
             .service
             .as_ref()
             .context(self.github.error.clone())?
-            .executable()
+            .executable()?
             .to_owned())
     }
     pub(super) fn github_command(&mut self, method: &str, params: &Value) -> Result<Value> {

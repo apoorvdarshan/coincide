@@ -6,9 +6,11 @@ pub mod api;
 pub mod attachments;
 pub mod browser_protocol;
 pub mod control;
+pub mod project_script_runs;
 pub mod provider_catalog;
 pub mod provider_preferences;
 pub use api::project_defaults;
+pub mod project_scripts;
 pub use api::provider_configuration;
 pub mod schedule_service;
 pub mod scheduling;
@@ -26,8 +28,11 @@ pub mod cli_session_discovery;
 pub mod cli_session_import;
 pub mod credentials;
 pub mod dictation;
+pub mod git_actions;
+pub mod github_repository;
 pub mod local_usage;
 pub mod organization;
+pub mod passkeys;
 pub mod platform_host;
 pub mod remote;
 pub mod turn_checkpoints;
@@ -42,6 +47,8 @@ pub mod workspace_github;
 pub mod github_api;
 pub mod github_checkout;
 
+pub mod bot_artwork;
+pub mod bot_personality;
 pub mod bot_runtime;
 
 pub mod github_write;
@@ -66,6 +73,7 @@ pub mod updater_helper;
 
 pub mod computer_use;
 pub mod computer_use_bridge;
+pub mod computer_use_screenshots;
 
 pub mod legacy_media_recovery;
 
@@ -73,6 +81,7 @@ pub mod composer_context;
 
 pub mod composer_policy;
 
+pub mod browser_address;
 pub mod composer_suggestions;
 
 pub mod browser_bookmarks;
@@ -94,6 +103,8 @@ pub mod native_ui_edits;
 pub mod appshots;
 
 pub mod reply_selection;
+
+pub mod project_search;
 
 pub mod voice;
 

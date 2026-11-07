@@ -142,6 +142,9 @@ impl Coincide {
                     .px_3()
                     .gap_1()
                     .child(heading)
+                    .when_some(self.project_scripts_control(cx), |toolbar, scripts| {
+                        toolbar.child(scripts)
+                    })
                     .when_some(self.run_status_pill(cx), |toolbar, pill| {
                         toolbar.child(pill)
                     })
@@ -158,6 +161,18 @@ impl Coincide {
                             ),
                     )
                     .child(self.right_panel_buttons(cx))
+                    .child(
+                        Button::new("pull-requests-toggle")
+                            .icon(IconName::GitPullRequest)
+                            .accessibility_label("Pull Requests")
+                            .tooltip("Toggle pull requests")
+                            .ghost()
+                            .compact()
+                            .selected(self.pull_requests_panel_open())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_pull_requests_panel(window, cx)
+                            })),
+                    )
                     .child(
                         Button::new("conversation-actions-toggle")
                             .icon(IconName::Ellipsis)

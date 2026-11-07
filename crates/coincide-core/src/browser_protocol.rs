@@ -95,6 +95,10 @@ pub enum BrowserAction {
     Reload,
     Tabs,
     Downloads,
+    FillLogin {
+        #[serde(default)]
+        item: Option<String>,
+    },
     NewTab {
         #[serde(default)]
         url: Option<String>,
@@ -103,6 +107,30 @@ pub enum BrowserAction {
     CloseTab,
     Show,
     Hide,
+    /// Searches with the user's search engine. The engine rewrites it into a
+    /// `navigate` to the results page before the browser receives it.
+    Search {
+        query: String,
+    },
+    /// Shows the user a "Your turn" message with Done and Not Now in this
+    /// thread's browser, and waits for them up to `timeout` seconds.
+    AskUser {
+        message: String,
+        #[serde(default = "default_user_turn_timeout")]
+        timeout: f64,
+    },
+    /// A fixed CSS viewport for testing layouts (`preset` or `width`/`height`);
+    /// `reset` gives the page the panel's size again.
+    Viewport {
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        height: Option<f64>,
+        #[serde(default)]
+        preset: Option<String>,
+        #[serde(default)]
+        reset: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -116,6 +144,84 @@ fn first_page() -> usize {
 }
 fn default_wait_timeout() -> u64 {
     10
+}
+fn default_user_turn_timeout() -> f64 {
+    USER_TURN_DEFAULT_TIMEOUT
+}
+/// Swift `UserTurnGate` limits: the message shown, and how long it waits.
+pub const USER_TURN_MAXIMUM_MESSAGE: usize = 500;
+/// Native approval plus private manager/renderer acknowledgement budget.
+pub const LOGIN_REQUEST_TIMEOUT: u64 = 390;
+pub const USER_TURN_DEFAULT_TIMEOUT: f64 = 300.;
+pub const USER_TURN_MAXIMUM_TIMEOUT: f64 = 900.;
+
+/// One plain line or paragraph for the "Your turn" banner: control characters
+/// become spaces (newlines stay), bounded, never empty.
+pub fn clean_user_turn_message(message: &str) -> String {
+    let text = message
+        .chars()
+        .map(|c| if c != '\n' && c.is_control() { ' ' } else { c })
+        .collect::<String>();
+    let text = text.trim();
+    if text.is_empty() {
+        return "The agent needs you to continue in the browser.".into();
+    }
+    if text.chars().count() > USER_TURN_MAXIMUM_MESSAGE {
+        let mut short = text
+            .chars()
+            .take(USER_TURN_MAXIMUM_MESSAGE - 1)
+            .collect::<String>();
+        short.push('…');
+        return short;
+    }
+    text.into()
+}
+
+impl BrowserAction {
+    /// The fixed viewport a `viewport` action asks for; `Some(None)` restores
+    /// the panel's size. Swift's presets and bounds.
+    pub fn viewport_size(&self) -> Option<Option<(u32, u32)>> {
+        let BrowserAction::Viewport {
+            width,
+            height,
+            preset,
+            reset,
+        } = self
+        else {
+            return None;
+        };
+        if *reset {
+            return Some(None);
+        }
+        let (width, height) = match preset.as_deref() {
+            Some("mobile") => (390., 844.),
+            Some("tablet") => (820., 1180.),
+            Some("desktop") => (1280., 860.),
+            Some(_) => return None,
+            None => ((*width)?, (*height)?),
+        };
+        let admitted = |value: f64, low: f64| {
+            value.is_finite() && value.fract() == 0. && (low..=2560.).contains(&value)
+        };
+        (admitted(width, 320.) && admitted(height, 240.))
+            .then_some(Some((width as u32, height as u32)))
+    }
+
+    /// How long the engine waits for the browser's answer before replying
+    /// with a timeout, as Swift's `PreviewCommand.timeout`.
+    pub fn result_timeout(&self) -> std::time::Duration {
+        match self {
+            BrowserAction::FillLogin { .. } => {
+                std::time::Duration::from_secs(LOGIN_REQUEST_TIMEOUT + 5)
+            }
+            BrowserAction::AskUser { timeout, .. } if timeout.is_finite() => {
+                std::time::Duration::from_secs_f64(
+                    timeout.clamp(1., USER_TURN_MAXIMUM_TIMEOUT) + 5.,
+                )
+            }
+            _ => std::time::Duration::from_secs(30),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -234,6 +340,38 @@ impl BrowserRequest {
             }
             BrowserAction::SelectTab | BrowserAction::CloseTab => {
                 ensure!(self.tab.is_some(), "A tab ID is required");
+            }
+            BrowserAction::FillLogin { item: Some(item) } => {
+                ensure!(
+                    !item.trim().is_empty()
+                        && item.len() <= 512
+                        && !item.chars().any(char::is_control),
+                    "Login item hint must contain 1–512 plain text bytes"
+                );
+            }
+            BrowserAction::Search { query } => {
+                let query = query.trim();
+                ensure!(
+                    !query.is_empty() && query.len() <= 2048,
+                    "Search needs a query of 1–2048 bytes"
+                );
+            }
+            BrowserAction::AskUser { message, timeout } => {
+                ensure!(
+                    self.tab.is_none(),
+                    "ask-user is for the thread's browser, not a tab"
+                );
+                ensure!(message.len() <= 4096, "ask-user message exceeds 4 KiB");
+                ensure!(
+                    timeout.is_finite() && (1. ..=USER_TURN_MAXIMUM_TIMEOUT).contains(timeout),
+                    "ask-user timeout must be between 1 and 900 seconds"
+                );
+            }
+            BrowserAction::Viewport { .. } => {
+                ensure!(
+                    self.action.viewport_size().is_some(),
+                    "Use a viewport preset (mobile, tablet, desktop), width 320–2560 and height 240–2560, or reset"
+                );
             }
             _ => {}
         }
@@ -1284,6 +1422,100 @@ mod tests {
         assert!(r.validate().is_err());
     }
 
+    fn request(value: serde_json::Value) -> Result<BrowserRequest> {
+        let mut value = value;
+        value["id"] = serde_json::json!("swift-parity");
+        value["threadId"] = serde_json::json!(uuid::Uuid::new_v4().to_string());
+        let request: BrowserRequest = serde_json::from_value(value)?;
+        request.validate()?;
+        Ok(request)
+    }
+
+    #[test]
+    fn search_ask_user_and_viewport_follow_swift_limits() {
+        assert!(request(serde_json::json!({"action":"search","query":" rust "})).is_ok());
+        assert!(request(serde_json::json!({"action":"search","query":"   "})).is_err());
+        assert!(request(serde_json::json!({"action":"search","query":"q".repeat(2049)})).is_err());
+        assert!(request(serde_json::json!({"action":"search","query":"x","frame":"f"})).is_err());
+
+        let ask = request(serde_json::json!({"action":"ask-user","message":"Sign in"})).unwrap();
+        assert!(matches!(ask.action, BrowserAction::AskUser { timeout, .. } if timeout == 300.));
+        assert_eq!(
+            ask.action.result_timeout(),
+            std::time::Duration::from_secs(305)
+        );
+        assert!(
+            request(serde_json::json!({"action":"ask-user","message":"x","timeout":2.5})).is_ok()
+        );
+        for timeout in [0.5, 901., f64::MAX] {
+            assert!(
+                request(serde_json::json!({"action":"ask-user","message":"x","timeout":timeout}))
+                    .is_err()
+            );
+        }
+        assert!(
+            request(serde_json::json!({"action":"ask-user","message":"m".repeat(4097)})).is_err()
+        );
+        assert!(
+            request(serde_json::json!({"action":"ask-user","message":"x","tab":"tab"})).is_err()
+        );
+        assert_eq!(
+            request(serde_json::json!({"action":"read"}))
+                .unwrap()
+                .action
+                .result_timeout(),
+            std::time::Duration::from_secs(30)
+        );
+
+        let size = |value| request(value).ok().and_then(|r| r.action.viewport_size());
+        assert_eq!(
+            size(serde_json::json!({"action":"viewport","preset":"mobile"})),
+            Some(Some((390, 844)))
+        );
+        assert_eq!(
+            size(serde_json::json!({"action":"viewport","preset":"tablet"})),
+            Some(Some((820, 1180)))
+        );
+        assert_eq!(
+            size(serde_json::json!({"action":"viewport","preset":"desktop"})),
+            Some(Some((1280, 860)))
+        );
+        assert_eq!(
+            size(serde_json::json!({"action":"viewport","width":320,"height":240})),
+            Some(Some((320, 240)))
+        );
+        assert_eq!(
+            size(serde_json::json!({"action":"viewport","reset":true,"preset":"bogus"})),
+            Some(None)
+        );
+        for invalid in [
+            serde_json::json!({"action":"viewport"}),
+            serde_json::json!({"action":"viewport","preset":"watch"}),
+            serde_json::json!({"action":"viewport","width":319,"height":500}),
+            serde_json::json!({"action":"viewport","width":500,"height":2561}),
+            serde_json::json!({"action":"viewport","width":500.5,"height":500}),
+            serde_json::json!({"action":"viewport","width":500}),
+        ] {
+            assert_eq!(size(invalid), None);
+        }
+        assert!(script_for_request(&ask).unwrap().is_none());
+    }
+
+    #[test]
+    fn user_turn_messages_are_plain_bounded_and_never_empty() {
+        assert_eq!(
+            clean_user_turn_message("  Sign in\u{7}\nthen Done "),
+            "Sign in \nthen Done"
+        );
+        assert_eq!(
+            clean_user_turn_message(" \u{0} "),
+            "The agent needs you to continue in the browser."
+        );
+        let long = clean_user_turn_message(&"é".repeat(600));
+        assert_eq!(long.chars().count(), USER_TURN_MAXIMUM_MESSAGE);
+        assert!(long.ends_with('…'));
+    }
+
     #[test]
     fn screenshot_is_native_only_with_closed_parameters_and_no_frame_route() {
         let value = serde_json::json!({"id":"shot","threadId":uuid::Uuid::new_v4().to_string(),"action":"screenshot","fullPage":true});
@@ -1480,5 +1712,33 @@ mod native_history_dispatch_tests {
             };
             assert!(script_for_request(&request).unwrap().is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod login_request_tests {
+    use super::*;
+    #[test]
+    fn fill_login_is_a_bounded_native_request_without_a_page_script_or_agent_approval() {
+        let request: BrowserRequest = serde_json::from_value(serde_json::json!({"id":"request", "threadId":uuid::Uuid::new_v4(), "action":"fill-login", "item":"Example login", "approved":true, "password":"ignored-agent-data"})).unwrap();
+        request.validate().unwrap();
+        assert_eq!(
+            request.action.result_timeout(),
+            std::time::Duration::from_secs(395)
+        );
+        assert!(script(&request.action).unwrap().is_none());
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert!(serialized.get("approved").is_none());
+        assert!(serialized.get("password").is_none());
+        for item in ["", "\n", &"x".repeat(513)] {
+            let mut bad = request.clone();
+            bad.action = BrowserAction::FillLogin {
+                item: Some(item.into()),
+            };
+            assert!(bad.validate().is_err());
+        }
+        let mut framed = request;
+        framed.frame = Some("frame".into());
+        assert!(framed.validate().is_err());
     }
 }

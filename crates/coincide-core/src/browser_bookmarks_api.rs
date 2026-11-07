@@ -20,6 +20,23 @@ impl Engine {
         self.require_admissions()?;
         Library::from_document(self.store.local_document(browser_bookmarks::DOCUMENT)?)
     }
+    /// Native owner only: no JSON route grants current-page bookmark mutation.
+    pub fn toggle_browser_bookmark(
+        &mut self,
+        expected_revision: u64,
+        candidate: browser_bookmarks::Candidate,
+    ) -> Result<Library> {
+        self.require_admissions()?;
+        let library = self
+            .saved_browser_bookmarks()?
+            .toggle(expected_revision, candidate)?;
+        self.store.save_document(
+            browser_bookmarks::DOCUMENT,
+            &serde_json::to_value(&library)?,
+        )?;
+        self.revision += 1;
+        Ok(library)
+    }
     pub fn import_browser_bookmarks(
         &mut self,
         expected_revision: u64,

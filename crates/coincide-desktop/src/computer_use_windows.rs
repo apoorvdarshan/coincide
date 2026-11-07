@@ -378,6 +378,8 @@ impl NativeBackend {
         permit: &Permit,
     ) -> R<NativeResult> {
         self.invalidate();
+        #[cfg(test)]
+        let observation_started = Instant::now();
         let deadline = Instant::now() + Duration::from_secs(3);
         let (bounds, dpi) = window.geometry()?;
         checked(permit, deadline)?;
@@ -386,6 +388,8 @@ impl NativeBackend {
             self.context = None;
         }
         let root = root?;
+        #[cfg(test)]
+        let pre_tree_ms = observation_started.elapsed().as_millis();
         let automation = self.context()?.automation.clone();
         let walker = native(unsafe { automation.ControlViewWalker() })?;
         let mut pending = vec![(root.clone(), 0usize)];
@@ -401,7 +405,21 @@ impl NativeBackend {
             if !visited.insert(runtime.clone()) {
                 continue;
             }
-            if native(unsafe { element.CurrentProcessId() })? != window.process.pid as i32 {
+            #[cfg(test)]
+            let identity_started = Instant::now();
+            let process_id = native(unsafe { element.CurrentProcessId() });
+            #[cfg(test)]
+            if process_id.is_err() {
+                // Counts and durations only: no HWND, PID, title, text or raw
+                // native error crosses the synthetic acceptance log boundary.
+                eprintln!(
+                    "CU identity query stage: depth={depth} nodes={} pre-tree-ms={pre_tree_ms} query-ms={} observation-ms={}",
+                    nodes.len(),
+                    identity_started.elapsed().as_millis(),
+                    observation_started.elapsed().as_millis()
+                );
+            }
+            if process_id? != window.process.pid as i32 {
                 return Err(Failure::StaleObservation);
             }
             let secure = unsafe { element.CurrentIsPassword() }.map_or(true, |v| v.as_bool());

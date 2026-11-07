@@ -13,7 +13,7 @@ use coincide_core::{
 };
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    component::{Disableable, button::Button},
+    component::{Disableable, Icon, Sizable, button::Button},
     div,
     prelude::FluentBuilder,
 };
@@ -98,6 +98,8 @@ struct Snapshot {
     generation: u64,
     phase: Phase,
     permission: Permission,
+    /// Apple Speech refused this app's speech-recognition access.
+    speech_denied: bool,
     message: &'static str,
     progress: Option<CaptureProgress>,
     text_pending: bool,
@@ -195,6 +197,12 @@ impl Controller for Microphone {
 #[derive(Debug)]
 enum InferenceFailure {
     Failed,
+    /// The system denied speech-recognition access.
+    #[cfg_attr(
+        not(all(target_os = "macos", feature = "native-microphone")),
+        allow(dead_code)
+    )]
+    Denied,
     Cancelled,
     CleanupPending,
     Hosted(coincide_core::dictation::transcription::Error),
@@ -267,6 +275,8 @@ struct LocalInference {
 }
 fn apple_failure(error: crate::voice_speech::Error) -> InferenceFailure {
     match error {
+        #[cfg(all(target_os = "macos", feature = "native-microphone"))]
+        crate::voice_speech::Error::Denied => InferenceFailure::Denied,
         crate::voice_speech::Error::Cancelled => InferenceFailure::Cancelled,
         crate::voice_speech::Error::CleanupPending => InferenceFailure::CleanupPending,
         _ => InferenceFailure::Failed,
@@ -444,6 +454,7 @@ struct Owner {
     phase: Phase,
     permission: Permission,
     permission_target: Option<Target>,
+    speech_denied: bool,
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
     model_lease: Option<ModelLease>,
@@ -465,6 +476,7 @@ impl Owner {
                 generation: self.generation,
                 phase: self.phase,
                 permission: self.permission,
+                speech_denied: self.speech_denied,
                 message,
                 progress: self.progress(),
                 text_pending: self.text_pending,
@@ -527,9 +539,15 @@ impl Owner {
                 .as_mut()
                 .unwrap()
                 .prepare_apple(&config, &cancelled);
+            self.speech_denied = matches!(result, Err(InferenceFailure::Denied));
             if let Err(error) = result {
                 self.phase = Phase::Failed;
-                self.publish(if matches!(error,InferenceFailure::CleanupPending){"Apple Speech cancellation has not returned. No recording started. Restart before another Apple request."}else{"On-device Apple Speech could not prepare for this language or authorization. Nothing was recorded. Local Whisper remains available."});
+                self.publish(match error {
+                    InferenceFailure::CleanupPending => "Apple Speech cancellation has not returned. No recording started. Restart before another Apple request.",
+                    // Swift DictationError.speechRecognitionDenied.
+                    InferenceFailure::Denied => "Coincide isn’t allowed to use speech recognition. Turn it on in System Settings › Privacy & Security › Speech Recognition.",
+                    _ => "On-device Apple Speech could not prepare for this language or authorization. Nothing was recorded. Local Whisper remains available.",
+                });
                 return false;
             }
             self.phase = previous_phase;
@@ -858,6 +876,8 @@ impl Owner {
                     self.publish(match permission {
                         Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
                         Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
+                        // Swift DictationError.microphoneDenied.
+                        Permission::Denied | Permission::Restricted if cfg!(target_os = "macos") => "Coincide doesn’t have access to the microphone. Turn it on in System Settings › Privacy & Security › Microphone.",
                         _ => "Microphone is not authorized. Nothing is recording.",
                     });
                 }
@@ -1004,7 +1024,7 @@ impl Owner {
                 self.phase = Phase::Failed;
                 self.publish(match error {Error::Unauthorized|Error::Forbidden=>"Voice service rejected this key or account. Update the separate Voice API key.",Error::RateLimited=>"Voice service rate limit reached. Nothing was inserted or sent.",Error::TooLarge=>"Voice service response exceeded the receive limit. Nothing was inserted or sent.",Error::Server|Error::Network=>"Voice service unavailable or request timed out. Nothing was inserted or sent.",_=>"Voice transcription was rejected or unreadable. Check the selected model and language."});
             }
-            Err(InferenceFailure::Failed) => {
+            Err(InferenceFailure::Failed | InferenceFailure::Denied) => {
                 self.phase = Phase::Failed;
                 self.publish("Local transcription failed. Check the selected CLI/model and recording format.");
             }
@@ -1117,6 +1137,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 phase: Phase::Idle,
                 permission: Permission::Unavailable,
                 permission_target: None,
+                speech_denied: false,
                 session: None,
                 audio: None,
                 model_lease: None,
@@ -1172,6 +1193,7 @@ pub struct MicrophoneSettings {
     backend_enabled: bool,
     phase: Phase,
     permission: Permission,
+    speech_denied: bool,
     status: String,
     listening_since: Option<std::time::Instant>,
     progress: Option<CaptureProgress>,
@@ -1191,7 +1213,7 @@ impl MicrophoneSettings {
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(factory);
-        (Self { partial_preview:None,connection, target: Target { binding: None, settings_revision: 0, input_device_uid:None, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false, device_catalog:None,device_refreshing:false,device_status:"Input devices have not been refreshed.".into() }, events)
+        (Self { partial_preview:None,connection, target: Target { binding: None, settings_revision: 0, input_device_uid:None, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, speech_denied: false, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false, device_catalog:None,device_refreshing:false,device_status:"Input devices have not been refreshed.".into() }, events)
     }
     #[cfg(test)]
     pub fn set_target(
@@ -1328,6 +1350,20 @@ impl MicrophoneSettings {
     pub fn failed(&self) -> bool {
         self.phase == Phase::Failed
     }
+    /// The privacy setting that stopped the last dictation, which the user
+    /// can turn on in System Settings (Swift DictationError.opensSystemSettings).
+    pub fn denial(&self) -> Option<crate::voice_system::Denial> {
+        use crate::voice_system::Denial;
+        if !cfg!(target_os = "macos") || self.dictation_active() {
+            None
+        } else if matches!(self.permission, Permission::Denied | Permission::Restricted) {
+            Some(Denial::Microphone)
+        } else if self.speech_denied {
+            Some(Denial::SpeechRecognition)
+        } else {
+            None
+        }
+    }
     pub fn begin_dictation(&mut self, cx: &mut Context<Self>) -> u64 {
         self.action(Action::BeginDictation, cx);
         self.generation
@@ -1419,6 +1455,7 @@ impl MicrophoneSettings {
                 self.text_pending = snapshot.text_pending;
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
+                self.speech_denied = snapshot.speech_denied;
                 self.status = snapshot.message.into();
                 cx.notify();
             }
@@ -1492,9 +1529,30 @@ impl Render for MicrophoneSettings {
             .child(Button::new("microphone-stop").label("Stop").disabled(gated || self.phase != Phase::Recording).on_click(cx.listener(|this, _, _, cx| this.action(Action::Stop, cx))))
             .child(Button::new("microphone-cancel").label("Cancel").disabled(gated && self.phase == Phase::Idle).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
             .child(Button::new("microphone-transcribe").label("Transcribe Recording").disabled(gated || self.phase != Phase::Captured).on_click(cx.listener(|this, _, _, cx| this.action(Action::Transcribe, cx))))
+            .when_some(microphone_denied_settings(self.permission), |pane, url| {
+                pane.child(div().flex().items_center().gap_2()
+                    .child(Icon::new(gpui_kit::assets::IconName::TriangleAlert).xsmall().text_color(gpui_kit::rgb(0xf0a030)))
+                    .child(div().flex_1().child("Coincide doesn’t have access to the microphone."))
+                    .when_some(url, |row, url| row.child(Button::new("microphone-open-settings").label(if cfg!(windows) { "Open Windows Settings" } else { "Open System Settings" }).on_click(move |_, _, cx| cx.open_url(url)))))
+            })
             .child(SharedString::from(self.status.clone()))
             .when_some(self.partial_preview(),|pane,text|pane.child(div().max_h(gpui_kit::px(64.0)).overflow_hidden().child("Dictation preview (final insertion after Stop)").child(text.to_owned())))
     }
+}
+
+/// Where to allow the microphone once the system denied it: Some(None) when
+/// access is denied but there is no settings page to open.
+fn microphone_denied_settings(permission: Permission) -> Option<Option<&'static str>> {
+    if !matches!(permission, Permission::Denied | Permission::Restricted) {
+        return None;
+    }
+    Some(if cfg!(target_os = "macos") {
+        Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    } else if cfg!(windows) {
+        Some("ms-settings:privacy-microphone")
+    } else {
+        None
+    })
 }
 
 #[cfg(test)]
@@ -1859,6 +1917,7 @@ mod tests {
             phase: Phase::Idle,
             permission: Permission::Unavailable,
             permission_target: None,
+            speech_denied: false,
             session: None,
             audio: None,
             model_lease: None,
@@ -2421,6 +2480,7 @@ mod tests {
             backend_enabled: true,
             phase: Phase::Idle,
             permission: Permission::Unavailable,
+            speech_denied: false,
             status: String::new(),
             listening_since: None,
             progress: None,

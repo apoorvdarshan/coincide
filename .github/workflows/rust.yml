@@ -166,6 +166,18 @@ jobs:
           set -o pipefail
           target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
           grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify Bitwarden passkey sign-in in a real WKWebView on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (bitwarden-sign-in)' "$RUNNER_TEMP/native-passkey-sdk.log"
       # Independent native fixture: it still reports when an unrelated earlier
       # fixture in this job failed. The job result keeps every failure.
       - name: Build synthetic native browser screenshot executable
@@ -201,6 +213,18 @@ jobs:
           set -o pipefail
           target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Build synthetic native tab shortcut executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_tab_shortcuts --locked
+      - name: Verify exact-view browser tab keys on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_TAB_SHORTCUTS: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_browser_tab_shortcuts | tee "$RUNNER_TEMP/native-tab-shortcuts.log"
+          grep -F 'synthetic native tab shortcuts: PASS' "$RUNNER_TEMP/native-tab-shortcuts.log"
       - name: Retain native macOS credential SDK evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -209,7 +233,9 @@ jobs:
           path: |
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-tab-shortcuts.log
           if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
@@ -273,6 +299,27 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/microphone-pcm-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/microphone-pcm-tests.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly two native PCM conversion tests' }
+      - name: Test Windows command shortcuts, menus, palette and terminal keys without a window
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- keyboard_settings::tests app_menu::tests command_palette::tests terminal_workspace::tests::prompt_jumps --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/keyboard-menu-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero keyboard and menu tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -SimpleMatch 'terminal_keys_follow_platform_terminal_conventions ... ok')) { throw 'Expected Windows terminal key conventions' }
+      - name: Test bot avatar rendering, bot editor and App Updates logic without a window
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/bot-editor-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/bot-editor-tests.log" -SimpleMatch 'test result: ok. 15 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly 15 bot avatar, bot editor and App Updates tests' }
+      - name: Test the pull request panel's repository states without GitHub
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/pr-panel-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in 'availability_reads_each_swift_state_from_the_engine', 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head') {
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/pr-panel-tests.log" -SimpleMatch "$name ... ok")) { throw "Expected $name to pass" }
+          }
       - name: Test transcript link routing, plan card, changed files and rewind logic
         shell: pwsh
         run: |
@@ -361,6 +408,28 @@ jobs:
           & target/debug/examples/native_upload_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-upload-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-upload-sdk.log" -SimpleMatch 'synthetic native upload: PASS')) { throw 'Expected actual native WebView2 attachment of owned files' }
+      - name: Build synthetic native tab shortcut executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_tab_shortcuts --locked
+      - name: Verify exact-view browser tab keys on a fresh Windows runner
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_TAB_SHORTCUTS: '1'
+        run: |
+          & target/debug/examples/native_browser_tab_shortcuts.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-tab-shortcuts.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-tab-shortcuts.log" -SimpleMatch 'synthetic native tab shortcuts: PASS')) { throw 'Expected actual focused-view native tab shortcut callbacks' }
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          & target/debug/examples/native_passkey_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-passkey-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-passkey-sdk.log" -SimpleMatch 'synthetic native passkeys: PASS (webview2-native)')) { throw 'Expected WebView2 to give the owned https page its WebAuthn API' }
       - name: Retain actual Windows native UI attempt evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -371,7 +440,9 @@ jobs:
             ${{ runner.temp }}/native-host-toast-*.log
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-tab-shortcuts.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -468,12 +539,29 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust appshots_platform::backend::tests --locked -- --nocapture | tee "$RUNNER_TEMP/appshots-linux-tests.log"
           grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-linux-tests.log"
           cargo test -p coincide-desktop --bin coincide-rust appshots::tests --locked -- --nocapture | tee "$RUNNER_TEMP/appshots-owner-tests.log"
-          grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-owner-tests.log"
+          grep -F 'test result: ok. 6 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/appshots-owner-tests.log"
       - name: Test native microphone PCM conversion without opening a device
         run: |
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
+      - name: Test Linux command shortcuts, menus, palette and terminal keys without a window
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- keyboard_settings::tests app_menu::tests command_palette::tests terminal_workspace::tests::prompt_jumps --nocapture | tee "$RUNNER_TEMP/keyboard-menu-tests.log"
+          grep -E 'test result: ok. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/keyboard-menu-tests.log"
+          grep -F 'terminal_keys_follow_platform_terminal_conventions ... ok' "$RUNNER_TEMP/keyboard-menu-tests.log"
+      - name: Test bot avatar rendering, bot editor and App Updates logic without a window
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | tee "$RUNNER_TEMP/bot-editor-tests.log"
+          grep -F 'test result: ok. 15 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/bot-editor-tests.log"
+      - name: Test the pull request panel's repository states without GitHub
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'availability_reads_each_swift_state_from_the_engine ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
@@ -593,6 +681,33 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Build synthetic native tab shortcut executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_tab_shortcuts --locked
+      - name: Verify exact-view browser tab keys on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_TAB_SHORTCUTS: '1'
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebKitGTK's missing WebAuthn API on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_browser_tab_shortcuts | tee "$RUNNER_TEMP/native-tab-shortcuts.log"
+          grep -F 'synthetic native tab shortcuts: PASS' "$RUNNER_TEMP/native-tab-shortcuts.log"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native Linux UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -602,5 +717,7 @@ jobs:
             ${{ runner.temp }}/linux-native-ui
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-tab-shortcuts.log
           if-no-files-found: warn

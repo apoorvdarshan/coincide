@@ -94,7 +94,7 @@ impl Coincide {
                             IconName::SquareArrowOutUpRight,
                             "Open In",
                         )
-                        .tooltip(label)
+                        .tooltip(format!("{label}\nRight-click to choose another app"))
                         .disabled(self.open_folder().is_none() || preferred.is_none())
                         .on_click(move |_, window, cx| {
                             if let Some(target) = preferred.clone() {
@@ -104,22 +104,57 @@ impl Coincide {
                             }
                         }),
                     )
+                    // Swift's OpenTargetChooser: every installed app with its
+                    // icon, grouped by kind, the default checked.
                     .context_menu(move |mut menu, _, cx| {
                         let targets = open_targets::installed();
-                        let _ = parent.update(cx, |this, cx| {
-                            this.open_targets = targets.clone();
-                            cx.notify();
-                        });
-                        for target in &targets {
-                            let parent = parent.clone();
-                            let target = target.clone();
-                            menu = menu.item(PopupMenuItem::new(target.name).on_click(
-                                move |_, window, cx| {
-                                    let _ = parent.update(cx, |this, cx| {
-                                        this.open_in_target(target.clone(), true, window, cx)
-                                    });
-                                },
-                            ));
+                        let preferred = parent
+                            .update(cx, |this, cx| {
+                                this.open_targets = targets.clone();
+                                cx.notify();
+                                open_targets::preferred(&targets, &this.settings)
+                                    .map(|target| target.id)
+                            })
+                            .ok()
+                            .flatten();
+                        for (index, group) in
+                            open_targets::menu_groups(&targets).into_iter().enumerate()
+                        {
+                            if index > 0 {
+                                menu = menu.item(PopupMenuItem::separator());
+                            }
+                            for target in group {
+                                let parent = parent.clone();
+                                let name = target.name;
+                                let item = match open_targets::icon(target) {
+                                    Some(image) => PopupMenuItem::element(move |_, _| {
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(img(image.clone()).size(px(16.)))
+                                            .child(name)
+                                    }),
+                                    None => PopupMenuItem::new(name),
+                                };
+                                let target = target.clone();
+                                menu =
+                                    menu.item(item.checked(preferred == Some(target.id)).on_click(
+                                        move |_, window, cx| {
+                                            let _ = parent.update(cx, |this, cx| {
+                                                this.open_in_target(
+                                                    target.clone(),
+                                                    true,
+                                                    window,
+                                                    cx,
+                                                )
+                                            });
+                                        },
+                                    ));
+                            }
+                        }
+                        if targets.is_empty() {
+                            menu = menu.item(PopupMenuItem::new("No apps found").disabled(true));
                         }
                         menu
                     })
@@ -133,6 +168,7 @@ impl Coincide {
                     .into_iter()
                     .map(|link| {
                         button(link.id, link.icon, link.label)
+                            .tooltip(format!("{}\n{}", link.label, link.detail))
                             .on_click(cx.listener(move |_, _, _, cx| cx.open_url(link.url)))
                     }),
             )
@@ -203,6 +239,8 @@ struct CommunityLink {
     id: &'static str,
     icon: IconName,
     label: &'static str,
+    /// The tooltip's second line (Swift `CommunityLink.detail`).
+    detail: &'static str,
     url: &'static str,
     priority: usize,
 }
@@ -215,6 +253,7 @@ fn community_links(height: f32) -> Vec<CommunityLink> {
             id: "navigation-github",
             icon: IconName::Star,
             label: "Star on GitHub",
+            detail: "Coincide is open source under the MIT License",
             url: "https://github.com/apoorvdarshan/coincide",
             priority: 1,
         },
@@ -222,6 +261,7 @@ fn community_links(height: f32) -> Vec<CommunityLink> {
             id: "navigation-product-hunt",
             icon: IconName::CircleArrowUp,
             label: "Upvote on Product Hunt",
+            detail: "producthunt.com/products/coincide",
             url: "https://www.producthunt.com/products/coincide",
             priority: 2,
         },
@@ -229,6 +269,7 @@ fn community_links(height: f32) -> Vec<CommunityLink> {
             id: "navigation-discord",
             icon: IconName::MessagesSquare,
             label: "Join the Discord",
+            detail: "discord.gg/DETrbhDVqw",
             url: "https://discord.gg/DETrbhDVqw",
             priority: 0,
         },
@@ -236,6 +277,7 @@ fn community_links(height: f32) -> Vec<CommunityLink> {
             id: "navigation-support",
             icon: IconName::Heart,
             label: "Support on Ko-fi",
+            detail: "Buy Apoorv a coffee",
             url: "https://ko-fi.com/apoorvdarshan",
             priority: 3,
         },

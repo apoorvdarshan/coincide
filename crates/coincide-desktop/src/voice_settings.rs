@@ -2,7 +2,50 @@
 use super::*;
 use coincide_core::voice::{Edit, Engine, Mode, Settings};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+
+/// What macOS does when 🌐 is pressed ("Press 🌐 key to"), read from its
+/// `AppleFnUsageType` preference: None when it does nothing (or off macOS),
+/// an empty name when unset or unreadable, as macOS then acts by default.
+fn system_fn_usage() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "com.apple.HIToolbox", "AppleFnUsageType"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok();
+        fn_usage(output.as_ref().and_then(|output| {
+            output
+                .status
+                .success()
+                .then(|| String::from_utf8_lossy(&output.stdout).trim().parse().ok())
+                .flatten()
+        }))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn fn_usage(value: Option<i64>) -> Option<&'static str> {
+    match value {
+        Some(0) => None,
+        Some(1) => Some("Change Input Source"),
+        Some(2) => Some("Show Emoji & Symbols"),
+        Some(3) => Some("Start Dictation"),
+        _ => Some(""),
+    }
+}
 impl Coincide {
+    /// Re-reads what Voice offers from outside Coincide when it opens: Codex's
+    /// API key and macOS's own use of 🌐.
+    pub(super) fn refresh_voice_environment(&mut self, cx: &mut Context<Self>) {
+        self.voice_credentials
+            .update(cx, |panel, cx| panel.refresh_codex_key(cx));
+        self.voice.fn_usage = system_fn_usage();
+    }
     pub(super) fn change_voice_setting(
         &mut self,
         edit: Edit,
@@ -330,6 +373,44 @@ impl Coincide {
         pane=pane.child(self.voice_picker("voice-modifier-picker",voice.shortcut.clone(),modifiers.iter().map(|(key,label)|(label.to_string(),*key==voice.shortcut,Edit::Shortcut(key.to_string()))).collect(),cx))
             .child(Button::new("voice-shortcut-record").label(if self.voice.recording_shortcut{"Press shortcut…"}else{"Record shortcut"}).on_click(cx.listener(|this,_,_,cx|{this.voice.recording_shortcut=true;cx.notify();})))
             .child("Shortcuts work only in the active composer window. The OS may reserve Fn or system shortcuts; AltGr character input is preserved.");
+        if voice.shortcut == "fn"
+            && let Some(usage) = self.voice.fn_usage
+        {
+            let text = if usage.is_empty() {
+                "macOS may also act when you press 🌐. To use 🌐 only for Coincide’s dictation, set “Press 🌐 key to” to Do Nothing in Keyboard settings.".to_owned()
+            } else {
+                format!(
+                    "macOS is also set to {usage} when you press 🌐. To use 🌐 only for Coincide’s dictation, set “Press 🌐 key to” to Do Nothing in Keyboard settings."
+                )
+            };
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(gpui_kit::assets::IconName::Info).xsmall())
+                    .child(div().flex_1().text_sm().child(text))
+                    .child(Button::new("voice-fn-keyboard-settings").label("Open Keyboard Settings").on_click(|_, _, cx| {
+                        cx.open_url("x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+                    })),
+            );
+        }
+        if voice.shortcut != "fn" || voice.mode != Mode::Both {
+            pane = pane.child(
+                div().flex().justify_end().child(
+                    Button::new("voice-shortcut-default")
+                        .label(if cfg!(target_os = "macos") {
+                            "Use 🌐 fn, Hold or Tap"
+                        } else {
+                            "Use Fn, Hold or Tap"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.change_voice_setting(Edit::Shortcut("fn".into()), window, cx);
+                            this.change_voice_setting(Edit::Mode(Mode::Both), window, cx);
+                        })),
+                ),
+            );
+        }
         pane.into_any_element()
     }
     pub(super) fn block_voice_close(
@@ -429,5 +510,17 @@ impl Coincide {
                 pane.child(self.microphone_panel.read(cx).status_text())
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod fn_usage_tests {
+    #[::core::prelude::v1::test]
+    fn only_do_nothing_leaves_fn_to_dictation() {
+        assert_eq!(super::fn_usage(Some(0)), None);
+        assert_eq!(super::fn_usage(Some(2)), Some("Show Emoji & Symbols"));
+        assert_eq!(super::fn_usage(Some(3)), Some("Start Dictation"));
+        assert_eq!(super::fn_usage(None), Some(""));
+        assert_eq!(super::fn_usage(Some(9)), Some(""));
     }
 }

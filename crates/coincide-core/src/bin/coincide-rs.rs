@@ -296,6 +296,13 @@ fn main() -> Result<()> {
             let operation = response["result"]["operationId"]
                 .as_str()
                 .context("Missing browser operation ID")?;
+            // ask-user waits for the person; other actions answer within 30s.
+            let limit = serde_json::from_value::<coincide_core::browser_protocol::BrowserAction>(
+                params.clone(),
+            )
+            .map_or(std::time::Duration::from_secs(30), |action| {
+                action.result_timeout()
+            }) + std::time::Duration::from_secs(5);
             let started = std::time::Instant::now();
             loop {
                 let response = control::request(
@@ -313,7 +320,7 @@ fn main() -> Result<()> {
                     return output(json!({"id":1,"result":result}));
                 }
                 anyhow::ensure!(
-                    started.elapsed() < std::time::Duration::from_secs(35),
+                    started.elapsed() < limit,
                     "Browser result timed out; verify page state before retrying"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(100));

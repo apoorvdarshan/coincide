@@ -12,6 +12,7 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=src/appshots_macos.m");
     println!("cargo:rerun-if-changed=src/notification_activity_macos.m");
+    println!("cargo:rerun-if-changed=src/app_shell_macos.m");
     #[cfg(target_os = "macos")]
     compile_appshots();
     println!("cargo:rerun-if-changed=src/microphone_macos.m");
@@ -84,6 +85,7 @@ fn compile_appshots() {
     cc::Build::new()
         .file("src/appshots_macos.m")
         .file("src/notification_activity_macos.m")
+        .file("src/app_shell_macos.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
         .flag("-std=gnu11")

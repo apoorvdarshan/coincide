@@ -27,6 +27,8 @@ impl SendIntent {
 }
 pub(super) struct State {
     pub recording_shortcut: bool,
+    /// What macOS also does on 🌐, as of the last time Voice opened.
+    pub fn_usage: Option<&'static str>,
     settings: Option<Settings>,
     machine: Trigger,
     clock: Instant,
@@ -35,11 +37,14 @@ pub(super) struct State {
     pub ticket: Option<SendIntent>,
     pub(super) preview: Option<dictation_preview::Preview>,
     pub(super) restored_preview: Option<gpui_base::input::NativeTextRevision>,
+    /// macOS's 🌐 key setting, re-read at most every two seconds.
+    fn_usage: std::cell::Cell<Option<(Instant, voice_system::FnKeyUsage)>>,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
             recording_shortcut: false,
+            fn_usage: None,
             settings: None,
             machine: Trigger::new(coincide_core::voice::Mode::Both, true),
             clock: Instant::now(),
@@ -48,10 +53,21 @@ impl Default for State {
             ticket: None,
             preview: None,
             restored_preview: None,
+            fn_usage: Default::default(),
         }
     }
 }
 impl State {
+    pub(super) fn fn_usage(&self) -> voice_system::FnKeyUsage {
+        if let Some((read, usage)) = self.fn_usage.get()
+            && read.elapsed() < std::time::Duration::from_secs(2)
+        {
+            return usage;
+        }
+        let usage = voice_system::FnKeyUsage::current();
+        self.fn_usage.set(Some((Instant::now(), usage)));
+        usage
+    }
     pub(super) fn recording_ended(&mut self) {
         self.machine.recording_ended();
     }
@@ -99,7 +115,6 @@ impl Coincide {
         let settings = Settings::decode(&self.settings);
         let enabled = settings.enabled
             && settings.shortcut_enabled
-            && (settings.engine != Engine::Apple || voice_speech::compiled())
             && microphone::compiled_backend_available()
             && !self.media.shutdown_requested
             && !self.media.close_requested;
@@ -148,13 +163,13 @@ impl Coincide {
             return;
         };
         let voice = Settings::decode(&self.settings);
-        if !voice.enabled || (voice.engine == Engine::Apple && !voice_speech::compiled()) {
+        if !voice.enabled {
             return;
         }
         if !self.microphone_panel.read(cx).configured_for_dictation() {
             self.voice.ticket = None;
             self.voice.machine.recording_ended();
-            self.status=if voice.engine==Engine::Whisper{"Choose the local Whisper executable and model in Settings › Voice before dictating."}else{"Save or explicitly load the separate Voice API key in Settings › Voice before dictating."}.into();
+            self.status=if voice_speech::effective_engine(voice.engine)==Engine::Whisper{"Choose the local Whisper executable and model in Settings › Voice before dictating."}else{"Save or explicitly load the separate Voice API key in Settings › Voice before dictating."}.into();
             cx.notify();
             return;
         }
@@ -218,9 +233,7 @@ impl Coincide {
         if !self.settings_open || !self.transcription_open || !recorder_active {
             self.voice.recording_shortcut = false;
         }
-        let available = self.voice_target_available(window, cx)
-            && settings.enabled
-            && (settings.engine != Engine::Apple || voice_speech::compiled());
+        let available = self.voice_target_available(window, cx) && settings.enabled;
         if self.voice.settings.as_ref() != Some(&settings) || !available {
             if self.voice.ticket.take().is_some() {
                 self.microphone_panel.update(cx, |p, cx| p.cancel(cx));
@@ -325,7 +338,6 @@ impl Coincide {
             || !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || (settings.engine == Engine::Apple && !voice_speech::compiled())
         {
             return false;
         }
@@ -391,7 +403,6 @@ impl Coincide {
         if !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || (settings.engine == Engine::Apple && !voice_speech::compiled())
         {
             return;
         }
