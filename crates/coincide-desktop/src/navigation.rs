@@ -216,49 +216,207 @@ impl Coincide {
         result
     }
 
-    fn sidebar_thread_content(&self, thread: &ThreadSummary, label: String, now: f64) -> Div {
+    /// A thread row as Swift's ThreadCell draws it: the agent's logo (a shield
+    /// while approvals wait, an archive box once archived, a spinner while
+    /// working), the title (semibold for an unseen result) and where it lives,
+    /// then the pin, schedule clock, status badge, unseen dot and its age or
+    /// running time.
+    fn sidebar_thread_content(
+        &self,
+        thread: &ThreadSummary,
+        label: String,
+        place: Option<String>,
+        now: f64,
+        cx: &App,
+    ) -> Div {
         let schedules = self
             .sidebar_schedules
             .iter()
+            // Only schedules that can run: allowed and not paused.
             .filter(|task| {
                 task["threadID"] == thread.id
                     && task["isPaused"] != true
-                    && task["awaitingApproval"] != true
+                    && task["approvalState"] == "approved"
             })
             .map(|task| text(task, "name"))
             .collect::<Vec<_>>();
-        let running = self.running.contains(&thread.id);
+        let status = self.sidebar_thread_status(thread);
+        let ink = self.color(0xe4e9f2);
+        let theme = cx.theme();
+        let badge = status.badge();
+        let leading = div()
+            .flex_shrink_0()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center();
+        let leading = match status {
+            sidebar_thread_status::RowStatus::Running { .. } => {
+                leading.child(gpui_kit::component::spinner::Spinner::new().small())
+            }
+            sidebar_thread_status::RowStatus::Approval(_) => leading.child(
+                Icon::new(IconName::ShieldAlert)
+                    .xsmall()
+                    .text_color(theme.warning),
+            ),
+            _ if thread.archived => leading.child(
+                Icon::new(IconName::Archive)
+                    .xsmall()
+                    .text_color(ink.opacity(0.45)),
+            ),
+            _ => match thread
+                .navigation
+                .as_ref()
+                .and_then(|meta| chat_layout::provider_logo(meta.provider.as_deref()?))
+            {
+                // Monochrome branding keeps a light backing in either appearance.
+                Some(logo) => {
+                    leading.child(img(logo).size(px(14.)).rounded(px(2.)).bg(rgb(0xffffff)))
+                }
+                None => leading.child(Icon::new(IconName::Cpu).xsmall()),
+            },
+        };
+        let time = match status {
+            sidebar_thread_status::RowStatus::Running { since } => Some((
+                sidebar_thread_status::elapsed(now - since),
+                self.color(0x98b1d4),
+            )),
+            _ => Some((
+                sidebar_age(
+                    thread.navigation.as_ref().and_then(|meta| meta.updated_at),
+                    now,
+                ),
+                ink.opacity(0.55),
+            )),
+        }
+        .filter(|_| badge.is_none());
         div()
             .flex()
             .items_center()
-            .gap_1()
+            .gap(px(6.))
             .w_full()
             .min_w_0()
-            .child(sidebar_button_label(label).flex_1())
-            .when(!schedules.is_empty(), |row| {
+            .child(leading)
+            .child(
+                // The project name gives way before the title does.
+                div()
+                    .min_w_0()
+                    .flex_shrink(1.)
+                    .truncate()
+                    .text_left()
+                    .child(label)
+                    .when(status.unseen(), |title| {
+                        title.font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .when(thread.archived, |title| title.text_color(ink.opacity(0.6))),
+            )
+            .when_some(place.filter(|place| !place.is_empty()), |row, place| {
                 row.child(
                     div()
-                        .id(SharedString::from(format!("sidebar-clock-{}", thread.id)))
-                        .child(IconName::Clock)
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(schedules.join("\n")).build(window, cx)
-                        }),
-                )
-            })
-            .when(running, |row| {
-                row.child(gpui_kit::component::spinner::Spinner::new().small())
-            })
-            .when(!running, |row| {
-                row.child(
-                    div()
+                        .flex_shrink(4.)
+                        .min_w_0()
+                        .truncate()
                         .text_size(px(11.))
-                        .text_color(self.color(0xe4e9f2).opacity(0.55))
-                        .child(sidebar_age(
-                            thread.navigation.as_ref().and_then(|meta| meta.updated_at),
-                            now,
-                        )),
+                        .text_color(ink.opacity(0.45))
+                        .child(place),
                 )
             })
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(px(4.))
+                    .when(thread.pinned, |row| {
+                        row.child(
+                            Icon::new(IconName::Pin)
+                                .size(px(10.))
+                                .text_color(ink.opacity(0.45)),
+                        )
+                    })
+                    .when(!schedules.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .id(SharedString::from(format!("sidebar-clock-{}", thread.id)))
+                                .text_color(ink.opacity(0.45))
+                                .child(Icon::new(IconName::Clock).size(px(10.)))
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(schedules.join("\n")).build(window, cx)
+                                }),
+                        )
+                    })
+                    .when_some(badge, |row, badge| {
+                        let color = if matches!(status, sidebar_thread_status::RowStatus::Failed) {
+                            theme.danger
+                        } else {
+                            theme.warning
+                        };
+                        row.child(
+                            div()
+                                .px(px(5.))
+                                .rounded_full()
+                                .bg(color.opacity(0.18))
+                                .text_color(color)
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(badge),
+                        )
+                    })
+                    .when(
+                        matches!(status, sidebar_thread_status::RowStatus::Completed),
+                        |row| row.child(div().size(px(7.)).rounded_full().bg(theme.success)),
+                    )
+                    .when_some(time, |row, (time, color)| {
+                        row.child(div().text_size(px(11.)).text_color(color).child(time))
+                    }),
+            )
+    }
+    fn sidebar_thread_status(&self, thread: &ThreadSummary) -> sidebar_thread_status::RowStatus {
+        sidebar_thread_status::row_status(
+            self.thread_activity.approvals(&thread.id),
+            self.running
+                .contains(&thread.id)
+                .then(|| self.thread_activity.running_since(&thread.id))
+                .flatten()
+                .or_else(|| {
+                    self.running
+                        .contains(&thread.id)
+                        .then(coincide_core::store::swift_timestamp)
+                }),
+            self.sidebar_preferences.document["unseen"][&thread.id].as_str(),
+        )
+    }
+    /// Swift's row tooltip: the title, where it lives, then its status.
+    fn sidebar_thread_tooltip(&self, thread: &ThreadSummary, now: f64) -> String {
+        let mut lines = vec![thread.title.clone()];
+        let mut place = self
+            .projects
+            .iter()
+            .find(|project| project["id"] == thread.project_id)
+            .map(|project| text(project, "name"))
+            .unwrap_or_default();
+        if let Some(branch) = thread
+            .navigation
+            .as_ref()
+            .and_then(|meta| meta.branch.as_deref())
+        {
+            place = if place.is_empty() {
+                branch.to_owned()
+            } else {
+                format!("{place} · {branch}")
+            };
+        }
+        if !place.is_empty() {
+            lines.push(place);
+        }
+        if let Some(label) = self.sidebar_thread_status(thread).label() {
+            lines.push(label.into());
+        }
+        if thread.snoozed_until.is_some_and(|until| until > now) {
+            lines.push("Snoozed".into());
+        }
+        lines.join("\n")
     }
     fn sidebar_projects_heading(&self, cx: &mut Context<Self>) -> AnyElement {
         self.sidebar_section_header(
@@ -775,23 +933,16 @@ impl Coincide {
                                     .unwrap_or(f64::MAX)
                             });
                         let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
-                        let label = format!(
-                            "{}{}{}{}",
-                            if thread.pinned && !pinned { "★ " } else { "" },
-                            if thread.archived { "Archived · " } else { "" },
-                            if snoozed { "Snoozed · " } else { "" },
-                            format!(
-                                "{}{}",
-                                if self.sidebar_preferences.document["unseen"][&thread.id]
-                                    .is_string()
-                                {
-                                    "● "
-                                } else {
-                                    ""
-                                },
-                                thread.title
-                            )
-                        );
+                        let label = thread.title.clone();
+                        // Pinned rows say which project they belong to.
+                        let place = pinned
+                            .then(|| {
+                                self.projects
+                                    .iter()
+                                    .find(|project| project["id"] == thread.project_id)
+                                    .map(|project| text(project, "name"))
+                            })
+                            .flatten();
                         group = group.child(div().id(SharedString::from(format!("sidebar-thread-drag-{}",thread.id))).w_full().flex().items_center().group("sidebar-thread-row")
                                 .when(pinned, |row| row.on_drag(PinnedDrag(pinned_drag),|drag,_,_,cx|cx.new(|_|drag.clone())))
                                 .on_drop(cx.listener(move |this,drag:&PinnedDrag,_,cx| {
@@ -807,13 +958,17 @@ impl Coincide {
                                 .min_w_0()
                                 .accessibility_id(SharedString::from(format!("thread-{id}")))
                                 .accessibility_label(SharedString::from(format!(
-                                    "{} conversation: {}",
+                                    "{} conversation: {}{}",
                                     if self.thread_bulk.mode {
                                         "Select"
                                     } else {
                                         "Open"
                                     },
-                                    thread.title
+                                    thread.title,
+                                    self.sidebar_thread_status(thread)
+                                        .label()
+                                        .map(|label| format!(", {label}"))
+                                        .unwrap_or_default()
                                 )))
                                 .child(self.sidebar_thread_content(thread,if self.thread_bulk.mode {
                                     format!(
@@ -826,8 +981,8 @@ impl Coincide {
                                     )
                                 } else {
                                     label
-                                },now))
-                                .tooltip(thread.title.clone())
+                                },place,now,cx))
+                                .tooltip(self.sidebar_thread_tooltip(thread, now))
                                 .w_full()
                                 .selected(if self.thread_bulk.mode {
                                     self.thread_bulk.picked.contains(&id)

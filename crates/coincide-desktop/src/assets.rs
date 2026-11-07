@@ -112,6 +112,7 @@ icon_assets!(
         PanelRightOpen,
         PanelRight,
         Pause,
+        Pin,
         Play,
         Plus,
         Redo2,
@@ -123,6 +124,7 @@ icon_assets!(
         Search,
         Settings2,
         Settings,
+        ShieldAlert,
         SortAscending,
         SortDescending,
         SkipForward,
@@ -180,6 +182,9 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            // Sidebar thread rows: pinned and waiting-for-approval marks.
+            "icons/pin.svg",
+            "icons/shield-alert.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
