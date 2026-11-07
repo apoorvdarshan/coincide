@@ -865,8 +865,8 @@ impl Render for GitHubActions {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, ActionScope, Confirmation, NOTICE, Reply, Work, blocked, execute, history, now,
-        status,
+        Action, ActionScope, Confirmation, NOTICE, Reply, ReviewEvent, Work, blocked, execute,
+        history, now, status,
     };
     use anyhow::Result;
     use serde_json::{Value, json};
@@ -934,7 +934,7 @@ mod tests {
                 assert_eq!(p["expectedHead"], s.head);
                 assert_eq!(
                     p["action"],
-                    json!({"kind":"review","event":event.key(),"body":body})
+                    json!({"kind":"review","event":"COMMENT","body":body})
                 );
                 Ok(json!({"mutationId":id,"status":"pending","result":null,"error":null}))
             },
