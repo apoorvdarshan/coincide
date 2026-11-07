@@ -30,11 +30,18 @@ type R<T> = Result<T, Failure>;
 fn native<T>(value: ::windows::core::Result<T>) -> R<T> {
     #[cfg(test)]
     let caller = std::panic::Location::caller();
-    value.map_err(|_| {
+    value.map_err(|_error| {
         #[cfg(test)]
         {
+            let category = match _error.code().0 as u32 {
+                UIA_E_TIMEOUT => "timeout",
+                UIA_E_ELEMENTNOTAVAILABLE => "element-unavailable",
+                value if value == E_ACCESSDENIED.0 as u32 => "access-denied",
+                value if value == RPC_E_DISCONNECTED.0 as u32 => "disconnected",
+                _ => "other",
+            };
             eprintln!(
-                "CU native boundary failed at {}:{}",
+                "CU native boundary failed ({category}) at {}:{}",
                 caller.file(),
                 caller.line()
             );

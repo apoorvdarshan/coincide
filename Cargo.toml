@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/coincide-core", "crates/coincide-desktop"]
+members = ["crates/coincide-core", "crates/coincide-desktop", "crates/coincide-native-host-tests"]
 exclude = ["vendor/gpui-base", "vendor/gpui-pre", "vendor/gpui-webview", "vendor/util_macros", "vendor/perf"]
 resolver = "2"
 
