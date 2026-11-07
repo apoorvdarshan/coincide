@@ -9,6 +9,8 @@ mod cookie_import;
 mod credential_bridge;
 #[path = "browser_dialogs.rs"]
 mod dialogs;
+#[path = "browser_native_history.rs"]
+mod native_history;
 #[path = "browser_native_keys.rs"]
 mod native_keys;
 #[path = "browser_press.rs"]
@@ -394,6 +396,31 @@ impl BrowserController {
             BrowserAction::Press { .. } => {
                 self.begin_press(request, target, cx)?;
                 Ok(None)
+            }
+            BrowserAction::Back | BrowserAction::Forward | BrowserAction::Reload => {
+                let action = native_history::Action::from_request(&request.action)
+                    .context("Unsupported native history action")?;
+                let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
+                let navigation = tab.navigation.clone();
+                let epoch = navigation.load(Ordering::Acquire);
+                let callbacks = &self.shutdown.callbacks;
+                let mut result =
+                    native_history::dispatch(tab.view.read(cx).raw(), action, callbacks, || {
+                        ensure!(!callbacks.closed(), "Browser is shutting down");
+                        ensure!(
+                            navigation.load(Ordering::Acquire) == epoch,
+                            "Document changed before native history dispatch"
+                        );
+                        // Invalidate old document grants immediately before the one
+                        // native SDK dispatch, including an uncertain SDK error.
+                        navigation.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    })?;
+                if result["dispatched"] == true {
+                    tab.loading = true;
+                }
+                result["tab"] = json!(target);
+                Ok(Some(result))
             }
             BrowserAction::Upload { .. } => {
                 ensure!(
