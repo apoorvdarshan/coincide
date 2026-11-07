@@ -641,7 +641,7 @@ impl Coincide {
                             .min_h_0()
                             .overflow_y_scroll()
                             .child(self.notification_panel.clone())
-                            .child(div().p_3().text_sm().child("Foreground conversation visibility is observed. System idle, screen lock, display sleep and remote-device monitoring are not connected."))
+                            .child(div().p_3().text_sm().child("Alerts use the visible conversation and available desktop activity signals. Remote-device monitoring is not connected."))
                         )
                             .into_any_element()
                     } else {

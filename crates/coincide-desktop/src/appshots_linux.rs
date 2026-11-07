@@ -135,6 +135,27 @@ fn connect(allowed: &dyn Fn() -> bool) -> Result<(XConnection<'_>, usize)> {
     )
 }
 
+/// Permission-free idle/display observations; no hook, pixels or window text.
+pub(super) fn notification_activity() -> crate::notification_activity::Observation {
+    use x11rb::protocol::{dpms, screensaver};
+    let mut observed = crate::notification_activity::Observation::default();
+    let allowed = || true;
+    if let Ok((connection, screen)) = connect(&allowed) {
+        let root = connection.setup().roots[screen].root;
+        if let Ok(cookie) = screensaver::query_info(&connection, root)
+            && let Ok(reply) = cookie.reply()
+        {
+            observed.idle_seconds = Some(u64::from(reply.ms_since_user_input) / 1000);
+        }
+        if let Ok(cookie) = dpms::info(&connection)
+            && let Ok(reply) = cookie.reply()
+        {
+            observed.display_asleep = Some(reply.state && reply.power_level != dpms::DPMSMode::ON);
+        }
+    }
+    observed
+}
+
 pub(super) fn configure(shortcut: Option<&str>) -> Result<()> {
     stop();
     ensure!(x11_session(), "{WAYLAND}");
