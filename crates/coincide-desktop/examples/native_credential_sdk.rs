@@ -147,6 +147,10 @@ impl Fixture {
         let view = gpui_webview::WebView::build(builder, window, cx)
             .expect("synthetic native view construction failed");
         verify_private(view.raw(), root).expect("owned native private context verification failed");
+        assert!(
+            browser_credentials::credential_fill_available(),
+            "validated production private fill must be exposed to native approval"
+        );
         let target = NativeCredentialTarget::new(view.raw(), Arc::new(AtomicU64::new(1)))
             .expect("native isolated-world SDK unavailable");
         let mut shutdown = shutdown::Shutdown::default();
