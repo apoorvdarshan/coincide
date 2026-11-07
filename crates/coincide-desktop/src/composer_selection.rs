@@ -805,6 +805,9 @@ fn command_transaction(
                 .all(|key| before_clear[*key] == ack[*key]),
         "Composer changed after acknowledgement; draft retained"
     );
+    if submission.keep_draft {
+        return Ok(before_clear);
+    }
     // No UI callback/await or other controller can interleave the Engine lock.
     // This clears only text, never consumes images or references.
     let cleared = invoke("threads.patch", json!({"threadId":id,"patch":{"draft":""}}))
@@ -1065,7 +1068,7 @@ fn reported_picker_model_label(thread: &Value, catalog: &Value) -> Option<String
         .filter(|name| !name.is_empty())
         .map(|_| footer_value(&row["displayName"], ""))
 }
-fn effort_picker_title(value: &Value) -> String {
+pub(super) fn effort_picker_title(value: &Value) -> String {
     let raw = footer_value(value, "Auto");
     match raw.as_str() {
         "none" | "off" => "Off".into(),
@@ -1517,8 +1520,10 @@ impl Coincide {
                     } else {
                         self.selected = Some(thread);
                     }
-                    self.composer
-                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    if !submission.keep_draft {
+                        self.composer
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                    }
                     if command == crate::composer_commands::Command::Model {
                         self.selection_ui.expanded = true;
                     } else if command == crate::composer_commands::Command::UsageLimits {
@@ -2472,6 +2477,10 @@ impl Coincide {
                 view.child(div().text_xs().truncate().child(annotation))
             })
             .into_any_element()
+    }
+    /// The saved conversation's selection capabilities, as last read; no engine call.
+    pub(super) fn composer_selection_capabilities(&self) -> &Value {
+        &self.selection_ui.capabilities
     }
     pub(super) fn composer_selection_expanded(&self) -> bool {
         self.selection_ui.expanded
@@ -3594,8 +3603,14 @@ mod tests {
         capabilities: Value,
         fault: &str,
     ) -> (Result<Value>, Value, Vec<String>) {
-        let submission =
-            crate::composer_commands::Submission::new(&stored, stored["draft"].as_str().unwrap());
+        let submission = if fault == "suggested" {
+            crate::composer_commands::Submission::suggested(
+                &stored,
+                stored["draft"].as_str().unwrap(),
+            )
+        } else {
+            crate::composer_commands::Submission::new(&stored, stored["draft"].as_str().unwrap())
+        };
         let mut calls = Vec::new();
         let mut reads = 0;
         let result = command_transaction(&submission, command, false, None, |method, params| {
@@ -3666,6 +3681,37 @@ mod tests {
                 "threads.patch"
             ]
         );
+    }
+    #[::core::prelude::v1::test]
+    fn suggested_command_keeps_the_rest_of_the_draft_and_its_attachments() {
+        let mut original = command_thread("fix the login ");
+        original["rustDraftImages"] = json!([{"id":"image"}]);
+        original["draftContext"] = json!([{"kind":"quote","text":"reference"}]);
+        for command in [
+            crate::composer_commands::Command::Plan,
+            crate::composer_commands::Command::Model,
+        ] {
+            let (result, stored, calls) = fake_command(
+                command,
+                original.clone(),
+                command_capabilities("codex", false),
+                "suggested",
+            );
+            let thread = result.unwrap();
+            assert_eq!(thread["draft"], "fix the login ");
+            assert_eq!(stored["draft"], "fix the login ");
+            assert_eq!(stored["rustDraftImages"], original["rustDraftImages"]);
+            assert_eq!(stored["draftContext"], original["draftContext"]);
+            assert_eq!(
+                stored["interactionMode"],
+                if command == crate::composer_commands::Command::Plan {
+                    "plan"
+                } else {
+                    "build"
+                }
+            );
+            assert!(!calls.iter().any(|method| method == "threads.patch"));
+        }
     }
     #[::core::prelude::v1::test]
     fn model_command_opens_controls_without_selecting_a_model_or_provider() {

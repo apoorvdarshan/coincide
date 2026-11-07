@@ -39,6 +39,8 @@ pub(super) struct State {
     epoch: Arc<AtomicU64>,
     review: Option<Arc<PreparedThreadFlags>>,
     undo: Option<Arc<ThreadFlagUndo>>,
+    /// When `undo` was made, among the inbox's Undo receipts (`inbox_undo`).
+    undo_stamp: u64,
     workers: worker_owner::WorkerOwner,
     sender: mpsc::SyncSender<Reply>,
     receiver: mpsc::Receiver<Reply>,
@@ -57,6 +59,7 @@ impl Default for State {
             epoch: Arc::new(AtomicU64::new(0)),
             review: None,
             undo: None,
+            undo_stamp: 0,
             workers: Default::default(),
             sender,
             receiver,
@@ -214,6 +217,7 @@ impl State {
                     undo.count()
                 );
                 self.undo = Some(undo.clone());
+                self.undo_stamp = inbox_undo::stamp();
                 self.review = None;
                 if reply.generation == self.epoch.load(Ordering::Acquire) {
                     self.picked.clear();
@@ -236,6 +240,10 @@ impl State {
                 None
             }
         }
+    }
+    /// The stamp of the latest batch's Undo receipt, while it has one.
+    pub(super) fn undo_stamp(&self) -> Option<u64> {
+        self.undo.as_ref().map(|_| self.undo_stamp)
     }
     pub fn close(&mut self) {
         self.invalidate();
@@ -400,7 +408,7 @@ impl Coincide {
     fn bulk_drafts_clean(&self, ids: &[String]) -> bool {
         !ids.iter().any(|id| self.pending_drafts.contains_key(id))
     }
-    fn review_bulk(&mut self, action: Action, cx: &mut Context<Self>) {
+    pub(super) fn review_bulk(&mut self, action: Action, cx: &mut Context<Self>) {
         self.sync_thread_bulk(cx);
         let ids: Vec<_> = self.thread_bulk.picked.iter().cloned().collect();
         if ids.is_empty() || !self.bulk_drafts_clean(&ids) {
@@ -439,7 +447,7 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn undo_bulk(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn undo_bulk(&mut self, cx: &mut Context<Self>) {
         self.sync_thread_bulk(cx);
         if !self.thread_bulk.binding.available {
             self.thread_bulk.status = "Return to the conversation list before Undo.".into();
@@ -461,6 +469,7 @@ impl Coincide {
     pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_bulk.close_selection();
         self.thread_list_open = !self.thread_list_open;
+        self.remember_sidebar_visibility();
         if !self.thread_list_open && self.thread_list_focus.contains_focused(window, cx) {
             self.navigation_focus.focus(window, cx);
         }
@@ -548,6 +557,28 @@ impl Coincide {
                     .label(action.label())
                     .disabled(busy || state.picked.is_empty())
                     .on_click(cx.listener(move |this, _, _, cx| this.review_bulk(action, cx))),
+                );
+            }
+            // Swift's bulk Settle Threads, Unsettle Threads and Delete Threads.
+            let running = state.picked.iter().any(|id| self.running.contains(id));
+            for (id, label, action) in [
+                ("settle", "Settle", sidebar_menus::BulkAction::Settle(true)),
+                (
+                    "unsettle",
+                    "Unsettle",
+                    sidebar_menus::BulkAction::Settle(false),
+                ),
+                ("delete", "Delete…", sidebar_menus::BulkAction::Delete),
+            ] {
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("sidebar-bulk-{id}")))
+                        .compact()
+                        .label(label)
+                        .disabled(busy || state.picked.is_empty() || (id == "settle" && running))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let ids = this.thread_bulk.picked.iter().cloned().collect::<Vec<_>>();
+                            this.sidebar_bulk_action(&ids, action, window, cx)
+                        })),
                 );
             }
             panel = panel.child(actions);

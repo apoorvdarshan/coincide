@@ -1,4 +1,6 @@
 //! One command dispatcher for the desktop and the local CLI/API.
+#[path = "github_checkout_api.rs"]
+mod github_checkout_api;
 #[path = "reply_selection_api.rs"]
 mod reply_selection_api;
 use crate::{
@@ -19,6 +21,11 @@ use uuid::Uuid;
 mod appshots_api;
 #[path = "terminal_api.rs"]
 mod terminal_api;
+#[path = "checkpoint_api.rs"]
+mod checkpoint_api;
+#[cfg(test)]
+#[path = "checkpoint_api_tests.rs"]
+mod checkpoint_api_tests;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -53,6 +60,9 @@ mod browser_bookmarks_api;
 mod browser_history_api;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
+#[cfg(test)]
+#[path = "run_clock_tests.rs"]
+mod run_clock_tests;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
@@ -84,6 +94,8 @@ mod composer_astra_api_tests;
 mod composer_context_api;
 #[path = "composer_file_reference.rs"]
 mod composer_file_reference;
+#[path = "composer_suggestions_api.rs"]
+mod composer_suggestions_api;
 #[path = "terminal_context_api.rs"]
 mod terminal_context_api;
 #[cfg(test)]
@@ -196,6 +208,11 @@ struct Running {
     events: VecDeque<Event>,
     persistence_error: Option<String>,
 }
+#[derive(Clone, Copy)]
+struct RunClock {
+    started_at: f64,
+    connected: bool,
+}
 pub struct Engine {
     appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
@@ -215,6 +232,12 @@ pub struct Engine {
     github: github_engine::GithubState,
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
+    /// When each run started and whether its provider has answered yet, for the
+    /// toolbar's "Connecting…" and "Working m:ss" (`app.status` `runClocks`).
+    run_clocks: HashMap<String, RunClock>,
+    /// Runs whose provider has reported anything yet. The others are still
+    /// starting, which the transcript's live line says ("Starting Claude…").
+    answered_runs: HashSet<String>,
     provider_workers: Vec<agent::WorkerCompletion>,
     background_workers: background_workers::State,
     provider_worker_outcomes: ProviderWorkersStatus,
@@ -250,6 +273,8 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    turn_checkpoints: checkpoint_api::State,
+    composer_commands: crate::composer_suggestions::ReportedCommands,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -299,6 +324,8 @@ impl Engine {
                 github_engine::GithubState::unavailable()
             },
             runs: HashMap::new(),
+            run_clocks: HashMap::new(),
+            answered_runs: HashSet::new(),
             provider_workers: Vec::new(),
             background_workers,
             provider_worker_outcomes: ProviderWorkersStatus::default(),
@@ -332,6 +359,8 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            turn_checkpoints: checkpoint_api::State::default(),
+            composer_commands: Default::default(),
         }
     }
     pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
@@ -386,16 +415,18 @@ impl Engine {
         }
         if terminal_api::METHODS.contains(&method) {
             return self.terminal_command(method, p);
+        if checkpoint_api::METHODS.contains(&method) {
+            return self.checkpoint_command(method, p);
         }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
             "cli.sessions.preview" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
-                session_import_api::preview(p)
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
+                session_import_api::preview(&self.store, p)
             }
             "cli.sessions.import" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
                 let result = session_import_api::import(&mut self.store, p)?;
                 self.revision += 1;
                 Ok(result)
@@ -513,6 +544,7 @@ impl Engine {
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
                 ensure!(self.browser_pending.len()<128,"Too many browser requests; collect completed results first");
+                crate::browser_protocol::validate_screenshot_parameters(p)?;
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
                 let request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
@@ -604,7 +636,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -621,7 +653,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
+                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status", "usage.claudeLimits.refresh", "usage.claudeLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -632,15 +664,17 @@ impl Engine {
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(checkpoint_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
                 methods.push("composer.context.attachTerminalSelection");
+                methods.push("composer.commands");
                 methods.push("bots.conversations.create");
                 #[cfg(unix)]
                 methods.extend_from_slice(github_engine::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(github_threads_engine::METHODS);
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))
             },
@@ -655,7 +689,7 @@ impl Engine {
             "projects.create"=>{let v=self.store.create_project(std::path::Path::new(required(p,"path")?),p["name"].as_str())?;self.revision+=1;Ok(v)}
             "projects.patch"=>{let v=self.store.patch_project(required(p,"projectId")?,&p["patch"])?;self.revision+=1;Ok(v)}
             "settings.read"=>Ok(provider_configuration::public_settings(self.store.document("settings.json")?.unwrap_or(json!({})))),
-            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
+            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));ensure!(p["patch"].get(crate::computer_use::SETTING).is_none_or(|value|current.get(crate::computer_use::SETTING)==Some(value)),"Computer Use can only be turned on or off in Settings › Computer Use");let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
             "threads.list" => Ok(serde_json::to_value(self.store.summaries(
                 p["query"].as_str().unwrap_or(""),
                 p["includeArchived"].as_bool().unwrap_or(false),
@@ -711,6 +745,25 @@ impl Engine {
                 let result = self.model_catalog.refresh_limits(executable)?;
                 self.revision += 1;
                 Ok(result)
+            }
+            "usage.claudeLimits.refresh" => {
+                crate::model_catalog::claude_limits::validate_refresh(p)?;
+                self.require_provider_enabled("claude")?;
+                let executable = std::env::var_os("COINCIDE_CLAUDE_EXECUTABLE")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
+                            .find(|entry| entry["provider"] == "claude")?["executable"].as_str().map(PathBuf::from)
+                    })
+                    .map(provider_configuration::current_executable);
+                let result = self.model_catalog.refresh_claude_limits(executable)?;
+                self.revision += 1;
+                Ok(result)
+            }
+            "usage.claudeLimits.status" => {
+                let id = crate::model_catalog::status_id(p)?;
+                if self.model_catalog.poll() { self.revision += 1; }
+                self.model_catalog.claude_limits_status(id)
             }
             "usage.codexLimits.status" => {
                 let id = crate::model_catalog::status_id(p)?;
@@ -849,7 +902,7 @@ impl Engine {
             }
             "agent.pending" => {
                 self.store.thread(required(p,"threadId")?)?;
-                Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"]})).collect::<Vec<_>>()).unwrap_or_default()))
+                Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"],"provider":run.provider})).collect::<Vec<_>>()).unwrap_or_default()))
             }
             "agent.answer" => {
                 let run = self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
@@ -873,6 +926,7 @@ impl Engine {
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
             "composer.context.edit" => self.edit_composer_context(p),
             "composer.context.attachTerminalSelection" => self.attach_terminal_selection(p),
+            "composer.commands" => self.reported_composer_commands(p),
             "agent.send" => self.send_turn(p,SendOrigin::Ordinary),
             "agent.stop" => {
                 self.request_provider_stop(required(p,"threadId")?)?;
@@ -900,9 +954,21 @@ impl Engine {
                         "Decision is not offered by the agent"
                     );
                 }
-                running
-                    .session
-                    .reply(frame["id"].clone(), json!({"decision":decision}))?;
+                // Only Claude Code reads a note with its answer (what to do
+                // instead of a denied call); never drop one silently elsewhere.
+                let mut answer = json!({"decision":decision});
+                if let Some(note) = p.get("text").filter(|note| !note.is_null()) {
+                    let note = note.as_str().context("Reply text must be a string")?;
+                    ensure!(note.len() <= 65536, "Reply text must fit within 64 KiB");
+                    ensure!(
+                        running.provider == "claude" || note.trim().is_empty(),
+                        "This agent does not take a reply with its approvals"
+                    );
+                    if !note.trim().is_empty() {
+                        answer["text"] = json!(note);
+                    }
+                }
+                running.session.reply(frame["id"].clone(), answer)?;
                 running.pending.remove(key);
                 self.notification_events.cancel_request(required(p,"threadId")?,key);
                 self.revision += 1;
@@ -983,7 +1049,16 @@ impl Engine {
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
-        let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        let mut runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        // Per-thread capabilities valid only for this running app; never saved
+        // as user text (Swift ThreadRunner.ephemeralRuntimeContexts).
+        if let Some(capability) = Uuid::parse_str(&id)
+            .ok()
+            .and_then(|thread| self.computer_use_runtime_context(thread))
+        {
+            runtime_prompt.push_str("\n\n");
+            runtime_prompt.push_str(&capability);
+        }
         let codex_profile = self.codex_login_context(&v)?;
         if let Some(configuration) = provider_configuration::current() {
             configuration.validate_named_profile(
@@ -1293,6 +1368,12 @@ impl Engine {
             SendOrigin::Queued(claim) => Some(claim.id().to_owned()),
             _ => None,
         };
+        let user_item_id = v["items"]
+            .as_array()
+            .and_then(|items| items.last())
+            .map(|item| text(item, "id"))
+            .unwrap_or_default();
+        let checkpoint = self.prepare_turn_checkpoint(&id, &user_item_id, &cwd);
         self.insert_running(
             id,
             Running {
@@ -1312,6 +1393,7 @@ impl Engine {
                     bot_instructions,
                     mode_policy,
                     named_launch,
+                    checkpoint,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1327,8 +1409,32 @@ impl Engine {
         Ok(json!({"accepted":true}))
     }
     fn insert_running(&mut self, id: String, run: Running) {
+        self.answered_runs.remove(&id);
         self.provider_workers.push(run.session.worker_completion());
+        self.run_clocks.insert(
+            id.clone(),
+            RunClock {
+                started_at: swift_timestamp(),
+                connected: false,
+            },
+        );
         self.runs.insert(id, run);
+    }
+    /// Each running thread's start (Swift reference seconds) and whether it is
+    /// still connecting: its provider has sent nothing since the run began.
+    fn run_clocks_status(&self) -> Value {
+        Value::Object(
+            self.runs
+                .keys()
+                .filter_map(|id| {
+                    let clock = self.run_clocks.get(id)?;
+                    Some((
+                        id.clone(),
+                        json!({"startedAt":clock.started_at,"connecting":!clock.connected}),
+                    ))
+                })
+                .collect(),
+        )
     }
     /// Nonblocking observer for trusted native owners. Background observers join
     /// provider threads; completed observations fold into sticky counters here.
@@ -1800,6 +1906,7 @@ impl Engine {
             self.revision += 1;
         }
         self.poll_workspace_completions();
+        self.poll_turn_checkpoints();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
@@ -1814,6 +1921,8 @@ impl Engine {
             }
         }
 
+        let runs = &self.runs;
+        self.run_clocks.retain(|id, _| runs.contains_key(id));
         let ids = self.runs.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             if let Some(run) = self.runs.get_mut(&id)
@@ -1824,6 +1933,10 @@ impl Engine {
             if self.runs[&id].events.is_empty() {
                 continue;
             }
+            if let Some(clock) = self.run_clocks.get_mut(&id) {
+                clock.connected = true;
+            }
+            self.answered_runs.insert(id.clone());
             // A worker publishes steering ACK before Finished. Recheck after
             // receiving terminal events so accepted input precedes seen-count
             // advancement and cannot be recapped into the next turn twice.
@@ -2008,6 +2121,26 @@ impl Engine {
                                     }
                                 }
                             }
+                            "provider/event" => {
+                                if let Some(commands) =
+                                    crate::composer_suggestions::reported_commands(p)
+                                {
+                                    let provider = self.runs[&id].provider.clone();
+                                    let account = if v["selection"]["provider"] == provider {
+                                        v["selection"]["accountID"].clone()
+                                    } else {
+                                        Value::Null
+                                    };
+                                    let folder = self.working_directory(&v).ok();
+                                    self.composer_commands.record(
+                                        &id,
+                                        &provider,
+                                        &account,
+                                        folder.as_deref(),
+                                        commands,
+                                    );
+                                }
+                            }
                             "provider/requestRejected" => {
                                 append(
                                     &mut v,
@@ -2063,13 +2196,17 @@ impl Engine {
                                             &self.runs[&id].provider,
                                             item,
                                         );
+                                        mark_completed(existing, method);
                                     } else {
                                         append(&mut v, "tool", &item.to_string(), Some(&external));
+                                        let row =
+                                            v["items"].as_array_mut().unwrap().last_mut().unwrap();
                                         codex_tool_metadata::apply(
-                                            v["items"].as_array_mut().unwrap().last_mut().unwrap(),
+                                            row,
                                             &self.runs[&id].provider,
                                             item,
                                         );
+                                        mark_completed(row, method);
                                     }
                                 }
                             }
@@ -2168,6 +2305,9 @@ impl Engine {
                 }
             }
             self.revision += 1;
+            if finished {
+                self.finish_turn_checkpoint(&id);
+            }
             if finished
                 && let Some(run) = self.runs.remove(&id)
                 && let Some(claim) = run.schedule_claim
@@ -2183,6 +2323,7 @@ impl Engine {
                 self.schedule_completions.push((claim, outcome, failure));
             }
         }
+        self.answered_runs.retain(|id| self.runs.contains_key(id));
         self.poll_native_follow_ups();
         self.poll_message_queues();
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
@@ -2243,6 +2384,17 @@ fn import_attachment(
 
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
+}
+/// When the provider first reported a tool call finished, for its duration.
+/// Display metadata only, like createdAt; it never settles the call or a turn.
+fn mark_completed(row: &mut Value, method: &str) {
+    if method == "item/completed"
+        && let Some(fields) = row.as_object_mut()
+    {
+        fields
+            .entry("completedAt")
+            .or_insert_with(|| json!(swift_timestamp()));
+    }
 }
 fn append(v: &mut Value, kind: &str, text: &str, external: Option<&str>) {
     let provider = v["selection"]["provider"].clone();
