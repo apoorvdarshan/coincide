@@ -286,6 +286,14 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/bot-editor-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/bot-editor-tests.log" -SimpleMatch 'test result: ok. 15 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly 15 bot avatar, bot editor and App Updates tests' }
+      - name: Test the pull request panel's repository states without GitHub
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/pr-panel-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in 'availability_reads_each_swift_state_from_the_engine', 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head') {
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/pr-panel-tests.log" -SimpleMatch "$name ... ok")) { throw "Expected $name to pass" }
+          }
       - name: Test transcript link routing, plan card, changed files and rewind logic
         shell: pwsh
         run: |
@@ -498,6 +506,12 @@ jobs:
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | tee "$RUNNER_TEMP/bot-editor-tests.log"
           grep -F 'test result: ok. 15 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/bot-editor-tests.log"
+      - name: Test the pull request panel's repository states without GitHub
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'availability_reads_each_swift_state_from_the_engine ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
