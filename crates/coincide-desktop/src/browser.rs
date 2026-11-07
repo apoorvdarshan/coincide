@@ -74,7 +74,7 @@ type FileRoot = Arc<Mutex<Option<PathBuf>>>;
 fn file_navigation_allowed(root: &FileRoot, address: &str) -> bool {
     root.lock().ok().is_some_and(|mut root| {
         // Remote documents must not inherit the user's local folder grant.
-        if allow_native_navigation(address) {
+        if coincide_core::browser_protocol::allow_native_navigation(address) {
             *root = None;
             return false;
         }
