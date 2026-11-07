@@ -45,7 +45,9 @@ function ownedStyle(node,change){
  change();
  if(!observer)return;
  const records=observer.takeRecords();
- if(records.length>1 || records.some(r=>r.type!=='attributes' || r.attributeName!=='style' || r.target!==node))record(records);
+ const own=records.findIndex(r=>r.type==='attributes' && r.attributeName==='style' && r.target===node);
+ if(own>=0)records.splice(own,1);
+ record(records);
 }
 const props=[['opacity','0'],['transition','none'],['animation','none']];
 function restore(){
