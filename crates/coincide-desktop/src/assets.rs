@@ -82,6 +82,9 @@ icon_assets!(
         FolderOpen,
         Folder,
         Frame,
+        Gauge,
+        GitPullRequest,
+        GitPullRequestDraft,
         GalleryVerticalEnd,
         GitBranch,
         Github,
@@ -182,6 +185,10 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            // Composer `/` and `#` suggestion rows.
+            "icons/gauge.svg",
+            "icons/git-pull-request.svg",
+            "icons/git-pull-request-draft.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
