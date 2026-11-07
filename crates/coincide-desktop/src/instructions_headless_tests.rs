@@ -132,6 +132,39 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
     let remote_before = git(&bare, &["rev-parse", "main"]);
     cx.update(gpui_kit::init);
     let editors = engine.lock().unwrap().native_ui_editors();
+    // The actual constructor's own busy error clears without a native click.
+    {
+        let held = engine.lock().unwrap();
+        let (waiting, waiting_cx) = cx.add_window_view(|window, cx| {
+            InstructionsPanel::new(engine.clone(), editors.editor(), window, cx)
+        });
+        let before = waiting_cx.read(|app| waiting.read(app).setup.status.clone());
+        assert!(before.contains("busy"));
+        waiting_cx.update(|_, cx| {
+            waiting.update(cx, |panel, cx| panel.poll_initial_instruction_setup(cx))
+        });
+        assert_eq!(
+            waiting_cx.read(|app| waiting.read(app).setup.status.clone()),
+            before
+        );
+        drop(held);
+        waiting_cx.update(|_, cx| {
+            waiting.update(cx, |panel, cx| panel.poll_initial_instruction_setup(cx))
+        });
+        assert!(waiting_cx.read(|app| waiting.read(app).setup.metadata.is_some()));
+        assert!(waiting_cx.read(|app| waiting.read(app).setup.status.is_empty()));
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .document("instructions.json")
+                .unwrap()
+                .unwrap(),
+            original
+        );
+        waiting_cx.update(|window, _| window.remove_window());
+    }
     // Force the exact initial EngineBusy case, not a synthetic missing flag.
     let guard = engine.lock().unwrap();
     let (panel, cx) = cx.add_window_view(|window, cx| {
@@ -145,7 +178,22 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
             .contains("not ready")
     );
     drop(guard);
-    // Retry the same real native handler after the owner becomes available.
+    // The same retained owner's read-only poll also recovers constructor busy
+    // without creating/adopting a file or granting a native setup capability.
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.poll_initial_instruction_setup(cx)));
+    assert!(cx.read(|app| panel.read(app).setup.metadata.is_some()));
+    assert_eq!(
+        engine
+            .lock()
+            .unwrap()
+            .store
+            .document("instructions.json")
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    // Explicit native handler still supplies the chooser authority.
+
     cx.update(|window, cx| panel.update(cx, |panel, cx| panel.setup_choose_master(window, cx)));
     assert!(cx.did_prompt_for_paths());
     {
