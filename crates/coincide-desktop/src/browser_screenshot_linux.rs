@@ -17,12 +17,42 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
-use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebView, WebViewExt};
+use webkit2gtk::{
+    SnapshotOptions, SnapshotRegion, UserContentInjectedFrames, UserContentManager,
+    UserContentManagerExt, UserScript, UserScriptInjectionTime, WebView, WebViewExt,
+};
 use wry::WebViewExtUnix;
 const WORLD: &str = "CoincidePrivateSnapshotV1";
 // FullDocument renders the whole document into one shared surface before
 // rows can be cropped. Refuse larger documents instead of allocating them.
 const MAX_FULL_DOCUMENT_PIXELS: f64 = 64_000_000.;
+/// WebKitGTK frees a named content world between evaluations unless its
+/// user content manager retains it; PREPARE's state must reach FINISH. An
+/// inert script in that world holds it for exactly this transaction.
+struct World {
+    manager: UserContentManager,
+    script: UserScript,
+}
+impl World {
+    fn retain(view: &WebView) -> Option<Self> {
+        let manager = view.user_content_manager()?;
+        let script = UserScript::for_world(
+            "/* Coincide private snapshot world */",
+            UserContentInjectedFrames::TopFrame,
+            UserScriptInjectionTime::End,
+            WORLD,
+            &[],
+            &[],
+        );
+        manager.add_script(&script);
+        Some(Self { manager, script })
+    }
+}
+impl Drop for World {
+    fn drop(&mut self) {
+        self.manager.remove_script(&self.script);
+    }
+}
 struct Source {
     view: WebView,
     navigation: Arc<AtomicU64>,
@@ -34,6 +64,7 @@ struct Source {
     width: i32,
     height: i32,
     scale: i32,
+    _world: World,
     _target: NativeLease,
 }
 impl Source {
@@ -114,7 +145,12 @@ pub(in super::super) fn capture(
         completion(Err("Show the browser before taking a screenshot"));
         return;
     }
+    let Some(world) = World::retain(&view) else {
+        completion(Err("Native snapshot is unavailable"));
+        return;
+    };
     let source = Rc::new(Source {
+        _world: world,
         view,
         navigation: navigation.clone(),
         epoch: navigation.load(Ordering::Acquire),

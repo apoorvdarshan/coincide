@@ -30,6 +30,9 @@ const WORLD: &str = "CoincidePrivateSnapshotV1";
 #[derive(Clone)]
 struct Source {
     view: Retained<WKWebView>,
+    // Retained for the whole transaction: a released named world loses
+    // PREPARE's state before FINISH.
+    world: Retained<WKContentWorld>,
     navigation: Arc<AtomicU64>,
     epoch: u64,
     protected: Arc<AtomicBool>,
@@ -57,11 +60,10 @@ impl Source {
         arguments: &[(&str, &str)],
         done: impl FnOnce(*mut AnyObject, *mut NSError) + 'static,
     ) {
-        let Some(mtm) = MainThreadMarker::new() else {
+        if MainThreadMarker::new().is_none() {
             done(std::ptr::null_mut(), std::ptr::null_mut());
             return;
-        };
-        let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm) };
+        }
         let keys = arguments
             .iter()
             .map(|(key, _)| NSString::from_str(key))
@@ -93,7 +95,7 @@ impl Source {
                     &NSString::from_str(script),
                     Some(&args),
                     None,
-                    &world,
+                    &self.world,
                     Some(&block),
                 );
         }
@@ -137,8 +139,10 @@ pub(in super::super) fn capture(
         return;
     };
     let epoch = navigation.load(Ordering::Acquire);
+    let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm) };
     let source = Source {
         view,
+        world,
         navigation,
         epoch,
         protected,
