@@ -117,10 +117,15 @@ fn filter(
                 return true;
             }
             let navigation = thread.navigation.as_ref();
+            // The worktree prefix is not part of what a branch says.
+            let branch = navigation
+                .and_then(|meta| meta.branch.as_deref())
+                .map(|branch| branch.strip_prefix(branch_prefix).unwrap_or(branch))
+                .unwrap_or("");
             palette_search::score_thread(
                 query,
                 &Field::new(&thread.title),
-                &Field::new(navigation.and_then(|meta| meta.branch.as_deref()).unwrap_or("")),
+                &Field::new(branch),
                 &Field::new(project),
                 navigation.and_then(|meta| meta.updated_at).unwrap_or(0.),
                 now,
