@@ -14,6 +14,7 @@ pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
 pub mod workspace;
+pub mod workspace_diff;
 
 pub mod inspector_preferences;
 pub mod message_queue;
@@ -61,6 +62,7 @@ pub mod updater_install;
 pub mod updater_helper;
 
 pub mod computer_use;
+pub mod computer_use_bridge;
 
 pub mod legacy_media_recovery;
 

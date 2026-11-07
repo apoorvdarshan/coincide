@@ -77,6 +77,7 @@ icon_assets!(
         Cpu,
         Dash,
         Delete,
+        Diff,
         EllipsisVertical,
         Ellipsis,
         ExternalLink,
@@ -86,6 +87,7 @@ icon_assets!(
         File,
         FolderClosed,
         FolderOpen,
+        FolderX,
         Folder,
         Frame,
         Gauge,
@@ -193,6 +195,7 @@ mod tests {
             "icons/arrow-up-right.svg",
             "icons/arrow-down-right.svg",
             "icons/square.svg",
+            // Empty states shared by sidebar chrome and Diff inspector.
             "icons/folder-x.svg",
             "icons/diff.svg",
             "icons/git-pull-request.svg",

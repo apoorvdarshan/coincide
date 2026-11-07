@@ -52,6 +52,8 @@ mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
 mod dictation_preview;
+mod diff_mount;
+mod diff_panel;
 mod draft_close;
 mod github_actions;
 mod github_review;
@@ -465,6 +467,9 @@ struct Coincide {
     inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    diff_panel: Entity<diff_panel::DiffPanel>,
+    /// The Local Git tab shows the Rust-only checkpoint and worktree tools, not the diff.
+    git_tools_open: bool,
     github_open: bool,
     github_panel: Entity<github_review::GitHubReviewPanel>,
     github_threads_panel: Entity<github_threads::GitHubThreadsPanel>,
@@ -593,6 +598,10 @@ impl Coincide {
                         .map(str::to_owned)
                 })
         });
+        self.diff_panel.update(cx, |panel, cx| {
+            panel.set_context(thread.clone(), root_hint.clone(), cx)
+        });
+        self.sync_diff_thread(false, cx);
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
@@ -1038,6 +1047,7 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let diff_panel = cx.new(|cx| diff_panel::DiffPanel::new(engine.clone(), window, cx));
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
         let github_actions =
             cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
@@ -1449,6 +1459,8 @@ impl Coincide {
             inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
+            diff_panel,
+            git_tools_open: false,
             github_open: false,
             github_panel,
             github_threads_panel,
@@ -3352,6 +3364,9 @@ impl Coincide {
                 if self.refresh(cx) {
                     self.revision = revision;
                 }
+                self.sync_diff_thread(true, cx);
+            } else {
+                self.sync_diff_thread(false, cx);
             }
             self.tick_turn_clock(cx);
         }
