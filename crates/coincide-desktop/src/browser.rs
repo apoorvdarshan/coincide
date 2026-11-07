@@ -718,6 +718,8 @@ impl BrowserController {
                             .into(),
                     });
                 }
+                // A visible page is laid out from the new fixed viewport.
+                cx.refresh_windows();
                 Ok(Some(match size {
                     Some((width, height)) => {
                         json!({"width":width,"height":height,"mode":"fixed","tab":target})
