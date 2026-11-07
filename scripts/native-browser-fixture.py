@@ -4,7 +4,7 @@
 Imported by isolated native CI smoke only. No external URL, saved login, cookie,
 password, upload, screenshot or arbitrary-script tool command is used.
 """
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import threading
@@ -12,20 +12,28 @@ import time
 import uuid
 
 
-def exercise_browser(rpc, thread_id, capture_visible):
+def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh native CI runner only"
     marker = "NativeBrowserReady" + uuid.uuid4().hex
     text = "Native browser input café Ω"
     http_requests = []
+    http_timing = []
+    started = time.monotonic()
     class Page(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
             self.connection.settimeout(2)
         def log_message(self, *_args):
             pass
+        def log_error(self, message, *args):
+            # Includes speculative or idle WebView connections ending at the 2 s limit.
+            if len(http_timing) < 128:
+                http_timing.append(["error: " + (message % args)[:80], round(time.monotonic() - started, 3)])
         def do_GET(self):
             if len(http_requests) < 64:
                 http_requests.append(self.path[:200])
+            if len(http_timing) < 128:
+                http_timing.append([self.path[:200], round(time.monotonic() - started, 3)])
             if self.path == "/frame":
                 html = '<title>Owned frame</title><p>NativeBrowserFrameReady</p>'
             elif self.path in ("/", "/second"):
@@ -51,7 +59,13 @@ def exercise_browser(rpc, thread_id, capture_visible):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
-    server = HTTPServer(("127.0.0.1", 0), Page)
+    class OwnedServer(ThreadingHTTPServer):
+        # A single serving thread stalls every page request behind an idle or
+        # speculative WebView connection until its socket timeout. Requests run
+        # concurrently on non-daemon threads that server_close() joins.
+        daemon_threads = False
+        block_on_close = True
+    server = OwnedServer(("127.0.0.1", 0), Page)
     worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .05},
                               name="owned-browser-http-fixture")
     worker.start()
@@ -129,13 +143,21 @@ def exercise_browser(rpc, thread_id, capture_visible):
         key_report = keys.exercise_keys(rpc, thread_id)
         assert key_report["passed"]
         assert request("tabs").get("tabs") == [], "Key fixture must close every created tab"
+        spec = importlib.util.spec_from_file_location("owned_native_download_fixture", Path(__file__).with_name("test-rust-native-browser-downloads.py"))
+        downloads = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(downloads)
+        download_report = downloads.exercise_downloads(rpc, thread_id, downloads_root)
+        assert download_report["passed"]
+        assert request("tabs").get("tabs") == [], "Download fixture must close every created tab"
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
                 "operations": receipts, "externalNetwork": False, "tabsClosed": True,
-                "nativeDialogs": dialog_report, "nativeKeys": key_report}
+                "nativeDialogs": dialog_report, "nativeKeys": key_report,
+                "nativeDownloads": download_report}
     except BaseException as error:
         # Diagnose the same failed operation without navigation, repeated input
         # or a changed deadline. These are only this fixture's private pages.
-        diagnostics = {"httpRequests": list(http_requests)}
+        diagnostics = {"httpRequests": list(http_requests), "httpTiming": list(http_timing),
+                       "failedAfterSeconds": round(time.monotonic() - started, 3)}
         for action in ("tabs", "read", "console"):
             try:
                 diagnostics[action] = request(action, tabs[0] if tabs else None)
@@ -164,6 +186,7 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--capture-ready", type=Path, required=True)
     parser.add_argument("--capture-ack", type=Path, required=True)
+    parser.add_argument("--downloads-root", type=Path, required=True)
     args = parser.parse_args()
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh CI runner only"
     client = args.client.resolve(strict=True)
@@ -198,7 +221,7 @@ def main():
             time.sleep(.05)
         raise AssertionError("Native parent did not acknowledge its actual browser capture")
     try:
-        report = exercise_browser(rpc, args.thread, capture_visible)
+        report = exercise_browser(rpc, args.thread, capture_visible, args.downloads_root)
         args.report.write_text(json.dumps(report, indent=2))
     except BaseException as error:
         args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000],
