@@ -75,6 +75,9 @@ icon_assets!(
         ChartPie,
         ChartNoAxesColumn,
         CircleArrowUp,
+        CircleArrowDown,
+        GitPullRequest,
+        Layers,
         MessagesSquare,
         SquarePen,
         SquareArrowOutUpRight,
@@ -253,7 +256,6 @@ mod tests {
             "icons/pin.svg",
             // Empty states shared by sidebar chrome and Diff inspector.
             "icons/diff.svg",
-
             // Project script icons and the scripts menu.
             "icons/play.svg",
             "icons/badge-check.svg",
@@ -261,8 +263,6 @@ mod tests {
             "icons/settings.svg",
             "icons/bug.svg",
             "icons/square-play.svg",
-            // Empty states shared by sidebar chrome and Diff inspector.
->>>>>>> origin/feat/parity-project-scripts-52f19
             "icons/folder-x.svg",
             "icons/git-pull-request.svg",
             "icons/shield-alert.svg",

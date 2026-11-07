@@ -92,11 +92,18 @@ impl Coincide {
                         .min_h_0()
                         .min_w_0()
                         .overflow_hidden()
-                        .child(if self.git_tools_open {
-                            self.workspace_panel.clone().into_any_element()
-                        } else {
-                            self.diff_panel.clone().into_any_element()
-                        })
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div().flex_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden()
+                                .child(if self.git_tools_open {
+                                    self.workspace_panel.clone().into_any_element()
+                                } else {
+                                    self.diff_panel.clone().into_any_element()
+                                }),
+                        )
+                        // The action bar stays below the selected Git workspace surface.
+                        .when_some(self.git_actions_bar(cx), |view, bar| view.child(bar))
                         .into_any_element()
                 })
                 .into_any_element()
