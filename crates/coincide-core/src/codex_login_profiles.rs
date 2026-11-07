@@ -20,6 +20,8 @@ pub(crate) struct LaunchContext {
     executable_identity: (crate::private_fs::Identity, u64, std::time::SystemTime),
     #[serde(skip_serializing_if = "Option::is_none")]
     native_api_key: Option<crate::provider_configuration::NativeCodexApiContext>,
+    #[serde(skip)]
+    home_lease: Option<crate::provider_configuration::CodexHomeLease>,
 }
 impl LaunchContext {
     pub(crate) fn capture(root: &Path, account: &str, executable: &Path) -> Result<Self> {
@@ -35,6 +37,9 @@ impl LaunchContext {
         let value = Self {
             account: account.into(),
             native_api_key: None,
+            home_lease: Some(crate::provider_configuration::CodexHomeLease::capture(
+                &home,
+            )?),
             root: root.into(),
             home: home.clone(),
             home_identity: crate::private_fs::identity(&home)?,
@@ -74,6 +79,7 @@ impl LaunchContext {
                 metadata.modified()?,
             ),
             native_api_key: Some(grant),
+            home_lease: None,
         };
         value.validate()?;
         Ok(value)
@@ -88,6 +94,9 @@ impl LaunchContext {
         &self.home
     }
     pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(lease) = &self.home_lease {
+            lease.validate()?;
+        }
         if let Some(native) = &self.native_api_key {
             native.validate()?;
             ensure!(native.home() == self.home, "Codex API profile home changed");
