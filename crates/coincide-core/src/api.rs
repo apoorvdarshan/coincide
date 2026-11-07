@@ -635,7 +635,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status"
+                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status", "usage.claudeLimits.refresh", "usage.claudeLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -726,6 +726,25 @@ impl Engine {
                 let result = self.model_catalog.refresh_limits(executable)?;
                 self.revision += 1;
                 Ok(result)
+            }
+            "usage.claudeLimits.refresh" => {
+                crate::model_catalog::claude_limits::validate_refresh(p)?;
+                self.require_provider_enabled("claude")?;
+                let executable = std::env::var_os("COINCIDE_CLAUDE_EXECUTABLE")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
+                            .find(|entry| entry["provider"] == "claude")?["executable"].as_str().map(PathBuf::from)
+                    })
+                    .map(provider_configuration::current_executable);
+                let result = self.model_catalog.refresh_claude_limits(executable)?;
+                self.revision += 1;
+                Ok(result)
+            }
+            "usage.claudeLimits.status" => {
+                let id = crate::model_catalog::status_id(p)?;
+                if self.model_catalog.poll() { self.revision += 1; }
+                self.model_catalog.claude_limits_status(id)
             }
             "usage.codexLimits.status" => {
                 let id = crate::model_catalog::status_id(p)?;
