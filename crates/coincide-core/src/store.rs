@@ -1,3 +1,5 @@
+#[path = "store_codex_profile_lifecycle.rs"]
+mod codex_profile_lifecycle;
 #[path = "reply_selection_store.rs"]
 mod reply_selection_store;
 #[path = "store_thread_idle.rs"]

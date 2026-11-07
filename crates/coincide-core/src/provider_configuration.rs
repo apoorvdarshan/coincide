@@ -1177,6 +1177,10 @@ impl Engine {
 #[path = "provider_account_secret_store.rs"]
 pub mod account_secret_store;
 
+#[path = "native_legacy_codex_accounts.rs"]
+mod legacy_codex_accounts;
+pub use legacy_codex_accounts::{NativeLegacyCodexAccount, PreparedLegacyCodexRename};
+
 #[path = "codex_profile_home_lease.rs"]
 mod codex_home_lease;
 pub(crate) use codex_home_lease::{Held as HeldCodexHomeLease, Lease as CodexHomeLease};
