@@ -4,6 +4,11 @@
 //! The desktop owner must additionally bind its actual native view, thread,
 //! navigation, private-world mask transaction and actual SDK completion. Nothing
 //! here invokes JavaScript, reads a file, captures a desktop or starts a process.
+#[path = "browser_screenshot_artifact.rs"]
+pub mod artifact;
+#[path = "browser_screenshot_mask.rs"]
+pub mod mask;
+
 use anyhow::{Result, ensure};
 use image::{ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, codecs::png::PngEncoder};
 use serde::Deserialize;
@@ -134,6 +139,41 @@ pub fn redact_png(bytes: &[u8], geometry: &Geometry) -> Result<Png> {
     redact_rgba(width, height, rgba, geometry)
 }
 
+/// Cairo ARGB32 is native-endian premultiplied data. Convert on the owned
+/// encoder worker; never expose hidden RGB from fully transparent pixels.
+pub fn redact_argb32(
+    width: u32,
+    height: u32,
+    stride: usize,
+    bytes: &[u8],
+    geometry: &Geometry,
+) -> Result<Png> {
+    geometry.check_native_size(width, height)?;
+    ensure!(
+        stride >= width as usize * 4
+            && stride.checked_mul(height as usize) == Some(bytes.len())
+            && bytes.len() <= MAX_NATIVE_PIXELS as usize * 4,
+        "Invalid native ARGB32 pixels"
+    );
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for row in bytes.chunks_exact(stride) {
+        for pixel in row[..width as usize * 4].chunks_exact(4) {
+            let argb = u32::from_ne_bytes(pixel.try_into().expect("four byte pixel"));
+            let alpha = (argb >> 24) as u8;
+            let channel = |shift| {
+                let value = ((argb >> shift) & 255) as u16;
+                if alpha == 0 {
+                    0
+                } else {
+                    ((value * 255 + u16::from(alpha) / 2) / u16::from(alpha)).min(255) as u8
+                }
+            };
+            rgba.extend_from_slice(&[channel(16), channel(8), channel(0), alpha]);
+        }
+    }
+    redact_rgba(width, height, rgba, geometry)
+}
+
 pub fn redact_rgba(width: u32, height: u32, mut rgba: Vec<u8>, geometry: &Geometry) -> Result<Png> {
     geometry.check_native_size(width, height)?;
     ensure!(
@@ -210,6 +250,18 @@ impl Write for BoundedPng {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_argb_premultiplication_and_transparent_pixels_are_safe() {
+        let geometry = Geometry::checked(2., 1., vec![]).unwrap();
+        let bytes = [0x80804020u32.to_ne_bytes(), 0x00ffffffu32.to_ne_bytes()].concat();
+        let png = redact_argb32(2, 1, 8, &bytes, &geometry).unwrap();
+        let image = image::load_from_memory_with_format(png.bytes(), ImageFormat::Png)
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(image.get_pixel(0, 0).0, [255, 128, 64, 128]);
+        assert_eq!(image.get_pixel(1, 0).0, [0; 4]);
+        assert!(redact_argb32(2, 1, 4, &bytes, &geometry).is_err());
+    }
     #[test]
     fn hostile_geometry_and_native_allocation_refused_before_decode() {
         for width in [f64::NAN, f64::INFINITY, -1., 0., 20_001.] {
