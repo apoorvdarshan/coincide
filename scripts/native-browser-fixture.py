@@ -4,7 +4,7 @@
 Imported by isolated native CI smoke only. No external URL, saved login, cookie,
 password, upload, screenshot or arbitrary-script tool command is used.
 """
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import threading
@@ -17,15 +17,23 @@ def exercise_browser(rpc, thread_id, capture_visible):
     marker = "NativeBrowserReady" + uuid.uuid4().hex
     text = "Native browser input café Ω"
     http_requests = []
+    http_timing = []
+    started = time.monotonic()
     class Page(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
             self.connection.settimeout(2)
         def log_message(self, *_args):
             pass
+        def log_error(self, message, *args):
+            # Includes speculative or idle WebView connections ending at the 2 s limit.
+            if len(http_timing) < 128:
+                http_timing.append(["error: " + (message % args)[:80], round(time.monotonic() - started, 3)])
         def do_GET(self):
             if len(http_requests) < 64:
                 http_requests.append(self.path[:200])
+            if len(http_timing) < 128:
+                http_timing.append([self.path[:200], round(time.monotonic() - started, 3)])
             if self.path == "/frame":
                 html = '<title>Owned frame</title><p>NativeBrowserFrameReady</p>'
             elif self.path in ("/", "/second"):
@@ -51,7 +59,13 @@ def exercise_browser(rpc, thread_id, capture_visible):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
-    server = HTTPServer(("127.0.0.1", 0), Page)
+    class OwnedServer(ThreadingHTTPServer):
+        # A single serving thread stalls every page request behind an idle or
+        # speculative WebView connection until its socket timeout. Requests run
+        # concurrently on non-daemon threads that server_close() joins.
+        daemon_threads = False
+        block_on_close = True
+    server = OwnedServer(("127.0.0.1", 0), Page)
     worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .05},
                               name="owned-browser-http-fixture")
     worker.start()
@@ -135,7 +149,8 @@ def exercise_browser(rpc, thread_id, capture_visible):
     except BaseException as error:
         # Diagnose the same failed operation without navigation, repeated input
         # or a changed deadline. These are only this fixture's private pages.
-        diagnostics = {"httpRequests": list(http_requests)}
+        diagnostics = {"httpRequests": list(http_requests), "httpTiming": list(http_timing),
+                       "failedAfterSeconds": round(time.monotonic() - started, 3)}
         for action in ("tabs", "read", "console"):
             try:
                 diagnostics[action] = request(action, tabs[0] if tabs else None)
