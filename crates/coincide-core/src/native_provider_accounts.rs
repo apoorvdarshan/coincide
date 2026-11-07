@@ -1048,6 +1048,7 @@ mod codex_key_enrollment;
 pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt};
 #[path = "native_admin_accounts.rs"]
 mod admin;
+pub use admin::{NativeAdminTokens, NativeAdminUsage, NativeAdminUsageReport};
 
 #[path = "native_key_accounts.rs"]
 mod keys;
