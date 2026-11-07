@@ -287,6 +287,11 @@ impl Fixture {
                 cx.notify();
                 return false;
             }
+            if self.index == 4 {
+                // Hiding the sibling can unmap the shared native parent; make
+                // the remaining owned view visible again before focusing it.
+                self.views[1].update(cx, |view, _| view.show());
+            }
             if self.index == 7 {
                 self.shutdown
                     .callbacks
