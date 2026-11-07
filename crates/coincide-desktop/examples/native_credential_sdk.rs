@@ -105,6 +105,12 @@ impl Fixture {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // WebKitGTK contexts require GTK first; the view build reuses this init.
+        #[cfg(target_os = "linux")]
+        {
+            gtk::gdk::set_allowed_backends("x11");
+            gtk::init().expect("GTK initialization for the owned fixture failed");
+        }
         let mut context = wry::WebContext::new(Some(root.join("runtime")));
         // Wry queues scripts evaluated before a view's first commit on macOS and
         // Linux and drops their callbacks, so probe only after the fixture loads.
