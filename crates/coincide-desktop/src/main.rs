@@ -21,6 +21,7 @@ mod archive_settings;
 mod assets;
 mod bot_settings;
 mod browser;
+mod browser_dialog_ui;
 mod browser_settings;
 mod chat_inspector;
 mod chat_layout;
@@ -1816,6 +1817,7 @@ impl Coincide {
             })
             .collect::<Vec<_>>();
         let active_id = active.as_ref().map(|tab| text(tab, "id"));
+        let dialog_banner = self.browser_dialog_banner(cx);
         Some(
             div()
                 .flex()
@@ -1912,6 +1914,7 @@ impl Coincide {
                         .text_xs()
                         .child(url),
                 )
+                .children(dialog_banner)
                 .child(
                     div()
                         .flex_1()

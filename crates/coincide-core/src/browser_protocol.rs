@@ -71,6 +71,13 @@ pub enum BrowserAction {
         #[serde(default = "default_wait_timeout")]
         timeout: u64,
     },
+    Dialog {
+        #[serde(rename = "dialogId")]
+        dialog_id: String,
+        accept: bool,
+        #[serde(default)]
+        text: Option<String>,
+    },
     Back,
     Forward,
     Reload,
@@ -134,6 +141,18 @@ impl BrowserRequest {
             );
         }
         match &self.action {
+            BrowserAction::Dialog {
+                dialog_id, text, ..
+            } => {
+                ensure!(
+                    uuid::Uuid::parse_str(dialog_id).is_ok(),
+                    "Invalid page dialog ID"
+                );
+                ensure!(
+                    text.as_ref().is_none_or(|text| text.len() <= 64 * 1024),
+                    "Dialog response exceeds 64 KiB"
+                );
+            }
             BrowserAction::Navigate { url } | BrowserAction::NewTab { url: Some(url) } => {
                 validate_url(url)?;
             }
@@ -1127,5 +1146,32 @@ mod tests {
             *text = "x".repeat(65537);
         }
         assert!(script_for_request(&request).is_err());
+    }
+}
+
+#[cfg(test)]
+mod dialog_request_tests {
+    use super::*;
+    #[test]
+    fn dialog_identity_is_distinct_from_operation_and_cannot_target_frame_or_oversize_reply() {
+        let dialog_id = uuid::Uuid::new_v4().to_string();
+        let value = serde_json::json!({"id":"operation-1","threadId":uuid::Uuid::new_v4().to_string(),"action":"dialog","dialogId":dialog_id,"accept":true,"text":"synthetic"});
+        let mut request: BrowserRequest = serde_json::from_value(value).unwrap();
+        request.validate().unwrap();
+        assert_eq!(request.id, "operation-1");
+        match &request.action {
+            BrowserAction::Dialog {
+                dialog_id: received,
+                ..
+            } => assert_eq!(received, &dialog_id),
+            _ => panic!("dialog request"),
+        }
+        request.frame = Some("frame-1".into());
+        assert!(request.validate().is_err());
+        request.frame = None;
+        if let BrowserAction::Dialog { text, .. } = &mut request.action {
+            *text = Some("x".repeat(64 * 1024 + 1));
+        }
+        assert!(request.validate().is_err());
     }
 }
