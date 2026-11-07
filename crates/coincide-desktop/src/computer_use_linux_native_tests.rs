@@ -96,6 +96,15 @@ fn owned_gtk_child() {
     let xid = unsafe { gdk_x11_window_get_xid(gdk.to_glib_none().0) } as u32;
     let (connection, screen) = x11rb::connect(None).unwrap();
     let screenroot = connection.setup().roots[screen].root;
+    assert!(
+        !connection
+            .query_extension(b"XWAYLAND")
+            .unwrap()
+            .reply()
+            .unwrap()
+            .present,
+        "Owned fixture requires a genuine private X11 server, not a Wayland bridge"
+    );
     let atom = |name: &[u8]| {
         connection
             .intern_atom(false, name)

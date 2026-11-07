@@ -31,6 +31,15 @@ use x11rb::{
 };
 
 const WAYLAND: &str = "Automatic Appshots requires an X11 session. Wayland requires a window selection portal; automatic front-window capture is unavailable in this build.";
+/// Known Wayland/XWayland restriction, distinct from a lost native connection.
+#[derive(Debug)]
+pub(crate) struct WaylandSession;
+impl std::fmt::Display for WaylandSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(WAYLAND)
+    }
+}
+impl std::error::Error for WaylandSession {}
 static INPUT: Mutex<Option<InputOwner>> = Mutex::new(None);
 static PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -40,8 +49,13 @@ struct InputOwner {
 }
 
 pub(crate) fn x11_session() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_none()
-        && !std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "wayland")
+    super::linux_session_policy::explicit_restriction(
+        std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("WAYLAND_SOCKET").is_some(),
+        None,
+    )
+    .is_none()
 }
 
 /// All X requests, including setup, have a shared deadline and cancellation
@@ -106,7 +120,9 @@ pub(crate) fn connect(allowed: &dyn Fn() -> bool) -> Result<(XConnection<'_>, us
 pub(crate) fn connect_guarded<P: Fn() -> bool>(
     allowed: P,
 ) -> Result<(RustConnection<BoundedStream<P>>, usize)> {
-    ensure!(x11_session(), "{WAYLAND}");
+    if !x11_session() {
+        return Err(WaylandSession.into());
+    }
     ensure!(allowed(), "Appshot cancelled");
     let parsed = parse_display::parse_display(None).context("No X11 display is available")?;
     // A local desktop feature must not create an unbounded remote TCP connect.
@@ -128,6 +144,22 @@ pub(crate) fn connect_guarded<P: Fn() -> bool>(
                 let connection = RustConnection::connect_to_stream_with_auth_info(
                     stream, screen, auth_name, auth_data,
                 )?;
+                // Detect a known XWayland server even when a launcher stripped
+                // the session variables. Never infer support from vendor text.
+                // Xorg protocol 1.0 (2022): QueryExtension suffices for presence:
+                // https://sources.debian.org/src/xorgproto/2024.1-1/xwaylandproto.txt/
+                let xwayland = connection.query_extension(b"XWAYLAND")?.reply()?.present;
+                connection.stream().check()?;
+                if super::linux_session_policy::explicit_restriction(
+                    None,
+                    false,
+                    false,
+                    Some(xwayland),
+                )
+                .is_some()
+                {
+                    return Err(WaylandSession.into());
+                }
                 return Ok((connection, screen));
             }
             Err(error) => last = Some(error),
@@ -429,7 +461,18 @@ pub(super) fn permissions(_action: u8) -> Permissions {
     }
     // X11 has no separate OS consent panel. Do not turn on a screen reader or
     // change session accessibility settings from a permission-refresh button.
-    let screen = connect(&|| true).is_ok_and(|(connection, _)| {
+    let allowed = || true;
+    let connection = match connect(&allowed) {
+        Ok((connection, _)) => Some(connection),
+        Err(error) if error.is::<WaylandSession>() => {
+            return Permissions {
+                detail: WAYLAND.into(),
+                ..Default::default()
+            };
+        }
+        Err(_) => None,
+    };
+    let screen = connection.as_ref().is_some_and(|connection| {
         connection
             .query_extension(b"Composite")
             .ok()

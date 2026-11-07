@@ -52,6 +52,15 @@ macro_rules! x {
 fn native<T, E>(result: Result<T, E>) -> R<T> {
     result.map_err(|_| Failure::Native)
 }
+fn x11_connection(allowed: &dyn Fn() -> bool) -> R<(shared::XConnection<'_>, usize)> {
+    shared::connect(allowed).map_err(|error| {
+        if error.is::<shared::WaylandSession>() {
+            Failure::Unsupported
+        } else {
+            Failure::Native
+        }
+    })
+}
 fn io<T>(result: std::io::Result<T>) -> R<T> {
     result.map_err(|_| stale())
 }
@@ -569,7 +578,7 @@ impl NativeBackend {
         }
         let deadline = Instant::now() + Duration::from_secs(4);
         let allowed = || checked(permit, deadline).is_ok();
-        let (connection, screen) = native(shared::connect(&allowed))?;
+        let (connection, screen) = x11_connection(&allowed)?;
         connection.stream().deadline(deadline);
         let root = connection
             .setup()
@@ -1008,6 +1017,22 @@ impl Backend for NativeBackend {
             });
         }
         // Only explicit Refresh or a granted Broker operation calls this method.
+        let allowed = || true;
+        let connection = match shared::connect(&allowed) {
+            Ok((connection, _)) => connection,
+            Err(error) if error.is::<shared::WaylandSession>() => {
+                return Ok(Permissions {
+                    accessibility: Permission::Unsupported,
+                    screen_capture: Permission::Unsupported,
+                });
+            }
+            Err(_) => {
+                return Ok(Permissions {
+                    accessibility: Permission::Denied,
+                    screen_capture: Permission::Denied,
+                });
+            }
+        };
         let bus = shared::accessibility_bus();
         let accessibility = if let Ok(bus) = bus {
             let _ = bus.close();
@@ -1015,16 +1040,11 @@ impl Backend for NativeBackend {
         } else {
             Permission::Denied
         };
-        let allowed = || true;
-        let screen_capture = shared::connect(&allowed)
+        let screen_capture = connection
+            .composite_query_version(0, 2)
             .ok()
-            .is_some_and(|(connection, _)| {
-                connection
-                    .composite_query_version(0, 2)
-                    .ok()
-                    .and_then(|cookie| cookie.reply().ok())
-                    .is_some()
-            });
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some();
         Ok(Permissions {
             accessibility,
             screen_capture: if screen_capture {

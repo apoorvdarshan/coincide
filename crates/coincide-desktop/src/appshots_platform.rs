@@ -1,5 +1,8 @@
 //! Native window-only adapters. None of these operations runs at construction.
 use anyhow::{Result, bail};
+#[cfg(any(test, target_os = "linux"))]
+#[path = "linux_session_policy.rs"]
+pub(crate) mod linux_session_policy;
 #[derive(Default, Clone, Debug)]
 pub struct Permissions {
     pub screen: bool,
