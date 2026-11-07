@@ -1,5 +1,33 @@
-//! Companion policy only: no sockets, discovery, credentials or CloudKit writes.
+//! Coincide Remote: the server the iPhone and iPad app connects to, speaking
+//! CoincideRemoteKit's protocol unchanged. Off by default; nothing listens,
+//! advertises or opens the secret store until the user turns it on. CloudKit
+//! lock-screen alerts are not part of this port.
 use std::net::IpAddr;
+
+#[path = "remote_adapter.rs"]
+pub mod adapter;
+#[path = "remote_addresses.rs"]
+pub mod addresses;
+#[path = "remote_bonjour.rs"]
+pub mod bonjour;
+#[path = "remote_crypto.rs"]
+pub mod crypto;
+#[path = "remote_identity.rs"]
+pub mod identity;
+#[path = "remote_pairing.rs"]
+pub mod pairing;
+#[path = "remote_protocol.rs"]
+pub mod protocol;
+#[path = "remote_qr.rs"]
+pub mod qr;
+#[path = "remote_secrets.rs"]
+pub mod secrets;
+#[path = "remote_server.rs"]
+pub mod server;
+#[path = "remote_session.rs"]
+pub mod session;
+#[path = "remote_text.rs"]
+pub mod text;
 use uuid::Uuid;
 
 /// Network eligibility is NOT authentication. TLS pinning and explicit pairing
