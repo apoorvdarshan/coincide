@@ -707,17 +707,18 @@ impl BrowserController {
                 let size = request.action.viewport_size().context("Invalid viewport")?;
                 let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
                 tab.viewport = size;
-                if let Some((width, height)) = size
-                    && self.visible.as_deref() != Some(thread.as_str())
-                {
-                    // A hidden page still gets its testing size, as Swift's
-                    // parked web view does; the panel lays out a visible one.
+                if let Some((width, height)) = size {
+                    // Size the native page immediately; the panel lays out the
+                    // same fixed box on its next render. A hidden page keeps
+                    // its testing size, as Swift's parked web view does.
                     let _ = tab.view.read(cx).set_bounds(wry::Rect {
                         position: wry::dpi::LogicalPosition::new(0., 0.).into(),
                         size: wry::dpi::LogicalSize::new(f64::from(width), f64::from(height))
                             .into(),
                     });
                 }
+                // A visible page is laid out from the new fixed viewport.
+                cx.refresh_windows();
                 Ok(Some(match size {
                     Some((width, height)) => {
                         json!({"width":width,"height":height,"mode":"fixed","tab":target})
@@ -2124,9 +2125,20 @@ impl BrowserController {
     }
     /// The fixed viewport of the thread's active tab, if an agent set one.
     pub fn active_viewport(&self, thread: &str) -> Option<(u32, u32)> {
-        let id = self.active.get(thread)?;
+        let id = self.active.get(thread).or_else(|| {
+            self.active
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                .map(|(_, id)| id)
+        })?;
         self.tabs
-            .get(thread)?
+            .get(thread)
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                    .map(|(_, tabs)| tabs)
+            })?
             .iter()
             .find(|tab| &tab.id == id)?
             .viewport
@@ -2247,6 +2259,7 @@ impl BrowserController {
         }
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":public_tab_title(&tab.title,tab.credential_console_suppressed.load(Ordering::Acquire)),"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
+            "fixedViewport":self.active_viewport(thread).map(|(width,height)|json!({"width":width,"height":height})),
             "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
             "nativeTabShortcutsAvailable":native_tab_shortcuts,

@@ -317,7 +317,7 @@ jobs:
         run: |
           cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/pr-panel-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($name in 'availability_reads_each_swift_state_from_the_engine', 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head') {
+          foreach ($name in 'repository_input_is_explicit_and_not_a_url_or_shell_fragment', 'state_and_list_bounds_reject_unsupported_or_incomplete_data') {
             if (-not (Select-String -Path "$env:RUNNER_TEMP/pr-panel-tests.log" -SimpleMatch "$name ... ok")) { throw "Expected $name to pass" }
           }
       - name: Test transcript link routing, plan card, changed files and rewind logic
@@ -412,10 +412,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo build -p coincide-desktop --example native_browser_tab_shortcuts --locked
       - name: Verify exact-view browser tab keys on a fresh Windows runner
-      - name: Build synthetic native passkey executable
-        if: ${{ !cancelled() }}
-        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
-      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
         if: ${{ !cancelled() }}
         timeout-minutes: 3
         shell: pwsh
@@ -425,6 +421,14 @@ jobs:
           & target/debug/examples/native_browser_tab_shortcuts.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-tab-shortcuts.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-tab-shortcuts.log" -SimpleMatch 'synthetic native tab shortcuts: PASS')) { throw 'Expected actual focused-view native tab shortcut callbacks' }
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
           COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
         run: |
           & target/debug/examples/native_passkey_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-passkey-sdk.log"
@@ -560,8 +564,8 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust github_review::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/pr-panel-tests.log"
-          grep -F 'availability_reads_each_swift_state_from_the_engine ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
-          grep -F 'load_finds_the_repository_then_lists_and_follows_the_open_pr_head ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'repository_input_is_explicit_and_not_a_url_or_shell_fragment ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
+          grep -F 'state_and_list_bounds_reject_unsupported_or_incomplete_data ... ok' "$RUNNER_TEMP/pr-panel-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
@@ -689,6 +693,15 @@ jobs:
         timeout-minutes: 3
         env:
           COINCIDE_SYNTHETIC_TAB_SHORTCUTS: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_browser_tab_shortcuts | tee "$RUNNER_TEMP/native-tab-shortcuts.log"
+          grep -F 'synthetic native tab shortcuts: PASS' "$RUNNER_TEMP/native-tab-shortcuts.log"
       - name: Build synthetic native passkey executable
         if: ${{ !cancelled() }}
         run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
@@ -704,8 +717,6 @@ jobs:
           set -o pipefail
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
           test -n "$VK_ICD_FILENAMES"
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_browser_tab_shortcuts | tee "$RUNNER_TEMP/native-tab-shortcuts.log"
-          grep -F 'synthetic native tab shortcuts: PASS' "$RUNNER_TEMP/native-tab-shortcuts.log"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
           grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native Linux UI evidence

@@ -17,17 +17,17 @@ use std::{
 };
 use uuid::Uuid;
 
-#[path = "terminal_api.rs"]
-mod terminal_api;
 #[path = "appshots_api.rs"]
 mod appshots_api;
-#[path = "git_actions_api.rs"]
-mod git_actions_api;
 #[path = "checkpoint_api.rs"]
 mod checkpoint_api;
 #[cfg(test)]
 #[path = "checkpoint_api_tests.rs"]
 mod checkpoint_api_tests;
+#[path = "git_actions_api.rs"]
+mod git_actions_api;
+#[path = "terminal_api.rs"]
+mod terminal_api;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -437,6 +437,9 @@ impl Engine {
         }
         if git_actions_api::METHODS.contains(&method) {
             return self.git_actions_command(method, p);
+        }
+        if terminal_api::METHODS.contains(&method) {
+            return self.terminal_command(method, p);
         }
         if checkpoint_api::METHODS.contains(&method) {
             return self.checkpoint_command(method, p);

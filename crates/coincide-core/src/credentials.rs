@@ -3,7 +3,7 @@
 use serde_json::Value;
 #[cfg(any(windows, test))]
 #[path = "credentials_process_custody.rs"]
-mod process_custody;
+pub(crate) mod process_custody;
 #[cfg(windows)]
 #[path = "credentials_windows.rs"]
 mod windows_capture;

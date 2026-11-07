@@ -96,6 +96,7 @@ struct Fixture {
     received: mpsc::Receiver<(usize, Command, u64, Option<String>)>,
     cases: Vec<Case>,
     index: usize,
+    hidden_sibling: bool,
     focused: Option<Instant>,
     waiting: Option<Waiting>,
     started: Instant,
@@ -169,6 +170,7 @@ impl Fixture {
             received,
             cases: cases(),
             index: 0,
+            hidden_sibling: false,
             focused: None,
             waiting: None,
             started: Instant::now(),
@@ -277,8 +279,18 @@ impl Fixture {
         }
         let case = self.cases[self.index];
         if self.focused.is_none() {
-            if self.index == 4 {
+            // Hiding a sibling moves GTK focus asynchronously; let that settle
+            // for one tick before focusing the selected view.
+            if self.index == 4 && !self.hidden_sibling {
                 self.views[0].update(cx, |view, _| view.hide());
+                self.hidden_sibling = true;
+                cx.notify();
+                return false;
+            }
+            if self.index == 4 {
+                // Hiding the sibling can unmap the shared native parent; make
+                // the remaining owned view visible again before focusing it.
+                self.views[1].update(cx, |view, _| view.show());
             }
             if self.index == 7 {
                 self.shutdown

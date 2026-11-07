@@ -974,7 +974,10 @@ impl Coincide {
                 cx,
             ));
         }
-        if matches(S::Appearance, "terminal translucent background blur transparent") {
+        if matches(
+            S::Appearance,
+            "terminal translucent background blur transparent",
+        ) {
             count += 1;
             content = content.child(self.setting_toggle(
                 "Translucent terminal",

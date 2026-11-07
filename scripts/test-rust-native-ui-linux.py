@@ -289,7 +289,7 @@ def main():
                 key = tuple(row[name] for name in ("page_num", "block_num", "par_num", "line_num"))
                 lines.setdefault(key, []).append(row)
         inputs = [rows for rows in lines.values()
-                  if "write a message" in " ".join(row["text"] for row in rows).lower()]
+                  if "ask anything" in " ".join(row["text"] for row in rows).lower()]
         assert len(inputs) == 1, "Expected exactly one rendered composer placeholder"
         rows = inputs[0]
         left = min(int(row["left"]) for row in rows)
