@@ -36,6 +36,28 @@ pub(super) fn update_visible_or_owner<T: 'static, R>(
     result
 }
 
+/// A native chooser result belongs to the window that opened it. A later
+/// Settings presentation must not inherit that choice. If the original window
+/// disappeared, drain only window-free bookkeeping and release the real picker
+/// custody; never replay the selected path in another window.
+pub(super) fn complete_native_picker<T: 'static>(
+    origin: AnyWindowHandle,
+    owner: &WeakEntity<T>,
+    cx: &mut impl AppContext,
+    apply: impl FnOnce(&mut T, &mut Window, &mut Context<T>),
+    abandoned: impl FnOnce(&mut T, &mut Context<T>),
+) -> Result<()> {
+    let mut apply = Some(apply);
+    let result = self::update(origin, owner, cx, |owner, window, cx| {
+        apply.take().expect("one native picker completion")(owner, window, cx)
+    });
+    if result.is_err() && apply.is_some() {
+        owner.update(cx, abandoned)
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 #[path = "main_window_poll_tests.rs"]
 mod tests;

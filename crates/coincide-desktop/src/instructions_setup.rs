@@ -279,6 +279,15 @@ impl InstructionsPanel {
         };
         cx.notify();
     }
+    fn abandon_instruction_picker(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.setup.generation == generation {
+            self.setup.picker_pending = false;
+            self.setup.generation = self.setup.generation.wrapping_add(1);
+            self.setup.status =
+                "Choice cancelled because its Settings window closed; existing setup kept.".into();
+            cx.notify();
+        }
+    }
     fn setup_choose_master(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.setup_clean(cx) {
             return;
@@ -304,6 +313,7 @@ impl InstructionsPanel {
         let generation = self.setup.generation;
         let picker_lease = self.edit_lease.pending_native_action();
         let picker_owner = cx.entity().clone();
+        let picker_window = window.window_handle();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -314,59 +324,67 @@ impl InstructionsPanel {
             let _picker_lease = picker_lease;
             let _picker_owner = picker_owner;
             let result: Result<_> = async { picker.await? }.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.setup.picker_pending = false;
-                if this.setup.generation != generation || this.dirty(cx) {
-                    this.setup.status =
-                        "Master choice discarded because the editor changed.".into();
-                    cx.notify();
-                    return;
-                }
-                let result = (|| -> Result<Option<NativeScope>> {
-                    let Some(paths) = result? else {
-                        return Ok(None);
-                    };
-                    anyhow::ensure!(paths.len() == 1, "Choose one master file");
-                    let mut scope = this
-                        .setup
-                        .scope
-                        .clone()
-                        .context("Select an instruction scope")?;
-                    let engine = this.setup.engine.clone();
-                    let mut owner = crate::try_state(&engine)?;
-                    scope.choose_master_native(paths[0].clone(), &owner.store)?;
-                    // The native chooser supplied this path; importing metadata
-                    // alone never reaches this configuration/write capability.
-                    let enabled = baseline
-                        .configuration(this.setup.project_root.as_deref())?
-                        .is_some_and(|c| c.enabled);
-                    this.setup.metadata = Some(scope.persist_configuration_native(
-                        &mut owner.store,
-                        &baseline,
-                        enabled,
-                    )?);
-                    Ok(Some(scope))
-                })();
-                match result {
-                    Ok(Some(scope)) => {
-                        this.setup.scope = Some(scope.clone());
-                        if let Err(e) = this.bind_native_source(&scope, window, cx) {
-                            this.setup.status = e.to_string();
-                        } else {
+            let _ = crate::main_window_poll::complete_native_picker(
+                picker_window,
+                &this,
+                cx,
+                |this, window, cx| {
+                    this.setup.picker_pending = false;
+                    if this.setup.generation != generation || this.dirty(cx) {
+                        this.setup.status =
+                            "Master choice discarded because the editor changed.".into();
+                        cx.notify();
+                        return;
+                    }
+                    let result = (|| -> Result<Option<NativeScope>> {
+                        let Some(paths) = result? else {
+                            return Ok(None);
+                        };
+                        anyhow::ensure!(paths.len() == 1, "Choose one master file");
+                        let mut scope = this
+                            .setup
+                            .scope
+                            .clone()
+                            .context("Select an instruction scope")?;
+                        let engine = this.setup.engine.clone();
+                        let mut owner = crate::try_state(&engine)?;
+                        scope.choose_master_native(paths[0].clone(), &owner.store)?;
+                        // The native chooser supplied this path; importing metadata
+                        // alone never reaches this configuration/write capability.
+                        let enabled = baseline
+                            .configuration(this.setup.project_root.as_deref())?
+                            .is_some_and(|c| c.enabled);
+                        this.setup.metadata = Some(scope.persist_configuration_native(
+                            &mut owner.store,
+                            &baseline,
+                            enabled,
+                        )?);
+                        Ok(Some(scope))
+                    })();
+                    match result {
+                        Ok(Some(scope)) => {
+                            this.setup.scope = Some(scope.clone());
+                            if let Err(e) = this.bind_native_source(&scope, window, cx) {
+                                this.setup.status = e.to_string();
+                            } else {
+                                this.setup.status =
+                                    "Master selected. Review links to use it for your agents."
+                                        .into();
+                            }
+                            if let Err(e) = this.setup.refresh() {
+                                this.setup.status = e.to_string();
+                            }
+                        }
+                        Ok(None) => {
                             this.setup.status =
-                                "Master selected. Review links to use it for your agents.".into();
+                                "Master choice cancelled; existing setup kept.".into()
                         }
-                        if let Err(e) = this.setup.refresh() {
-                            this.setup.status = e.to_string();
-                        }
-                    }
-                    Ok(None) => {
-                        this.setup.status = "Master choice cancelled; existing setup kept.".into()
-                    }
-                    Err(e) => this.setup.status = e.to_string(),
-                };
-                cx.notify();
-            });
+                        Err(e) => this.setup.status = e.to_string(),
+                    };
+                    cx.notify();
+                },
+                move |this, cx| this.abandon_instruction_picker(generation, cx),
+            );
         }));
         cx.notify();
     }

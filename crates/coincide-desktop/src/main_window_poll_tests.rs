@@ -90,6 +90,54 @@ fn shared_owner_keeps_polling_main_after_settings_closes(cx: &mut TestAppContext
         cx.update(|cx| weak.update_in(cx, |_, _, _| ())).is_err(),
         "old entity-window lookup must reproduce the stopped polling path"
     );
+    // Re-rendering the same owner in a new Settings window cannot adopt the
+    // old native chooser result. Only its cancellation bookkeeping may drain.
+    let (reopened, _) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|_| Settings {
+                owner: owner.clone(),
+            })
+        })
+        .unwrap()
+    });
+    cx.update_window(reopened, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let mut applied = 0;
+    let mut abandoned = 0;
+    cx.update(|cx| {
+        super::complete_native_picker(
+            settings,
+            &weak,
+            cx,
+            |_, _, _| applied += 1,
+            |_, _| abandoned += 1,
+        )
+    })
+    .unwrap();
+    assert_eq!((applied, abandoned), (0, 1));
+    cx.update(|cx| {
+        super::complete_native_picker(
+            reopened,
+            &weak,
+            cx,
+            |_, window, _| {
+                assert_eq!(window.window_handle(), reopened);
+                applied += 1;
+            },
+            |_, _| abandoned += 1,
+        )
+    })
+    .unwrap();
+    assert_eq!(
+        (applied, abandoned),
+        (1, 1),
+        "a completed choice cannot also cancel"
+    );
+    cx.update_window(reopened, |_, window, _| window.remove_window())
+        .unwrap();
     // A real native edit-custody receipt reproduces why a stopped retained
     // child poll can prevent ordinary Quit even after its worker has returned.
     let data = std::env::current_dir().unwrap().join("data");
