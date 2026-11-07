@@ -31,17 +31,38 @@ if (fullPage==='yes' && (docHeight>height || docWidth>width)) return '';
 const nodes=[],walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT);
 let node=root;
 while(node){if(nodes.length>=10000)return '';nodes.push(node);node=walker.nextNode();}
-const masks=[], saved=[];
+const masks=[], saved=[], changedStyles=new WeakSet();
+let dirty=false,observer=null;
+function record(records){
+ if(!records.length)return;
+ dirty=true;
+ for(const r of records)if(r.type==='attributes' && r.attributeName==='style')changedStyles.add(r.target);
+}
+function ownedStyle(node,change){
+ // Observe before any page custom-element callback can run synchronously.
+ // Only our one style-attribute mutation is expected. An extra mutation,
+ // different target/attribute, child or text change invalidates the capture.
+ change();
+ if(!observer)return;
+ const records=observer.takeRecords();
+ if(records.length>1 || records.some(r=>r.type!=='attributes' || r.attributeName!=='style' || r.target!==node))record(records);
+}
 const props=[['opacity','0'],['transition','none'],['animation','none']];
 function restore(){
- for(const [node,old] of saved) for(let i=0;i<props.length;i++){
+ for(const [node,old] of saved) {
+  if(changedStyles.has(node))continue;
+  for(let i=0;i<props.length;i++){
   const [name,value]=props[i], [original,priority]=old[i];
   // A newer page/user style owns the property; never overwrite it.
   if(node.style.getPropertyValue(name)!==value || node.style.getPropertyPriority(name)!=='important') continue;
-  if(original) node.style.setProperty(name,original,priority);else node.style.removeProperty(name);
+  ownedStyle(node,()=>{if(original) node.style.setProperty(name,original,priority);else node.style.removeProperty(name);});
+  if(changedStyles.has(node))break;
+  }
  }
 }
 try {
+ observer=new MutationObserver(record);
+ observer.observe(root,{subtree:true,childList:true,attributes:true,characterData:true});
  for(const node of nodes){
   const tag=node.localName;
   const sensitive=(tag==='input' && !['button','submit','reset','image','hidden'].includes(node.type)) ||
@@ -50,37 +71,41 @@ try {
   if(!sensitive) continue;
   const r=node.getBoundingClientRect();
   if(r.bottom<=0 || r.right<=0 || r.left>=width || r.top>=height) continue;
-  if(masks.length>=2048) {restore();return '';}
+  if(masks.length>=2048) {restore();observer.disconnect();return '';}
   masks.push({x:r.x,y:r.y,width:r.width,height:r.height});
   const old=props.map(([name])=>[node.style.getPropertyValue(name),node.style.getPropertyPriority(name)]);
   saved.push([node,old]);
-  for(const [name,value] of props)node.style.setProperty(name,value,'important');
+  for(const [name,value] of props){
+   ownedStyle(node,()=>node.style.setProperty(name,value,'important'));
+   if(dirty)break;
+  }
+  if(dirty){restore();observer.disconnect();return '';}
  }
- const state={ticket,root,width,height,sx,sy,url:location.href,saved,props,restore,dirty:false};
- state.observer=new MutationObserver(()=>{state.dirty=true;});
- state.observer.observe(root,{subtree:true,childList:true,attributes:true,characterData:true});
+ const state={ticket,root,width,height,sx,sy,url:location.href,saved,props,restore,observer,record,changed:()=>dirty};
  globalThis[key]=state;
  // Flush style synchronously; the actual native snapshot API paints current
  // layout again after this real JS callback. No frame/timer is a completion ACK.
  root.getBoundingClientRect();
  for(const [node] of saved) if(getComputedStyle(node).opacity!=='0'){
-  state.observer.disconnect();restore();delete globalThis[key];return '';
+  restore();state.observer.disconnect();delete globalThis[key];return '';
  }
- if(state.dirty || state.observer.takeRecords().length || root!==document.documentElement ||
+ state.record(state.observer.takeRecords());
+ if(state.changed() || root!==document.documentElement ||
     location.href!==expectedURL || innerWidth!==width || innerHeight!==height || scrollX!==sx || scrollY!==sy){
-  state.observer.disconnect();restore();delete globalThis[key];return '';
+  restore();state.observer.disconnect();delete globalThis[key];return '';
  }
  return JSON.stringify({width,height,masks});
-}catch(_){restore();delete globalThis[key];return '';}
+}catch(_){restore();observer?.disconnect();delete globalThis[key];return '';}
 "#;
 
 pub const FINISH: &str = r#"
 const key='__coincidePrivateSnapshotV1',s=globalThis[key];
 if(!s || s.ticket!==ticket) return false;
-let valid=!s.dirty && !s.observer.takeRecords().length && s.root===document.documentElement &&
+s.record(s.observer.takeRecords());
+let valid=!s.changed() && s.root===document.documentElement &&
   s.url===location.href && location.href===expectedURL && s.width===innerWidth &&
   s.height===innerHeight && s.sx===scrollX && s.sy===scrollY;
 for(const [node] of s.saved) for(const [name,value] of s.props)
  if(!node.isConnected || node.style.getPropertyValue(name)!==value || node.style.getPropertyPriority(name)!=='important')valid=false;
-s.observer.disconnect();s.restore();delete globalThis[key];return valid;
+s.restore();s.record(s.observer.takeRecords());valid=valid && !s.changed();s.observer.disconnect();delete globalThis[key];return valid;
 "#;
