@@ -1179,7 +1179,7 @@ pub mod account_secret_store;
 
 #[path = "codex_profile_home_lease.rs"]
 mod codex_home_lease;
-pub(crate) use codex_home_lease::Lease as CodexHomeLease;
+pub(crate) use codex_home_lease::{Held as HeldCodexHomeLease, Lease as CodexHomeLease};
 
 #[path = "native_provider_accounts.rs"]
 mod accounts;

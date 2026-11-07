@@ -151,6 +151,14 @@ impl LaunchContext {
         );
         Ok(())
     }
+    pub(crate) fn acquire_home_lease(
+        &self,
+    ) -> Result<Option<crate::provider_configuration::HeldCodexHomeLease>> {
+        self.home_lease
+            .as_ref()
+            .map(|lease| lease.acquire())
+            .transpose()
+    }
     pub(crate) fn arguments(&self) -> Vec<String> {
         if self.native_api_key.is_some() {
             return [

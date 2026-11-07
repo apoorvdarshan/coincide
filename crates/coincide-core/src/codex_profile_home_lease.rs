@@ -1,10 +1,10 @@
-//! Shared custody for legacy subscription homes. The lease is never serialized
-//! into existing catalog/session proofs; it only excludes native home mutation.
+//! Legacy context pins are cacheable without keeping a home busy. Actual
+//! transport/catalog children retain a shared lease until their owned cleanup.
+//! Neither pin nor lease changes existing serialized subscription proofs.
 use super::*;
 use std::{fmt, sync::Arc};
 #[derive(Clone)]
 pub(crate) struct Lease {
-    file: Arc<File>,
     path: PathBuf,
     identity: crate::private_fs::Identity,
 }
@@ -42,29 +42,42 @@ impl Lease {
         );
         file.try_lock_shared()
             .context("Codex account is being changed or removed")?;
-        let lease = Self {
-            file: Arc::new(file),
-            path,
-            identity,
-        };
+        let lease = Self { path, identity };
         lease.validate()?;
         Ok(lease)
     }
     pub(crate) fn validate(&self) -> Result<()> {
         private(&self.path, false)?;
         ensure!(
-            crate::private_fs::identity(&self.path)? == self.identity
-                && crate::private_fs::file_identity(&self.file)? == self.identity,
+            crate::private_fs::identity(&self.path)? == self.identity,
             "Codex account owner was replaced"
         );
         Ok(())
     }
+    pub(crate) fn acquire(&self) -> Result<Held> {
+        self.validate()?;
+        let file = open_file(&self.path, false)?;
+        ensure!(
+            crate::private_fs::file_identity(&file)? == self.identity,
+            "Codex account owner changed while opening"
+        );
+        file.try_lock_shared()
+            .context("Codex account is being changed or removed")?;
+        self.validate()?;
+        Ok(Held {
+            _file: Arc::new(file),
+        })
+    }
+}
+#[derive(Clone)]
+pub(crate) struct Held {
+    _file: Arc<File>,
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn shared_contexts_exclude_exclusive_conversion_until_last_clone_drops() {
+    fn actual_child_leases_exclude_conversion_but_cached_pins_do_not() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("owned");
         #[cfg(unix)]
@@ -74,8 +87,9 @@ mod tests {
         }
         #[cfg(windows)]
         crate::private_fs::windows::create_directory(&home).unwrap();
-        let first = Lease::capture(&home).unwrap();
-        let second = Lease::capture(&home).unwrap();
+        let pin = Lease::capture(&home).unwrap();
+        let first = pin.acquire().unwrap();
+        let second = pin.acquire().unwrap();
         let copy = first.clone();
         let exclusive = open_file(&home.join(".native-account-owner"), false).unwrap();
         assert!(exclusive.try_lock().is_err());
@@ -84,6 +98,6 @@ mod tests {
         assert!(exclusive.try_lock().is_err());
         drop(copy);
         exclusive.try_lock().unwrap();
-        assert!(Lease::capture(&home).is_err());
+        assert!(pin.acquire().is_err());
     }
 }
