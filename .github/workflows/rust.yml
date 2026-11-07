@@ -208,7 +208,7 @@ jobs:
         run: |
           cargo test -p coincide-native-host-tests --features native-computer-use,native-notifications --locked notifications::windows_policy::tests -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-toast-policy.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-policy.log" -SimpleMatch 'test result: ok. 3 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly three production toast policy tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-policy.log" -SimpleMatch 'test result: ok. 4 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly four production toast policy tests' }
       - name: Verify actual isolated Windows toast registration delivery and clearing
         shell: pwsh
         run: |
