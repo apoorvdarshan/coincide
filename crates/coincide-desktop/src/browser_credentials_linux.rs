@@ -14,7 +14,9 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
-use webkit2gtk::{WebView, WebViewExt};
+use webkit2gtk::{
+    UserContentInjectedFrames, UserScript, UserScriptInjectionTime, WebView, WebViewExt,
+};
 use wry::WebViewExtUnix;
 const WORLD: &str = "CoincidePrivateCredentialFillV1";
 // Native renderer/private-channel acceptance must precede public enablement.
@@ -29,6 +31,11 @@ struct Pending {
 #[derive(Clone)]
 pub struct NativeCredentialTarget {
     view: WebView,
+    // WebKitGTK maps a world name to one shared world only while something
+    // retains it; an unretained name gets a fresh world on every call, which
+    // would drop the probe's binding before the fill. This inert script holds
+    // the named world and is never added to a content manager or page.
+    _world: UserScript,
     navigation: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
     pending: Rc<RefCell<Vec<Weak<RefCell<Pending>>>>>,
@@ -39,6 +46,14 @@ impl NativeCredentialTarget {
     pub fn new(view: &wry::WebView, navigation: Arc<AtomicU64>) -> Option<Self> {
         gtk::is_initialized_main_thread().then(|| Self {
             view: view.webview(),
+            _world: UserScript::for_world(
+                "",
+                UserContentInjectedFrames::TopFrame,
+                UserScriptInjectionTime::End,
+                WORLD,
+                &[],
+                &[],
+            ),
             navigation,
             closed: Arc::new(AtomicBool::new(false)),
             pending: Rc::new(RefCell::new(Vec::new())),
