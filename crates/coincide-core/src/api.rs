@@ -1,4 +1,6 @@
 //! One command dispatcher for the desktop and the local CLI/API.
+#[path = "github_checkout_api.rs"]
+mod github_checkout_api;
 #[path = "reply_selection_api.rs"]
 mod reply_selection_api;
 use crate::{
