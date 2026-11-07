@@ -85,6 +85,7 @@ impl Coincide {
             }
         }
         let drafts_saved = self.flush_pending_drafts() && self.flush_native_selection();
+        self.voice.close();
         self.selection_ui.close_capability_reads();
         self.thread_bulk.close();
         self.instructions_panel
@@ -100,6 +101,8 @@ impl Coincide {
         self.transcription_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.microphone_panel
+            .update(cx, |panel, _| panel.request_shutdown());
+        self.voice_credentials
             .update(cx, |panel, _| panel.request_shutdown());
         self.session_import_panel
             .update(cx, |panel, _| panel.request_shutdown());
@@ -131,6 +134,8 @@ impl Coincide {
         self.request_media_owner_shutdown(cx);
         let media = self.poll_media_owner_shutdown(cx);
         let statuses = [
+            self.voice_credentials
+                .update(cx, |panel, _| panel.shutdown_status()),
             self.provider_configuration_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.selection_ui.capability_read_shutdown_status(),
