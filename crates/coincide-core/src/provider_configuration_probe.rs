@@ -9,11 +9,13 @@ pub struct ProbeReport {
     pub account: Option<String>,
     pub integrations: Option<String>,
     pub models: Vec<Value>,
+    pub status_note: Option<String>,
 }
 pub struct Probe {
     provider: String,
     binary: Binary,
     configuration: Option<LaunchConfiguration>,
+    codex_profile: Option<crate::codex_login_profiles::LaunchContext>,
 }
 impl Engine {
     pub fn prepare_native_login_account_check(
@@ -37,10 +39,20 @@ impl Engine {
         let executable = configuration
             .approved_executable()
             .context("Install this provider or approve its executable first")?;
+        let codex_profile = if provider == "codex" {
+            Some(crate::codex_login_profiles::LaunchContext::capture(
+                &self.store.data_directory()?,
+                id,
+                &executable,
+            )?)
+        } else {
+            None
+        };
         Ok(Probe {
             provider: provider.into(),
             binary: Binary::capture(&executable)?,
             configuration: Some(configuration),
+            codex_profile,
         })
     }
     pub fn prepare_native_provider_check(&self, provider: &str) -> Result<Probe> {
@@ -61,6 +73,7 @@ impl Engine {
             provider: provider.into(),
             binary: Binary::capture(&executable)?,
             configuration,
+            codex_profile: None,
         })
     }
 }
@@ -68,6 +81,34 @@ impl Probe {
     pub fn run(&self, allowed: &impl Fn() -> bool) -> Result<ProbeReport> {
         self.binary.validate()?;
         let _scope = enter(self.configuration.clone());
+        if self.provider == "codex" {
+            match crate::agent::codex_metadata::check(
+                &self.binary.requested,
+                self.codex_profile.as_ref(),
+                allowed,
+            ) {
+                Ok(snapshot) => {
+                    return Ok(codex_report(
+                        &self.binary.requested,
+                        snapshot,
+                        self.codex_profile.is_some(),
+                    ));
+                }
+                Err(_) => {
+                    ensure!(allowed(), "Provider check cancelled");
+                    let (success, out, err) = crate::agent::metadata_capture::capture(
+                        &self.binary.requested,
+                        &["--version"],
+                        allowed,
+                    )?;
+                    ensure!(
+                        success,
+                        "Codex app-server and version checks failed; review its setup instructions"
+                    );
+                    return Ok(ProbeReport { executable:self.binary.requested.clone(), version:version(&out).or_else(||version(&err)), status_note:Some("Codex account and model check failed. No sign-in or model readiness was verified.".into()), ..Default::default() });
+                }
+            }
+        }
         let capture = |args: &[&str]| {
             self.binary.validate()?;
             crate::agent::metadata_capture::capture(&self.binary.requested, args, allowed)
@@ -176,6 +217,56 @@ impl Probe {
 }
 // Swift CursorModels.parseModelsCommand uses the CLI's "id - name" rows.
 // These remain display metadata, never an ACP model/options capability grant.
+fn codex_report(
+    executable: &Path,
+    snapshot: crate::agent::codex_metadata::Snapshot,
+    login_profile: bool,
+) -> ProbeReport {
+    let kind = snapshot.account["account"]["type"].as_str();
+    let requires_auth = snapshot.account["requiresOpenaiAuth"].as_bool();
+    let (authenticated, note) = match (kind, requires_auth) {
+        (Some("chatgpt"), Some(true)) if snapshot.models_read => (
+            Some(true),
+            "Codex reports a ChatGPT sign-in and returned this account’s model catalog.",
+        ),
+        (Some("chatgpt"), Some(true)) => (
+            None,
+            "Codex reports a ChatGPT sign-in, but its model catalog could not be read.",
+        ),
+        (Some("apiKey"), _) if login_profile => (
+            Some(false),
+            "This Login profile contains API-key authentication. Sign in with ChatGPT or choose API key.",
+        ),
+        (Some("apiKey"), _) => (
+            None,
+            "Codex reports an API key is configured. Authentication is checked when you send a request.",
+        ),
+        (None, Some(true)) if snapshot.account["account"].is_null() => {
+            (Some(false), "Codex reports no configured sign-in.")
+        }
+        (_, Some(false)) => (
+            None,
+            "Codex reports OpenAI authentication is not required. Account identity is not verified.",
+        ),
+        _ => (None, "Codex did not report a recognized sign-in state."),
+    };
+    ProbeReport {
+        executable: executable.into(),
+        version: snapshot
+            .version
+            .as_deref()
+            .and_then(|value| version(value.as_bytes())),
+        authenticated,
+        account: if kind == Some("chatgpt") {
+            bounded_text(&snapshot.account["account"]["email"])
+        } else {
+            None
+        },
+        models: snapshot.models,
+        status_note: Some(note.into()),
+        ..Default::default()
+    }
+}
 fn cursor_models(bytes: &[u8]) -> Vec<Value> {
     let mut clean = String::new();
     let mut escape = false;
@@ -243,6 +334,41 @@ fn version(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codex_key_configuration_and_failed_catalog_do_not_claim_authentication() {
+        let snapshot = |kind: &str, models_read| crate::agent::codex_metadata::Snapshot {
+            version: Some("codex_cli_rs/0.100.0".into()),
+            account: json!({"requiresOpenaiAuth":true,"account":{"type":kind,"email":"synthetic@example.invalid","apiKey":"synthetic-sensitive-value"}}),
+            models: vec![],
+            models_read,
+        };
+        let key = codex_report(
+            Path::new("synthetic-codex"),
+            snapshot("apiKey", true),
+            false,
+        );
+        assert!(key.authenticated.is_none() && key.account.is_none());
+        assert!(
+            !key.status_note
+                .unwrap()
+                .contains("synthetic-sensitive-value")
+        );
+        let wrong_mode = codex_report(Path::new("synthetic-codex"), snapshot("apiKey", true), true);
+        assert_eq!(wrong_mode.authenticated, Some(false));
+        let partial = codex_report(
+            Path::new("synthetic-codex"),
+            snapshot("chatgpt", false),
+            true,
+        );
+        assert!(partial.authenticated.is_none());
+        let checked = codex_report(
+            Path::new("synthetic-codex"),
+            snapshot("chatgpt", true),
+            true,
+        );
+        assert_eq!(checked.authenticated, Some(true));
+        assert_eq!(checked.version.as_deref(), Some("0.100.0"));
+    }
     #[test]
     fn named_check_captures_only_native_profile_and_rejects_stale_review() {
         let (_root, mut engine, binary) = super::super::tests::fixture();

@@ -798,6 +798,14 @@ impl Panel {
         cx.notify();
     }
     fn account_request(&mut self, provider: &str, request: Request, cx: &mut Context<Self>) {
+        if self.pending.is_none()
+            && let Request::Check { id, .. }
+            | Request::Setup { id, .. }
+            | Request::CodexAuth { id, .. } = &request
+            && let Some(editor) = self.accounts.editors.get_mut(provider)
+        {
+            editor.reports.remove(id);
+        }
         self.start(provider, super::Request::Accounts(request), cx);
     }
     fn commit_account_name(&mut self, provider: &str, id: &str, cx: &mut Context<Self>) {
@@ -1154,6 +1162,13 @@ impl Panel {
                                 .unwrap_or("Sign-in not checked"),
                         ),
                     );
+            }
+            if let Some(note) = editor
+                .reports
+                .get(&id)
+                .and_then(|report| report.status_note.as_ref())
+            {
+                card = card.child(div().text_sm().child(note.clone()));
             }
             if draft.dirty(cx) {
                 let p = p.clone();

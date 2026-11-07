@@ -11,9 +11,7 @@ const WRITE_DEADLINE: Duration = Duration::from_secs(10);
 /// Read-only catalog transport reuses the same owned child/pipe join boundary
 /// as turns, with a stricter per-frame allocation cap. No runtime JSON path can
 /// construct this adapter or supply a named profile.
-#[cfg(windows)]
 pub(crate) struct CatalogTransport(Transport);
-#[cfg(windows)]
 impl CatalogTransport {
     pub(crate) fn spawn(
         launch: &Launch,
