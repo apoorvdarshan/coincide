@@ -2,10 +2,59 @@
 //! to its opening generation; saving uses the Core review, never current focus.
 use super::*;
 use coincide_core::project_defaults::ProjectDefaultsReview;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     checkbox::Checkbox,
     menu::{DropdownMenu, PopupMenuItem},
 };
+
+/// A model's catalog entry, when its provider's catalog is loaded.
+pub(super) fn catalog_model<'a>(
+    catalog: &'a Value,
+    provider: &str,
+    model: &str,
+) -> Option<&'a Value> {
+    if catalog["provider"] != provider || catalog["state"] != "ready" {
+        return None;
+    }
+    catalog["models"]
+        .as_array()?
+        .iter()
+        .find(|row| row["id"] == model)
+}
+/// Swift's model change: the effort stays when the new model offers it, and
+/// so does the speed; anything it doesn't offer is cleared.
+fn carry_effort_and_speed(previous: &Value, next: &mut Value, model: Option<&Value>) {
+    let Some(fields) = next.as_object_mut() else {
+        return;
+    };
+    let offers = |key: &str, field: Option<&str>, value: &str| {
+        model
+            .and_then(|model| model[key].as_array())
+            .is_some_and(|rows| {
+                rows.iter().any(|row| match field {
+                    Some(field) => row[field] == value,
+                    None => row == value,
+                })
+            })
+    };
+    match previous["effort"].as_str() {
+        Some(effort) if offers("reportedEfforts", None, effort) => {
+            fields.insert("effort".into(), json!(effort));
+        }
+        _ => {
+            fields.remove("effort");
+        }
+    }
+    match previous["speed"].as_str() {
+        Some(speed) if offers("reportedSpeeds", Some("id"), speed) => {
+            fields.insert("speed".into(), json!(speed));
+        }
+        _ => {
+            fields.remove("speed");
+        }
+    }
+}
 
 pub(super) struct State {
     target: Option<String>,
@@ -241,6 +290,124 @@ impl Coincide {
         true
     }
 
+    /// The model picker's Reasoning and Speed choices for the chosen model,
+    /// each shown only when the model offers more than one way to run.
+    fn project_defaults_capabilities(
+        &self,
+        mut form: Stateful<Div>,
+        generation: u64,
+        selection: &Value,
+        model: &Value,
+        global: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let efforts = model["reportedEfforts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !efforts.is_empty() {
+            let chosen = selection["effort"]
+                .as_str()
+                .or_else(|| model["reportedDefaultEffort"].as_str())
+                .map(str::to_owned);
+            let choices = efforts
+                .iter()
+                .map(|effort| {
+                    let mut next = selection.clone();
+                    next["effort"] = json!(effort);
+                    (
+                        composer_selection::effort_picker_title(&json!(effort)),
+                        chosen.as_deref() == Some(effort.as_str()),
+                        next,
+                    )
+                })
+                .collect::<Vec<_>>();
+            form = form.child(div().mt_2().text_sm().child("Reasoning")).child(
+                self.project_defaults_dropdown(
+                    "project-defaults-effort",
+                    generation,
+                    choices,
+                    global,
+                    cx,
+                ),
+            );
+        }
+        let speeds = model["reportedSpeeds"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if !speeds.is_empty() {
+            let chosen = selection["speed"].as_str();
+            let mut standard = selection.clone();
+            if let Some(fields) = standard.as_object_mut() {
+                fields.remove("speed");
+            }
+            let mut choices = vec![("Standard".to_owned(), chosen.is_none(), standard)];
+            choices.extend(speeds.iter().filter_map(|speed| {
+                let id = speed["id"].as_str()?;
+                let mut next = selection.clone();
+                next["speed"] = json!(id);
+                Some((
+                    speed["name"].as_str().unwrap_or(id).to_owned(),
+                    chosen == Some(id),
+                    next,
+                ))
+            }));
+            form = form.child(div().mt_2().text_sm().child("Speed")).child(
+                self.project_defaults_dropdown(
+                    "project-defaults-speed",
+                    generation,
+                    choices,
+                    global,
+                    cx,
+                ),
+            );
+        }
+        form
+    }
+    fn project_defaults_dropdown(
+        &self,
+        id: &'static str,
+        generation: u64,
+        choices: Vec<(String, bool, Value)>,
+        global: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let parent = cx.entity().downgrade();
+        let title = choices
+            .iter()
+            .find(|(_, chosen, _)| *chosen)
+            .map(|(title, _, _)| title.clone())
+            .unwrap_or_default();
+        Button::new(id)
+            .label(title)
+            .disabled(global)
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut menu, _, _| {
+                for (title, chosen, selection) in &choices {
+                    let parent = parent.clone();
+                    let selection = selection.clone();
+                    menu = menu.item(PopupMenuItem::new(title.clone()).checked(*chosen).on_click(
+                        move |_, window, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                this.project_defaults_choice(
+                                    generation,
+                                    "selection",
+                                    selection.clone(),
+                                    window,
+                                    cx,
+                                )
+                            });
+                        },
+                    ));
+                }
+                menu
+            })
+    }
+
     pub(super) fn project_defaults_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let state = &self.project_defaults;
         state.target.as_ref()?;
@@ -300,42 +467,57 @@ impl Coincide {
                 "",
             );
             let parent = cx.entity().downgrade();
-            let saved_selection = selection.clone();
+            let catalog = &self.selection_ui.catalog;
+            let current = catalog_model(catalog, &provider, &model);
+            // Each choice is decided here, against the catalog shown now.
+            let choices = rows
+                .iter()
+                .filter(|row| !row.hidden)
+                .take(1000)
+                .map(|row| {
+                    let mut next = if selection["provider"] == row.provider {
+                        selection.clone()
+                    } else {
+                        json!({"provider":row.provider,"modelID":row.model})
+                    };
+                    if next["modelID"] != row.model {
+                        next["modelID"] = json!(row.model);
+                        carry_effort_and_speed(
+                            &selection,
+                            &mut next,
+                            catalog_model(catalog, &row.provider, &row.model),
+                        );
+                    }
+                    (format!("{} · {}", row.provider, row.name), next)
+                })
+                .collect::<Vec<_>>();
             form = form.child(div().mt_2().text_sm().child("Model")).child(
                 Button::new("project-defaults-model")
-                    .accessibility_label("Project default model")
+                    .accessibility_label("Model")
                     .disabled(global)
                     .child(chat_layout::provider_label(&provider, model.clone()))
+                    // Swift's bolt for a faster speed.
+                    .when(selection["speed"].is_string(), |button| {
+                        button.icon(IconName::Zap)
+                    })
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut menu, _, _| {
-                        for row in rows.iter().filter(|row| !row.hidden).take(1000) {
+                        for (title, selection) in &choices {
                             let parent = parent.clone();
-                            let mut selection = if saved_selection["provider"] == row.provider {
-                                saved_selection.clone()
-                            } else {
-                                json!({"provider":row.provider,"modelID":row.model})
-                            };
-                            if selection["modelID"] != row.model {
-                                selection["modelID"] = json!(row.model);
-                                if let Some(fields) = selection.as_object_mut() {
-                                    fields.remove("effort");
-                                    fields.remove("speed");
-                                }
-                            }
-                            menu = menu.item(
-                                PopupMenuItem::new(format!("{} · {}", row.provider, row.name))
-                                    .on_click(move |_, window, cx| {
-                                        let _ = parent.update(cx, |this, cx| {
-                                            this.project_defaults_choice(
-                                                generation,
-                                                "selection",
-                                                selection.clone(),
-                                                window,
-                                                cx,
-                                            )
-                                        });
-                                    }),
-                            );
+                            let selection = selection.clone();
+                            menu = menu.item(PopupMenuItem::new(title.clone()).on_click(
+                                move |_, window, cx| {
+                                    let _ = parent.update(cx, |this, cx| {
+                                        this.project_defaults_choice(
+                                            generation,
+                                            "selection",
+                                            selection.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                },
+                            ));
                         }
                         let parent = parent.clone();
                         menu.item(PopupMenuItem::separator()).item(
@@ -355,6 +537,10 @@ impl Coincide {
             );
             if state.custom && !global {
                 form = form.child(Input::new(&state.model));
+            }
+            if let Some(model) = current {
+                form = self
+                    .project_defaults_capabilities(form, generation, &selection, model, global, cx);
             }
             if provider == "codex" {
                 let mut accounts = vec![(Value::Null, "Default account".to_owned())];
@@ -409,15 +595,41 @@ impl Coincide {
                         }),
                 );
             }
-            let detail = [
-                state.draft["selection"]["effort"].as_str(),
-                state.draft["selection"]["speed"].as_str(),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
+            // Swift's model detail: the effort (or the model's default) and speed.
+            let effort = state.draft["selection"]["effort"]
+                .as_str()
+                .or_else(|| current.and_then(|model| model["reportedDefaultEffort"].as_str()));
+            let speed = state.draft["selection"]["speed"].as_str().map(|speed| {
+                current
+                    .and_then(|model| model["reportedSpeeds"].as_array())
+                    .and_then(|rows| rows.iter().find(|row| row["id"] == speed))
+                    .and_then(|row| row["name"].as_str())
+                    .unwrap_or(speed)
+                    .to_owned()
+            });
+            let detail = effort
+                .map(|effort| composer_selection::effort_picker_title(&json!(effort)))
+                .into_iter()
+                .chain(speed)
+                .collect::<Vec<_>>()
+                .join(" · ");
             form = form.child(div().text_xs().child(detail));
+            form = form.child(
+                Button::new("project-defaults-agent-settings")
+                    .ghost()
+                    .compact()
+                    .icon(IconName::Settings)
+                    .label("Agent Settings…")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_project_defaults(window, cx);
+                        this.open_settings_panel(window, cx);
+                        this.navigate_settings_section(
+                            settings::SettingsSection::Models,
+                            window,
+                            cx,
+                        );
+                    })),
+            );
             for (field, label, values) in [
                 (
                     "accessMode",
@@ -560,5 +772,36 @@ impl Coincide {
                 .child(form)
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn a_new_model_keeps_the_effort_and_speed_it_offers_and_drops_the_rest() {
+        let previous =
+            json!({"provider":"codex","modelID":"old","effort":"high","speed":"priority"});
+        let offers_both = json!({"id":"new","reportedEfforts":["low","high"],"reportedSpeeds":[{"id":"priority","name":"Fast"}]});
+        let mut next =
+            json!({"provider":"codex","modelID":"new","effort":"high","speed":"priority"});
+        carry_effort_and_speed(&previous, &mut next, Some(&offers_both));
+        assert_eq!(next["effort"], "high");
+        assert_eq!(next["speed"], "priority");
+        let offers_neither = json!({"id":"new","reportedEfforts":["low"],"reportedSpeeds":[]});
+        carry_effort_and_speed(&previous, &mut next, Some(&offers_neither));
+        assert_eq!(next, json!({"provider":"codex","modelID":"new"}));
+        let mut unknown = json!({"provider":"codex","modelID":"new","effort":"high"});
+        carry_effort_and_speed(&previous, &mut unknown, None);
+        assert_eq!(unknown, json!({"provider":"codex","modelID":"new"}));
+    }
+    #[::core::prelude::v1::test]
+    fn only_a_ready_catalog_of_the_same_provider_describes_a_model() {
+        let catalog = json!({"provider":"codex","state":"ready","models":[{"id":"a"}]});
+        assert!(catalog_model(&catalog, "codex", "a").is_some());
+        assert!(catalog_model(&catalog, "claude", "a").is_none());
+        assert!(catalog_model(&catalog, "codex", "b").is_none());
+        let loading = json!({"provider":"codex","state":"loading","models":[{"id":"a"}]});
+        assert!(catalog_model(&loading, "codex", "a").is_none());
     }
 }
