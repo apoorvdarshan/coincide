@@ -1049,7 +1049,9 @@ impl Coincide {
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
-        let (browser, browser_error) = match BrowserController::new(profile_dir) {
+        let (browser, browser_error) = match control::download_directory()
+            .and_then(|downloads| BrowserController::new(profile_dir, downloads))
+        {
             Ok(mut browser) => {
                 // `bw` runs only after a page asks and, for the key, after Sign In.
                 browser.set_passkey_vault(passkey_vault);

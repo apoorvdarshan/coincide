@@ -363,7 +363,8 @@ def main():
         module_spec.loader.exec_module(browser_fixture)
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,
-            lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"))
+            lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"),
+            home / "Downloads" / "Coincide")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("actual native browser loopback navigation/input/click/same-origin frame/history/reload/tab selection and cleanup; native pixels reviewed separately")
         newer = rpc("threads.create", projectId=created_project["id"])

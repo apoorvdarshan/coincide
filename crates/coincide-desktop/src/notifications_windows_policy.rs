@@ -56,6 +56,55 @@ pub(super) fn owned_history_id(id: &str, thread: Uuid) -> bool {
     thread_from_event_id(id) == Some(thread)
 }
 
+/// `canonicalize` yields verbatim `\\?\` paths, which the shell namespace
+/// behind `IShellLink::SetPath` does not parse. Return the equivalent ordinary
+/// Win32 disk or UNC path, refusing components whose meaning would change once
+/// the verbatim prefix no longer disables Win32 normalization. Callers still
+/// verify the saved target by canonical path and file identity.
+pub(super) fn shell_link_target(path: &str) -> Result<String> {
+    let plain = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_owned()
+    } else {
+        path.to_owned()
+    };
+    let bytes = plain.as_bytes();
+    let (root, rest) = if bytes.len() > 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'\\'
+    {
+        (&plain[..3], &plain[3..])
+    } else if let Some(unc) = plain.strip_prefix(r"\\") {
+        let mut parts = unc.splitn(3, '\\');
+        let (Some(server), Some(share), Some(_)) = (parts.next(), parts.next(), parts.next())
+        else {
+            anyhow::bail!("Unsupported notification target path");
+        };
+        ensure!(
+            !server.is_empty() && !share.is_empty() && !matches!(server, "?" | "."),
+            "Unsupported notification target path"
+        );
+        let root = server.len() + share.len() + 4;
+        (&plain[..root], &plain[root..])
+    } else {
+        anyhow::bail!("Unsupported notification target path");
+    };
+    ensure!(
+        !root.contains('/')
+            && rest.split('\\').all(|part| {
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && !part.contains('/')
+                    && !part.ends_with(['.', ' '])
+            }),
+        "Unsupported notification target path"
+    );
+    Ok(plain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +141,44 @@ mod tests {
             "https://untrusted.invalid",
         ] {
             assert!(!owned_history_id(id, foreign));
+        }
+    }
+    #[test]
+    fn shell_link_targets_drop_only_the_verbatim_prefix() {
+        for (path, expected) in [
+            (
+                r"\\?\D:\a\coincide\target\app.exe",
+                r"D:\a\coincide\target\app.exe",
+            ),
+            (
+                r"C:\Program Files\Coincide\app.exe",
+                r"C:\Program Files\Coincide\app.exe",
+            ),
+            (
+                r"\\?\UNC\server\share\Coincide\app.exe",
+                r"\\server\share\Coincide\app.exe",
+            ),
+            (r"\\server\share\app.exe", r"\\server\share\app.exe"),
+        ] {
+            assert_eq!(shell_link_target(path).unwrap(), expected);
+        }
+        for path in [
+            "",
+            r"\\?\Volume{00000000-0000-0000-0000-000000000000}\app.exe",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\app.exe",
+            r"\\.\C:\app.exe",
+            r"\\?\C:\name.\app.exe",
+            r"\\?\C:\name \app.exe",
+            r"\\?\C:\a\..\app.exe",
+            r"\\?\C:\a\.\app.exe",
+            r"\\?\C:\a\\app.exe",
+            r"\\?\C:\a/b\app.exe",
+            r"\\?\UNC\server\app.exe",
+            r"C:",
+            r"C:\",
+            "relative\\app.exe",
+        ] {
+            assert!(shell_link_target(path).is_err(), "{path}");
         }
     }
     #[test]
