@@ -405,13 +405,14 @@ impl Engine {
         let (_, result) = self
             .git_actions
             .results
-            .remove(id)
+            .get(id)
             .context("Git operation not found")?;
         ensure!(
             result["_thread"] == owner,
             "Git operation belongs to another thread"
         );
-        let mut result = result;
+        // Verify the owner before consuming its one-shot result.
+        let (_, mut result) = self.git_actions.results.remove(id).unwrap();
         if let Some(object) = result.as_object_mut() {
             object.remove("_thread");
         }
@@ -581,7 +582,10 @@ impl Engine {
 
     /// Collects worker reports and applies their thread changes on the engine.
     pub(super) fn poll_git_actions(&mut self) {
-        let now = Instant::now();
+        self.poll_git_actions_at(Instant::now());
+    }
+
+    fn poll_git_actions_at(&mut self, now: Instant) {
         let mut finished = Vec::new();
         for (id, result) in self.git_actions.rx.try_iter() {
             finished.push((id, result));
@@ -611,12 +615,15 @@ impl Engine {
             .git_actions
             .pending
             .iter()
-            .filter(|(_, pending)| pending.started.elapsed() > OPERATION_LIFETIME)
+            .filter(|(_, pending)| {
+                !pending.mutation
+                    && now.saturating_duration_since(pending.started) > OPERATION_LIFETIME
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
-            // The worker may still run; its later report is dropped, and so is
-            // its exclusion, so the thread is not blocked for good.
+            // Expire abandoned reads only. A mutation keeps its exclusion
+            // until its actual completion; elapsed time cannot prove it stopped.
             if let Some(pending) = self.git_actions.pending.remove(&id) {
                 self.git_actions.mutating.remove(&pending.thread);
                 self.git_actions.preparing.remove(&pending.thread);

@@ -272,3 +272,46 @@ fn toolbar_moves_unstarted_threads_between_checkout_and_worktrees() {
     assert!(!Path::new(&unused).exists());
     assert!(root.join("readme.md").is_file());
 }
+
+#[test]
+fn another_thread_cannot_consume_a_finished_git_result() {
+    let (_dir, mut engine, owner, other, _) = fixture();
+    let id = Uuid::new_v4().to_string();
+    engine.git_actions.results.insert(
+        id.clone(),
+        (Instant::now(), json!({"_thread":owner,"value":"retained"})),
+    );
+    assert!(engine.git_actions_result(&other, &id).is_err());
+    let reply = engine.git_actions_result(&owner, &id).unwrap();
+    assert_eq!(reply, json!({"ready":true,"result":{"value":"retained"}}));
+    assert!(engine.git_actions_result(&owner, &id).is_err());
+}
+
+#[test]
+fn elapsed_time_does_not_release_an_unfinished_git_mutation() {
+    let (_dir, mut engine, owner, _, _) = fixture();
+    let id = Uuid::new_v4().to_string();
+    let started = Instant::now();
+    engine.git_actions.mutating.insert(owner.clone());
+    engine.git_actions.pending.insert(
+        id.clone(),
+        Pending {
+            thread: owner.clone(),
+            started,
+            progress: Arc::new(Mutex::new(String::new())),
+            completion: Completion::None,
+            mutation: true,
+        },
+    );
+    engine.poll_git_actions_at(started + OPERATION_LIFETIME + Duration::from_secs(1));
+    assert!(engine.git_actions.pending.contains_key(&id));
+    assert!(engine.git_actions.mutating.contains(&owner));
+    engine
+        .git_actions
+        .tx
+        .send((id.clone(), json!({"done":true})))
+        .unwrap();
+    engine.poll_git_actions();
+    assert!(!engine.git_actions.pending.contains_key(&id));
+    assert!(!engine.git_actions.mutating.contains(&owner));
+}

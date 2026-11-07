@@ -256,6 +256,7 @@ pub(super) fn file_manager() -> Option<Target> {
         target.args = vec!["-R".into()];
     }
     Some(target)
+}
 /// A conversation's worktree, else its project's folder.
 pub(super) fn folder_of(thread: &Value, projects: &[Value]) -> Option<PathBuf> {
     thread["worktreePath"]
