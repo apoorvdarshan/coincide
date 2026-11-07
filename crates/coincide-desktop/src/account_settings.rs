@@ -75,6 +75,21 @@ fn matching_operation(value: &Value, account: &str, operation: Option<&str>) -> 
 }
 
 impl Coincide {
+    pub(crate) fn open_codex_profile_settings_for(
+        &mut self,
+        account: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_codex_account_settings(window, cx);
+        if !self.provider_settings.codex.signing_in() {
+            self.provider_settings.codex.account = account;
+        } else if self.provider_settings.codex.account != account {
+            self.provider_settings.codex.message =
+                "Finish or cancel the current account sign-in before choosing another account."
+                    .into();
+        }
+    }
     pub(crate) fn open_codex_account_settings(
         &mut self,
         window: &mut Window,

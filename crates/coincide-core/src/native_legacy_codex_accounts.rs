@@ -87,12 +87,193 @@ impl Engine {
         Ok(())
     }
 }
+pub struct PreparedLegacyCodexRemoval {
+    source: Value,
+    configuration: Value,
+    registry: Option<String>,
+    account: Account,
+    threads: Vec<Value>,
+    _exclusive: LoginHome,
+}
+impl PreparedLegacyCodexRemoval {
+    pub fn name(&self) -> &str {
+        &self.account.name
+    }
+    pub fn conversation_count(&self) -> usize {
+        self.threads.len()
+    }
+}
+impl Engine {
+    pub fn prepare_native_legacy_codex_removal(
+        &mut self,
+        id: &str,
+        expected: &str,
+    ) -> Result<PreparedLegacyCodexRemoval> {
+        self.require_admissions()?;
+        let configuration = legacy::configuration(&self.store)?;
+        let row = legacy::account(&configuration, id)?;
+        ensure!(
+            revision(self, &configuration)? == expected,
+            "Codex profiles changed; review removal again"
+        );
+        let threads = self.store.native_account_removal_threads("codex", id)?;
+        removal::ready(self, &threads)?;
+        let owner =
+            Private::open(&self.store, true)?.context("Native account authority missing")?;
+        let registry = self.store.native_accounts_payload("codex")?;
+        let payload = read(&owner, "codex", registry.as_deref())?;
+        ensure!(
+            payload["accounts"].get(id).is_none(),
+            "This profile already uses native account settings"
+        );
+        let home = legacy::managed_home(&self.store.data_directory()?, id, false)?;
+        let pin = CodexHomeLease::capture(&home)?;
+        pin.validate()?;
+        let account = Account {
+            id: id.into(),
+            provider: "codex".into(),
+            name: row["name"].as_str().unwrap().into(),
+            revision: Uuid::new_v4().to_string(),
+            launch_revision: Uuid::new_v4().to_string(),
+            authentication: Authentication::Login,
+            key_variable: None,
+            key: None,
+            admin_key: None,
+            codex_enrollment: None,
+            home_identity: crate::private_fs::identity(&home)?,
+            guard_identity: crate::private_fs::identity(&home.join(GUARD))?,
+            home,
+        };
+        let exclusive =
+            LoginHome::capture_mode(&self.store.data_directory()?, account.clone(), true, true)?;
+        exclusive.validate()?;
+        Ok(PreparedLegacyCodexRemoval {
+            source: owner.source.clone(),
+            configuration,
+            registry,
+            account,
+            threads,
+            _exclusive: exclusive,
+        })
+    }
+    pub fn apply_native_legacy_codex_removal(
+        &mut self,
+        plan: PreparedLegacyCodexRemoval,
+    ) -> Result<NativeAccountRemoval> {
+        removal::ready(self, &plan.threads)?;
+        plan._exclusive.validate()?;
+        let owner =
+            Private::open(&self.store, false)?.context("Native account authority missing")?;
+        ensure!(
+            owner.source == plan.source,
+            "Codex removal belongs to another Store"
+        );
+        let mut payload = read(&owner, "codex", plan.registry.as_deref())?;
+        removal::tombstone(&mut payload, &plan.account)?;
+        if payload.get("revoked_accounts").is_none() {
+            payload["revoked_accounts"] = json!({});
+        }
+        let revoked = payload["revoked_accounts"]
+            .as_object_mut()
+            .context("Account revocations malformed")?;
+        ensure!(
+            revoked.len() < 10_000,
+            "Account revocations exceed their bound"
+        );
+        revoked.insert(plan.account.id.clone(), json!(true));
+        let committed = encoded(&owner, &payload)?;
+        self.store.revoke_legacy_codex_profile(
+            &plan.configuration,
+            &plan.account.id,
+            plan.registry.as_deref(),
+            &committed,
+            &plan.threads,
+        )?;
+        self.revision += 1;
+        let count = plan.threads.len();
+        drop(plan._exclusive);
+        // Revocation is durable before private-home deletion. Retain its exact
+        // tombstone on any failure; normal native cleanup can retry it later.
+        let mut pending = true;
+        if removal::remove_home(&self.store.data_directory()?, &plan.account).is_ok() {
+            payload["removed_accounts"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&plan.account.id);
+            pending = self
+                .store
+                .save_native_accounts_payload(
+                    "codex",
+                    Some(&committed),
+                    &encoded(&owner, &payload)?,
+                )
+                .is_err();
+        }
+        Ok(NativeAccountRemoval {
+            conversations: count,
+            cleanup_pending: pending,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn reviewed_removal_excludes_other_child_owners_and_preserves_conversation_content() {
+        let (_root, mut engine, binary) = super::super::super::tests::fixture();
+        let row = engine
+            .execute(
+                "providers.codex.profiles.create",
+                &json!({"name":"Synthetic removed profile"}),
+            )
+            .unwrap();
+        let id = row["id"].as_str().unwrap();
+        let thread = json!({"id":Uuid::new_v4().to_string(),"title":"Preserved","draft":"Keep draft","items":[{"role":"user","text":"Keep history"}],"selection":{"provider":"codex","modelID":"default","accountID":id},"future":{"keep":true}});
+        engine.store.save(&thread).unwrap();
+        let account = engine.native_legacy_codex_accounts().unwrap().remove(0);
+        let context =
+            legacy::LaunchContext::capture(&engine.store.data_directory().unwrap(), id, &binary)
+                .unwrap();
+        let actual_child_lease = context.acquire_home_lease().unwrap();
+        assert!(
+            engine
+                .prepare_native_legacy_codex_removal(id, &account.revision)
+                .is_err()
+        );
+        drop(actual_child_lease);
+        let plan = engine
+            .prepare_native_legacy_codex_removal(id, &account.revision)
+            .unwrap();
+        assert!(context.acquire_home_lease().is_err());
+        let mut peer =
+            Engine::new(Store::open(&engine.store.resume_source_path().unwrap()).unwrap());
+        let mut changed = thread.clone();
+        changed["draft"] = json!("Newer draft from peer");
+        peer.store.save(&changed).unwrap();
+        assert!(engine.apply_native_legacy_codex_removal(plan).is_err());
+        assert_eq!(engine.native_legacy_codex_accounts().unwrap().len(), 1);
+        let plan = engine
+            .prepare_native_legacy_codex_removal(id, &account.revision)
+            .unwrap();
+        let result = engine.apply_native_legacy_codex_removal(plan).unwrap();
+        assert_eq!(result.conversations, 1);
+        assert!(!result.cleanup_pending);
+        changed["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("accountID");
+        assert_eq!(
+            engine.store.thread(thread["id"].as_str().unwrap()).unwrap(),
+            changed
+        );
+        assert!(engine.native_legacy_codex_accounts().unwrap().is_empty());
+        assert!(engine.routes_native_provider_account(&thread).unwrap());
+        assert!(engine.validate_native_account_selection(&thread).is_err());
+    }
+    #[test]
     fn rename_preserves_unknowns_and_order_and_rejects_other_source_or_changed_document() {
-        let (_root, mut engine, _) = super::super::tests::fixture();
+        let (_root, mut engine, _) = super::super::super::tests::fixture();
         let row = engine
             .execute(
                 "providers.codex.profiles.create",
@@ -122,7 +303,7 @@ mod tests {
         let foreign = engine
             .prepare_native_legacy_codex_rename(id, &current.revision, "Wrong source")
             .unwrap();
-        let (_other, mut other, _) = super::super::tests::fixture();
+        let (_other, mut other, _) = super::super::super::tests::fixture();
         assert!(other.apply_native_legacy_codex_rename(foreign).is_err());
         let plan = engine
             .prepare_native_legacy_codex_rename(id, &current.revision, "Race overwrite")

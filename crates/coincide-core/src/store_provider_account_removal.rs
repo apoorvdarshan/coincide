@@ -1,7 +1,7 @@
 //! Atomic native account revocation and conversation fallback. Imported source
 //! rows/original bytes stay untouched; only accountID changes in native chats.
 use super::*;
-fn affected(db: &Connection, provider: &str, account: &str) -> Result<Vec<Value>> {
+pub(super) fn affected(db: &Connection, provider: &str, account: &str) -> Result<Vec<Value>> {
     let mut statement=db.prepare("SELECT document FROM threads WHERE json_extract(document,'$.selection.provider')=?1 AND json_extract(document,'$.selection.accountID')=?2 AND NOT EXISTS(SELECT 1 FROM imported_threads WHERE imported_threads.id=threads.id) ORDER BY id")?;
     let rows = statement.query_map(params![provider, account], |row| row.get::<_, String>(0))?;
     let mut documents = Vec::new();

@@ -1177,10 +1177,6 @@ impl Engine {
 #[path = "provider_account_secret_store.rs"]
 pub mod account_secret_store;
 
-#[path = "native_legacy_codex_accounts.rs"]
-mod legacy_codex_accounts;
-pub use legacy_codex_accounts::{NativeLegacyCodexAccount, PreparedLegacyCodexRename};
-
 #[path = "codex_profile_home_lease.rs"]
 mod codex_home_lease;
 pub(crate) use codex_home_lease::{Held as HeldCodexHomeLease, Lease as CodexHomeLease};
@@ -1191,8 +1187,9 @@ pub(crate) use accounts::NativeCodexApiContext;
 pub use accounts::{
     NativeAccountAuthentication, NativeAccountRemoval, NativeAdminModel, NativeAdminTokens,
     NativeAdminUsage, NativeAdminUsageReport, NativeCodexKeyEnrollment,
-    NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave, NativeLoginAccount,
-    NativeProviderAccount, PreparedNativeAccountRemoval, native_account_key_choices,
+    NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave, NativeLegacyCodexAccount,
+    NativeLoginAccount, NativeProviderAccount, PreparedLegacyCodexRemoval,
+    PreparedLegacyCodexRename, PreparedNativeAccountRemoval, native_account_key_choices,
 };
 
 #[path = "provider_setup.rs"]
