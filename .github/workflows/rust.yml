@@ -166,6 +166,18 @@ jobs:
           set -o pipefail
           target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
           grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify Bitwarden passkey sign-in in a real WKWebView on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (bitwarden-sign-in)' "$RUNNER_TEMP/native-passkey-sdk.log"
       # Independent native fixture: it still reports when an unrelated earlier
       # fixture in this job failed. The job result keeps every failure.
       - name: Build synthetic native browser screenshot executable
@@ -201,18 +213,6 @@ jobs:
           set -o pipefail
           target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
-      - name: Build synthetic native passkey executable
-        if: ${{ !cancelled() }}
-        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
-      - name: Verify Bitwarden passkey sign-in in a real WKWebView on a fresh macOS runner
-        if: ${{ !cancelled() }}
-        timeout-minutes: 3
-        env:
-          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
-        run: |
-          set -o pipefail
-          target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
-          grep -F 'synthetic native passkeys: PASS (bitwarden-sign-in)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native macOS credential SDK evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -221,8 +221,8 @@ jobs:
           path: |
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
-            ${{ runner.temp }}/native-upload-sdk.log
             ${{ runner.temp }}/native-passkey-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
           if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
@@ -397,8 +397,8 @@ jobs:
             ${{ runner.temp }}/native-host-toast-*.log
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
-            ${{ runner.temp }}/native-upload-sdk.log
             ${{ runner.temp }}/native-passkey-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -646,6 +646,6 @@ jobs:
             ${{ runner.temp }}/linux-native-ui
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
-            ${{ runner.temp }}/native-upload-sdk.log
             ${{ runner.temp }}/native-passkey-sdk.log
+            ${{ runner.temp }}/native-upload-sdk.log
           if-no-files-found: warn
