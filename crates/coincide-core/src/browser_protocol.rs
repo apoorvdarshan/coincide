@@ -358,6 +358,34 @@ struct DownloadRecord {
     state: &'static str,
     error: Option<String>,
 }
+/// Opaque receipt for a UI-owned native download object. Never deserialized from
+/// browser JSON; unlike URL-only callbacks, each native object has its own key.
+pub struct NativeDownloadReceipt {
+    root: std::path::PathBuf,
+    thread: String,
+    tab: String,
+    key: String,
+    destination: std::path::PathBuf,
+}
+impl NativeDownloadReceipt {
+    pub fn destination(&self) -> &std::path::Path {
+        &self.destination
+    }
+}
+/// Blob downloads remain document-scoped; this does not broaden public navigation.
+pub fn validate_native_download(address: &str, document: &str) -> Result<()> {
+    if let Some(inner) = address.strip_prefix("blob:") {
+        let blob = validate_url(inner)?;
+        let page = validate_url(document)?;
+        ensure!(
+            blob.origin() == page.origin(),
+            "Blob download does not belong to this document origin"
+        );
+        Ok(())
+    } else {
+        validate_url(address).map(|_| ())
+    }
+}
 impl DownloadRegistry {
     pub fn new(directory: std::path::PathBuf) -> Result<Self> {
         ensure!(
@@ -387,7 +415,8 @@ impl DownloadRegistry {
         url: &str,
         suggested: &std::path::Path,
     ) -> Result<std::path::PathBuf> {
-        let result = self.start_inner(thread, tab, url, suggested);
+        let result =
+            validate_url(url).and_then(|_| self.reserve(thread, tab, url, suggested, true));
         if let Err(error) = &result {
             self.refuse(thread, &error.to_string());
         }
@@ -405,14 +434,52 @@ impl DownloadRegistry {
             .push_back((thread.to_owned(), reason.chars().take(512).collect()));
     }
 
-    fn start_inner(
+    /// Trusted native adapter entry: caller retains and compares the actual SDK
+    /// view/download objects. Correlation is this receipt, never page-provided IDs.
+    pub fn start_native(
+        &mut self,
+        thread: &str,
+        tab: &str,
+        address: &str,
+        document: &str,
+        suggested: &std::path::Path,
+    ) -> Result<NativeDownloadReceipt> {
+        let result = (|| {
+            validate_native_download(address, document)?;
+            let key = format!("native:{}", uuid::Uuid::new_v4());
+            let destination = self.reserve(thread, tab, &key, suggested, false)?;
+            Ok(NativeDownloadReceipt {
+                root: self.directory.clone(),
+                thread: thread.into(),
+                tab: tab.into(),
+                key,
+                destination,
+            })
+        })();
+        if result.is_err() {
+            self.refuse(thread, "Native download could not be admitted");
+        }
+        result
+    }
+    pub fn complete_native(&mut self, receipt: &NativeDownloadReceipt, success: bool) {
+        if self.directory == receipt.root {
+            self.complete(
+                &receipt.thread,
+                &receipt.tab,
+                &receipt.key,
+                Some(&receipt.destination),
+                success,
+            );
+        }
+    }
+    fn reserve(
         &mut self,
         thread: &str,
         tab: &str,
         url: &str,
         suggested: &std::path::Path,
+        track_rejections: bool,
     ) -> Result<std::path::PathBuf> {
-        validate_url(url)?;
         uuid::Uuid::parse_str(thread)?;
         uuid::Uuid::parse_str(tab)?;
         let key = (thread.to_owned(), tab.to_owned(), url.to_owned());
@@ -470,7 +537,7 @@ impl DownloadRegistry {
             });
             Ok(destination)
         })();
-        if result.is_err() {
+        if result.is_err() && track_rejections {
             // A denied start may still trigger a failure callback. Without this
             // ledger it could incorrectly fail a later accepted same-URL retry.
             if self.rejected.len() >= 128 && !self.rejected.contains_key(&key) {
@@ -564,7 +631,7 @@ impl DownloadRegistry {
         serde_json::json!({"downloads":downloads,"acceptingDownloads":!self.correlation_exhausted,
             "lastError":self.last_errors.iter().find(|(owner,_)|owner==thread).map(|(_,error)|error),
             "pendingCancellationCallbacks":self.rejected.iter().filter(|((owner,owner_tab,_),_)|owner==thread && tab.is_none_or(|tab|owner_tab==tab)).map(|(_,count)|u64::from(*count)).sum::<u64>(),
-            "limitations":["No progress bytes, cancellation or resume API","Files and partial downloads remain on disk; history is session-only","Only HTTP(S) downloads; at most 8 active and 50 retained records","Missing cancellation callbacks can block same-URL retries in a tab"]})
+            "limitations":["No progress bytes, cancellation or resume API","Files and partial downloads remain on disk; history is session-only","HTTP(S); native object adapters additionally support document-origin blob downloads; at most 8 active and 50 retained records","Missing cancellation callbacks can block same-URL retries in a tab"]})
     }
 }
 
