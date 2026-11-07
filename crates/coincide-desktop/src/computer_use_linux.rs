@@ -17,6 +17,7 @@ use x11rb::{
     connection::Connection,
     protocol::{
         Event,
+        composite::ConnectionExt as _,
         res::{self, ConnectionExt as _},
         xproto::*,
         xtest::ConnectionExt as _,
