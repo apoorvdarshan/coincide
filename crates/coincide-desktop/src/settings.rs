@@ -351,6 +351,25 @@ const PALETTES: &[Palette] = &[
     },
 ];
 
+/// Swift's caption under "Open links in your default browser", naming this
+/// platform's modifier for the other destination.
+fn link_routing_caption(default_browser: bool) -> &'static str {
+    match (default_browser, cfg!(target_os = "macos")) {
+        (true, true) => {
+            "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview."
+        }
+        (true, false) => {
+            "Clicking a web link opens your default browser. Ctrl-click opens it in Coincide’s browser preview."
+        }
+        (false, true) => {
+            "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."
+        }
+        (false, false) => {
+            "Clicking a web link opens it in Coincide’s browser preview. Ctrl-click opens your default browser."
+        }
+    }
+}
+
 pub(super) fn reply_font() -> &'static str {
     #[cfg(target_os = "macos")]
     {
@@ -456,6 +475,10 @@ impl Coincide {
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }
+        self.general_settings.sync(&self.settings, window, cx);
+        let prefix = general_settings::branch_prefix(&self.settings);
+        self.workspace_panel
+            .update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
@@ -743,8 +766,8 @@ impl Coincide {
         }
         if matches(S::Models, "models favorite hidden custom providers catalog") {
             count += 1;
-            content =
-                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
+            let catalogs = self.model_catalogs(cx);
+            content = content.child(self.models_settings_panel(&catalogs, cx));
         }
         if matches(
             S::About,
@@ -767,7 +790,7 @@ impl Coincide {
         }
         if matches(
             S::Usage,
-            "saved local usage history tokens provider reports cost counters live codex limits quota credits",
+            "saved local usage history tokens provider reports cost counters live codex claude plan limits quota credits daily chart models projects activity",
         ) {
             count += 1;
             if self.settings_section == S::Usage {
@@ -775,8 +798,16 @@ impl Coincide {
                     .provider_configuration_panel
                     .update(cx, |panel, cx| panel.admin_usage_view(cx));
                 content = content
+                    .child(self.usage_dashboard(cx))
                     .child(admin_usage)
-                    .child(self.codex_limits.panel.clone())
+                    .child(
+                        div()
+                            .mt_2()
+                            .px_1()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Saved turn reports"),
+                    )
                     .child(
                         div()
                             .h(px(460.))
@@ -786,7 +817,7 @@ impl Coincide {
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")
-                        .label("View usage and Codex limits")
+                        .label("View usage and plan limits")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.settings_section = S::Usage;
                             cx.notify();
@@ -995,7 +1026,28 @@ impl Coincide {
                     choices,
                     cx,
                 ));
+                if key == "followUpBehavior" {
+                    content = content.child(self.follow_up_settings_caption());
+                }
             }
+        }
+        if matches(
+            S::Conversation,
+            "open links default browser preview web command control click",
+        ) {
+            count += 1;
+            content = content.child(self.link_settings(cx));
+        }
+        if matches(
+            S::Conversation,
+            "new threads default model reasoning effort provider",
+        ) {
+            count += 1;
+            content = content.child(self.default_model_settings(cx));
+        }
+        if matches(S::Conversation, "git worktree branch prefix name") {
+            count += 1;
+            content = content.child(self.branch_prefix_settings(cx));
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
@@ -1011,6 +1063,13 @@ impl Coincide {
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
             content = content.child(self.awake_settings(cx));
+        }
+        if matches(
+            S::Automation,
+            "remote coincide remote iphone ipad phone pair pairing qr code tailscale devices certificate",
+        ) {
+            count += 1;
+            content = content.child(self.remote_panel.clone());
         }
         for (section, id, label, terms) in [
             (

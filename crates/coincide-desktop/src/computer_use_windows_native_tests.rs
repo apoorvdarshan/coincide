@@ -537,6 +537,8 @@ fn actual_owned_window_actions_and_capture_drain() {
         owner.state().filter(|state| state["focus"] == 100)
     });
     let snapshot = observe(&owner, thread, pid, window, false);
+    // Revocation ends the epoch: the thread's next request runs under a new
+    // one, and the old observation's tokens never act again.
     handle.native_revoke(thread);
     assert!(matches!(
         request(
@@ -545,7 +547,7 @@ fn actual_owned_window_actions_and_capture_drain() {
             "set_value",
             json!({"element_token":element(&snapshot,"edit"),"text":"refused"})
         ),
-        Err(Failure::NotGranted)
+        Err(Failure::StaleObservation)
     ));
     assert_eq!(owner.state().unwrap()["text"], "y");
     owner.close_child();

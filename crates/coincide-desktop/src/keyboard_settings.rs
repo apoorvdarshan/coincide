@@ -1,6 +1,7 @@
 //! Native shortcut recording for existing Rust commands. Persistence uses Swift's
 //! shortcutOverrides IDs/syntax; unsupported imported commands remain untouched.
 use super::*;
+use gpui_kit::component::checkbox::Checkbox;
 
 const MOD: u8 = 1;
 const CTRL: u8 = 2;
@@ -203,6 +204,39 @@ impl Shortcut {
         parts.push(&self.key);
         parts.join("+")
     }
+    /// The compact form menus show: "⌥⌘S" on macOS, "Ctrl+Alt+S" elsewhere.
+    fn hint(&self) -> String {
+        let key = match self.key.as_str() {
+            "enter" => "↩".to_owned(),
+            "tab" => "⇥".to_owned(),
+            "space" => "Space".to_owned(),
+            "esc" => "⎋".to_owned(),
+            "backspace" | "delete" => "⌫".to_owned(),
+            "arrowup" => "↑".to_owned(),
+            "arrowdown" => "↓".to_owned(),
+            "arrowleft" => "←".to_owned(),
+            "arrowright" => "→".to_owned(),
+            other => other.to_uppercase(),
+        };
+        if cfg!(target_os = "macos") {
+            let mut text = String::new();
+            for (flag, glyph) in [(CTRL, "⌃"), (ALT, "⌥"), (SHIFT, "⇧"), (MOD, "⌘")] {
+                if self.modifiers & flag != 0 {
+                    text.push_str(glyph);
+                }
+            }
+            text + &key
+        } else {
+            let mut parts = Vec::new();
+            for (flag, name) in [(MOD | CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift")] {
+                if self.modifiers & flag != 0 {
+                    parts.push(name.to_owned());
+                }
+            }
+            parts.push(key);
+            parts.join("+")
+        }
+    }
     fn label(&self) -> String {
         let mut parts = Vec::new();
         for (flag, text) in [
@@ -246,6 +280,12 @@ pub(super) fn shortcut_label(settings: &Value, command: Command) -> Option<Strin
     binding(settings, command)
         .shortcut
         .map(|shortcut| shortcut.label())
+}
+/// The command's current shortcut in its compact form, for hints beside rows.
+pub(super) fn shortcut_hint(settings: &Value, command: Command) -> Option<String> {
+    binding(settings, command)
+        .shortcut
+        .map(|shortcut| shortcut.hint())
 }
 fn binding(settings: &Value, command: Command) -> Binding {
     let (id, _, default) = command.spec();
@@ -401,19 +441,71 @@ fn save(engine: &SharedEngine, change: Change<'_>) -> Result<Value> {
     }
     Ok(response["result"].clone())
 }
+/// Commands sharing their shortcut with another command, in `Command::ALL`
+/// order, as Swift's `commandsWithConflicts`.
+fn conflicted(settings: &Value) -> Vec<Command> {
+    let keys = Command::ALL.map(|command| {
+        binding(settings, command)
+            .shortcut
+            .map(|shortcut| shortcut.physical())
+    });
+    Command::ALL
+        .into_iter()
+        .zip(&keys)
+        .filter(|(_, key)| {
+            key.as_ref()
+                .is_some_and(|key| keys.iter().flatten().filter(|other| *other == key).count() > 1)
+        })
+        .map(|(command, _)| command)
+        .collect()
+}
+/// The filter matches a command's name, its ID or its shortcut, as in Swift.
+fn filter_matches(settings: &Value, command: Command, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    let (id, title, _) = command.spec();
+    let keys = binding(settings, command)
+        .shortcut
+        .map(|shortcut| shortcut.label())
+        .unwrap_or_default();
+    [title, id, keys.as_str()]
+        .iter()
+        .any(|text| text.to_lowercase().contains(&query))
+}
+/// The caption a changed row shows, as Swift's `KeyBindingRow`.
+fn default_caption(command: Command) -> String {
+    Shortcut::parse(command.spec().2).map_or_else(
+        || "No shortcut by default".into(),
+        |shortcut| format!("Default: {}", shortcut.label()),
+    )
+}
 pub struct State {
     recording: Option<Command>,
     restore: Option<FocusHandle>,
     focus: FocusHandle,
     reset_confirm: bool,
+    filter: Entity<InputState>,
+    only_conflicts: bool,
+    _filter: Subscription,
 }
 impl State {
-    pub fn new(cx: &mut Context<Coincide>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter shortcuts"));
+        let subscription = cx.subscribe(&filter, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         Self {
             recording: None,
             restore: None,
             focus: cx.focus_handle(),
             reset_confirm: false,
+            filter,
+            only_conflicts: false,
+            _filter: subscription,
         }
     }
 }
@@ -492,14 +584,17 @@ impl Coincide {
             cx.stop_propagation();
             return true;
         }
-        if key.key == "escape"
-            && !key.modifiers.platform
+        let plain = !key.modifiers.platform
             && !key.modifiers.control
             && !key.modifiers.alt
-            && !key.modifiers.shift
-        {
+            && !key.modifiers.shift;
+        if key.key == "escape" && plain {
             self.cancel_shortcut_recording(window, cx);
             self.settings_status = "Shortcut recording cancelled".into();
+        } else if matches!(key.key.as_str(), "backspace" | "delete") && plain {
+            // As in Swift's recorder, Delete leaves the command without a shortcut.
+            self.cancel_shortcut_recording(window, cx);
+            self.save_shortcut(Change::Set(command, ""), window, cx);
         } else if let Some(shortcut) = Shortcut::event(key) {
             if shortcut.reserved() {
                 self.cancel_shortcut_recording(window, cx);
@@ -559,7 +654,56 @@ impl Coincide {
         if retained > 0 {
             panel = panel.child(div().text_sm().child(format!("{retained} imported command override(s) are not available in this preview and are retained unchanged.")));
         }
-        for command in Command::ALL {
+        let conflicts = conflicted(&self.settings);
+        let query = self.keyboard.filter.read(cx).value().to_string();
+        panel = panel.child(Input::new(&self.keyboard.filter));
+        if !conflicts.is_empty() || self.keyboard.only_conflicts {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(if conflicts.is_empty() {
+                                rgb(0x46A758)
+                            } else {
+                                rgb(0xF5A524)
+                            })
+                            .child(if conflicts.is_empty() {
+                                "✓ No shortcuts conflict."
+                            } else {
+                                "⚠ Some shortcuts conflict."
+                            }),
+                    )
+                    .child(
+                        Checkbox::new("shortcuts-only-conflicts")
+                            .label("Show only conflicts")
+                            .checked(self.keyboard.only_conflicts)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.keyboard.only_conflicts = *checked;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
+        let shown = Command::ALL
+            .into_iter()
+            .filter(|command| {
+                (!self.keyboard.only_conflicts || conflicts.contains(command))
+                    && filter_matches(&self.settings, *command, &query)
+            })
+            .collect::<Vec<_>>();
+        if shown.is_empty() {
+            panel = panel.child(div().p_3().text_sm().child(if query.trim().is_empty() {
+                "No Conflicts".to_owned()
+            } else {
+                format!("No results for “{}”", query.trim())
+            }));
+        }
+        for command in shown {
             let (id, title, _) = command.spec();
             let current = binding(&self.settings, command);
             let recording = self.keyboard.recording == Some(command);
@@ -626,6 +770,9 @@ impl Coincide {
                                 })),
                         ),
                 );
+            if current.customized {
+                row = row.child(div().text_sm().child(default_caption(command)));
+            }
             if let Some(issue) = current.issue {
                 row = row.child(div().text_sm().child(issue));
             }
@@ -662,18 +809,39 @@ impl Coincide {
             );
         }
         panel = panel.child(
-            Button::new("shortcuts-reset-supported")
-                .label("Reset these shortcuts…")
-                .disabled(!writable)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.keyboard.reset_confirm = true;
-                    cx.notify();
-                })),
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().text_sm().child("When two commands share a shortcut, a changed one wins over a default one. Fixed menu shortcuts such as Copy keep their keys."))
+                .child(
+                    Button::new("shortcuts-reset-supported")
+                        .label("Reset these shortcuts…")
+                        .disabled(!writable)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.keyboard.reset_confirm = true;
+                            cx.notify();
+                        })),
+                ),
         );
         if self.keyboard.reset_confirm {
             panel = panel.child(div().flex().flex_wrap().items_center().gap_2().child("Restore defaults for the eight commands above? Other imported shortcuts are kept.")
                 .child(Button::new("shortcuts-reset-confirm").label("Restore defaults").on_click(cx.listener(|this,_,window,cx| {this.keyboard.reset_confirm=false; this.save_shortcut(Change::ResetSupported,window,cx); })))
                 .child(Button::new("shortcuts-reset-cancel").label("Cancel").on_click(cx.listener(|this,_,_,cx| {this.keyboard.reset_confirm=false; cx.notify();}))));
+        }
+        if cfg!(target_os = "macos") {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().text_sm().child("App Shortcuts added for Coincide in System Settings › Keyboard take priority over these."))
+                    .child(Button::new("shortcuts-open-system-settings").label("Open Keyboard Settings…").on_click(|_, _, cx| {
+                        cx.open_url("x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+                    })),
+            );
         }
         panel.into_any_element()
     }
@@ -684,6 +852,26 @@ mod tests {
     use super::*;
     fn key(text: &str) -> Shortcut {
         Shortcut::parse(text).unwrap()
+    }
+    #[::core::prelude::v1::test]
+    fn hints_use_menu_glyphs_on_macos_and_names_elsewhere() {
+        let hint = |text: &str| key(text).hint();
+        if cfg!(target_os = "macos") {
+            assert_eq!(hint("mod+n"), "⌘N");
+            assert_eq!(hint("mod+alt+s"), "⌥⌘S");
+            assert_eq!(hint("ctrl+shift+enter"), "⌃⇧↩");
+        } else {
+            assert_eq!(hint("mod+n"), "Ctrl+N");
+            assert_eq!(hint("mod+alt+s"), "Ctrl+Alt+S");
+            assert_eq!(hint("ctrl+shift+enter"), "Ctrl+Shift+↩");
+        }
+        assert_eq!(
+            shortcut_hint(
+                &json!({"shortcutOverrides":{"chat.new":""}}),
+                Command::NewThread
+            ),
+            None
+        );
     }
     #[::core::prelude::v1::test]
     fn swift_syntax_round_trips_aliases_plus_unicode_and_exact_modifier_keys() {
@@ -777,6 +965,42 @@ mod tests {
             resolve(&json!({"shortcutOverrides":removed}), &key("mod+l")),
             Some(Command::Palette)
         );
+    }
+    #[::core::prelude::v1::test]
+    fn pane_tools_find_conflicts_filter_rows_and_name_defaults() {
+        assert!(conflicted(&json!({})).is_empty());
+        let shared = json!({"shortcutOverrides":{"chat.new":"mod+l","commandPalette.toggle":"mod+l","sidebar.toggle":""}});
+        assert_eq!(
+            conflicted(&shared),
+            vec![Command::NewThread, Command::Palette]
+        );
+        // A command taking another's default conflicts with it too.
+        let taken = json!({"shortcutOverrides":{"terminal.toggle":"mod+b"}});
+        assert_eq!(
+            conflicted(&taken),
+            vec![Command::Sidebar, Command::Terminal]
+        );
+        let settings = json!({});
+        assert!(filter_matches(&settings, Command::Terminal, ""));
+        assert!(filter_matches(&settings, Command::Terminal, " TERMINAL "));
+        assert!(filter_matches(
+            &settings,
+            Command::Terminal,
+            "terminal.toggle"
+        ));
+        let modifier = if cfg!(target_os = "macos") {
+            "command"
+        } else {
+            "control"
+        };
+        assert!(filter_matches(
+            &settings,
+            Command::Terminal,
+            &format!("{modifier} + j")
+        ));
+        assert!(!filter_matches(&settings, Command::Terminal, "palette"));
+        assert!(default_caption(Command::NewThread).starts_with("Default: "));
+        assert!(default_caption(Command::NewThread).ends_with(" + N"));
     }
     #[::core::prelude::v1::test]
     fn native_terminal_browser_and_palette_keep_existing_key_ownership() {

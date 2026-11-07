@@ -285,7 +285,7 @@ impl Engine {
             row.revoke_native(&native)?;
         }
         for id in &ids {
-            self.computer_use_selection_changed(Uuid::parse_str(id)?);
+            self.computer_use_thread_removed(Uuid::parse_str(id)?);
         }
         self.notification_events.discard_deleted_threads(&ids);
         let token = Uuid::new_v4().to_string();

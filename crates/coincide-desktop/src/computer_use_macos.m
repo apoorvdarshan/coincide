@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 @interface CUElement : NSObject
 @property(nonatomic, assign) AXUIElementRef element;
@@ -202,7 +203,9 @@ static BOOL CUValidate(CUElement *entry) {
   return self;
 }
 @end
-static NSDictionary *CUScreenshot(CGWindowID wid, pid_t pid, CGRect bounds) {
+// Captures a window, or a region of it in window points (zoom), as PNG.
+static NSDictionary *CUCapture(CGWindowID wid, pid_t pid, CGRect bounds,
+                               CGRect source, double maxScale) {
 #if CU_SCREEN_KIT && defined(__MAC_OS_X_VERSION_MAX_ALLOWED) &&                \
     __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
   if (@available(macOS 14.0, *)) {
@@ -230,10 +233,12 @@ static NSDictionary *CUScreenshot(CGWindowID wid, pid_t pid, CGRect bounds) {
     SCContentFilter *filter =
         [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
     SCStreamConfiguration *configuration = [SCStreamConfiguration new];
-    double scale =
-        MIN(1.0, 1600.0 / MAX(bounds.size.width, bounds.size.height));
-    configuration.width = MAX(1, (size_t)(bounds.size.width * scale));
-    configuration.height = MAX(1, (size_t)(bounds.size.height * scale));
+    CGSize area = CGRectIsNull(source) ? bounds.size : source.size;
+    double scale = MIN(maxScale, 1600.0 / MAX(area.width, area.height));
+    configuration.width = MAX(1, (size_t)(area.width * scale));
+    configuration.height = MAX(1, (size_t)(area.height * scale));
+    if (!CGRectIsNull(source))
+      configuration.sourceRect = source;
     configuration.showsCursor = NO;
     configuration.ignoreShadowsSingleWindow = YES;
     configuration.scalesToFit = YES;
@@ -274,11 +279,11 @@ static NSDictionary *CUScreenshot(CGWindowID wid, pid_t pid, CGRect bounds) {
 #endif
   return CUError(@"unsupported");
 }
-static BOOL CUIsBrowser(pid_t pid) {
-  NSString *bundle =
-      [NSRunningApplication runningApplicationWithProcessIdentifier:pid]
-              .bundleIdentifier
-          ?: @"";
+static NSDictionary *CUScreenshot(CGWindowID wid, pid_t pid, CGRect bounds) {
+  return CUCapture(wid, pid, bounds, CGRectNull, 1.0);
+}
+static BOOL CUIsBrowserBundle(NSString *bundle) {
+  bundle = bundle ?: @"";
   for (NSString *prefix in @[
          @"com.apple.Safari", @"com.google.Chrome", @"org.mozilla.firefox",
          @"com.microsoft.edgemac", @"com.brave.Browser",
@@ -287,6 +292,11 @@ static BOOL CUIsBrowser(pid_t pid) {
     if ([bundle hasPrefix:prefix])
       return YES;
   return NO;
+}
+static BOOL CUIsBrowser(pid_t pid) {
+  return CUIsBrowserBundle(
+      [NSRunningApplication runningApplicationWithProcessIdentifier:pid]
+          .bundleIdentifier);
 }
 static NSDictionary *CUObserve(CUContext *ctx, NSDictionary *request) {
   pid_t pid = [request[@"pid"] intValue];
@@ -544,6 +554,629 @@ static NSDictionary *CUInput(CUContext *ctx, NSDictionary *request) {
     return CUError(@"unsupported");
   return @{@"done" : @YES};
 }
+// MARK: Extended tools. Every target is rechecked here, immediately before
+// input, exactly as for click_point and press_key; nothing is retried.
+static BOOL CUTopmost(CGPoint p, CGWindowID wid) {
+  for (NSDictionary *w in CUWindows())
+    if ([w[(id)kCGWindowLayer] intValue] == 0 &&
+        CGRectContainsPoint(CUBounds(w), p))
+      return [w[(id)kCGWindowNumber] unsignedIntValue] == wid;
+  return NO;
+}
+static BOOL CUFrontmost(pid_t pid) {
+  return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier ==
+         pid;
+}
+// A point of the current screenshot observation, in screen points. Pixel
+// input is denied if the captured window content changed since then.
+static NSDictionary *CUObservedPoint(CUContext *ctx, NSDictionary *target,
+                                     BOOL recapture, CGPoint *out) {
+  if (![target isKindOfClass:NSDictionary.class])
+    return CUError(@"invalid_request");
+  pid_t pid = [target[@"pid"] intValue];
+  CGWindowID wid = [target[@"window"] unsignedIntValue];
+  double x = [target[@"x"] doubleValue], y = [target[@"y"] doubleValue];
+  if (pid != ctx.pid || wid != ctx.windowID || !isfinite(x) || !isfinite(y) ||
+      x < 0 || y < 0 || x >= ctx.bounds.size.width ||
+      y >= ctx.bounds.size.height ||
+      !CUSame(CUBounds(CUWindow(wid, pid)), ctx.bounds) || !CUFrontmost(pid))
+    return CUError(@"stale_observation");
+  CGPoint p = CGPointMake(ctx.bounds.origin.x + x, ctx.bounds.origin.y + y);
+  if (!CUTopmost(p, wid) || !ctx.screenshot)
+    return CUError(@"stale_observation");
+  if (recapture) {
+    NSDictionary *fresh = CUScreenshot(wid, pid, ctx.bounds);
+    if (fresh[@"error"])
+      return fresh;
+    if (![fresh[@"png_base64"] isEqualToString:ctx.screenshot])
+      return CUError(@"stale_observation");
+  }
+  *out = p;
+  return nil;
+}
+// The center of a validated element in the foreground app.
+static NSDictionary *CUElementPoint(CUElement *record, CGPoint *out) {
+  if (!record || !CUValidate(record) || !CUFrontmost(record.pid))
+    return CUError(@"stale_observation");
+  CGRect b = record.elementBounds;
+  if (b.size.width <= 0 || b.size.height <= 0)
+    return CUError(@"unsupported");
+  CGPoint p = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+  if (!CUTopmost(p, record.windowID))
+    return CUError(@"stale_observation");
+  *out = p;
+  return nil;
+}
+static NSDictionary *CUTarget(CUContext *ctx, NSDictionary *target,
+                              CUElement **element, CGPoint *out) {
+  if (![target isKindOfClass:NSDictionary.class])
+    return CUError(@"invalid_request");
+  if (target[@"native"]) {
+    *element = ctx.elements[target[@"native"]];
+    return CUElementPoint(*element, out);
+  }
+  *element = nil;
+  return CUObservedPoint(ctx, target, YES, out);
+}
+// Posts every event after one final authority check, then releases them. A
+// press is never left without its release.
+static NSDictionary *CUPost(CUContext *ctx, CGEventRef *events, size_t count) {
+  BOOL complete = YES;
+  for (size_t i = 0; i < count; i++)
+    complete = complete && events[i];
+  NSDictionary *result = nil;
+  if (!complete)
+    result = CUError(@"native");
+  else if (!ctx.check || !ctx.check(ctx.guard))
+    result = CUError(@"revoked");
+  else
+    for (size_t i = 0; i < count; i++) {
+      CGEventSetFlags(events[i], 0);
+      CGEventPost(kCGHIDEventTap, events[i]);
+    }
+  for (size_t i = 0; i < count; i++)
+    if (events[i])
+      CFRelease(events[i]);
+  return result ?: @{@"done" : @YES};
+}
+static CGEventRef CUMouse(CGEventType type, CGPoint p, CGMouseButton button,
+                          int64_t clicks) {
+  CGEventRef event = CGEventCreateMouseEvent(NULL, type, p, button);
+  if (event && clicks)
+    CGEventSetIntegerValueField(event, kCGMouseEventClickState, clicks);
+  return event;
+}
+static NSDictionary *CUPointer(CUContext *ctx, NSDictionary *r) {
+  NSString *action = r[@"action"];
+  CUElement *element = nil;
+  CGPoint p = CGPointZero;
+  if ([action isEqualToString:@"move"]) {
+    NSDictionary *error = CUObservedPoint(ctx, r[@"target"], NO, &p);
+    if (error)
+      return error;
+    CGEventRef events[] = {
+        CUMouse(kCGEventMouseMoved, p, kCGMouseButtonLeft, 0)};
+    return CUPost(ctx, events, 1);
+  }
+  NSDictionary *target = r[@"target"];
+  if ([action isEqualToString:@"right_click"] &&
+      [target isKindOfClass:NSDictionary.class] && target[@"native"]) {
+    // A control with its own menu action needs no pointer or foreground.
+    // The choice is made before input; a failed action is never retried.
+    element = ctx.elements[target[@"native"]];
+    if (!element || !CUValidate(element))
+      return CUError(@"stale_observation");
+    CFArrayRef names = NULL;
+    BOOL menu = AXUIElementCopyActionNames(element.element, &names) ==
+                    kAXErrorSuccess &&
+                names &&
+                [(__bridge NSArray *)names
+                    containsObject:(__bridge NSString *)kAXShowMenuAction];
+    if (names)
+      CFRelease(names);
+    if (menu) {
+      if (!ctx.check || !ctx.check(ctx.guard))
+        return CUError(@"revoked");
+      return AXUIElementPerformAction(element.element, kAXShowMenuAction) ==
+                     kAXErrorSuccess
+                 ? @{@"done" : @YES}
+                 : CUError(@"native");
+    }
+  }
+  NSDictionary *error = CUTarget(ctx, target, &element, &p);
+  if (error)
+    return error;
+  if ([action isEqualToString:@"double_click"]) {
+    CGEventRef events[] = {
+        CUMouse(kCGEventLeftMouseDown, p, kCGMouseButtonLeft, 1),
+        CUMouse(kCGEventLeftMouseUp, p, kCGMouseButtonLeft, 1),
+        CUMouse(kCGEventLeftMouseDown, p, kCGMouseButtonLeft, 2),
+        CUMouse(kCGEventLeftMouseUp, p, kCGMouseButtonLeft, 2)};
+    return CUPost(ctx, events, 4);
+  }
+  if ([action isEqualToString:@"right_click"]) {
+    CGEventRef events[] = {
+        CUMouse(kCGEventRightMouseDown, p, kCGMouseButtonRight, 1),
+        CUMouse(kCGEventRightMouseUp, p, kCGMouseButtonRight, 1)};
+    return CUPost(ctx, events, 2);
+  }
+  if ([action isEqualToString:@"scroll"]) {
+    int32_t amount = MAX(1, MIN(50, [r[@"amount"] intValue]));
+    NSString *direction = r[@"direction"];
+    int32_t vertical = [direction isEqualToString:@"up"]     ? amount
+                       : [direction isEqualToString:@"down"] ? -amount
+                                                             : 0;
+    int32_t horizontal = [direction isEqualToString:@"left"]    ? amount
+                         : [direction isEqualToString:@"right"] ? -amount
+                                                                : 0;
+    if (!vertical && !horizontal)
+      return CUError(@"invalid_request");
+    CGEventRef wheel = CGEventCreateScrollWheelEvent(
+        NULL, kCGScrollEventUnitLine, 2, vertical, horizontal);
+    if (wheel)
+      CGEventSetLocation(wheel, p);
+    CGEventRef events[] = {
+        CUMouse(kCGEventMouseMoved, p, kCGMouseButtonLeft, 0), wheel};
+    return CUPost(ctx, events, 2);
+  }
+  return CUError(@"unsupported");
+}
+static NSDictionary *CUDrag(CUContext *ctx, NSDictionary *r) {
+  CGPoint from = CGPointZero;
+  NSDictionary *error = CUObservedPoint(ctx, r, YES, &from);
+  if (error)
+    return error;
+  double x = [r[@"to_x"] doubleValue], y = [r[@"to_y"] doubleValue];
+  if (!isfinite(x) || !isfinite(y) || x < 0 || y < 0 ||
+      x >= ctx.bounds.size.width || y >= ctx.bounds.size.height)
+    return CUError(@"stale_observation");
+  CGPoint to = CGPointMake(ctx.bounds.origin.x + x, ctx.bounds.origin.y + y);
+  enum { steps = 12 };
+  CGEventRef events[steps + 3];
+  events[0] = CUMouse(kCGEventMouseMoved, from, kCGMouseButtonLeft, 0);
+  events[1] = CUMouse(kCGEventLeftMouseDown, from, kCGMouseButtonLeft, 1);
+  for (int i = 1; i <= steps; i++) {
+    double t = (double)i / steps;
+    CGPoint p = CGPointMake(from.x + (to.x - from.x) * t,
+                            from.y + (to.y - from.y) * t);
+    events[1 + i] = CUMouse(kCGEventLeftMouseDragged, p, kCGMouseButtonLeft, 1);
+  }
+  events[steps + 2] = CUMouse(kCGEventLeftMouseUp, to, kCGMouseButtonLeft, 1);
+  return CUPost(ctx, events, steps + 3);
+}
+// The element must still be focused in the foreground app, as for press_key.
+static NSDictionary *CUFocused(CUContext *ctx, NSDictionary *r,
+                               CUElement **out) {
+  CUElement *record = ctx.elements[r[@"native"]];
+  if (!record || !CUValidate(record))
+    return CUError(@"stale_observation");
+  CFTypeRef focused = CUCopy(record.element, kAXFocusedAttribute);
+  BOOL isFocused = focused && CFGetTypeID(focused) == CFBooleanGetTypeID() &&
+                   CFBooleanGetValue(focused);
+  if (focused)
+    CFRelease(focused);
+  if (!isFocused || !CUFrontmost(record.pid))
+    return CUError(@"stale_observation");
+  *out = record;
+  return nil;
+}
+static NSDictionary *CUTypeText(CUContext *ctx, NSDictionary *r) {
+  CUElement *record = nil;
+  NSDictionary *error = CUFocused(ctx, r, &record);
+  if (error)
+    return error;
+  NSString *text = r[@"text"];
+  if (![text isKindOfClass:NSString.class] || !text.length ||
+      text.length > 16384)
+    return CUError(@"invalid_request");
+  enum { chunk = 16 };
+  for (NSUInteger start = 0; start < text.length;) {
+    NSRange range = [text
+        rangeOfComposedCharacterSequencesForRange:NSMakeRange(
+                                                      start,
+                                                      MIN((NSUInteger)chunk,
+                                                          text.length -
+                                                              start))];
+    if (range.length > 2 * chunk)
+      return CUError(@"invalid_request");
+    unichar buffer[2 * chunk];
+    [text getCharacters:buffer range:range];
+    CGEventRef events[] = {CGEventCreateKeyboardEvent(NULL, 0, true),
+                           CGEventCreateKeyboardEvent(NULL, 0, false)};
+    for (int i = 0; i < 2; i++)
+      if (events[i])
+        CGEventKeyboardSetUnicodeString(events[i], range.length, buffer);
+    NSDictionary *posted = CUPost(ctx, events, 2);
+    if (posted[@"error"])
+      return posted;
+    start = NSMaxRange(range);
+    usleep(2000);
+  }
+  return @{@"done" : @YES};
+}
+static NSDictionary *CUHotkey(CUContext *ctx, NSDictionary *r) {
+  CUElement *record = nil;
+  NSDictionary *error = CUFocused(ctx, r, &record);
+  if (error)
+    return error;
+  NSDictionary *codes = @{
+    @"a" : @0,      @"s" : @1,         @"d" : @2,      @"f" : @3,
+    @"h" : @4,      @"g" : @5,         @"z" : @6,      @"x" : @7,
+    @"c" : @8,      @"v" : @9,         @"b" : @11,     @"q" : @12,
+    @"w" : @13,     @"e" : @14,        @"r" : @15,     @"y" : @16,
+    @"t" : @17,     @"1" : @18,        @"2" : @19,     @"3" : @20,
+    @"4" : @21,     @"6" : @22,        @"5" : @23,     @"=" : @24,
+    @"9" : @25,     @"7" : @26,        @"-" : @27,     @"8" : @28,
+    @"0" : @29,     @"]" : @30,        @"o" : @31,     @"u" : @32,
+    @"[" : @33,     @"i" : @34,        @"p" : @35,     @"l" : @37,
+    @"j" : @38,     @"'" : @39,        @"k" : @40,     @";" : @41,
+    @"\\" : @42,    @"," : @43,        @"/" : @44,     @"n" : @45,
+    @"m" : @46,     @"." : @47,        @"`" : @50,     @"enter" : @36,
+    @"tab" : @48,   @"space" : @49,    @"backspace" : @51,
+    @"escape" : @53, @"delete" : @117, @"home" : @115, @"end" : @119,
+    @"page_up" : @116, @"page_down" : @121, @"left" : @123, @"right" : @124,
+    @"down" : @125, @"up" : @126,      @"f1" : @122,   @"f2" : @120,
+    @"f3" : @99,    @"f4" : @118,      @"f5" : @96,    @"f6" : @97,
+    @"f7" : @98,    @"f8" : @100,      @"f9" : @101,   @"f10" : @109,
+    @"f11" : @103,  @"f12" : @111
+  };
+  NSNumber *key = [r[@"key"] isKindOfClass:NSString.class] ? codes[r[@"key"]]
+                                                           : nil;
+  if (!key || ![r[@"modifiers"] isKindOfClass:NSArray.class])
+    return CUError(@"unsupported");
+  CGEventFlags flags = 0;
+  for (NSString *modifier in r[@"modifiers"]) {
+    if ([modifier isEqual:@"command"])
+      flags |= kCGEventFlagMaskCommand;
+    else if ([modifier isEqual:@"control"])
+      flags |= kCGEventFlagMaskControl;
+    else if ([modifier isEqual:@"option"])
+      flags |= kCGEventFlagMaskAlternate;
+    else if ([modifier isEqual:@"shift"])
+      flags |= kCGEventFlagMaskShift;
+    else
+      return CUError(@"invalid_request");
+  }
+  if (!flags)
+    return CUError(@"invalid_request");
+  CGEventRef down = CGEventCreateKeyboardEvent(NULL, key.unsignedShortValue,
+                                               true),
+             up = CGEventCreateKeyboardEvent(NULL, key.unsignedShortValue,
+                                             false);
+  if (!down || !up) {
+    if (down)
+      CFRelease(down);
+    if (up)
+      CFRelease(up);
+    return CUError(@"native");
+  }
+  CGEventSetFlags(down, flags);
+  CGEventSetFlags(up, flags);
+  if (!ctx.check || !ctx.check(ctx.guard)) {
+    CFRelease(down);
+    CFRelease(up);
+    return CUError(@"revoked");
+  }
+  CGEventPost(kCGHIDEventTap, down);
+  CGEventPost(kCGHIDEventTap, up);
+  CFRelease(down);
+  CFRelease(up);
+  return @{@"done" : @YES};
+}
+// The AXMenu under a menu bar item or menu item.
+static AXUIElementRef CUSubmenu(AXUIElementRef item) {
+  CFArrayRef children = NULL;
+  AXUIElementRef menu = NULL;
+  if (AXUIElementCopyAttributeValues(item, kAXChildrenAttribute, 0, 4,
+                                     &children) == kAXErrorSuccess &&
+      children && CFGetTypeID(children) == CFArrayGetTypeID())
+    for (CFIndex i = 0; i < CFArrayGetCount(children) && !menu; i++) {
+      AXUIElementRef child =
+          (AXUIElementRef)CFArrayGetValueAtIndex(children, i);
+      if (CFGetTypeID(child) == AXUIElementGetTypeID() &&
+          [CUString(child, kAXRoleAttribute, 128) isEqual:@"AXMenu"])
+        menu = (AXUIElementRef)CFRetain(child);
+    }
+  if (children)
+    CFRelease(children);
+  return menu;
+}
+static NSDictionary *CUInvokeMenu(CUContext *ctx, NSDictionary *r) {
+  pid_t pid = [r[@"pid"] intValue];
+  NSArray *path = r[@"path"];
+  if (pid <= 0 || ![path isKindOfClass:NSArray.class] || !path.count ||
+      path.count > 8)
+    return CUError(@"invalid_request");
+  NSRunningApplication *app =
+      [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+  if (!app || app.activationPolicy != NSApplicationActivationPolicyRegular)
+    return CUError(@"stale_observation");
+  if (CUIsBrowser(pid))
+    return CUError(@"unsupported");
+  AXUIElementRef application = AXUIElementCreateApplication(pid);
+  AXUIElementSetMessagingTimeout(application, 0.3);
+  AXUIElementRef current = (AXUIElementRef)CUCopy(application,
+                                                  kAXMenuBarAttribute);
+  CFRelease(application);
+  if (current && CFGetTypeID(current) != AXUIElementGetTypeID()) {
+    CFRelease(current);
+    current = NULL;
+  }
+  for (NSUInteger depth = 0; current && depth < path.count; depth++) {
+    NSString *title = path[depth];
+    if (![title isKindOfClass:NSString.class]) {
+      CFRelease(current);
+      return CUError(@"invalid_request");
+    }
+    if (depth > 0) {
+      AXUIElementRef menu = CUSubmenu(current);
+      CFRelease(current);
+      current = menu;
+      if (!current)
+        break;
+    }
+    AXUIElementSetMessagingTimeout(current, 0.3);
+    CFArrayRef children = NULL;
+    AXUIElementRef match = NULL;
+    if (AXUIElementCopyAttributeValues(current, kAXChildrenAttribute, 0, 256,
+                                       &children) == kAXErrorSuccess &&
+        children && CFGetTypeID(children) == CFArrayGetTypeID())
+      for (CFIndex i = 0; i < CFArrayGetCount(children) && !match; i++) {
+        AXUIElementRef child =
+            (AXUIElementRef)CFArrayGetValueAtIndex(children, i);
+        if (CFGetTypeID(child) == AXUIElementGetTypeID() &&
+            [[CUString(child, kAXTitleAttribute, 256)
+                stringByTrimmingCharactersInSet:NSCharacterSet
+                                                    .whitespaceCharacterSet]
+                caseInsensitiveCompare:
+                    [title stringByTrimmingCharactersInSet:
+                               NSCharacterSet.whitespaceCharacterSet]] ==
+                NSOrderedSame)
+          match = (AXUIElementRef)CFRetain(child);
+      }
+    if (children)
+      CFRelease(children);
+    CFRelease(current);
+    current = match;
+  }
+  if (!current)
+    return CUError(@"stale_observation");
+  CFTypeRef enabled = CUCopy(current, kAXEnabledAttribute);
+  BOOL isEnabled = enabled && CFGetTypeID(enabled) == CFBooleanGetTypeID() &&
+                   CFBooleanGetValue(enabled);
+  if (enabled)
+    CFRelease(enabled);
+  NSDictionary *result = nil;
+  if (!isEnabled)
+    result = CUError(@"unsupported");
+  else if (!ctx.check || !ctx.check(ctx.guard))
+    result = CUError(@"revoked");
+  else if (AXUIElementPerformAction(current, kAXPressAction) !=
+           kAXErrorSuccess)
+    result = CUError(@"native");
+  CFRelease(current);
+  return result ?: @{@"done" : @YES};
+}
+static NSDictionary *CULaunch(CUContext *ctx, NSDictionary *r) {
+  NSString *bundle = r[@"bundle_id"];
+  if (![bundle isKindOfClass:NSString.class] || !bundle.length ||
+      bundle.length > 255)
+    return CUError(@"invalid_request");
+  if (CUIsBrowserBundle(bundle))
+    return CUError(@"unsupported");
+  NSURL *url =
+      [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:bundle];
+  if (!url)
+    return CUError(@"unsupported");
+  if (!ctx.check || !ctx.check(ctx.guard))
+    return CUError(@"revoked");
+  NSWorkspaceOpenConfiguration *configuration =
+      [NSWorkspaceOpenConfiguration configuration];
+  configuration.activates = YES;
+  CUAsync *launch = [CUAsync new];
+  [NSWorkspace.sharedWorkspace
+      openApplicationAtURL:url
+             configuration:configuration
+         completionHandler:^(NSRunningApplication *app, NSError *error) {
+           launch.value = app && !error ? @(app.processIdentifier) : nil;
+           dispatch_semaphore_signal(launch.ready);
+         }];
+  if (dispatch_semaphore_wait(launch.ready,
+                              dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)))
+    return CUError(@"timed_out");
+  if (!launch.value)
+    return CUError(@"native");
+  return @{@"data" : @{@"pid" : launch.value, @"bundle_id" : bundle}};
+}
+static NSDictionary *CUSetFrame(CUContext *ctx, NSDictionary *r) {
+  pid_t pid = [r[@"pid"] intValue];
+  CGWindowID wid = [r[@"window"] unsignedIntValue];
+  CGPoint origin = CGPointMake([r[@"x"] doubleValue], [r[@"y"] doubleValue]);
+  CGSize size = CGSizeMake([r[@"width"] doubleValue], [r[@"height"] doubleValue]);
+  if (!isfinite(origin.x) || !isfinite(origin.y) || !isfinite(size.width) ||
+      !isfinite(size.height) || size.width < 1 || size.height < 1)
+    return CUError(@"invalid_request");
+  if (CUIsBrowser(pid))
+    return CUError(@"unsupported");
+  NSDictionary *info = CUWindow(wid, pid);
+  if (!info)
+    return CUError(@"stale_observation");
+  AXUIElementRef window = CUFindWindow(pid, CUBounds(info));
+  if (!window)
+    return CUError(@"stale_observation");
+  Boolean movable = false, sizable = false;
+  AXUIElementIsAttributeSettable(window, kAXPositionAttribute, &movable);
+  AXUIElementIsAttributeSettable(window, kAXSizeAttribute, &sizable);
+  NSDictionary *result = nil;
+  AXValueRef position = AXValueCreate(kAXValueCGPointType, &origin),
+             dimensions = AXValueCreate(kAXValueCGSizeType, &size);
+  if (!movable || !sizable)
+    result = CUError(@"unsupported");
+  else if (!position || !dimensions)
+    result = CUError(@"native");
+  else if (!ctx.check || !ctx.check(ctx.guard))
+    result = CUError(@"revoked");
+  else if (AXUIElementSetAttributeValue(window, kAXPositionAttribute,
+                                        position) != kAXErrorSuccess ||
+           AXUIElementSetAttributeValue(window, kAXSizeAttribute,
+                                        dimensions) != kAXErrorSuccess)
+    result = CUError(@"native");
+  if (position)
+    CFRelease(position);
+  if (dimensions)
+    CFRelease(dimensions);
+  CFRelease(window);
+  if (wid == ctx.windowID)
+    [ctx.elements removeAllObjects];
+  return result ?: @{@"done" : @YES};
+}
+// The main display without web browsers' windows, in screen points.
+static NSDictionary *CUDesktop(void) {
+#if CU_SCREEN_KIT && defined(__MAC_OS_X_VERSION_MAX_ALLOWED) &&                \
+    __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+  if (@available(macOS 14.0, *)) {
+    if (!CGPreflightScreenCaptureAccess())
+      return CUError(@"permission_denied");
+    CUAsync *list = [CUAsync new];
+    [SCShareableContent
+        getShareableContentExcludingDesktopWindows:NO
+                               onScreenWindowsOnly:YES
+                                 completionHandler:^(
+                                     SCShareableContent *content,
+                                     NSError *error) {
+                                   list.value = error ? nil : content;
+                                   dispatch_semaphore_signal(list.ready);
+                                 }];
+    if (dispatch_semaphore_wait(
+            list.ready, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)))
+      return CUError(@"timed_out");
+    SCShareableContent *content = list.value;
+    SCDisplay *display = nil;
+    for (SCDisplay *candidate in content.displays)
+      if (candidate.displayID == CGMainDisplayID())
+        display = candidate;
+    if (!display)
+      return CUError(@"native");
+    NSMutableArray<SCRunningApplication *> *browsers = [NSMutableArray array];
+    for (SCRunningApplication *app in content.applications)
+      if (CUIsBrowserBundle(app.bundleIdentifier))
+        [browsers addObject:app];
+    SCContentFilter *filter =
+        [[SCContentFilter alloc] initWithDisplay:display
+                           excludingApplications:browsers
+                                exceptingWindows:@[]];
+    CGRect frame = CGDisplayBounds(display.displayID);
+    SCStreamConfiguration *configuration = [SCStreamConfiguration new];
+    double scale =
+        MIN(1.0, 1600.0 / MAX(frame.size.width, frame.size.height));
+    configuration.width = MAX(1, (size_t)(frame.size.width * scale));
+    configuration.height = MAX(1, (size_t)(frame.size.height * scale));
+    configuration.showsCursor = NO;
+    configuration.scalesToFit = YES;
+    configuration.preservesAspectRatio = YES;
+    CUAsync *capture = [CUAsync new];
+    [SCScreenshotManager
+        captureImageWithFilter:filter
+                 configuration:configuration
+             completionHandler:^(CGImageRef image, NSError *error) {
+               @try {
+                 if (image && !error) {
+                   NSData *png = [[[NSBitmapImageRep alloc]
+                       initWithCGImage:image]
+                       representationUsingType:NSBitmapImageFileTypePNG
+                                    properties:@{}];
+                   if (!png)
+                     capture.value = CUError(@"native");
+                   else if (png.length > 2000000)
+                     capture.value = CUError(@"too_large");
+                   else
+                     capture.value = @{
+                       @"encoding" : @"png_base64",
+                       @"data" : [png base64EncodedStringWithOptions:0],
+                       @"width" : @(CGImageGetWidth(image)),
+                       @"height" : @(CGImageGetHeight(image)),
+                       @"display" : @{
+                         @"x" : @(frame.origin.x),
+                         @"y" : @(frame.origin.y),
+                         @"width" : @(frame.size.width),
+                         @"height" : @(frame.size.height)
+                       }
+                     };
+                 }
+               } @catch (NSException *__unused exception) {
+                 capture.value = CUError(@"native");
+               }
+               dispatch_semaphore_signal(capture.ready);
+             }];
+    if (dispatch_semaphore_wait(
+            capture.ready, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)))
+      return CUError(@"timed_out");
+    NSDictionary *image = capture.value ?: CUError(@"native");
+    return image[@"error"] ? image : @{@"data" : @{@"screenshot" : image}};
+  }
+#endif
+  return CUError(@"unsupported");
+}
+static NSDictionary *CUZoom(CUContext *ctx, NSDictionary *r) {
+  pid_t pid = [r[@"pid"] intValue];
+  CGWindowID wid = [r[@"window"] unsignedIntValue];
+  CGRect region = CGRectMake([r[@"x"] doubleValue], [r[@"y"] doubleValue],
+                             [r[@"width"] doubleValue],
+                             [r[@"height"] doubleValue]);
+  if (pid != ctx.pid || wid != ctx.windowID ||
+      !CUSame(CUBounds(CUWindow(wid, pid)), ctx.bounds))
+    return CUError(@"stale_observation");
+  if (!isfinite(region.origin.x) || !isfinite(region.origin.y) ||
+      !isfinite(region.size.width) || !isfinite(region.size.height) ||
+      region.size.width < 1 || region.size.height < 1 ||
+      CGRectGetMaxX(region) > ctx.bounds.size.width + 0.5 ||
+      CGRectGetMaxY(region) > ctx.bounds.size.height + 0.5)
+    return CUError(@"invalid_request");
+  NSDictionary *image = CUCapture(wid, pid, ctx.bounds, region, 2.0);
+  if (image[@"error"])
+    return image;
+  return @{
+    @"data" : @{
+      @"image" : @{
+        @"encoding" : @"png_base64",
+        @"data" : image[@"png_base64"],
+        @"width" : image[@"width"],
+        @"height" : image[@"height"]
+      },
+      @"region" : @{
+        @"x" : @(region.origin.x),
+        @"y" : @(region.origin.y),
+        @"width" : @(region.size.width),
+        @"height" : @(region.size.height)
+      },
+      @"coordinateSpace" : @"window_points"
+    }
+  };
+}
+static NSDictionary *CUExtended(CUContext *ctx, NSDictionary *r) {
+  NSString *op = r[@"op"];
+  if ([op isEqualToString:@"desktop_screenshot"])
+    return CUDesktop();
+  if ([op isEqualToString:@"zoom"])
+    return CUZoom(ctx, r);
+  if (!ctx.check || !ctx.check(ctx.guard))
+    return CUError(@"revoked");
+  if ([op isEqualToString:@"pointer"])
+    return CUPointer(ctx, r);
+  if ([op isEqualToString:@"drag"])
+    return CUDrag(ctx, r);
+  if ([op isEqualToString:@"type_text"])
+    return CUTypeText(ctx, r);
+  if ([op isEqualToString:@"hotkey"])
+    return CUHotkey(ctx, r);
+  if ([op isEqualToString:@"invoke_menu"])
+    return CUInvokeMenu(ctx, r);
+  if ([op isEqualToString:@"launch_app"])
+    return CULaunch(ctx, r);
+  if ([op isEqualToString:@"set_window_frame"])
+    return CUSetFrame(ctx, r);
+  return CUError(@"unsupported");
+}
 static NSDictionary *CUExecute(CUContext *ctx, NSDictionary *r) {
   NSString *op = r[@"op"];
   if ([op isEqualToString:@"invalidate"]) {
@@ -607,6 +1240,11 @@ static NSDictionary *CUExecute(CUContext *ctx, NSDictionary *r) {
   }
   if ([op isEqualToString:@"observe"])
     return CUObserve(ctx, r);
+  if ([@[
+        @"pointer", @"drag", @"type_text", @"hotkey", @"invoke_menu",
+        @"launch_app", @"set_window_frame", @"desktop_screenshot", @"zoom"
+      ] containsObject:op])
+    return CUExtended(ctx, r);
   return CUInput(ctx, r);
 }
 void *coincide_cu_create(void) {
