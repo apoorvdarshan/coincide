@@ -20,7 +20,9 @@ use webkit2gtk::{
 use wry::WebViewExtUnix;
 const WORLD: &str = "CoincidePrivateCredentialFillV1";
 // Native renderer/private-channel acceptance must precede public enablement.
-const NATIVE_FILL_VALIDATED: bool = false;
+// Production bridge passed the isolated native SDK fixture on all three hosts
+// in Rust CI run 42353376575 (f4249ba4). Runtime checks still fail closed.
+const NATIVE_FILL_VALIDATED: bool = true;
 pub fn available() -> bool {
     NATIVE_FILL_VALIDATED
 }

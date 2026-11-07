@@ -29,6 +29,10 @@ pub mod organization;
 pub mod platform_host;
 pub mod remote;
 pub mod usage_history;
+pub mod usage_limits;
+pub mod usage_presentation;
+pub mod usage_pricing;
+pub mod usage_report;
 pub mod workspace_git;
 pub mod workspace_github;
 
