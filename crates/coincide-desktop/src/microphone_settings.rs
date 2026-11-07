@@ -1631,7 +1631,10 @@ mod tests {
             Ok(())
         }
         fn cancel(&mut self) {
-            let mut trace = self.trace.lock().unwrap();
+            let mut trace = self
+                .trace
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             trace.threads.push(thread::current().id());
             if self.session.take().is_some() {
                 trace.cancels += 1;
@@ -1654,7 +1657,10 @@ mod tests {
     }
     impl Drop for FakeController {
         fn drop(&mut self) {
-            let mut trace = self.trace.lock().unwrap();
+            let mut trace = self
+                .trace
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             trace.threads.push(thread::current().id());
             if let Some(closed) = trace.closed.take() {
                 let _ = closed.send(());
@@ -1721,7 +1727,10 @@ mod tests {
             Ok("合成音声の文字起こし".into())
         }
         fn cancel_apple(&mut self) {
-            self.trace.lock().unwrap().apple_prepared = false;
+            self.trace
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .apple_prepared = false;
         }
 
         fn hosted(
@@ -1938,6 +1947,12 @@ mod tests {
             action: Action::BeginDictation,
         });
         owner.tick();
+        assert!(
+            matches!(owner.phase, Phase::Recording),
+            "first turn admits the capture before any streamed read"
+        );
+        owner.tick(); // actual next owner turn reads the published prefix
+
         assert_eq!(trace.lock().unwrap().streamed_samples, 2);
         assert!(
             events.try_recv().is_err(),
@@ -1977,6 +1992,12 @@ mod tests {
             action: Action::BeginDictation,
         });
         owner.tick();
+        assert!(
+            matches!(owner.phase, Phase::Recording),
+            "first turn admits the capture before any streamed read"
+        );
+        owner.tick(); // actual next owner turn reads the published prefix
+
         assert_eq!(trace.lock().unwrap().streamed_samples, 2);
         owner.command(Command {
             generation: 1,
@@ -2011,6 +2032,12 @@ mod tests {
             action: Action::BeginDictation,
         });
         owner.tick();
+        assert!(
+            matches!(owner.phase, Phase::Recording),
+            "first turn admits the capture before any streamed read"
+        );
+        owner.tick(); // actual next owner turn reads the published prefix
+
         let trace = trace.lock().unwrap();
         assert_eq!(trace.streamed_samples, 0);
         assert_eq!(trace.cancels, 1);
