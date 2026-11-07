@@ -78,8 +78,10 @@ impl Coincide {
                 match result {
                     Ok(saved) => {
                         // A commit remains real even if navigation revoked its UI projection.
-                        self.status =
-                            "Terminal selection attached to its original conversation.".into();
+                        self.status = format!(
+                            "{} attached to its original conversation.",
+                            request.subject()
+                        );
                         let current = self.selected.as_ref().is_some_and(|thread| {
                             thread["id"] == baseline.thread && baseline.context.matches(thread)
                         });
@@ -99,7 +101,7 @@ impl Coincide {
                         }
                     }
                     Err(error) => {
-                        self.status = format!("Terminal selection was not attached: {error}")
+                        self.status = format!("{} was not attached: {error}", request.subject())
                     }
                 }
                 cx.notify();
