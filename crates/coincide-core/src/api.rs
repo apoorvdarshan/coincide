@@ -53,6 +53,9 @@ mod browser_bookmarks_api;
 mod browser_history_api;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
+#[cfg(test)]
+#[path = "run_clock_tests.rs"]
+mod run_clock_tests;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
@@ -198,6 +201,11 @@ struct Running {
     events: VecDeque<Event>,
     persistence_error: Option<String>,
 }
+#[derive(Clone, Copy)]
+struct RunClock {
+    started_at: f64,
+    connected: bool,
+}
 pub struct Engine {
     appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
@@ -217,6 +225,9 @@ pub struct Engine {
     github: github_engine::GithubState,
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
+    /// When each run started and whether its provider has answered yet, for the
+    /// toolbar's "Connecting…" and "Working m:ss" (`app.status` `runClocks`).
+    run_clocks: HashMap<String, RunClock>,
     /// Runs whose provider has reported anything yet. The others are still
     /// starting, which the transcript's live line says ("Starting Claude…").
     answered_runs: HashSet<String>,
@@ -305,6 +316,7 @@ impl Engine {
                 github_engine::GithubState::unavailable()
             },
             runs: HashMap::new(),
+            run_clocks: HashMap::new(),
             answered_runs: HashSet::new(),
             provider_workers: Vec::new(),
             background_workers,
@@ -610,7 +622,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -1377,7 +1389,30 @@ impl Engine {
     fn insert_running(&mut self, id: String, run: Running) {
         self.answered_runs.remove(&id);
         self.provider_workers.push(run.session.worker_completion());
+        self.run_clocks.insert(
+            id.clone(),
+            RunClock {
+                started_at: swift_timestamp(),
+                connected: false,
+            },
+        );
         self.runs.insert(id, run);
+    }
+    /// Each running thread's start (Swift reference seconds) and whether it is
+    /// still connecting: its provider has sent nothing since the run began.
+    fn run_clocks_status(&self) -> Value {
+        Value::Object(
+            self.runs
+                .keys()
+                .filter_map(|id| {
+                    let clock = self.run_clocks.get(id)?;
+                    Some((
+                        id.clone(),
+                        json!({"startedAt":clock.started_at,"connecting":!clock.connected}),
+                    ))
+                })
+                .collect(),
+        )
     }
     /// Nonblocking observer for trusted native owners. Background observers join
     /// provider threads; completed observations fold into sticky counters here.
@@ -1863,6 +1898,8 @@ impl Engine {
             }
         }
 
+        let runs = &self.runs;
+        self.run_clocks.retain(|id, _| runs.contains_key(id));
         let ids = self.runs.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             if let Some(run) = self.runs.get_mut(&id)
@@ -1872,6 +1909,9 @@ impl Engine {
             }
             if self.runs[&id].events.is_empty() {
                 continue;
+            }
+            if let Some(clock) = self.run_clocks.get_mut(&id) {
+                clock.connected = true;
             }
             self.answered_runs.insert(id.clone());
             // A worker publishes steering ACK before Finished. Recheck after

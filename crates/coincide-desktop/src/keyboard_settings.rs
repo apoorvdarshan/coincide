@@ -203,6 +203,39 @@ impl Shortcut {
         parts.push(&self.key);
         parts.join("+")
     }
+    /// The compact form menus show: "⌥⌘S" on macOS, "Ctrl+Alt+S" elsewhere.
+    fn hint(&self) -> String {
+        let key = match self.key.as_str() {
+            "enter" => "↩".to_owned(),
+            "tab" => "⇥".to_owned(),
+            "space" => "Space".to_owned(),
+            "esc" => "⎋".to_owned(),
+            "backspace" | "delete" => "⌫".to_owned(),
+            "arrowup" => "↑".to_owned(),
+            "arrowdown" => "↓".to_owned(),
+            "arrowleft" => "←".to_owned(),
+            "arrowright" => "→".to_owned(),
+            other => other.to_uppercase(),
+        };
+        if cfg!(target_os = "macos") {
+            let mut text = String::new();
+            for (flag, glyph) in [(CTRL, "⌃"), (ALT, "⌥"), (SHIFT, "⇧"), (MOD, "⌘")] {
+                if self.modifiers & flag != 0 {
+                    text.push_str(glyph);
+                }
+            }
+            text + &key
+        } else {
+            let mut parts = Vec::new();
+            for (flag, name) in [(MOD | CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift")] {
+                if self.modifiers & flag != 0 {
+                    parts.push(name.to_owned());
+                }
+            }
+            parts.push(key);
+            parts.join("+")
+        }
+    }
     fn label(&self) -> String {
         let mut parts = Vec::new();
         for (flag, text) in [
@@ -246,6 +279,12 @@ pub(super) fn shortcut_label(settings: &Value, command: Command) -> Option<Strin
     binding(settings, command)
         .shortcut
         .map(|shortcut| shortcut.label())
+}
+/// The command's current shortcut in its compact form, for hints beside rows.
+pub(super) fn shortcut_hint(settings: &Value, command: Command) -> Option<String> {
+    binding(settings, command)
+        .shortcut
+        .map(|shortcut| shortcut.hint())
 }
 fn binding(settings: &Value, command: Command) -> Binding {
     let (id, _, default) = command.spec();
@@ -684,6 +723,26 @@ mod tests {
     use super::*;
     fn key(text: &str) -> Shortcut {
         Shortcut::parse(text).unwrap()
+    }
+    #[::core::prelude::v1::test]
+    fn hints_use_menu_glyphs_on_macos_and_names_elsewhere() {
+        let hint = |text: &str| key(text).hint();
+        if cfg!(target_os = "macos") {
+            assert_eq!(hint("mod+n"), "⌘N");
+            assert_eq!(hint("mod+alt+s"), "⌥⌘S");
+            assert_eq!(hint("ctrl+shift+enter"), "⌃⇧↩");
+        } else {
+            assert_eq!(hint("mod+n"), "Ctrl+N");
+            assert_eq!(hint("mod+alt+s"), "Ctrl+Alt+S");
+            assert_eq!(hint("ctrl+shift+enter"), "Ctrl+Shift+↩");
+        }
+        assert_eq!(
+            shortcut_hint(
+                &json!({"shortcutOverrides":{"chat.new":""}}),
+                Command::NewThread
+            ),
+            None
+        );
     }
     #[::core::prelude::v1::test]
     fn swift_syntax_round_trips_aliases_plus_unicode_and_exact_modifier_keys() {

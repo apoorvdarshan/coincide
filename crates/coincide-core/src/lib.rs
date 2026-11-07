@@ -18,6 +18,8 @@ pub mod workspace_diff;
 
 pub mod inspector_preferences;
 pub mod message_queue;
+pub mod palette_search;
+pub mod schedule_presentation;
 pub mod thread_history;
 
 pub mod cli_session_import;
