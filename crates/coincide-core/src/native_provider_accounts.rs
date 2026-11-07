@@ -22,7 +22,7 @@ type Authentication = NativeAccountAuthentication;
 fn login_mode(mode: &Authentication) -> bool {
     *mode == Authentication::Login
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NativeProviderAccount {
     pub id: String,
     pub provider: String,
@@ -523,6 +523,28 @@ impl Engine {
             "Native account selection changed; choose the account again"
         );
         Ok(())
+    }
+    pub(crate) fn native_account_choice_available(&self, thread: &Value) -> bool {
+        let Some(id) = thread["id"].as_str() else {
+            return false;
+        };
+        self.active_thread.as_deref() == Some(id)
+            && !self.admissions_frozen()
+            && !self.runs.contains_key(id)
+            && !self.unsaved_threads.contains_key(id)
+            && !self.native_follow_up.pending_thread(id)
+            && thread["rustBotContext"].is_null()
+            && thread["botID"].is_null()
+            && self.store.is_imported(id).is_ok_and(|imported| !imported)
+            && crate::message_queue::read(thread).is_ok_and(|rows| {
+                rows.iter().all(|row| {
+                    !matches!(
+                        row.state,
+                        crate::message_queue::State::Pending
+                            | crate::message_queue::State::Dispatching
+                    )
+                })
+            })
     }
     pub fn native_provider_accounts(&self, provider: &str) -> Result<Vec<NativeProviderAccount>> {
         provider_id(provider)?;

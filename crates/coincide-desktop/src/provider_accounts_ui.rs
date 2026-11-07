@@ -39,6 +39,7 @@ struct Review {
 }
 #[derive(Default)]
 pub(super) struct Accounts {
+    pub(super) revision: u64,
     editors: HashMap<String, Editor>,
     review: Option<Review>,
 }
@@ -473,11 +474,15 @@ impl Panel {
         editor
             .drafts
             .retain(|id, _| snapshot.rows.iter().any(|row| row.id == *id));
+        let changed = editor.rows != snapshot.rows || editor.cleanup != snapshot.cleanup;
         editor.rows = snapshot.rows;
         editor.cleanup = snapshot.cleanup;
         editor.loaded = true;
         editor.load_requested = false;
         editor.notice = notice;
+        if changed {
+            self.accounts.revision = self.accounts.revision.wrapping_add(1);
+        }
         cx.notify();
     }
     pub(super) fn account_error(&mut self, provider: &str, error: &anyhow::Error) {

@@ -741,6 +741,7 @@ impl Engine {
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
+                    result["nativeAccountSelectionAllowed"]=json!(self.native_account_choice_available(&thread));
                     if codex_profile_models_api::named_thread(&thread) {
                         let mut named = self.codex_profile_model_capabilities(&thread);
                         self.apply_provider_preferences(&mut named)?;

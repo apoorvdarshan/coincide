@@ -699,6 +699,9 @@ impl Panel {
             || self.pending.is_some()
             || self.pickers.iter().any(|task| !task.is_ready())
     }
+    pub fn account_revision(&self) -> u64 {
+        self.accounts.revision
+    }
     pub fn is_selected(&self, provider: &str) -> bool {
         self.active == provider
     }

@@ -118,6 +118,8 @@ impl Engine {
         result["namedModels"] = json!({"supported":true,"accountID":thread["selection"]["accountID"],"threadId":thread["id"],
             "refreshAllowed":base_reason.is_none(),"accountCatalogReady":account_catalog_ready,"selectionGeneration":thread["id"].as_str().and_then(|id|self.store.selection_scope_generation(id)),"readinessGeneration":readiness_generation,"reason":base_reason,"authenticationChecked":false,
             "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":true,"nativeResumeScope":"successful_saved_turn_owned_worker_join_and_private_journal","crossRestartResumeSupported":cfg!(any(unix,windows)),"nativeResume":self.named_resume.durable_status(),"fullAccessSupported":explicit_model_ready,"planSupported":explicit_model_ready});
+        result["nativeAccountSelectionAllowed"] =
+            json!(self.native_account_choice_available(thread));
         result["namedModels"]["nativeApiKey"] =
             json!(provider_configuration::native_key_profile("codex"));
         if let Some(codex) = result["providers"]
