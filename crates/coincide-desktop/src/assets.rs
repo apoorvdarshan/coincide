@@ -72,6 +72,7 @@ icon_assets!(
         Cpu,
         Dash,
         Delete,
+        Diff,
         EllipsisVertical,
         Ellipsis,
         ExternalLink,
@@ -81,6 +82,7 @@ icon_assets!(
         File,
         FolderClosed,
         FolderOpen,
+        FolderX,
         Folder,
         Frame,
         Gauge,
@@ -188,6 +190,9 @@ mod tests {
             "icons/arrow-up-right.svg",
             "icons/arrow-down-right.svg",
             "icons/square.svg",
+            // The Diff inspector's empty states.
+            "icons/diff.svg",
+            "icons/folder-x.svg",
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
             "icons/git-pull-request.svg",
