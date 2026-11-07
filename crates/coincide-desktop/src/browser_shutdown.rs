@@ -40,7 +40,6 @@ impl NativeLifetimes {
     pub fn block(&self) -> NativeLease {
         NativeLease::new(self.blocks.clone())
     }
-    #[cfg(any(target_os = "macos", test))]
     pub fn target(&self) -> NativeLease {
         NativeLease::new(self.targets.clone())
     }
