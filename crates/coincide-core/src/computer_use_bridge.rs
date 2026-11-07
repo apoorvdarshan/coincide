@@ -633,7 +633,8 @@ fn reply(stream: &mut TcpStream, status: u16, value: &Value) {
     let _ = stream
         .write_all(head.as_bytes())
         .and_then(|()| stream.write_all(&body))
-        .and_then(|()| stream.flush());
+        .and_then(|()| stream.flush())
+        .and_then(|()| stream.shutdown(Shutdown::Write));
 }
 
 #[cfg(unix)]
@@ -684,11 +685,49 @@ mod tests {
     fn send(port: u16, bytes: &[u8]) -> (u16, Value) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream.write_all(bytes).unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        let (head, body) = response.split_once("\r\n\r\n").unwrap();
-        let status = head.split(' ').nth(1).unwrap().parse().unwrap();
-        (status, serde_json::from_str(body).unwrap())
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        receive_response(&mut stream).unwrap()
+    }
+    // HTTP completion is Content-Length, not TCP EOF (Winsock may reset after
+    // closing a duplicated socket). Truncated headers/body still fail strictly.
+    fn receive_response(stream: &mut TcpStream) -> anyhow::Result<(u16, Value)> {
+        let mut header = Vec::new();
+        while !header.ends_with(b"\r\n\r\n") {
+            anyhow::ensure!(header.len() < MAXIMUM_HEADERS, "oversize response header");
+            let mut byte = [0];
+            stream.read_exact(&mut byte)?;
+            header.push(byte[0]);
+        }
+        let header = std::str::from_utf8(&header)?;
+        let status = header
+            .split(' ')
+            .nth(1)
+            .ok_or_else(|| anyhow::anyhow!("missing status"))?
+            .parse()?;
+        let length: usize = header
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .ok_or_else(|| anyhow::anyhow!("missing Content-Length"))?
+            .parse()?;
+        anyhow::ensure!(
+            length > 0 && length <= MAXIMUM_RESPONSE,
+            "invalid response length"
+        );
+        let mut body = vec![0; length];
+        stream.read_exact(&mut body)?;
+        Ok((status, serde_json::from_slice(&body)?))
+    }
+    #[test]
+    fn response_fixture_requires_every_declared_body_byte() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{}")
+            .unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+        assert!(receive_response(&mut client).is_err());
     }
     fn config(access: &Access) -> (u16, String, String) {
         let text = std::fs::read_to_string(&access.configuration).unwrap();
