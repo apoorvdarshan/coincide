@@ -138,7 +138,7 @@ impl NativeWrites {
             .spawn(move || {
                 let result = (|| -> Result<(PathBuf, Option<GithubWriteService>)> {
                     ensure!(
-                        cfg!(unix),
+                        cfg!(any(unix, windows)),
                         "GitHub actions are unavailable on this platform"
                     );
                     let (data, gh, marker) = {
