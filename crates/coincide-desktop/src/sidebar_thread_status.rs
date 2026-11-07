@@ -198,6 +198,11 @@ impl Coincide {
                 Ok(()) => changed = true,
                 Err(error) if engine_busy(&error) => {
                     self.thread_activity.retry_finished(marks);
+                    if clear.is_some() {
+                        // Activation is acknowledged only when its seen mark
+                        // was saved; retry on the next active-window poll.
+                        self.thread_activity.window_active = false;
+                    }
                 }
                 Err(error) => {
                     self.status = format!("Conversation marker could not be saved: {error}");
