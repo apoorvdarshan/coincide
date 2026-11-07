@@ -80,10 +80,12 @@ icon_assets!(
         FolderOpen,
         Folder,
         Frame,
+        Gauge,
+        GitPullRequest,
+        GitPullRequestDraft,
         GalleryVerticalEnd,
         GitBranch,
         // The Pull Requests toolbar button and its row menu.
-        GitPullRequest,
         Hash,
         Link,
         Github,
@@ -187,6 +189,9 @@ mod tests {
             "icons/git-pull-request.svg",
             "icons/hash.svg",
             "icons/link.svg",
+            // Composer `/` and `#` suggestion rows.
+            "icons/gauge.svg",
+            "icons/git-pull-request-draft.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
