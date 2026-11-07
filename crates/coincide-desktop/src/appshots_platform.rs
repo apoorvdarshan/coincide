@@ -14,7 +14,7 @@ pub struct Capture {
 }
 #[cfg(target_os = "linux")]
 #[path = "appshots_linux.rs"]
-mod backend;
+pub(crate) mod backend;
 #[cfg(target_os = "windows")]
 #[path = "appshots_windows.rs"]
 mod backend;

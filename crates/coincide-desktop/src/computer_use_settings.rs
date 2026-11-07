@@ -97,7 +97,7 @@ impl Render for ComputerUseSettingsPanel {
             .child(div().flex().gap_2()
                 .child(Button::new("computer-use-thread-grant").label("Allow selected thread").disabled(!active||self.selected.is_none()||self.status.permissions.accessibility!=Permission::Granted).on_click(cx.listener(|this,_,_,cx|this.grant(cx))))
                 .child(Button::new("computer-use-thread-revoke").label("Revoke selected thread").disabled(self.selected.is_none()).on_click(cx.listener(|this,_,_,cx|this.revoke(cx)))))
-            .child("No browser control, arbitrary scripts or commands. macOS requires Accessibility and Screen Recording access. Windows follows its app and window capture permissions. Dispatch success requires a new observation to verify the result.")
+            .child("No browser control, arbitrary scripts or commands. macOS requires Accessibility and Screen Recording access. Windows follows its app and window capture permissions. Linux requires X11, XRes, XComposite and app accessibility; Wayland and XWayland are unsupported. Dispatch success requires a new observation to verify the result.")
             .child(self.notice.clone().or_else(||self.status.error.map(|e|format!("{e:?}"))).unwrap_or_default())
     }
 }
