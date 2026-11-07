@@ -310,6 +310,7 @@ fn run<B: Backend>(
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             process(&mut adapter, &mut dispatcher, &mut status, queued.command)
         }));
+        let backend_panicked = result.is_err();
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(_) => {
@@ -337,10 +338,8 @@ fn run<B: Backend>(
         publish(&handle, &status);
         pending = Some(Receipt {
             command_id: queued.command_id,
-            native_callbacks_unconfirmed: callback_custody(
-                &outcome,
-                B::MAY_RETAIN_NATIVE_CALLBACKS,
-            ),
+            native_callbacks_unconfirmed: backend_panicked
+                || callback_custody(&outcome, B::MAY_RETAIN_NATIVE_CALLBACKS),
             outcome,
         });
     }
@@ -582,6 +581,43 @@ mod tests {
             &Outcome::Permission(Permission::Unknown),
             true
         ));
+    }
+    #[test]
+    fn synchronous_adapter_control_panic_cannot_assert_callback_return() {
+        struct Panics;
+        impl Backend for Panics {
+            const MAY_RETAIN_NATIVE_CALLBACKS: bool = false;
+            fn permission(&mut self) -> Result<Permission> {
+                panic!("synthetic status panic")
+            }
+            fn request_permission(&mut self) -> Result<Permission> {
+                unreachable!()
+            }
+            fn post(&mut self, _: &Payload) -> Delivery {
+                unreachable!()
+            }
+            fn clear_thread(&mut self, _: Uuid) -> Result<()> {
+                unreachable!()
+            }
+        }
+        let mut runtime = NotificationRuntime::spawn(Panics, 8).unwrap();
+        let handle = runtime.handle();
+        send(&handle, Command::Configure(Settings::default()));
+        receipt(&runtime);
+        send(&handle, Command::RefreshPermission);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !handle.try_status().is_some_and(|status| status.stopped) {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        let exit = runtime.shutdown().unwrap();
+        let returned = runtime
+            .try_receipt()
+            .ok()
+            .or(exit.pending_receipt)
+            .expect("Retained panic receipt");
+        assert!(matches!(returned.outcome, Outcome::Rejected(_)));
+        assert!(returned.native_callbacks_unconfirmed);
     }
     #[test]
     fn activity_sampling_requires_enabled_configuration_and_stays_on_owned_worker() {
