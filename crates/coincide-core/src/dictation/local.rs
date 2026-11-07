@@ -110,6 +110,7 @@ impl LocalWhisper {
         wav: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Result<String, LocalError> {
+        self.check_configuration()?;
         if cancelled() {
             return Err(LocalError::Cancelled);
         }

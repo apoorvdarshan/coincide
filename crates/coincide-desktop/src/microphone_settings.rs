@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct LocalRecordingConfig {
+    pub model_proof: Option<Arc<coincide_core::dictation::model_assets::VerifiedModel>>,
     pub executable: PathBuf,
     pub model: PathBuf,
     pub language: String,
@@ -214,6 +215,15 @@ impl Inference for LocalInference {
         config: &LocalRecordingConfig,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Option<ModelLease>, InferenceFailure> {
+        if let Some(model) = &config.model_proof {
+            if model.path() != config.model {
+                return Err(InferenceFailure::Failed);
+            }
+            return model
+                .acquire(cancelled)
+                .map(Some)
+                .map_err(|_| InferenceFailure::Failed);
+        }
         coincide_core::dictation::model_assets::acquire_model_path(&config.model, cancelled)
             .map(Some)
             .map_err(|_| InferenceFailure::Failed)
@@ -1387,6 +1397,7 @@ mod tests {
             settings_revision: 1,
             input_device_uid: None,
             config: Some(RecordingConfig::Local(LocalRecordingConfig {
+                model_proof: None,
                 executable: PathBuf::from("/synthetic/whisper"),
                 model: PathBuf::from("/synthetic/model"),
                 language: "en".into(),

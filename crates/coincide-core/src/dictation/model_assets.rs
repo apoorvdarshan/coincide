@@ -537,8 +537,12 @@ impl Repository {
                 }
             };
             let moved_identity = files::identity(&moved)?;
-            drop(moved);
-            if moved_identity != model.identity {
+            let verified = if moved_identity == model.identity {
+                verify(moved, &model.spec, cancelled)
+            } else {
+                Err(Error::Changed)
+            };
+            if let Err(error) = verified {
                 // Restore without overwriting a newly-created name. If that
                 // fails, keep the foreign content and explicit recovery receipt.
                 if self
@@ -547,7 +551,7 @@ impl Repository {
                     .is_ok()
                 {
                     self.directory.unlink_owned(&temporary, moved_identity)?;
-                    return Err(Error::Changed);
+                    return Err(error);
                 }
                 self.recovery
                     .lock()
