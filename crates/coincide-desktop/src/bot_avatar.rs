@@ -1,15 +1,15 @@
 //! Bot avatars as GPUI images: `coincide_core::bot_artwork` draws each character
-//! as SVG, which GPUI rasterizes in full color on every platform. Images are
-//! drawn at three times their size for high-density screens and cached, so a
-//! render never redraws or re-decodes the same avatar.
+//! as SVG, which GPUI rasterizes in full color on every platform, at twice its
+//! size (`SMOOTH_SVG_SCALE_FACTOR`) for high-density screens. Images are cached,
+//! so a render never redraws or re-decodes the same avatar.
 use coincide_core::bot_artwork::{Character, Tint, svg};
+#[cfg(test)]
+use gpui_kit::SMOOTH_SVG_SCALE_FACTOR;
 use gpui_kit::{Image, ImageFormat, IntoElement, Styled, img, px};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
-
-const PIXEL_SCALE: f32 = 3.;
 
 /// The avatar `side` points wide, cached by look and size.
 pub(crate) fn image(character: Character, tint: Tint, side: f32) -> Arc<Image> {
@@ -22,7 +22,8 @@ pub(crate) fn image(character: Character, tint: Tint, side: f32) -> Arc<Image> {
     cache
         .entry(key)
         .or_insert_with(|| {
-            let pixels = (side * PIXEL_SCALE).ceil().max(1.) as u32;
+            // The document's own size, in points; GPUI adds the density.
+            let pixels = side.ceil().max(1.) as u32;
             Arc::new(Image::from_bytes(
                 ImageFormat::Svg,
                 svg(character, tint, side as f64, pixels, 1.).into_bytes(),
@@ -54,7 +55,7 @@ mod tests {
                     &super::image(character, character.default_tint(), side)
                 ));
                 let rendered = image.to_image_data(renderer.clone()).unwrap();
-                let pixels = (side * PIXEL_SCALE).ceil() as i32;
+                let pixels = (side * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32;
                 let size = rendered.size(0);
                 assert_eq!((size.width.0, size.height.0), (pixels, pixels));
                 let bytes = rendered.as_bytes(0).unwrap();

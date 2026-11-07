@@ -261,6 +261,12 @@ fn native_bot_reorder_is_a_baseline_checked_permutation_preserving_every_record_
 fn look_personality_and_folder_edits_are_normalized_like_swift_and_keep_other_fields() {
     let (_root, mut engine) = fixture();
     engine.store.save_document(DOCUMENT, &envelope()).unwrap();
+    // Absolute on this platform; existence is checked when a conversation starts.
+    let folder = if cfg!(windows) {
+        r"C:\synthetic\bot-folder"
+    } else {
+        "/synthetic/bot-folder"
+    };
     let read = engine.execute("bots.read", &json!({"botId":ID})).unwrap();
     let saved = engine
         .execute(
@@ -268,7 +274,7 @@ fn look_personality_and_folder_edits_are_normalized_like_swift_and_keep_other_fi
             &json!({"botId":ID,"baseline":read["baseline"],"patch":{
                 "avatar":{"shape":"teddy","tint":"sky"},
                 "personality":{"preset":"calm","custom":"  kept beside the preset \n"},
-                "folder":"/synthetic/bot-folder"}}),
+                "folder":folder}}),
         )
         .unwrap();
     let bot = &saved["bot"];
@@ -277,7 +283,7 @@ fn look_personality_and_folder_edits_are_normalized_like_swift_and_keep_other_fi
         bot["personality"],
         json!({"preset":"calm","custom":"kept beside the preset"})
     );
-    assert_eq!(bot["folder"], "/synthetic/bot-folder");
+    assert_eq!(bot["folder"], folder);
     assert_eq!(bot["futureBot"], envelope()["bots"][0]["futureBot"]);
     assert_eq!(bot["selection"], envelope()["bots"][0]["selection"]);
     // No personality and the home folder are saved as missing keys, as Swift does;
