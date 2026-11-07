@@ -326,8 +326,12 @@ def main():
             capture(settings_window, stage + "-filtered", "Results")
             click_rendered_word(settings_window, stage + "-result", word, min_y=80)
             wait_for(f"native Settings title {title}", lambda title=title: command("xdotool", "getwindowname", settings_window, env=env).strip() == title)
-            capture(settings_window, stage, body_text)
-            report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True})
+            provider_page = title in {"Claude Code", "Cursor", "Grok Build", "OpenCode", "Antigravity"}
+            # These routes only load saved local configuration. Wait for that
+            # real retained child completion before recording enabled controls;
+            # never click Check/Sign In or execute a provider for this check.
+            capture(settings_window, stage, "Saved settings loaded" if provider_page else body_text)
+            report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True, "savedConfigurationLoaded": provider_page})
         click_rendered_word(settings_window, "settings-all-pages-return-general", "General")
         wait_for("native General title after all pages", lambda: command("xdotool", "getwindowname", settings_window, env=env).strip() == "General")
         capture(settings_window, "settings-all-pages-general", "Appearance")
