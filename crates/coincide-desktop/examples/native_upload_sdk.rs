@@ -748,10 +748,12 @@ fn main() -> anyhow::Result<()> {
         Some(Ok(())) => {
             println!(
                 "synthetic native upload: PASS (production probe/worker/attachment scripts, exact bytes, reader refusals, stale-ticket refusal{}; native SDK deallocation unconfirmed)",
-                if cfg!(target_os = "windows") {
-                    ""
+                if cfg!(target_os = "macos") {
+                    ", hidden-tab chooser declined, key-window open panel sheet shown and cancelled"
+                } else if cfg!(target_os = "linux") {
+                    ", hidden-tab chooser declined, visible view's standard chooser shown and cancelled"
                 } else {
-                    ", hidden-tab chooser declined, visible key-window chooser shown and cancelled"
+                    ""
                 }
             );
             Ok(())
