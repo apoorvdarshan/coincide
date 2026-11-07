@@ -60,7 +60,7 @@ struct Transfer {
 }
 impl Owner {
     pub(super) fn install(
-        view: &wry::WebView,
+        view: &gpui_webview::WebView,
         thread: &str,
         tab: &str,
         registry: Rc<RefCell<DownloadRegistry>>,
@@ -69,7 +69,7 @@ impl Owner {
         navigation: Arc<AtomicU64>,
         changed: impl Fn() + 'static,
     ) -> Result<Rc<Self>> {
-        let view = view.webview();
+        let view = view.raw().webview();
         let context = view
             .context()
             .context("Native download context unavailable")?;
@@ -343,16 +343,12 @@ impl Transfer {
             self.cancel();
             return;
         };
+        // A response download briefly makes its own URL the view's active URI,
+        // so the navigation epoch, not the URI, proves the initiating page remains.
         if self.receipt.borrow().is_some()
             || self.cancelled.get()
             || !owner.admitting()
             || owner.navigation.load(Ordering::Acquire) != self.epoch
-            || owner
-                .weak_view
-                .upgrade()
-                .and_then(|view| view.uri())
-                .as_deref()
-                != Some(self.source.as_str())
             || self.download.web_view() != owner.weak_view.upgrade()
         {
             self.cancel();
