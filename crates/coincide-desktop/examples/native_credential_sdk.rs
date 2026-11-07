@@ -43,7 +43,10 @@ for(const el of document.querySelectorAll('input')) {el.addEventListener('input'
 document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();fixture.submits++});
 window.fixtureReady=true;
 </script>"#;
-const VERIFY: &str = r#"(()=>location.href==='https://credential-fixture.invalid/login.html' && document.querySelector('#u').value==='synthetic-user' && document.querySelector('#p').value==='SYNTHETIC-ONLY-\"\u0000-\u03bb' && fixture.inputs===2 && fixture.changes===2 && fixture.submits===0 && fixture.setters===0)()"#;
+// The password carries quote, backslash, template, markup and non-BMP text
+// through the typed arguments. Not NUL: WebKit input value sanitization can't
+// store control characters, so no WebKit fill could ever confirm one.
+const VERIFY: &str = r#"(()=>location.href==='https://credential-fixture.invalid/login.html' && document.querySelector('#u').value==='synthetic-user' && document.querySelector('#p').value==='SYNTHETIC-ONLY-"\'\\${x}</script>-\u03bb-\u{1F511}' && fixture.inputs===2 && fixture.changes===2 && fixture.submits===0 && fixture.setters===0)()"#;
 struct SyntheticVault;
 impl VaultCommand for SyntheticVault {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, Failure> {
@@ -62,7 +65,7 @@ impl VaultCommand for SyntheticVault {
         if args != ["get", "item", "synthetic-owned-entry", "--nointeraction"] {
             return Err(Failure::Unavailable);
         }
-        Ok(br#"{"login":{"username":"synthetic-user","password":"SYNTHETIC-ONLY-\"\u0000-\u03bb","uris":[{"uri":"https://credential-fixture.invalid"}]}}"#.to_vec())
+        Ok(br#"{"login":{"username":"synthetic-user","password":"SYNTHETIC-ONLY-\"'\\${x}</script>-\u03bb-\ud83d\udd11","uris":[{"uri":"https://credential-fixture.invalid"}]}}"#.to_vec())
     }
 }
 fn binding(navigation: u64) -> PageBinding {
