@@ -1237,6 +1237,7 @@ dependencies = [
  "objc2-web-kit",
  "serde_json",
  "sha2 0.11.1",
+ "tempfile",
  "uuid",
  "windows 0.61.3",
  "windows-capture",
