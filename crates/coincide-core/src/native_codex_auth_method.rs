@@ -286,7 +286,7 @@ mod tests {
                 .exists()
         );
         let scope = engine
-            .native_account_configuration("codex", &row.id, true)
+            .native_account_configuration_mode("codex", &row.id, true)
             .unwrap();
         assert!(scope.metadata_only);
         let _scope = enter(Some(scope));
