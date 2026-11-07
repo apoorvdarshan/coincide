@@ -22,6 +22,7 @@ mod app_menu;
 mod app_menu_mount;
 mod archive_settings;
 mod assets;
+mod bot_avatar;
 mod bot_settings;
 mod browser;
 mod browser_dialog_ui;
@@ -443,6 +444,7 @@ struct Coincide {
     microphone_settings_active: bool,
     session_import_open: bool,
     session_import_panel: Entity<session_import::SessionImportPanel>,
+    updater_settings: Entity<updater_settings::UpdaterSettingsView>,
     credentials_open: bool,
     browser_settings_open: bool,
     browser_settings_panel: Entity<browser_settings::BrowserSettings>,
@@ -1000,6 +1002,17 @@ impl Coincide {
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
         let session_import_panel =
             cx.new(|cx| session_import::SessionImportPanel::new(engine.clone(), window, cx));
+        // No update channel or signed helper is configured for this build, so
+        // the section shows its unavailable state and never checks a feed.
+        let updater_settings = cx.new(|cx| {
+            updater_settings::UpdaterSettingsView::new(
+                Default::default(),
+                None,
+                Box::new(updater_lifecycle::UnavailableHelper),
+                engine.clone(),
+                cx,
+            )
+        });
         // Discovery checks executable metadata only. Vault reads require a
         // password-manager button click in this native panel.
         let (credential_settings, credential_jobs) =
@@ -1403,6 +1416,7 @@ impl Coincide {
             microphone_settings_active: false,
             session_import_open: false,
             session_import_panel,
+            updater_settings,
             credentials_open: false,
             browser_settings_open: false,
             browser_settings_panel,
@@ -4442,9 +4456,6 @@ impl Render for Coincide {
         }
         self.sync_credentials(cx);
         self.sync_notification_activity(window, cx);
-        let import_project = self.selected_project.clone();
-        self.session_import_panel
-            .update(cx, |panel, cx| panel.set_project(import_project, cx));
         self.sync_workspace_context(cx);
         self.sync_composer_selection(window, cx);
         if let Some(thread) = self.selected.as_mut()

@@ -1,6 +1,8 @@
 //! Standalone import panel. Parent: `mod session_import;`, create an
-//! Entity<SessionImportPanel>, call set_project on destination changes, render it,
-//! and subscribe to SessionImportEvent::Imported to select the persisted thread.
+//! Entity<SessionImportPanel>, render it, and subscribe to
+//! SessionImportEvent::Imported to select the persisted thread. As in Swift, the
+//! imported thread continues the session in its own folder's project, starting in
+//! approval mode; a session already in a conversation opens that one instead.
 //! Every API call runs on a single background worker, never on the GPUI thread.
 use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
@@ -16,7 +18,6 @@ const VISIBLE_CHARS: usize = 1500;
 struct Selection {
     path: PathBuf,
     provider: String,
-    project: Option<String>,
 }
 impl Selection {
     fn params(&self) -> Result<Value> {
@@ -27,7 +28,7 @@ impl Selection {
         );
         Ok(
             json!({"path":self.path.to_str().context("Source path must be UTF-8")?,
-            "provider":self.provider,"projectId":self.project}),
+            "provider":self.provider}),
         )
     }
 }
@@ -41,6 +42,8 @@ struct Preview {
     shortened: bool,
     messages: Vec<(String, String)>,
     display_shortened: bool,
+    /// The conversation already holding this session, which Import opens.
+    existing: Option<String>,
 }
 impl Preview {
     fn from_reply(selection: Selection, reply: Value) -> Result<Self> {
@@ -52,9 +55,18 @@ impl Preview {
             "Invalid preview fingerprint"
         );
         ensure!(
-            reply["provider"] == selection.provider && reply["executable"] == false,
-            "Invalid preview provider or execution state"
+            reply["provider"] == selection.provider && reply["continuesSession"] == true,
+            "Invalid preview provider or session state"
         );
+        let existing = match &reply["existingThreadId"] {
+            Value::Null => None,
+            id => {
+                // Kept as stored: thread IDs are matched exactly.
+                let id = id.as_str().context("Invalid existing thread ID")?;
+                uuid::Uuid::parse_str(id)?;
+                Some(id.to_owned())
+            }
+        };
         let count = reply["messageCount"]
             .as_u64()
             .context("Preview has no message count")?;
@@ -108,6 +120,7 @@ impl Preview {
             shortened: reply["shortenedText"] == true,
             messages,
             display_shortened,
+            existing,
         })
     }
     fn import_params(&self) -> Result<Value> {
@@ -122,7 +135,8 @@ enum Action {
 }
 enum Outcome {
     Preview(Preview),
-    Imported(String),
+    /// The thread, and whether it held the session already.
+    Imported(String, bool),
 }
 fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Result<Outcome> {
     match action {
@@ -130,13 +144,17 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
             let reply = api("cli.sessions.preview", selection.params()?)?;
             Ok(Outcome::Preview(Preview::from_reply(selection, reply)?))
         }
+        // Swift opens the conversation holding the session without importing again.
+        Action::Import(Preview {
+            existing: Some(id), ..
+        }) => Ok(Outcome::Imported(id, true)),
         Action::Import(preview) => {
             let reply = api("cli.sessions.import", preview.import_params()?)?;
             let id = reply["threadId"]
                 .as_str()
                 .context("Import outcome unknown: refresh conversations before retrying")?;
             uuid::Uuid::parse_str(id).context("Import returned an invalid thread ID")?;
-            Ok(Outcome::Imported(id.to_owned()))
+            Ok(Outcome::Imported(id.to_owned(), reply["existing"] == true))
         }
     }
 }
@@ -164,7 +182,6 @@ pub enum SessionImportEvent {
 pub struct SessionImportPanel {
     engine: SharedEngine,
     provider: String,
-    project: Option<String>,
     generation: u64,
     busy: bool,
     workers: WorkerOwner,
@@ -192,7 +209,6 @@ impl SessionImportPanel {
         Self {
             engine,
             provider: "codex".into(),
-            project: None,
             generation: 0,
             busy: false,
             workers: WorkerOwner::default(),
@@ -203,19 +219,6 @@ impl SessionImportPanel {
             rx,
             _poll: Some(poll),
         }
-    }
-    /// Capture destination at preview time; never silently import into a newly
-    /// selected project. An in-flight import still emits its actual persisted ID.
-    pub fn set_project(&mut self, project: Option<String>, cx: &mut Context<Self>) {
-        if self.workers.closed() || self.project == project {
-            return;
-        }
-        self.project = project;
-        self.generation = self.generation.wrapping_add(1);
-        self.preview = None;
-        self.notice = if self.busy { "Destination changed. Waiting for the previous operation; an import already started may complete." }
-            else { "Destination changed. Choose a source again to preview for this destination." }.into();
-        cx.notify();
     }
     fn provider(&mut self, provider: &str, cx: &mut Context<Self>) {
         if self.workers.closed() || self.busy || self.choosing || self.provider == provider {
@@ -237,7 +240,6 @@ impl SessionImportPanel {
         let selection = Selection {
             path: PathBuf::new(),
             provider: self.provider.clone(),
-            project: self.project.clone(),
         };
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -337,10 +339,14 @@ impl SessionImportPanel {
         };
         self.busy = false;
         match result {
-            Ok(Outcome::Imported(thread_id)) => {
+            Ok(Outcome::Imported(thread_id, existing)) => {
                 self.preview = None;
-                self.notice =
-                    "Imported as a read-only conversation. Fork it before sending messages.".into();
+                self.notice = if existing {
+                    "This session is already in a conversation, so Coincide opened it."
+                } else {
+                    "Imported. Send a message to continue the session; it starts in approval mode."
+                }
+                .into();
                 // Do not discard a durable success after the destination changes.
                 cx.emit(SessionImportEvent::Imported { thread_id });
             }
@@ -349,7 +355,7 @@ impl SessionImportPanel {
                 self.notice = "Review the preview, then confirm import.".into();
             }
             Ok(_) => {
-                self.notice = "Preview destination changed. Choose the source again.".into();
+                self.notice = "Provider changed. Choose the source again.".into();
             }
             Err(error) => {
                 self.preview = None;
@@ -370,7 +376,8 @@ impl Render for SessionImportPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = self.busy || self.choosing || self.workers.closed();
         let mut pane = div().id("session-import-panel").size_full().flex().flex_col().gap_2().p_3()
-            .child("Import CLI session")
+            .child("Import CLI Session")
+            .child("Preview a Claude Code or Codex conversation before importing. The original file stays unchanged; Coincide keeps a private copy and starts imported threads in approval mode.")
             .child("Choose a provider explicitly. Only text is shown; unsupported records stay in the preserved original.")
             .child(div().flex().gap_2()
                 .child(Button::new("session-import-codex").label(if self.provider == "codex" {"✓ Codex"} else {"Codex"}).disabled(disabled)
@@ -379,7 +386,6 @@ impl Render for SessionImportPanel {
                     .on_click(cx.listener(|this,_,_,cx|this.provider("claude",cx))))
                 .child(Button::new("session-import-choose").label("Choose session file…").disabled(disabled || !cfg!(unix))
                     .on_click(cx.listener(|this,_,_,cx|this.choose(cx)))))
-            .child(format!("Destination: {}",self.project.as_deref().unwrap_or("Chats (projectless)")))
             .child(div().text_sm().child(self.notice.clone()));
         if !cfg!(unix) {
             pane = pane.child("Session file import is not supported on this platform yet.");
@@ -394,8 +400,8 @@ impl Render for SessionImportPanel {
             .gap_2();
         if let Some(preview) = &self.preview {
             pane = pane.child(div().id("session-import-confirmation").flex().flex_col().gap_2()
-                .child("Import this reviewed file? This creates a separate read-only conversation. It cannot execute the original provider session; fork it to continue.")
-                .child(Button::new("session-import-confirm").label("Import reviewed session").primary().disabled(disabled)
+                .child(if preview.existing.is_some() {"This session is already in a conversation."} else {"Import continues this session in a thread of its folder’s project. Nothing runs until you send a message."})
+                .child(Button::new("session-import-confirm").label(if preview.existing.is_some() {"Open Existing Thread"} else {"Import"}).primary().disabled(disabled)
                     .on_click(cx.listener(|this,_,_,cx| {if let Some(preview) = this.preview.clone() { this.start(Action::Import(preview),cx); }}))));
             body = body
                 .child(preview.title.clone())
@@ -446,11 +452,10 @@ mod tests {
         Selection {
             path: PathBuf::from("/synthetic/source.jsonl"),
             provider: "codex".into(),
-            project: None,
         }
     }
     fn reply() -> Value {
-        json!({"provider":"codex","executable":false,"sha256":"a".repeat(64),"title":"Synthetic",
+        json!({"provider":"codex","continuesSession":true,"existingThreadId":null,"sha256":"a".repeat(64),"title":"Synthetic",
         "messageCount":1,"omittedRecords":3,"shortenedText":false,"messages":[{"role":"user","text":"hello"}]})
     }
     #[::core::prelude::v1::test]
@@ -476,13 +481,32 @@ mod tests {
             Action::Import(preview),
         )
         .unwrap();
-        assert!(matches!(outcome, Outcome::Imported(_)));
+        assert!(matches!(outcome, Outcome::Imported(_, false)));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, "cli.sessions.preview");
         assert_eq!(calls[1].0, "cli.sessions.import");
         assert_eq!(calls[1].1["sha256"], "a".repeat(64));
         assert_eq!(calls[1].1["path"], "/synthetic/source.jsonl");
-        assert!(calls[1].1["projectId"].is_null());
+        // The session's own folder decides the project, as in Swift.
+        assert!(calls[1].1.get("projectId").is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn a_session_already_in_a_conversation_opens_it_without_importing() {
+        let mut value = reply();
+        value["existingThreadId"] = json!("00000000-0000-4000-8000-000000000002");
+        let preview = Preview::from_reply(selection(), value).unwrap();
+        let outcome = run(
+            &mut |_, _| panic!("opening an existing thread must not import again"),
+            Action::Import(preview),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            Outcome::Imported(id, true) if id == "00000000-0000-4000-8000-000000000002"
+        ));
+        let mut value = reply();
+        value["continuesSession"] = json!(false);
+        assert!(Preview::from_reply(selection(), value).is_err());
     }
     #[::core::prelude::v1::test]
     fn display_is_bounded_and_omissions_preserved() {
@@ -560,17 +584,25 @@ mod fixture_tests {
                 Action::Preview(Selection {
                     path: path.clone(),
                     provider: provider.into(),
-                    project: None,
                 }),
             )
             .unwrap() else {
                 panic!("expected preview")
             };
             assert_eq!(preview.count, 1);
-            let Outcome::Imported(thread) = run(&mut api, Action::Import(preview)).unwrap() else {
+            let Outcome::Imported(thread, false) = run(&mut api, Action::Import(preview)).unwrap()
+            else {
                 panic!("expected import")
             };
-            assert!(engine.lock().unwrap().store.is_imported(&thread).unwrap());
+            // The thread continues the source's own session, like any other thread.
+            {
+                let store = &engine.lock().unwrap().store;
+                assert!(!store.is_imported(&thread).unwrap());
+                assert_eq!(
+                    store.thread(&thread).unwrap()["sessions"][provider]["sessionID"],
+                    json!(id)
+                );
+            }
             assert_eq!(fs::read(&path).unwrap(), source.as_bytes());
             assert_eq!(
                 engine
@@ -599,7 +631,6 @@ mod fixture_tests {
             Action::Preview(Selection {
                 path: path.clone(),
                 provider: "claude".into(),
-                project: None,
             }),
         )
         .unwrap() else {
@@ -635,7 +666,6 @@ mod fixture_tests {
             let action = Action::Preview(Selection {
                 path: PathBuf::from("/synthetic/session.jsonl"),
                 provider: "codex".into(),
-                project: None,
             });
             let result = run_admitted(
                 &mut |_, _| panic!("closed worker must not touch Engine or source"),

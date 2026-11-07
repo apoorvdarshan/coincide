@@ -1,5 +1,7 @@
 //! Explicit CLI-session capture. Parent API registers `preview` and `import`.
-//! Captures source bytes into Store; never resumes a source provider session.
+//! Captures source bytes into Store and, as Swift's `importSession` does, saves
+//! a thread that continues the source's native session in approval mode. Neither
+//! route starts a provider; the session resumes only with the user's next message.
 use crate::{
     cli_session_import::{
         ImportProvider, MAX_BYTES, SessionPreview, preview_claude, preview_codex,
@@ -126,22 +128,64 @@ fn title(preview: &SessionPreview) -> String {
 
 /// Params: absolute `path` (no symlinks in any component), `provider`.
 /// The fingerprint is a source-change guard, not an authorization credential.
-pub fn preview(params: &Value) -> Result<Value> {
+/// `existingThreadId` names the conversation already holding this session, which
+/// Import then opens instead of copying it again.
+pub fn preview(store: &Store, params: &Value) -> Result<Value> {
     let bytes = read_source(Path::new(required(params, "path")?))?;
     let parsed = parse(required(params, "provider")?, &bytes)?;
+    let existing = store.thread_for_native_session(
+        provider_name(parsed.provider),
+        &parsed.session_id.to_string(),
+    )?;
     Ok(
         json!({"provider":provider_name(parsed.provider),"sessionId":parsed.session_id.to_string(),
         "sourceKey":source_key(&parsed),"sha256":fingerprint(&bytes),"bytes":bytes.len(),
         "title":title(&parsed),"directory":parsed.directory,"model":parsed.model,
         "messageCount":parsed.messages.len(),"omittedRecords":parsed.omitted_records,
-        "shortenedText":parsed.shortened_text,"executable":false,
+        "shortenedText":parsed.shortened_text,"continuesSession":true,"existingThreadId":existing,
         "messages":parsed.messages.iter().take(20).map(|m| json!({"role":m.role,"text":m.text})).collect::<Vec<_>>() }),
     )
 }
 
+/// The project a session continues in: the explicit `projectId`, else the
+/// project for the session's folder, added when the folder exists and no project
+/// has it yet (Swift's `importSession`). A missing folder imports into Chats.
+fn project(store: &mut Store, params: &Value, directory: &str) -> Result<String> {
+    ensure!(
+        params["projectId"].is_null() || params["projectId"].is_string(),
+        "projectId must be a UUID string"
+    );
+    if let Some(project) = params["projectId"].as_str() {
+        let project = Uuid::parse_str(project)?.to_string().to_uppercase();
+        if project != CHATS {
+            ensure!(
+                store
+                    .projects()?
+                    .as_array()
+                    .is_some_and(|projects| projects.iter().any(|p| p["id"]
+                        .as_str()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&project)))),
+                "Project not found"
+            );
+        }
+        return Ok(project);
+    }
+    let folder = Path::new(directory);
+    if !folder.is_absolute() || !folder.is_dir() {
+        return Ok(CHATS.into());
+    }
+    let project = store.create_project(folder, None)?;
+    Ok(project["id"]
+        .as_str()
+        .context("Created project has no ID")?
+        .to_owned())
+}
+const CHATS: &str = "00000000-0000-0000-0000-000000000000";
+
 /// Params: preview's `path`, `provider`, `sha256`, and optional `projectId`.
 /// Rereads immediately before the Store transaction; duplicates never overwrite.
-/// Parent increments engine revision only after this returns successfully.
+/// A session already in a conversation returns that thread with `existing`.
+/// Parent increments engine revision only for a new import.
 pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
     let expected = required(params, "sha256")?;
     ensure!(
@@ -154,27 +198,19 @@ pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
         "Source changed after preview; preview it again"
     );
     let parsed = parse(required(params, "provider")?, &bytes)?;
-    ensure!(
-        params["projectId"].is_null() || params["projectId"].is_string(),
-        "projectId must be a UUID string"
-    );
-    let project = params["projectId"]
-        .as_str()
-        .unwrap_or("00000000-0000-0000-0000-000000000000");
-    let project = Uuid::parse_str(project)?.to_string().to_uppercase();
-    if project != "00000000-0000-0000-0000-000000000000" {
-        ensure!(
-            store
-                .projects()?
-                .as_array()
-                .is_some_and(|projects| projects.iter().any(|p| p["id"]
-                    .as_str()
-                    .is_some_and(|id| id.eq_ignore_ascii_case(&project)))),
-            "Project not found"
-        );
-    }
     let provider = provider_name(parsed.provider);
+    let session = parsed.session_id.to_string();
+    if let Some(existing) = store.thread_for_native_session(provider, &session)? {
+        return Ok(json!({"threadId":existing,"existing":true,"continuesSession":true}));
+    }
     let source_key = source_key(&parsed);
+    ensure!(
+        store.original(&source_key)?.is_none(),
+        "This CLI source key was already imported"
+    );
+    // Validated before the project so a rejected import adds no project. A
+    // failure in the Store transaction itself can leave only that empty project.
+    let project = project(store, params, &parsed.directory)?;
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();
     let items = parsed.messages.iter().map(|message| json!({
@@ -182,17 +218,30 @@ pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
         "provider":provider,"createdAt":now,"completedAt":now,"status":"completed",
         "importedTimestamp":message.timestamp,"externalID":message.external_id
     })).collect::<Vec<_>>();
-    let document = json!({"id":id,"projectID":project,"title":title(&parsed),
-        "createdAt":now,"updatedAt":now,"items":items,"sessions":{},"draft":"",
+    // The native session has seen every imported item, so continuing sends only
+    // what the user writes next.
+    let mut document = json!({"id":id,"projectID":project,"title":title(&parsed),
+        "createdAt":now,"updatedAt":now,"items":items,
+        "sessions":{(provider):{"sessionID":session,"seenItemCount":parsed.messages.len()}},"draft":"",
         "selection":{"provider":provider,"modelID":parsed.model.as_deref().unwrap_or("default")},
         "accessMode":"approval","interactionMode":"build","isPinned":false,"isArchived":false,
         "importedSession":{"sourceKey":source_key,"sha256":expected,"provider":provider,
-            "sessionID":parsed.session_id.to_string(),"directory":parsed.directory,
+            "sessionID":session,"directory":parsed.directory,
             "omittedRecords":parsed.omitted_records,"shortenedText":parsed.shortened_text}});
-    store.import_cli_session(&document, &source_key, &bytes)?;
+    if let Some(follow_up) = store
+        .document("settings.json")?
+        .as_ref()
+        .and_then(|settings| {
+            crate::composer_follow_up::Behavior::parse(&settings["followUpBehavior"])
+        })
+    {
+        document["followUpBehavior"] = json!(follow_up.key());
+    }
+    store.import_resumable_cli_session(&document, &source_key, &bytes)?;
     Ok(
-        json!({"threadId":id,"sourceKey":source_key,"messageCount":parsed.messages.len(),
-        "omittedRecords":parsed.omitted_records,"shortenedText":parsed.shortened_text,"executable":false}),
+        json!({"threadId":id,"existing":false,"sourceKey":source_key,"projectId":project,
+        "messageCount":parsed.messages.len(),"omittedRecords":parsed.omitted_records,
+        "shortenedText":parsed.shortened_text,"continuesSession":true}),
     )
 }
 
@@ -201,15 +250,15 @@ mod tests {
     use super::*;
     use std::fs;
     const SESSION: &str = "00000000-0000-4000-8000-000000000001";
-    fn fixture(provider: &str) -> Vec<u8> {
+    fn fixture_in(provider: &str, cwd: &str) -> Vec<u8> {
         let records = if provider == "codex" {
             vec![
-                json!({"type":"session_meta","payload":{"id":SESSION,"cwd":"/synthetic","unknown":{"preserve":true}}}),
+                json!({"type":"session_meta","payload":{"id":SESSION,"cwd":cwd,"unknown":{"preserve":true}}}),
                 json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fixture unique question"}]}}),
             ]
         } else {
             vec![
-                json!({"sessionId":SESSION,"cwd":"/synthetic","uuid":"one","parentUuid":null,
+                json!({"sessionId":SESSION,"cwd":cwd,"uuid":"one","parentUuid":null,
             "type":"user","message":{"role":"user","content":"fixture unique question"},"unknown":{"preserve":true}}),
             ]
         };
@@ -220,6 +269,9 @@ mod tests {
             .join("\n")
             .into_bytes()
     }
+    fn fixture(provider: &str) -> Vec<u8> {
+        fixture_in(provider, "/synthetic")
+    }
     fn setup(provider: &str) -> (tempfile::TempDir, std::path::PathBuf, Store, Value, Vec<u8>) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -228,42 +280,66 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         let store = Store::open(&root.join("rust/state.sqlite")).unwrap();
         let mut params = json!({"provider":provider,"path":path.to_str().unwrap()});
-        params["sha256"] = preview(&params).unwrap()["sha256"].clone();
+        params["sha256"] = preview(&store, &params).unwrap()["sha256"].clone();
         (dir, path, store, params, bytes)
     }
     #[test]
-    fn persisted_import_preserves_source_and_is_non_executable_after_restart() {
+    fn persisted_import_preserves_source_and_continues_the_native_session_after_restart() {
         for provider in ["codex", "claude"] {
             let (dir, path, mut store, params, bytes) = setup(provider);
             assert!(store.summaries("", true).unwrap().is_empty());
             let result = import(&mut store, &params).unwrap();
-            let id = result["threadId"].as_str().unwrap();
+            assert_eq!(result["existing"], false);
+            let id = result["threadId"].as_str().unwrap().to_owned();
             let source = result["sourceKey"].as_str().unwrap();
-            assert!(store.is_imported(id).unwrap());
             assert_eq!(store.original(source).unwrap().unwrap(), bytes);
             assert_eq!(fs::read(path).unwrap(), bytes);
-            assert!(
-                store.thread(id).unwrap()["sessions"]
-                    .as_object()
-                    .unwrap()
-                    .is_empty()
-            );
             assert_eq!(store.summaries("unique", true).unwrap().len(), 1);
             drop(store);
             let store = Store::open(&dir.path().join("rust/state.sqlite")).unwrap();
-            assert!(store.is_imported(id).unwrap());
-            let mut engine = crate::api::Engine::new(store);
-            let response = engine.dispatch(json!({"id":"test","method":"agent.send","params":{"threadId":id,"text":"must not execute"}}));
-            assert!(
-                response["error"]["message"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("read-only")),
-                "{response}"
+            // No execution barrier: the thread runs like any other, resuming the
+            // source's own session after the items it has already seen.
+            assert!(!store.is_imported(&id).unwrap());
+            let thread = store.thread(&id).unwrap();
+            assert_eq!(
+                crate::agent::provider_session(&thread, provider).as_deref(),
+                Some(SESSION)
             );
+            assert_eq!(crate::agent::provider_seen_count(&thread, provider), 1);
+            assert_eq!(thread["accessMode"], "approval");
+            assert_eq!(thread["interactionMode"], "build");
+            assert_eq!(thread["importedSession"]["sessionID"], SESSION);
+            // The synthetic folder does not exist, so no project is added for it.
+            assert_eq!(thread["projectID"], CHATS);
+            assert!(store.projects().unwrap().as_array().unwrap().is_empty());
         }
     }
     #[test]
-    fn changed_source_and_duplicate_import_leave_no_partial_thread() {
+    fn existing_session_folder_becomes_or_reuses_the_threads_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let folder = root.join("work/app");
+        fs::create_dir_all(&folder).unwrap();
+        let mut store = Store::open(&root.join("rust/state.sqlite")).unwrap();
+        let mut ids = Vec::new();
+        for provider in ["codex", "claude"] {
+            let path = root.join(format!("{provider}.jsonl"));
+            fs::write(&path, fixture_in(provider, folder.to_str().unwrap())).unwrap();
+            let mut params = json!({"provider":provider,"path":path.to_str().unwrap()});
+            params["sha256"] = preview(&store, &params).unwrap()["sha256"].clone();
+            let result = import(&mut store, &params).unwrap();
+            ids.push(result["projectId"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(ids[0], ids[1]);
+        let projects = store.projects().unwrap();
+        let projects = projects.as_array().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0]["path"], folder.to_str().unwrap());
+        assert_eq!(projects[0]["name"], "app");
+        assert_eq!(projects[0]["id"], ids[0].as_str());
+    }
+    #[test]
+    fn changed_source_leaves_no_partial_thread_and_a_second_import_opens_the_first() {
         let (_dir, path, mut store, params, bytes) = setup("codex");
         fs::write(&path, b"changed").unwrap();
         assert!(import(&mut store, &params).is_err());
@@ -276,37 +352,72 @@ mod tests {
         );
         fs::write(&path, bytes).unwrap();
         let imported = import(&mut store, &params).unwrap();
-        assert!(import(&mut store, &params).is_err());
+        let id = imported["threadId"].as_str().unwrap();
+        assert_eq!(
+            preview(&store, &params).unwrap()["existingThreadId"],
+            json!(id)
+        );
+        let again = import(&mut store, &params).unwrap();
+        assert_eq!(again["existing"], true);
+        assert_eq!(again["threadId"], json!(id));
         assert_eq!(store.summaries("", true).unwrap().len(), 1);
+    }
+    #[test]
+    fn sessions_already_in_a_conversation_are_found_in_either_saved_form() {
+        let (_dir, _path, mut store, params, _bytes) = setup("claude");
+        assert!(preview(&store, &params).unwrap()["existingThreadId"].is_null());
+        // Swift writes enum-keyed dictionaries as alternating key/value arrays.
+        let mut swift = store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        swift["sessions"] =
+            json!(["codex",{"sessionID":"other"},"claude",{"sessionID":SESSION.to_uppercase()}]);
+        store.save(&swift).unwrap();
+        assert_eq!(
+            preview(&store, &params).unwrap()["existingThreadId"],
+            swift["id"]
+        );
+        let opened = import(&mut store, &params).unwrap();
+        assert_eq!(opened["existing"], true);
+        assert_eq!(opened["threadId"], swift["id"]);
+        let mut rust = swift.clone();
+        rust["sessions"] = json!({"codex":{"sessionID":SESSION}});
+        store.save(&rust).unwrap();
+        // The same ID under another provider is a different session.
+        assert!(preview(&store, &params).unwrap()["existingThreadId"].is_null());
+        assert_eq!(
+            store.thread_for_native_session("codex", SESSION).unwrap(),
+            rust["id"].as_str().map(str::to_owned)
+        );
         assert!(
             store
-                .is_imported(imported["threadId"].as_str().unwrap())
-                .unwrap()
+                .thread_for_native_session("antigravity", SESSION)
+                .is_err()
         );
     }
     #[test]
     fn rejects_symlink_sources_parent_links_and_oversized_files() {
         use std::os::unix::fs::symlink;
-        let (dir, path, _store, params, _bytes) = setup("codex");
+        let (dir, path, store, params, _bytes) = setup("codex");
         let root = dir.path().canonicalize().unwrap();
         let link = root.join("link.jsonl");
         symlink(&path, &link).unwrap();
         let mut p = params.clone();
         p["path"] = json!(link.to_str().unwrap());
-        assert!(preview(&p).is_err());
+        assert!(preview(&store, &p).is_err());
         fs::create_dir(root.join("folder")).unwrap();
         fs::write(root.join("folder/source.jsonl"), fixture("codex")).unwrap();
         symlink(root.join("folder"), root.join("linked-folder")).unwrap();
         p["path"] = json!(root.join("linked-folder/source.jsonl").to_str().unwrap());
-        assert!(preview(&p).is_err());
+        assert!(preview(&store, &p).is_err());
         File::options()
             .write(true)
             .open(&path)
             .unwrap()
             .set_len(MAX_BYTES as u64 + 1)
             .unwrap();
-        assert!(preview(&params).is_err());
+        assert!(preview(&store, &params).is_err());
         p["path"] = json!("relative.jsonl");
-        assert!(preview(&p).is_err());
+        assert!(preview(&store, &p).is_err());
     }
 }

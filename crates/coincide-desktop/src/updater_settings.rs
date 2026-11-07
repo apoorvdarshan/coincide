@@ -1,16 +1,36 @@
-//! Explicit native updater controls. Register from the desktop; construction and
-//! rendering never check a feed. The existing native tick drives `tick`, and the
-//! actual Quit handler drives lifecycle hooks/consumes its one-use quit permit.
+//! Settings › About › App Updates, as Swift's AppUpdateSettingsView: the daily
+//! check preference, status and the Check, Download, Install on Quit and Cancel
+//! Installation actions. Construction and rendering never check a feed; checks
+//! run only when asked or when the daily check is due, and only with a configured
+//! update channel. The actual Quit handler drives lifecycle hooks/consumes its
+//! one-use quit permit.
 use super::updater_lifecycle::{
     HelperLauncher, Lifecycle, LifecycleState, NativePolicy, NormalQuitPermit, ShutdownHooks,
 };
 use anyhow::{Result, bail, ensure};
-use coincide_core::updater::{Operation, SignatureStatus, State, Updater};
+use coincide_core::{
+    api::{SharedEngine, call},
+    store::swift_timestamp,
+    updater::{Operation, SignatureStatus, State, Updater},
+};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Context, IntoElement, ParentElement, Render, Styled, Window,
-    component::{Disableable, button::Button},
+    Context, FontWeight, InteractiveElement, IntoElement, ParentElement, Render, Styled, Task,
+    Window,
+    component::{ActiveTheme, Disableable, button::Button, checkbox::Checkbox},
     div,
 };
+use serde_json::json;
+use std::time::{Duration, Instant};
+
+/// Swift checks once a day, looking every hour whether a day has passed.
+const DAILY: f64 = 24. * 3600.;
+const AUTOMATIC_LOOK: Duration = Duration::from_secs(3600);
+
+/// Whether the daily check is due: on, and a day since the last check.
+fn automatic_check_due(enabled: bool, last: Option<f64>, now: f64) -> bool {
+    enabled && last.is_none_or(|last| !(now - last < DAILY))
+}
 
 #[derive(Default)]
 pub struct UpdaterSettings {
@@ -123,38 +143,99 @@ impl UpdaterSettings {
     pub fn take_normal_quit_permission(&mut self) -> Option<NormalQuitPermit> {
         self.lifecycle.as_mut()?.take_normal_quit_permission()
     }
+    /// Swift's `automaticCheck`: checks when the daily check is due, unless an
+    /// update is already being checked, downloaded, ready or armed.
+    pub fn automatic_check(&mut self, enabled: bool, last: Option<f64>, now: f64) -> bool {
+        let idle = matches!(
+            self.updater.state(),
+            State::Idle
+                | State::Current
+                | State::Unpublished
+                | State::Available(_)
+                | State::Cancelled
+                | State::TimedOut
+                | State::Failed(_)
+        );
+        if !automatic_check_due(enabled, last, now)
+            || !idle
+            || self.operation.is_some()
+            || self.lifecycle.is_some()
+        {
+            return false;
+        }
+        self.check().is_ok()
+    }
+    fn busy(&self) -> bool {
+        self.operation.is_some()
+            || matches!(
+                self.lifecycle(),
+                Some(LifecycleState::WaitingForProposal | LifecycleState::WaitingForReady)
+            )
+    }
+    /// The installation is armed for the next normal Quit, or on its way there.
+    fn armed(&self) -> bool {
+        self.lifecycle().is_some_and(|state| {
+            !matches!(
+                state,
+                LifecycleState::Cancelled | LifecycleState::Blocked(_)
+            )
+        })
+    }
+    fn staged_job(&self) -> Option<std::path::PathBuf> {
+        match self.updater.state() {
+            State::Staged(stage) => Some(stage.job),
+            _ => None,
+        }
+    }
     pub fn status_text(&self) -> String {
         if let Some(lifecycle) = &self.lifecycle {
             return match lifecycle.state() {
-                LifecycleState::WaitingForProposal => "Verifying update with independent helper…".into(),
-                LifecycleState::AwaitingNativeApproval(_) => "Review the verified update below.".into(),
-                LifecycleState::WaitingForReady => "Waiting for helper to observe this app instance…".into(),
-                LifecycleState::ReadyForNormalQuit => "Update armed for your next normal Quit. The app will not quit or reopen automatically.".into(),
-                LifecycleState::ShuttingDown(step) => format!("Saving and stopping work: {step:?}…"),
-                LifecycleState::WaitingForConsent => "Waiting for helper to persist clean-quit consent…".into(),
-                LifecycleState::NormalQuitPermitted | LifecycleState::Exiting => "Saved work confirmed; normal quit may complete.".into(),
-                LifecycleState::Cancelling => "Waiting for helper to confirm cancellation…".into(),
-                LifecycleState::Cancelled => "Update helper cancelled. Staged download retained.".into(),
-                LifecycleState::Blocked(reason) => format!("Update blocked: {reason}"),
-                LifecycleState::ConsentUncertain(reason) => format!("Quit consent could not be confirmed: {reason}. Do not retry this update automatically."),
+                LifecycleState::WaitingForProposal | LifecycleState::WaitingForReady => {
+                    "Preparing installation…".into()
+                }
+                LifecycleState::AwaitingNativeApproval(_) => {
+                    "Review the verified update below.".into()
+                }
+                LifecycleState::ReadyForNormalQuit => "The update will install after you quit. Wait for confirmation, then reopen Coincide yourself.".into(),
+                LifecycleState::ShuttingDown(_) | LifecycleState::WaitingForConsent => {
+                    "Saving and stopping work before the update installs…".into()
+                }
+                LifecycleState::NormalQuitPermitted | LifecycleState::Exiting => {
+                    "Your work is saved. The update installs as Coincide quits.".into()
+                }
+                LifecycleState::Cancelling => "Cancelling the installation…".into(),
+                LifecycleState::Cancelled => {
+                    "Installation cancelled. The downloaded update is kept.".into()
+                }
+                LifecycleState::Blocked(reason) => {
+                    format!("The update can't be installed: {reason}")
+                }
+                LifecycleState::ConsentUncertain(reason) => format!(
+                    "Coincide couldn't confirm it was safe to install ({reason}). The update won't be retried automatically."
+                ),
             };
         }
         match self.updater.state() {
-            State::Disabled => "Updates are off. A Rust preview feed and trust anchor must be configured.".into(),
-            State::Idle => "Check for a Rust preview update when you choose.".into(),
-            State::Checking => "Checking for a Rust preview update…".into(),
-            State::Current => "This Rust preview is current for the configured channel.".into(),
-            State::Unpublished => "No Rust preview update is published on the configured channel.".into(),
-            State::Available(release) => format!("Rust preview {} is available ({} bytes).", release.version, release.size),
-            State::Downloading { received, total } => format!("Downloading Rust preview: {received} / {total} bytes…"),
-            State::Verifying => "Checking downloaded archive and staged bundle…".into(),
+            State::Disabled => {
+                "This build has no update channel, so it can't check for updates.".into()
+            }
+            State::Idle => "Check for a newer version of Coincide.".into(),
+            State::Checking => "Checking for updates…".into(),
+            State::Current => "Coincide is up to date.".into(),
+            State::Unpublished => "No published release is available yet.".into(),
+            State::Available(release) => format!("Version {} is available.", release.version),
+            State::Downloading { .. } | State::Verifying => {
+                "Downloading and verifying the update…".into()
+            }
             State::Staged(stage) => match stage.signature {
-                SignatureStatus::Pending { reason } => format!("Archive SHA-256 verified. Signature verification pending: {reason}. Installation is not authorized."),
-                SignatureStatus::Verified => "Staged signature and archive verified. Native approval and independent helper readiness are still required.".into(),
+                SignatureStatus::Verified => "The update is verified and ready to install.".into(),
+                SignatureStatus::Pending { reason } => format!(
+                    "The update is downloaded, but its signature isn't verified yet ({reason}), so it can't be installed."
+                ),
             },
-            State::Cancelled => "Update operation cancelled.".into(),
-            State::TimedOut => "Update operation timed out.".into(),
-            State::Failed(reason) => format!("Update failed: {reason}"),
+            State::Cancelled => "Update cancelled.".into(),
+            State::TimedOut => "The update request timed out. Try again later.".into(),
+            State::Failed(reason) => reason,
         }
     }
     fn record(&mut self, result: Result<()>) {
@@ -164,120 +245,266 @@ impl UpdaterSettings {
     }
 }
 
-/// Native GPUI surface: no timer, startup networking or Quit action. Parent embeds
-/// this entity in Settings and calls tick from its existing native event loop.
+/// The App Updates section. Its own poll completes operations and, hourly,
+/// runs the daily check; there is no startup check and no Quit action here.
 /// Native lifecycle hooks belong to the real root app, not this view/window.
 pub struct UpdaterSettingsView {
     pub model: UpdaterSettings,
     policy: Option<NativePolicy>,
     launcher: Box<dyn HelperLauncher>,
+    engine: SharedEngine,
+    /// `checksForAppUpdates` (Swift's default is on) and `lastAppUpdateCheck`
+    /// (seconds since 2001, as Swift saves dates), once read from settings.
+    preferences: Option<(bool, Option<f64>)>,
+    checking: bool,
+    looked: Option<Instant>,
+    _poll: Task<()>,
 }
 impl UpdaterSettingsView {
     pub fn new(
         model: UpdaterSettings,
         policy: Option<NativePolicy>,
         launcher: Box<dyn HelperLauncher>,
+        engine: SharedEngine,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let poll = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+                if this.update(cx, |this, cx| this.tick(cx)).is_err() {
+                    break;
+                }
+            }
+        });
         Self {
             model,
             policy,
             launcher,
+            engine,
+            preferences: None,
+            checking: false,
+            looked: None,
+            _poll: poll,
         }
     }
-    pub fn tick(&mut self, cx: &mut Context<Self>) {
-        self.model.tick();
+    /// Reads the preferences until it succeeds; a busy Engine is retried next poll.
+    fn preferences(&mut self) -> Option<(bool, Option<f64>)> {
+        if self.preferences.is_none()
+            && let Ok(settings) = call(&self.engine, "settings.read", json!({}))
+        {
+            self.preferences = Some((
+                settings["checksForAppUpdates"].as_bool().unwrap_or(true),
+                settings["lastAppUpdateCheck"].as_f64(),
+            ));
+        }
+        self.preferences
+    }
+    fn save_preference(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
+        let mut patch = json!({});
+        patch[key] = value;
+        call(&self.engine, "settings.patch", json!({"patch":patch}))?;
+        Ok(())
+    }
+    fn set_daily(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        match self.save_preference("checksForAppUpdates", json!(enabled)) {
+            Ok(()) => {
+                let last = self.preferences.and_then(|(_, last)| last);
+                self.preferences = Some((enabled, last));
+                self.automatic_check();
+            }
+            Err(error) => self.model.error = Some(format!("The preference wasn't saved: {error}")),
+        }
         cx.notify();
+    }
+    /// Swift records the check's time before it starts, so a failing check is
+    /// not retried until the next day.
+    fn automatic_check(&mut self) {
+        if matches!(self.model.state(), State::Disabled) {
+            return;
+        }
+        let Some((enabled, last)) = self.preferences() else {
+            return;
+        };
+        let now = swift_timestamp();
+        if automatic_check_due(enabled, last, now)
+            && self
+                .save_preference("lastAppUpdateCheck", json!(now))
+                .is_ok()
+        {
+            self.preferences = Some((enabled, Some(now)));
+            self.checking = self.model.automatic_check(enabled, last, now);
+        }
+    }
+    fn check(&mut self) {
+        let result = self.model.check();
+        self.checking = result.is_ok();
+        self.model.record(result);
+    }
+    pub fn tick(&mut self, cx: &mut Context<Self>) {
+        let before = (self.model.state(), self.model.lifecycle().cloned());
+        self.model.tick();
+        if self.checking && self.model.operation.is_none() {
+            self.checking = false;
+            if matches!(
+                self.model.state(),
+                State::Current | State::Unpublished | State::Available(_)
+            ) {
+                let now = swift_timestamp();
+                if self
+                    .save_preference("lastAppUpdateCheck", json!(now))
+                    .is_ok()
+                    && let Some((enabled, _)) = self.preferences
+                {
+                    self.preferences = Some((enabled, Some(now)));
+                }
+            }
+        }
+        if self
+            .looked
+            .is_none_or(|looked| looked.elapsed() >= AUTOMATIC_LOOK)
+        {
+            self.looked = Some(Instant::now());
+            self.automatic_check();
+        }
+        if before != (self.model.state(), self.model.lifecycle().cloned()) {
+            cx.notify();
+        }
     }
 }
 impl Render for UpdaterSettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let daily = self.preferences().is_none_or(|(enabled, _)| enabled);
         let state = self.model.state();
-        let session_clear = self.model.no_install_session().is_ok();
-        let busy = self.model.operation.is_some();
-        let can_check = !matches!(state, State::Disabled) && session_clear && !busy;
-        let can_download = matches!(state, State::Available(_)) && session_clear && !busy;
-        let can_install =
-            matches!(state, State::Staged(_)) && session_clear && !busy && self.policy.is_some();
-        let can_cancel = busy
-            || self.model.lifecycle().is_some_and(|s| {
-                !matches!(
-                    s,
-                    LifecycleState::Cancelled
-                        | LifecycleState::Cancelling
-                        | LifecycleState::WaitingForConsent
-                        | LifecycleState::NormalQuitPermitted
-                        | LifecycleState::Exiting
-                        | LifecycleState::ConsentUncertain(_)
-                )
-            });
+        let busy = self.model.busy();
+        let armed = self.model.armed();
+        let can_install = self.policy.is_some();
+        let downloading = matches!(state, State::Downloading { .. } | State::Verifying);
+        let ready =
+            matches!(&state, State::Staged(stage) if stage.signature == SignatureStatus::Verified);
+        let muted = cx.theme().muted_foreground;
+        let mut actions = div().flex().flex_wrap().gap_2().child(
+            Button::new("app-update-check")
+                .label("Check for Updates…")
+                .disabled(matches!(state, State::Disabled) || busy || armed)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.check();
+                    cx.notify();
+                })),
+        );
+        if matches!(state, State::Available(_)) && can_install && !busy {
+            actions = actions.child(
+                Button::new("app-update-download")
+                    .label("Download Update")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let result = this.model.download();
+                        this.model.record(result);
+                        cx.notify();
+                    })),
+            );
+        }
+        if downloading {
+            actions = actions.child(
+                Button::new("app-update-cancel-download")
+                    .label("Cancel Download")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let result = this.model.cancel();
+                        this.model.record(result);
+                        cx.notify();
+                    })),
+            );
+        }
+        if ready && can_install && !armed {
+            actions = actions.child(
+                Button::new("app-update-install")
+                    .label("Install on Quit")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(policy) = this.policy.clone() {
+                            let result = this.model.prepare_install(policy, this.launcher.as_mut());
+                            this.model.record(result);
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        let cancellable = self.model.lifecycle().is_some_and(|state| {
+            !matches!(
+                state,
+                LifecycleState::Cancelled
+                    | LifecycleState::Cancelling
+                    | LifecycleState::WaitingForConsent
+                    | LifecycleState::NormalQuitPermitted
+                    | LifecycleState::Exiting
+                    | LifecycleState::ConsentUncertain(_)
+            )
+        });
+        if cancellable {
+            actions = actions.child(
+                Button::new("app-update-cancel")
+                    .label("Cancel Installation")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let result = this.model.cancel();
+                        this.model.record(result);
+                        cx.notify();
+                    })),
+            );
+        }
         let mut content = div()
+            .id("app-update-settings")
             .flex()
             .flex_col()
-            .gap_3()
-            .child("Rust preview updates")
-            .child(self.model.status_text())
+            .gap_2()
+            .p_3()
+            .border_b_1()
+            .border_color(cx.theme().border)
             .child(
                 div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("rust-update-check")
-                            .label("Check for Update")
-                            .disabled(!can_check)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let result = this.model.check();
-                                this.model.record(result);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("rust-update-download")
-                            .label("Download Update")
-                            .disabled(!can_download)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let result = this.model.download();
-                                this.model.record(result);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("rust-update-prepare")
-                            .label("Review Install on Quit")
-                            .disabled(!can_install)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(policy) = this.policy.clone() {
-                                    let result =
-                                        this.model.prepare_install(policy, this.launcher.as_mut());
-                                    this.model.record(result);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("rust-update-cancel")
-                            .label("Cancel Update")
-                            .disabled(!can_cancel)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let result = this.model.cancel();
-                                this.model.record(result);
-                                cx.notify();
-                            })),
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("App Updates"),
+            )
+            .child(
+                Checkbox::new("app-update-daily")
+                    .label("Check for updates daily")
+                    .checked(daily)
+                    .on_click(
+                        cx.listener(|this, checked: &bool, _, cx| this.set_daily(*checked, cx)),
                     ),
-            );
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(self.model.status_text()),
+            )
+            .when(
+                (matches!(state, State::Available(_)) || ready) && !can_install,
+                |view| {
+                    view.child(div().text_sm().text_color(muted).child(
+                        if cfg!(target_os = "macos") {
+                            "Updates can only be installed by a verified Developer ID build."
+                        } else {
+                            "Installing updates isn't available on this platform yet."
+                        },
+                    ))
+                },
+            )
+            .child(actions);
         if let Some(LifecycleState::AwaitingNativeApproval(proposal)) = self.model.lifecycle() {
             let displayed = proposal.as_ref().clone();
             // The immutable proposal is the one the approval callback binds. Hash
             // and anchor are shown here because they determine this decision.
             content = content
                 .child(format!(
-                    "Install Rust preview {} → {}",
-                    proposal.installed_version, proposal.release.version
+                    "Install version {} over {}",
+                    proposal.release.version, proposal.installed_version
                 ))
                 .child(format!("Target: {}", proposal.target.display()))
                 .child(format!("Signing anchor: {}", proposal.anchor))
                 .child(format!("Archive SHA-256: {}", proposal.release.sha256))
                 .child(
-                    Button::new("rust-update-native-approve")
+                    Button::new("app-update-approve")
                         .label("Approve for Next Normal Quit")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let result = this.model.native_approve(&displayed);
@@ -286,8 +513,19 @@ impl Render for UpdaterSettingsView {
                         })),
                 );
         }
+        if let Some(job) = self.model.staged_job().filter(|_| ready || armed) {
+            content = content
+                .child(div().text_sm().text_color(muted).child(
+                    "Coincide never quits or reopens automatically. The previous app is kept as a backup.",
+                ))
+                .child(
+                    Button::new("app-update-reveal")
+                        .label("Show Update Folder")
+                        .on_click(move |_, _, cx| cx.reveal_path(&job)),
+                );
+        }
         if let Some(error) = self.model.error() {
-            content = content.child(error.to_owned());
+            content = content.child(div().text_sm().child(error.to_owned()));
         }
         content
     }
@@ -308,7 +546,22 @@ mod tests {
         assert!(model.download().is_err());
         assert!(model.begin_normal_quit().is_err());
         assert!(model.take_normal_quit_permission().is_none());
-        assert!(model.status_text().contains("Updates are off"));
+        assert!(model.status_text().contains("no update channel"));
+    }
+    #[test]
+    fn daily_check_is_due_once_a_day_only_while_on() {
+        assert!(automatic_check_due(true, None, 0.));
+        assert!(!automatic_check_due(false, None, 0.));
+        assert!(!automatic_check_due(true, Some(1000.), 1000. + DAILY - 1.));
+        assert!(automatic_check_due(true, Some(1000.), 1000. + DAILY));
+        // As in Swift, a day must pass after the saved time; an unreadable time
+        // never blocks the check.
+        assert!(!automatic_check_due(true, Some(1000.), 999.));
+        assert!(automatic_check_due(true, Some(f64::NAN), 0.));
+        let mut model = UpdaterSettings::default();
+        assert!(!model.automatic_check(true, None, 0.));
+        assert!(model.operation.is_none() && model.error().is_none());
+        assert!(matches!(model.state(), State::Disabled));
     }
     #[test]
     fn no_stage_cannot_show_approval_or_prepare_helper() {

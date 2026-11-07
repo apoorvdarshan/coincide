@@ -32,6 +32,8 @@ pub mod workspace_github;
 
 pub mod github_api;
 
+pub mod bot_artwork;
+pub mod bot_personality;
 pub mod bot_runtime;
 
 pub mod github_write;

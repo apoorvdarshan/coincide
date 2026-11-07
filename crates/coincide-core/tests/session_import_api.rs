@@ -26,7 +26,7 @@ fn session_import_capabilities_match_platform_support() {
 
 #[cfg(unix)]
 #[test]
-fn public_import_changes_revision_once_preserves_source_and_cannot_execute() {
+fn public_import_changes_revision_once_preserves_source_and_continues_the_session() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
     let path = root.join("session.jsonl");
@@ -40,7 +40,8 @@ fn public_import_changes_revision_once_preserves_source_and_cannot_execute() {
     let params = json!({"provider":"codex","path":path});
     let preview = call(&mut engine, "cli.sessions.preview", params.clone());
     assert!(preview["error"].is_null(), "{preview}");
-    assert_eq!(preview["result"]["executable"], false);
+    assert_eq!(preview["result"]["continuesSession"], true);
+    assert!(preview["result"]["existingThreadId"].is_null());
     assert!(engine.store.summaries("", true).unwrap().is_empty());
     let mut params = params;
     params["sha256"] = preview["result"]["sha256"].clone();
@@ -64,36 +65,26 @@ fn public_import_changes_revision_once_preserves_source_and_cannot_execute() {
     assert!(imported["error"].is_null(), "{imported}");
     assert_eq!(engine.revision, revision + 1);
     let id = imported["result"]["threadId"].as_str().unwrap().to_owned();
-    assert!(engine.store.is_imported(&id).unwrap());
+    assert!(!engine.store.is_imported(&id).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
-    let duplicate = call(&mut engine, "cli.sessions.import", params);
-    assert!(duplicate["error"].is_object());
+    // A second import opens the first instead of copying the session again.
+    let again = call(&mut engine, "cli.sessions.import", params);
+    assert!(again["error"].is_null(), "{again}");
+    assert_eq!(again["result"]["existing"], true);
+    assert_eq!(again["result"]["threadId"], json!(id));
     assert_eq!(engine.revision, revision + 1);
     assert_eq!(engine.store.summaries("", true).unwrap().len(), 1);
-    let execution = call(
-        &mut engine,
-        "agent.send",
-        json!({"threadId":id,"text":"never execute"}),
-    );
-    assert!(
-        execution["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("read-only")
-    );
-    assert_eq!(
-        engine.store.thread(&id).unwrap()["items"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    // Importing never starts the provider; the session resumes with the user's
+    // next message.
     assert_eq!(
         call(&mut engine, "app.status", json!({}))["result"]["running"],
         json!([])
     );
     drop(engine);
     let store = Store::open(&database).unwrap();
-    assert!(store.is_imported(&id).unwrap());
-    assert_eq!(store.thread(&id).unwrap()["sessions"], json!({}));
+    assert!(!store.is_imported(&id).unwrap());
+    assert_eq!(
+        store.thread(&id).unwrap()["sessions"],
+        json!({"codex":{"sessionID":"00000000-0000-4000-8000-000000000001","seenItemCount":1}})
+    );
 }

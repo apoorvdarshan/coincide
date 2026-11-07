@@ -32,6 +32,16 @@ icon_assets!(
         Paperclip,
         PencilRuler,
         Zap,
+        // Bot editor personality chips.
+        Binoculars,
+        Briefcase,
+        CircleSlash,
+        Crosshair,
+        Drama,
+        Footprints,
+        GraduationCap,
+        Leaf,
+        PencilLine,
         Ban,
         BatteryCharging,
         BatteryFull,
@@ -180,6 +190,10 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            // The bot editor's personality chips.
+            "icons/circle-slash.svg",
+            "icons/graduation-cap.svg",
+            "icons/pencil-line.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

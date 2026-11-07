@@ -748,7 +748,7 @@ impl Coincide {
         }
         if matches(
             S::About,
-            "about version help community website github discord contact privacy terms license acknowledgements",
+            "about version app updates check download install help community website github discord contact privacy terms license acknowledgements",
         ) {
             count += 1;
             content = content.child(self.about_settings(cx));

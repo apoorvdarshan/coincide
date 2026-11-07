@@ -411,6 +411,58 @@ impl Store {
         source_key: &str,
         source: &[u8],
     ) -> Result<()> {
+        self.insert_cli_session(document, source_key, source, true)
+    }
+    /// As `import_cli_session`, for a reviewed session the user continues, as
+    /// Swift's `importSession` does: no execution barrier, so the thread runs
+    /// like any other and resumes the native session its document references.
+    pub fn import_resumable_cli_session(
+        &mut self,
+        document: &Value,
+        source_key: &str,
+        source: &[u8],
+    ) -> Result<()> {
+        self.insert_cli_session(document, source_key, source, false)
+    }
+    /// The conversation already holding a provider's native session: one
+    /// imported from it, or one whose saved session reference is it (Swift's
+    /// `threadForSession`). Session IDs compare case-insensitively.
+    pub fn thread_for_native_session(
+        &self,
+        provider: &str,
+        session: &str,
+    ) -> Result<Option<String>> {
+        self.connection()?;
+        ensure!(
+            matches!(provider, "codex" | "claude"),
+            "Unsupported session provider"
+        );
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT id FROM threads WHERE
+                    (json_extract(document,'$.importedSession.provider')=?1
+                        AND lower(json_extract(document,'$.importedSession.sessionID'))=lower(?2))
+                    OR (json_type(document,'$.sessions')='object'
+                        AND lower(json_extract(document,'$.sessions.' || ?1 || '.sessionID'))=lower(?2))
+                    OR (json_type(document,'$.sessions')='array' AND EXISTS(
+                        SELECT 1 FROM json_each(document,'$.sessions') AS k
+                        JOIN json_each(document,'$.sessions') AS v ON v.key=k.key+1
+                        WHERE k.key%2=0 AND k.value=?1
+                            AND lower(json_extract(document,v.fullkey || '.sessionID'))=lower(?2)))
+                ORDER BY id LIMIT 1",
+                params![provider, session],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    fn insert_cli_session(
+        &mut self,
+        document: &Value,
+        source_key: &str,
+        source: &[u8],
+        barrier: bool,
+    ) -> Result<()> {
         self.connection()?;
         validate_cli_source_key(source_key)?;
         ensure!(
@@ -454,7 +506,9 @@ impl Store {
             "INSERT INTO threads(id,document) VALUES (?1,?2)",
             params![id, serialized],
         )?;
-        tx.execute("INSERT INTO imported_threads(id) VALUES (?1)", [id])?;
+        if barrier {
+            tx.execute("INSERT INTO imported_threads(id) VALUES (?1)", [id])?;
+        }
         index_thread(&tx, document)?;
         cache_thread(&tx, document, true)?;
         tx.commit()?;

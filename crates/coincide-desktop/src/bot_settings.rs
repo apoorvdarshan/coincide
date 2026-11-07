@@ -1,13 +1,24 @@
 //! Parent: create/render Entity<BotSettingsPanel>; subscribe to BotSettingsEvent
-//! for saved IDs if needed. This editor only persists name and bot.persona.
+//! for saved IDs if needed. Like Swift's BotEditor, this editor persists a bot's
+//! look, name, personality, instructions (bot.persona) and folder; nothing is
+//! saved until Save. The agent, model and modes stay as saved.
+use crate::bot_avatar;
 use crate::worker_owner::{Admission, ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
-use coincide_core::api::{SharedEngine, call};
-use gpui_kit::base::Disableable;
+use coincide_core::{
+    api::{SharedEngine, call},
+    bot_artwork::{Character, Tint},
+    bot_personality::{self, CUSTOM_LIMIT, PRESETS},
+};
+use gpui_kit::base::{Disableable, Selectable};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
+    assets::IconName,
     component::{
+        ActiveTheme,
         button::*,
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
+        menu::{DropdownMenu, PopupMenuItem},
     },
     *,
 };
@@ -49,19 +60,121 @@ impl Bound {
         })
     }
 }
+/// A bot's look: a character in one of the tints (Swift's `BotAvatar`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Look {
+    shape: Character,
+    tint: Tint,
+}
+impl Look {
+    /// A character in its own color.
+    fn character(shape: Character) -> Self {
+        Self {
+            shape,
+            tint: shape.default_tint(),
+        }
+    }
+    /// Anything this version cannot read reads as the defaults, as in Swift.
+    fn from_bot(bot: &Value) -> Self {
+        let shape = bot["avatar"]["shape"]
+            .as_str()
+            .and_then(Character::from_raw)
+            .unwrap_or(Character::Alien);
+        let tint = bot["avatar"]["tint"]
+            .as_str()
+            .and_then(Tint::from_raw)
+            .unwrap_or(shape.default_tint());
+        Self { shape, tint }
+    }
+    fn value(self) -> Value {
+        json!({"shape":self.shape.raw(),"tint":self.tint.raw()})
+    }
+}
+/// How the bot talks: a preset, or the user's description (Swift's `BotPersonality`).
+/// The description is kept beside a preset, so switching back to Custom finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Personality {
+    preset: Option<String>,
+    custom: String,
+}
+impl Personality {
+    fn from_bot(bot: &Value) -> Option<Self> {
+        let value = &bot["personality"];
+        if !value.is_object() {
+            return None;
+        }
+        let preset = value["preset"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned);
+        let custom = bot_personality::custom_text(value["custom"].as_str().unwrap_or(""));
+        (preset.is_some() || !custom.is_empty()).then_some(Self { preset, custom })
+    }
+    fn value(&self) -> Value {
+        match &self.preset {
+            Some(preset) => json!({"preset":preset,"custom":self.custom}),
+            None => json!({"custom":self.custom}),
+        }
+    }
+}
+/// What the personality chips choose between. A preset this version doesn't
+/// have (a newer version's) stays chosen, but no chip shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Choice {
+    None,
+    Preset(String),
+    Custom,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Fields {
     name: String,
     persona: String,
+    look: Look,
+    personality: Option<Personality>,
+    /// None for the home folder.
+    folder: Option<String>,
 }
 impl Fields {
     fn from_bot(bot: &Value) -> Self {
         Self {
             name: bot["name"].as_str().unwrap_or("").into(),
             persona: bot["persona"].as_str().unwrap_or("").into(),
+            look: Look::from_bot(bot),
+            personality: Personality::from_bot(bot),
+            folder: bot["folder"]
+                .as_str()
+                .filter(|folder| !folder.is_empty())
+                .map(str::to_owned),
         }
     }
-    fn patch(&self) -> Result<Value> {
+    /// A fresh bot as Swift's `BotEditor.newBot` makes it: a character none of the
+    /// bots is yet when one is left, with its color, name and personality.
+    fn new_bot(used: &[Character], pick: usize) -> Self {
+        let free = Character::ALL
+            .into_iter()
+            .filter(|character| !used.contains(character))
+            .collect::<Vec<_>>();
+        let choices = if free.is_empty() {
+            Character::ALL.to_vec()
+        } else {
+            free
+        };
+        let character = choices[pick % choices.len()];
+        Self {
+            name: character.default_name().into(),
+            persona: String::new(),
+            look: Look::character(character),
+            personality: character.default_personality().map(|preset| Personality {
+                preset: Some(preset.into()),
+                custom: String::new(),
+            }),
+            folder: None,
+        }
+    }
+    /// Name and instructions always; look, personality and folder only when they
+    /// differ from `saved` (or for a new bot), so fields this version cannot
+    /// read stay exactly as saved.
+    fn patch(&self, saved: Option<&Fields>) -> Result<Value> {
         let name = self.name.trim();
         ensure!(
             !name.is_empty() && name.chars().count() <= 200,
@@ -71,7 +184,26 @@ impl Fields {
             self.persona.chars().count() <= 20_000,
             "Bot instructions must fit within 20,000 characters"
         );
-        Ok(json!({"name":name,"persona":self.persona}))
+        ensure!(
+            self.personality
+                .as_ref()
+                .is_none_or(|personality| personality.custom.chars().count() <= CUSTOM_LIMIT),
+            "A custom personality must fit within 4,000 characters"
+        );
+        let mut patch = json!({"name":name,"persona":self.persona});
+        if saved.is_none_or(|saved| saved.look != self.look) {
+            patch["avatar"] = self.look.value();
+        }
+        if saved.is_none_or(|saved| saved.personality != self.personality) {
+            patch["personality"] = self
+                .personality
+                .as_ref()
+                .map_or(Value::Null, Personality::value);
+        }
+        if saved.is_none_or(|saved| saved.folder != self.folder) {
+            patch["folder"] = json!(self.folder);
+        }
+        Ok(patch)
     }
 }
 #[derive(Clone)]
@@ -80,15 +212,101 @@ struct Write {
     id: Option<String>,
     baseline: String,
     fields: Fields,
+    /// The saved values the draft started from; None for a new bot.
+    saved: Option<Fields>,
 }
 impl Write {
     fn params(&self) -> Result<Value> {
-        let mut params = json!({"baseline":self.baseline,"patch":self.fields.patch()?});
+        let mut params =
+            json!({"baseline":self.baseline,"patch":self.fields.patch(self.saved.as_ref())?});
         if let Some(id) = &self.id {
             params["botId"] = json!(id);
         }
         Ok(params)
     }
+}
+/// The user's home folder, where a bot works unless it has a folder of its own.
+fn home_folder() -> Option<std::path::PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(std::path::PathBuf::from)
+        .filter(|home| home.is_absolute())
+}
+/// The folder as shown: the home folder and paths inside it start with `~`.
+fn folder_label(folder: Option<&str>, home: Option<&std::path::Path>) -> String {
+    let Some(folder) = folder else {
+        return "~".into();
+    };
+    if let Some(home) = home
+        && let Ok(inside) = std::path::Path::new(folder).strip_prefix(home)
+    {
+        let inside = inside.to_string_lossy();
+        return if inside.is_empty() {
+            "~".into()
+        } else {
+            format!("~{}{inside}", std::path::MAIN_SEPARATOR)
+        };
+    }
+    folder.into()
+}
+/// The folder a picked directory saves as: None for the home folder.
+fn chosen_folder(path: &std::path::Path, home: Option<&std::path::Path>) -> Option<String> {
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        a == b
+            || a.canonicalize()
+                .ok()
+                .zip(b.canonicalize().ok())
+                .is_some_and(|(a, b)| a == b)
+    };
+    if home.is_some_and(|home| same(path, home)) {
+        None
+    } else {
+        Some(path.to_string_lossy().into_owned())
+    }
+}
+/// The lucide icon each personality chip shows, after Swift's SF Symbols.
+fn personality_icon(choice: &Choice) -> IconName {
+    match choice {
+        Choice::None => IconName::CircleSlash,
+        Choice::Custom => IconName::PencilLine,
+        Choice::Preset(id) => match id.as_str() {
+            "cheerful" => IconName::Sun,
+            "calm" => IconName::Leaf,
+            "witty" => IconName::Drama,
+            "mentor" => IconName::GraduationCap,
+            "coach" => IconName::Footprints,
+            "candid" => IconName::Crosshair,
+            "curious" => IconName::Binoculars,
+            "professional" => IconName::Briefcase,
+            "gentle" => IconName::Heart,
+            "creative" => IconName::Palette,
+            _ => IconName::CircleSlash,
+        },
+    }
+}
+const NO_PERSONALITY: &str = "No personality of its own: it talks as its instructions say.";
+/// The name a new character brings: its own, while the bot still has the
+/// previous character's name or none. A name the user wrote stays.
+fn suggested_name(current: &str, previous: Character, next: Character) -> Option<&'static str> {
+    let current = current.trim();
+    (current.is_empty() || current == previous.default_name()).then_some(next.default_name())
+}
+/// The personality a new character brings: its own, while the user hasn't
+/// picked one and the bot has none or the previous character's.
+fn suggested_personality(
+    current: &Choice,
+    picked: bool,
+    previous: Character,
+    next: Character,
+) -> Option<Choice> {
+    let suggests = match current {
+        Choice::None => true,
+        Choice::Preset(id) => previous.default_personality() == Some(id.as_str()),
+        Choice::Custom => false,
+    };
+    (!picked && suggests).then(|| {
+        next.default_personality()
+            .map_or(Choice::None, |id| Choice::Preset(id.into()))
+    })
 }
 #[derive(Clone)]
 struct Conversation {
@@ -197,45 +415,144 @@ struct Editor {
     bound: Bound,
     name: Entity<InputState>,
     persona: Entity<TextareaState>,
+    /// The custom personality's description.
+    custom: Entity<TextareaState>,
+    look: Look,
+    choice: Choice,
+    /// Whether the user picked a personality. Until then a new character brings
+    /// its own, as it brings its name (Swift's `BotPersonalitySection.suggest`).
+    picked_personality: bool,
+    folder: Option<String>,
     blocked: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl Editor {
-    fn new(bound: Bound, window: &mut Window, cx: &mut Context<BotSettingsPanel>) -> Self {
-        let fields = Fields::from_bot(&bound.bot);
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Bot name"));
+    /// An editor over `bound`, starting from `draft` when given (a new bot's
+    /// suggested look, name and personality), else from the saved values.
+    fn new(
+        bound: Bound,
+        draft: Option<Fields>,
+        window: &mut Window,
+        cx: &mut Context<BotSettingsPanel>,
+    ) -> Self {
+        let fields = draft.unwrap_or_else(|| Fields::from_bot(&bound.bot));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
         name.update(cx, |input, cx| input.set_value(fields.name, window, cx));
         let persona = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("This bot’s instructions")
+                .placeholder("What the bot does and how it works")
                 .submit_on_enter(false)
         });
         persona.update(cx, |input, cx| input.set_value(fields.persona, window, cx));
-        let subscriptions = vec![
-            cx.subscribe(&name, |_, _, event, cx| {
+        let custom = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Describe the personality…")
+                .submit_on_enter(false)
+        });
+        let choice = match &fields.personality {
+            None => Choice::None,
+            Some(Personality {
+                preset: Some(id), ..
+            }) => Choice::Preset(id.clone()),
+            Some(_) => Choice::Custom,
+        };
+        let text = fields
+            .personality
+            .as_ref()
+            .map(|personality| personality.custom.clone())
+            .unwrap_or_default();
+        custom.update(cx, |input, cx| input.set_value(text, window, cx));
+        let mut subscriptions = vec![cx.subscribe(&name, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        })];
+        for input in [&persona, &custom] {
+            subscriptions.push(cx.subscribe(input, |_, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
-            }),
-            cx.subscribe(&persona, |_, _, event, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
-            }),
-        ];
+            }));
+        }
         Self {
             bound,
             name,
             persona,
+            custom,
+            look: fields.look,
+            choice,
+            picked_personality: false,
+            folder: fields.folder,
             blocked: false,
             _subscriptions: subscriptions,
+        }
+    }
+    fn personality(&self, cx: &App) -> Option<Personality> {
+        let custom = self.custom.read(cx).value().trim().to_owned();
+        match &self.choice {
+            Choice::None => None,
+            Choice::Preset(id) => Some(Personality {
+                preset: Some(id.clone()),
+                custom,
+            }),
+            // Custom without a description is no personality.
+            Choice::Custom => (!custom.is_empty()).then_some(Personality {
+                preset: None,
+                custom,
+            }),
         }
     }
     fn fields(&self, cx: &App) -> Fields {
         Fields {
             name: self.name.read(cx).value().to_string(),
             persona: self.persona.read(cx).value().to_string(),
+            look: self.look,
+            personality: self.personality(cx),
+            folder: self.folder.clone(),
         }
+    }
+    fn is_new(&self) -> bool {
+        self.bound.bot["id"].as_str().is_none()
+    }
+    /// A character comes in its own color, and brings its name while the bot still
+    /// has the previous character's (or none); a name the user wrote stays. Its
+    /// personality comes along the same way, unless the user picked one.
+    fn pick_shape(&mut self, shape: Character, window: &mut Window, cx: &mut App) {
+        let previous = self.look.shape;
+        if shape == previous {
+            return;
+        }
+        let name = self.name.read(cx).value().to_string();
+        if let Some(name) = suggested_name(&name, previous, shape) {
+            self.name
+                .update(cx, |input, cx| input.set_value(name, window, cx));
+        }
+        if let Some(choice) =
+            suggested_personality(&self.choice, self.picked_personality, previous, shape)
+        {
+            self.choice = choice;
+        }
+        self.look = Look::character(shape);
+    }
+    fn pick_personality(&mut self, choice: Choice, window: &mut Window, cx: &mut App) {
+        self.picked_personality = true;
+        let custom = choice == Choice::Custom;
+        self.choice = choice;
+        if custom {
+            self.custom.update(cx, |input, cx| input.focus(window, cx));
+        }
+    }
+    /// Replaces the description with a preset's text, for the user to make their own.
+    fn start_from(&mut self, preset: &str, window: &mut Window, cx: &mut App) {
+        let Some(preset) = bot_personality::preset(preset) else {
+            return;
+        };
+        self.picked_personality = true;
+        self.choice = Choice::Custom;
+        self.custom.update(cx, |input, cx| {
+            input.set_value(preset.prompt, window, cx);
+            input.focus(window, cx);
+        });
     }
 }
 pub enum BotSettingsEvent {
@@ -254,6 +571,7 @@ pub struct BotSettingsPanel {
     pending_key: Option<String>,
     pending_write: bool,
     pending_conversation: bool,
+    choosing_folder: bool,
     notice: String,
     tx: mpsc::Sender<(u64, Result<Outcome>)>,
     rx: mpsc::Receiver<(u64, Result<Outcome>)>,
@@ -313,6 +631,7 @@ impl BotSettingsPanel {
             pending_key: None,
             pending_write: false,
             pending_conversation: false,
+            choosing_folder: false,
             notice: String::new(),
             tx,
             rx,
@@ -378,17 +697,25 @@ impl BotSettingsPanel {
         };
         self.generation = self.generation.wrapping_add(1);
         self.selected = Some(NEW.into());
-        self.editors.entry(NEW.into()).or_insert_with(|| {
-            Editor::new(
+        if !self.editors.contains_key(NEW) {
+            let used = self
+                .bots
+                .iter()
+                .map(|bot| Look::from_bot(bot).shape)
+                .collect::<Vec<_>>();
+            let pick = usize::from(uuid::Uuid::new_v4().as_bytes()[0]);
+            let editor = Editor::new(
                 Bound {
                     bot: json!({"name":"","persona":""}),
                     baseline,
                     origin: "empty".into(),
                 },
+                Some(Fields::new_bot(&used, pick)),
                 window,
                 cx,
-            )
-        });
+            );
+            self.editors.insert(NEW.into(), editor);
+        }
         self.notice =
             "New bot draft. Save creates one stable server ID. Creating a conversation is a separate action.".into();
         cx.notify();
@@ -404,7 +731,8 @@ impl BotSettingsPanel {
             return;
         };
         let fields = editor.fields(cx);
-        if let Err(error) = fields.patch() {
+        let saved = (!editor.is_new()).then(|| Fields::from_bot(&editor.bound.bot));
+        if let Err(error) = fields.patch(saved.as_ref()) {
             self.notice = error.to_string();
             cx.notify();
             return;
@@ -414,8 +742,80 @@ impl BotSettingsPanel {
             id: editor.bound.bot["id"].as_str().map(str::to_owned),
             baseline: editor.bound.baseline.clone(),
             fields,
+            saved,
         };
         self.start(Action::Write(write), cx);
+    }
+    /// Swift's Cancel: closes the editor without saving, dropping its draft.
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = self.selected.take() else {
+            return;
+        };
+        if self.pending_key.as_deref() != Some(key.as_str()) {
+            self.editors.remove(&key);
+        }
+        self.generation = self.generation.wrapping_add(1);
+        self.notice = "Closed without saving.".into();
+        cx.notify();
+    }
+    fn editor_mut(&mut self) -> Option<&mut Editor> {
+        let key = self.selected.as_ref()?;
+        self.editors.get_mut(key).filter(|editor| !editor.blocked)
+    }
+    fn choose_folder(&mut self, cx: &mut Context<Self>) {
+        if self.choosing_folder || !self.workers.begin_picker() {
+            return;
+        }
+        let Some(key) = self.selected.clone() else {
+            self.workers.finish_picker();
+            return;
+        };
+        self.choosing_folder = true;
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let result: Result<_> = async { picker.await? }.await;
+            let _ = this.update(cx, |this, cx| {
+                this.choosing_folder = false;
+                if !this.workers.finish_picker() {
+                    return;
+                }
+                match result {
+                    Ok(Some(paths)) if paths.len() == 1 => {
+                        let home = home_folder();
+                        if let Some(editor) = this.editors.get_mut(&key) {
+                            editor.folder = chosen_folder(&paths[0], home.as_deref());
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => this.notice = format!("Folder selection failed: {error}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = event.keystroke.modifiers;
+        let primary = if cfg!(target_os = "macos") {
+            modifiers.platform && !modifiers.control
+        } else {
+            modifiers.control && !modifiers.platform
+        };
+        let plain = !modifiers.alt && !modifiers.shift && !modifiers.function;
+        match event.keystroke.key.as_str() {
+            // Swift's Save key equivalent: Command-Return (Control-Enter elsewhere).
+            "enter" if primary && plain => self.save(cx),
+            "escape" if !primary && !modifiers.control && plain => self.cancel(cx),
+            _ => return,
+        }
+        window.prevent_default();
+        cx.stop_propagation();
     }
     fn new_conversation(&mut self, cx: &mut Context<Self>) {
         if self.busy {
@@ -481,8 +881,9 @@ impl BotSettingsPanel {
                     editor.blocked = false;
                     self.notice="Saved baseline reloaded; your draft is retained. Compare the saved values below before saving again.".into();
                 } else {
-                    self.editors.insert(id, Editor::new(bound, window, cx));
-                    self.notice = "Edit this bot’s name or instructions, then Save.".into();
+                    self.editors
+                        .insert(id, Editor::new(bound, None, window, cx));
+                    self.notice = "Edit this bot, then Save.".into();
                 }
             }
             Ok(Outcome::Read(_)) => {
@@ -508,6 +909,13 @@ impl BotSettingsPanel {
                         editor
                             .persona
                             .update(cx, |input, cx| input.set_value(saved.persona, window, cx));
+                        editor.look = saved.look;
+                        editor.folder = saved.folder;
+                        if let Some(personality) = saved.personality {
+                            editor.custom.update(cx, |input, cx| {
+                                input.set_value(personality.custom, window, cx)
+                            });
+                        }
                     }
                     editor.bound = bound.clone();
                     editor.blocked = false;
@@ -551,6 +959,387 @@ impl Drop for BotSettingsPanel {
         self.request_shutdown();
     }
 }
+/// A section label in the editor, as Swift's: small, medium weight, secondary.
+fn section_label(text: &'static str, cx: &App) -> Div {
+    div()
+        .mt_3()
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
+/// A hint under a section, as Swift's: small and secondary.
+fn hint(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.into())
+}
+impl BotSettingsPanel {
+    /// Swift BotEditor's content, top down: who it is and how it looks, its
+    /// personality, instructions, agent and folder, then Cancel and Save.
+    fn editor_view(&self, editor: &Editor, cx: &mut Context<Self>) -> AnyElement {
+        let fields = editor.fields(cx);
+        let saved = Fields::from_bot(&editor.bound.bot);
+        let new = editor.is_new();
+        let dirty = new || fields != saved;
+        let locked = self.busy || editor.blocked;
+        let look = editor.look;
+        let theme = cx.theme();
+        let (accent, raised) = (theme.ring, theme.secondary);
+        let shapes = Character::ALL.into_iter().map(|shape| {
+            // Each character shows in its own color, the chosen one in the bot's.
+            let chosen = shape == look.shape;
+            let tint = if chosen {
+                look.tint
+            } else {
+                shape.default_tint()
+            };
+            Button::new(SharedString::from(format!(
+                "bot-look-shape-{}",
+                shape.raw()
+            )))
+            .ghost()
+            .selected(chosen)
+            .accessibility_label(shape.default_name())
+            .tooltip(shape.default_name())
+            .disabled(locked)
+            .w(px(40.))
+            .h(px(40.))
+            .p_0()
+            .rounded(px(9.))
+            .when(chosen, |button| {
+                button.bg(raised).border_2().border_color(accent)
+            })
+            .child(bot_avatar::avatar(shape, tint, 26.))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(editor) = this.editor_mut() {
+                    editor.pick_shape(shape, window, cx);
+                }
+                cx.notify();
+            }))
+        });
+        let tints = Tint::ALL.into_iter().map(|tint| {
+            let chosen = tint == look.tint;
+            Button::new(SharedString::from(format!("bot-look-tint-{}", tint.raw())))
+                .ghost()
+                .selected(chosen)
+                .accessibility_label(tint.name())
+                .tooltip(tint.name())
+                .disabled(locked)
+                .w(px(24.))
+                .h(px(24.))
+                .p_0()
+                .rounded_full()
+                .when(chosen, |button| button.border_2().border_color(accent))
+                .child(
+                    div()
+                        .size(px(if chosen { 15. } else { 18. }))
+                        .rounded_full()
+                        .bg(rgb(tint.rgb())),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(editor) = this.editor_mut() {
+                        editor.look.tint = tint;
+                    }
+                    cx.notify();
+                }))
+        });
+        let choices = std::iter::once((Choice::None, "None", NO_PERSONALITY))
+            .chain(PRESETS.iter().map(|preset| {
+                (
+                    Choice::Preset(preset.id.into()),
+                    preset.name,
+                    preset.summary,
+                )
+            }))
+            .chain(std::iter::once((
+                Choice::Custom,
+                "Custom",
+                "Describe a personality in your own words.",
+            )));
+        let chips = choices.enumerate().map(|(index, (choice, name, summary))| {
+            let chosen = choice == editor.choice;
+            Button::new(SharedString::from(format!("bot-personality-{index}")))
+                .outline()
+                .compact()
+                .selected(chosen)
+                .icon(personality_icon(&choice))
+                .label(name)
+                .tooltip(summary)
+                .disabled(locked)
+                .h(px(26.))
+                .rounded(px(8.))
+                .when(chosen, |button| {
+                    button.bg(raised).border_2().border_color(accent)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(editor) = this.editor_mut() {
+                        editor.pick_personality(choice.clone(), window, cx);
+                    }
+                    cx.notify();
+                }))
+        });
+        let preset = match &editor.choice {
+            Choice::Preset(id) => bot_personality::preset(id),
+            _ => None,
+        };
+        let summary = match &editor.choice {
+            Choice::None => NO_PERSONALITY,
+            Choice::Preset(_) => preset.map_or("", |preset| preset.summary),
+            Choice::Custom => "",
+        };
+        let custom_count = editor.custom.read(cx).value().trim().chars().count();
+        let parent = cx.entity().downgrade();
+        let start_menu = Button::new("bot-personality-start")
+            .icon(IconName::ListPlus)
+            .label("Start from Preset")
+            .accessibility_label("Start from Preset")
+            .compact()
+            .disabled(locked)
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut menu, _, _| {
+                for preset in &PRESETS {
+                    let parent = parent.clone();
+                    let (name, summary, id) = (preset.name, preset.summary, preset.id);
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(name)
+                                .child(div().text_xs().opacity(0.7).child(summary))
+                        })
+                        .icon(personality_icon(&Choice::Preset(id.into())))
+                        .on_click(move |_, window, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                if let Some(editor) = this.editor_mut() {
+                                    editor.start_from(id, window, cx);
+                                }
+                                cx.notify();
+                            });
+                        }),
+                    );
+                }
+                menu
+            });
+        let home = home_folder();
+        let folder = folder_label(editor.folder.as_deref(), home.as_deref());
+        let folder_path = editor
+            .folder
+            .clone()
+            .or_else(|| {
+                home.as_ref()
+                    .map(|home| home.to_string_lossy().into_owned())
+            })
+            .unwrap_or_default();
+        let selection = &editor.bound.bot["selection"];
+        let agent = [
+            selection["provider"]
+                .as_str()
+                .map(|provider| match provider {
+                    "codex" => "Codex".to_owned(),
+                    "claude" => "Claude".to_owned(),
+                    other => other.to_owned(),
+                }),
+            selection["modelID"].as_str().map(str::to_owned),
+            Some(
+                match editor.bound.bot["accessMode"].as_str() {
+                    Some("fullAccess") => "Full access",
+                    _ => "Ask before changes",
+                }
+                .to_owned(),
+            ),
+            Some(
+                match editor.bound.bot["interactionMode"].as_str() {
+                    Some("plan") => "Plan",
+                    _ => "Build",
+                }
+                .to_owned(),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+        div()
+            .id("bot-editor")
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .max_w(px(520.))
+            .p_1()
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.key(event, window, cx)
+            }))
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(if new { "New Bot" } else { "Edit Bot" }),
+            )
+            .child(hint(
+                "A bot is an ongoing conversation with its own personality and job. It runs on your agents like any thread.",
+                cx,
+            ))
+            .child(
+                div()
+                    .mt_3()
+                    .flex()
+                    .items_end()
+                    .gap(px(14.))
+                    .child(bot_avatar::avatar(look.shape, look.tint, 56.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(section_label("Name", cx).mt_0())
+                            .child(Input::new(&editor.name)),
+                    ),
+            )
+            .child(section_label("Look", cx))
+            .child(div().flex().flex_wrap().gap(px(6.)).children(shapes))
+            .child(div().mt_1().flex().flex_wrap().gap(px(10.)).children(tints))
+            .child(section_label("Personality", cx))
+            .child(div().flex().flex_wrap().gap(px(6.)).children(chips))
+            .when(!summary.is_empty(), |view| view.child(hint(summary, cx).mt_1()))
+            .when_some(preset, |view, preset| {
+                view.child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Preview"),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(crate::settings::reply_font())
+                                .child(preset.greeting),
+                        ),
+                )
+            })
+            .when(editor.choice == Choice::Custom, |view| {
+                view.child(Textarea::new(&editor.custom).h(px(84.))).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(start_menu)
+                        .child(hint(
+                            if custom_count > CUSTOM_LIMIT {
+                                format!("Up to 4,000 characters. This one has {custom_count}.")
+                            } else {
+                                "Up to 4,000 characters.".to_owned()
+                            },
+                            cx,
+                        )),
+                )
+            })
+            .child(hint(
+                "How the bot talks and behaves, apart from its job. A change reaches its conversations with their next message.",
+                cx,
+            ))
+            .child(section_label("Instructions", cx))
+            .child(Textarea::new(&editor.persona).h(px(120.)))
+            .child(hint(
+                format!(
+                    "What the bot does and how it works. Its agent gets this and the personality at the start of each session; neither shows in the conversation. ({}/20,000 characters)",
+                    fields.persona.chars().count()
+                ),
+                cx,
+            ))
+            .child(section_label("Agent", cx))
+            .child(div().text_sm().child(agent))
+            .child(hint(
+                "New conversations start on this agent and model, asking before changes. This editor doesn't change them yet.",
+                cx,
+            ))
+            .child(section_label("Folder", cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("bot-folder-path")
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .truncate()
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(folder_path.clone())
+                                    .build(window, cx)
+                            })
+                            .child(folder),
+                    )
+                    .when(editor.folder.is_some(), |row| {
+                        row.child(
+                            Button::new("bot-folder-home")
+                                .label("Use Home Folder")
+                                .ghost()
+                                .disabled(locked)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(editor) = this.editor_mut() {
+                                        editor.folder = None;
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("bot-folder-choose")
+                            .label("Choose…")
+                            .disabled(locked || self.choosing_folder)
+                            .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
+                    ),
+            )
+            .child(hint(
+                "Its conversations run here and can work with everything inside.",
+                cx,
+            ))
+            .child(
+                div()
+                    .mt_4()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("bots-cancel")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+                    )
+                    .child(
+                        Button::new("bots-save")
+                            .label(if new { "Create Bot" } else { "Save" })
+                            .primary()
+                            .disabled(locked || !dirty || fields.name.trim().is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                    ),
+            )
+            .child(hint(
+                format!(
+                    "{} Saved source: {}.",
+                    if dirty { "Unsaved draft." } else { "Matches saved settings." },
+                    editor.bound.origin
+                ),
+                cx,
+            ))
+            .into_any_element()
+    }
+}
 impl Render for BotSettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut pane=div().id("bot-settings-panel").size_full().flex().flex_col().gap_2().p_3()
@@ -580,9 +1369,19 @@ impl Render for BotSettingsPanel {
                 .chars()
                 .take(200)
                 .collect::<String>();
+            let look = Look::from_bot(bot);
             body = body.child(
                 Button::new(SharedString::from(format!("bot-settings-select-{id}")))
-                    .label(name)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(bot_avatar::avatar(look.shape, look.tint, 20.))
+                            .child(name.clone()),
+                    )
+                    .accessibility_label(name)
+                    .selected(self.selected.as_deref() == Some(id.as_str()))
                     .disabled(self.busy)
                     .on_click(cx.listener(move |this, _, _, cx| this.select(selected.clone(), cx))),
             );
@@ -591,53 +1390,31 @@ impl Render for BotSettingsPanel {
             body = body.child("Showing the first 200 bots.");
         }
         if let Some(editor) = self.selected.as_ref().and_then(|id| self.editors.get(id)) {
-            let fields = editor.fields(cx);
-            let saved = Fields::from_bot(&editor.bound.bot);
-            let dirty = fields != saved;
             pane = pane.child(
                 div()
                     .flex()
                     .gap_2()
                     .child(
-                        Button::new("bots-save")
-                            .label("Save bot")
-                            .primary()
-                            .disabled(self.busy || editor.blocked || !dirty)
-                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-                    )
-                    .child(
                         Button::new("bots-reload-baseline")
                             .label("Reload saved baseline (keep edits)")
                             .disabled(self.busy)
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                    )
+                    .child(
+                        Button::new("bots-new-conversation")
+                            .label("New conversation (saved settings)")
+                            .disabled(
+                                self.busy
+                                    || editor.blocked
+                                    || editor.bound.bot["id"].as_str().is_none(),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.new_conversation(cx))),
                     ),
             );
-            pane = pane.child(
-                Button::new("bots-new-conversation")
-                    .label("New conversation (saved settings)")
-                    .disabled(
-                        self.busy || editor.blocked || editor.bound.bot["id"].as_str().is_none(),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.new_conversation(cx))),
-            );
+            let saved = Fields::from_bot(&editor.bound.bot);
             body = body
                 .child("New conversations use the saved settings shown below. Unsaved editor text stays here until you Save it.")
-                .child(if dirty {
-                    "Unsaved draft"
-                } else {
-                    "Matches saved settings"
-                })
-                .child("Name (1–200 characters)")
-                .child(Input::new(&editor.name))
-                .child(format!(
-                    "Bot instructions ({}/20,000 characters)",
-                    fields.persona.chars().count()
-                ))
-                .child(Textarea::new(&editor.persona).h(px(240.)))
-                .child(format!(
-                    "Saved source: {}. Other settings are read-only in this editor.",
-                    editor.bound.origin
-                ))
+                .child(self.editor_view(editor, cx))
                 .child(format!(
                     "Saved name: {}",
                     saved.name.chars().take(200).collect::<String>()
@@ -645,46 +1422,6 @@ impl Render for BotSettingsPanel {
                 .child(format!(
                     "Saved instructions: {}",
                     saved.persona.chars().take(1500).collect::<String>()
-                ))
-                .child(format!(
-                    "Provider: {} · Model: {} · Access: {} · Interaction: {}",
-                    editor.bound.bot["selection"]["provider"]
-                        .as_str()
-                        .unwrap_or("unspecified"),
-                    editor.bound.bot["selection"]["modelID"]
-                        .as_str()
-                        .unwrap_or("default"),
-                    editor.bound.bot["accessMode"]
-                        .as_str()
-                        .unwrap_or("unspecified"),
-                    editor.bound.bot["interactionMode"]
-                        .as_str()
-                        .unwrap_or("unspecified")
-                ))
-                .child(format!(
-                    "Folder (read-only): {}",
-                    editor.bound.bot["folder"]
-                        .as_str()
-                        .unwrap_or("Home")
-                        .chars()
-                        .take(500)
-                        .collect::<String>()
-                ))
-                .child(format!(
-                    "Avatar (read-only): {}",
-                    editor.bound.bot["avatar"]
-                        .to_string()
-                        .chars()
-                        .take(500)
-                        .collect::<String>()
-                ))
-                .child(format!(
-                    "Personality (read-only): {}",
-                    editor.bound.bot["personality"]
-                        .to_string()
-                        .chars()
-                        .take(1000)
-                        .collect::<String>()
                 ));
         }
         pane.child(body)
@@ -695,6 +1432,135 @@ impl Render for BotSettingsPanel {
 mod tests {
     use super::*;
     const ID: &str = "00000000-0000-4000-8000-000000000001";
+    /// A draft that changes only text: the default look, no personality, home folder.
+    pub(super) fn text_fields(name: String, persona: String) -> Fields {
+        Fields {
+            name,
+            persona,
+            ..Fields::from_bot(&json!({}))
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn saved_look_personality_and_folder_read_leniently_like_swift() {
+        let fields = Fields::from_bot(&json!({"name":"Old","persona":"",
+            "avatar":{"shape":"cloud","tint":"future-tint"},
+            "personality":{"preset":"","custom":"  Be brief.  "},"folder":""}));
+        // Earlier body shapes read as their closest character, in its own color.
+        assert_eq!(fields.look, Look::character(Character::Teddy));
+        assert_eq!(
+            fields.personality,
+            Some(Personality {
+                preset: None,
+                custom: "Be brief.".into()
+            })
+        );
+        assert_eq!(fields.folder, None);
+        let empty = Fields::from_bot(&json!({"personality":{"custom":"   "},"avatar":"bad"}));
+        assert_eq!(empty.look, Look::character(Character::Alien));
+        assert_eq!(empty.personality, None);
+        let future = Fields::from_bot(&json!({"personality":{"preset":"future","custom":"kept"}}));
+        assert_eq!(
+            future.personality.unwrap().preset.as_deref(),
+            Some("future")
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn patch_sends_look_personality_and_folder_only_when_changed() {
+        let saved = Fields::from_bot(&json!({"name":"Teddy","persona":"Job",
+            "avatar":{"shape":"teddy","tint":"caramel"},"personality":{"preset":"mentor","custom":""},
+            "folder":"/work"}));
+        assert_eq!(
+            saved.patch(Some(&saved)).unwrap(),
+            json!({"name":"Teddy","persona":"Job"})
+        );
+        let mut draft = saved.clone();
+        draft.look.tint = Tint::Sky;
+        draft.personality = None;
+        draft.folder = None;
+        assert_eq!(
+            draft.patch(Some(&saved)).unwrap(),
+            json!({"name":"Teddy","persona":"Job","avatar":{"shape":"teddy","tint":"sky"},
+                "personality":null,"folder":null})
+        );
+        draft.personality = Some(Personality {
+            preset: Some("calm".into()),
+            custom: "Mine".into(),
+        });
+        assert_eq!(
+            draft.patch(Some(&saved)).unwrap()["personality"],
+            json!({"preset":"calm","custom":"Mine"})
+        );
+        draft.personality = Some(Personality {
+            preset: None,
+            custom: "🦀".repeat(CUSTOM_LIMIT + 1),
+        });
+        assert!(draft.patch(Some(&saved)).is_err());
+        // A new bot sends everything, so it is saved with the look it was shown.
+        let new = Fields::new_bot(&[], 0);
+        let patch = new.patch(None).unwrap();
+        assert_eq!(patch["avatar"], json!({"shape":"alien","tint":"leaf"}));
+        assert_eq!(
+            patch["personality"],
+            json!({"preset":"curious","custom":""})
+        );
+        assert!(patch["folder"].is_null());
+    }
+    #[::core::prelude::v1::test]
+    fn new_bots_take_a_character_none_of_the_bots_is_yet() {
+        let used = Character::ALL[..6].to_vec();
+        for pick in 0..20 {
+            let fields = Fields::new_bot(&used, pick);
+            assert_eq!(fields.look, Look::character(Character::Brulee));
+            assert_eq!(fields.name, "Brulee");
+            assert_eq!(
+                fields.personality.unwrap().preset.as_deref(),
+                Some("cheerful")
+            );
+        }
+        let all = Fields::new_bot(&Character::ALL, 3);
+        assert_eq!(all.look.shape, Character::ALL[3]);
+    }
+    #[::core::prelude::v1::test]
+    fn a_new_character_brings_its_name_and_personality_until_the_user_picks() {
+        let (alien, star) = (Character::Alien, Character::Star);
+        assert_eq!(suggested_name("Alien", alien, star), Some("Star"));
+        assert_eq!(suggested_name("  ", alien, star), Some("Star"));
+        assert_eq!(suggested_name("Fetch", alien, star), None);
+        let curious = Choice::Preset("curious".into());
+        assert_eq!(
+            suggested_personality(&curious, false, alien, star),
+            Some(Choice::Preset("coach".into()))
+        );
+        assert_eq!(
+            suggested_personality(&Choice::None, false, alien, star),
+            Some(Choice::Preset("coach".into()))
+        );
+        assert_eq!(suggested_personality(&curious, true, alien, star), None);
+        assert_eq!(
+            suggested_personality(&Choice::Preset("witty".into()), false, alien, star),
+            None
+        );
+        assert_eq!(
+            suggested_personality(&Choice::Custom, false, alien, star),
+            None
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn folders_show_with_a_tilde_and_home_saves_as_none() {
+        let home = std::env::temp_dir().canonicalize().unwrap();
+        let inside = home.join("work");
+        assert_eq!(folder_label(None, Some(&home)), "~");
+        assert_eq!(
+            folder_label(inside.to_str(), Some(&home)),
+            format!("~{}work", std::path::MAIN_SEPARATOR)
+        );
+        assert_eq!(folder_label(Some("/elsewhere"), None), "/elsewhere");
+        assert_eq!(chosen_folder(&home, Some(&home)), None);
+        assert_eq!(
+            chosen_folder(&inside, Some(&home)).as_deref(),
+            inside.to_str()
+        );
+    }
     fn reply() -> Value {
         json!({"bot":{"id":ID,"name":"Saved","persona":"Instructions","unknown":{"keep":true}},
         "baseline":"a".repeat(64),"origin":"local","instructionsScope":"bot-local","executionConnected":false})
@@ -705,10 +1571,8 @@ mod tests {
             key: ID.into(),
             id: Some(ID.into()),
             baseline: "b".repeat(64),
-            fields: Fields {
-                name: " New name ".into(),
-                persona: "Local bot text".into(),
-            },
+            fields: text_fields(" New name ".into(), "Local bot text".into()),
+            saved: Some(text_fields(String::new(), String::new())),
         };
         let mut calls = Vec::new();
         let outcome = run(
@@ -733,10 +1597,8 @@ mod tests {
             key: NEW.into(),
             id: None,
             baseline: "b".repeat(64),
-            fields: Fields {
-                name: "New".into(),
-                persona: String::new(),
-            },
+            fields: text_fields("New".into(), String::new()),
+            saved: None,
         };
         let mut method = String::new();
         let Outcome::Saved(_, bound) = run(
@@ -755,15 +1617,13 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn conflict_returns_error_without_retry_or_draft_mutation() {
-        let fields = Fields {
-            name: "Draft".into(),
-            persona: "Keep unsaved".into(),
-        };
+        let fields = text_fields("Draft".into(), "Keep unsaved".into());
         let write = Write {
             key: ID.into(),
             id: Some(ID.into()),
             baseline: "b".repeat(64),
             fields: fields.clone(),
+            saved: Some(text_fields(String::new(), String::new())),
         };
         let mut count = 0;
         assert!(
@@ -781,29 +1641,16 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn local_validation_bounds_unicode_and_read_checks_identity() {
+        assert!(text_fields("  ".into(), String::new()).patch(None).is_err());
         assert!(
-            Fields {
-                name: "  ".into(),
-                persona: String::new()
-            }
-            .patch()
-            .is_err()
+            text_fields("Name".into(), "🦀".repeat(20_001))
+                .patch(None)
+                .is_err()
         );
         assert!(
-            Fields {
-                name: "Name".into(),
-                persona: "🦀".repeat(20_001)
-            }
-            .patch()
-            .is_err()
-        );
-        assert!(
-            Fields {
-                name: "Name".into(),
-                persona: "🦀".repeat(20_000)
-            }
-            .patch()
-            .is_ok()
+            text_fields("Name".into(), "🦀".repeat(20_000))
+                .patch(None)
+                .is_ok()
         );
         assert!(
             run(
@@ -816,10 +1663,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn conversation_creation_uses_saved_baseline_only_and_never_sends_or_saves() {
         let bound = Bound::parse(reply()).unwrap();
-        let draft = Fields {
-            name: "Unsaved name".into(),
-            persona: "Unsaved instructions".into(),
-        };
+        let draft = text_fields("Unsaved name".into(), "Unsaved instructions".into());
         let before = draft.clone();
         let request = Conversation::from_saved(&bound).unwrap();
         let mut calls = Vec::new();
@@ -860,6 +1704,7 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod fixture_tests {
+    use super::tests::text_fields;
     use super::*;
     use coincide_core::{api::Engine, store::Store};
     use std::{
@@ -896,10 +1741,11 @@ mod fixture_tests {
             key: NEW.into(),
             id: None,
             baseline: list["baseline"].as_str().unwrap().into(),
-            fields: Fields {
-                name: "Synthetic bot".into(),
-                persona: "Synthetic bot-local instructions".into(),
-            },
+            fields: text_fields(
+                "Synthetic bot".into(),
+                "Synthetic bot-local instructions".into(),
+            ),
+            saved: None,
         };
         let Outcome::Saved(_, created) = run(&mut api, Action::Write(write)).unwrap() else {
             panic!("create")
@@ -913,10 +1759,8 @@ mod fixture_tests {
             key: id.clone(),
             id: Some(id.clone()),
             baseline: read.baseline.clone(),
-            fields: Fields {
-                name: "Synthetic renamed".into(),
-                persona: "Changed local text".into(),
-            },
+            fields: text_fields("Synthetic renamed".into(), "Changed local text".into()),
+            saved: Some(text_fields(String::new(), String::new())),
         };
         let stale = write.clone();
         let Outcome::Saved(_, saved) = run(&mut api, Action::Write(write)).unwrap() else {
@@ -963,7 +1807,9 @@ mod fixture_tests {
                 fields: Fields {
                     name: "  Renamed  ".into(),
                     persona: persona.into(),
+                    ..Fields::from_bot(&read.bot)
                 },
+                saved: Some(Fields::from_bot(&read.bot)),
             }),
         )
         .unwrap() else {
@@ -999,10 +1845,10 @@ mod fixture_tests {
         let Outcome::Read(bound) = run(&mut api, Action::Read(bot_id.clone())).unwrap() else {
             panic!("read")
         };
-        let editor_draft = Fields {
-            name: "Unsaved editor name".into(),
-            persona: "Keep unsaved editor text".into(),
-        };
+        let editor_draft = text_fields(
+            "Unsaved editor name".into(),
+            "Keep unsaved editor text".into(),
+        );
         let before = editor_draft.clone();
         let Outcome::ConversationCreated(thread_id) = run(
             &mut api,

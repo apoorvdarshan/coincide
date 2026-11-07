@@ -32,6 +32,7 @@ impl Coincide {
                 .child(Button::new("about-copy-version").label("Copy Version Info").on_click(cx.listener(move |_,_,_,cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
                 }))))
+            .child(self.updater_settings.clone())
             .child(div().text_lg().child("Help & Community"));
         for (id, label, detail, url) in [
             (
