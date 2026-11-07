@@ -39,6 +39,8 @@ pub(super) struct State {
     epoch: Arc<AtomicU64>,
     review: Option<Arc<PreparedThreadFlags>>,
     undo: Option<Arc<ThreadFlagUndo>>,
+    /// When `undo` was made, among the inbox's Undo receipts (`inbox_undo`).
+    undo_stamp: u64,
     workers: worker_owner::WorkerOwner,
     sender: mpsc::SyncSender<Reply>,
     receiver: mpsc::Receiver<Reply>,
@@ -57,6 +59,7 @@ impl Default for State {
             epoch: Arc::new(AtomicU64::new(0)),
             review: None,
             undo: None,
+            undo_stamp: 0,
             workers: Default::default(),
             sender,
             receiver,
@@ -214,6 +217,7 @@ impl State {
                     undo.count()
                 );
                 self.undo = Some(undo.clone());
+                self.undo_stamp = inbox_undo::stamp();
                 self.review = None;
                 if reply.generation == self.epoch.load(Ordering::Acquire) {
                     self.picked.clear();
@@ -236,6 +240,10 @@ impl State {
                 None
             }
         }
+    }
+    /// The stamp of the latest batch's Undo receipt, while it has one.
+    pub(super) fn undo_stamp(&self) -> Option<u64> {
+        self.undo.as_ref().map(|_| self.undo_stamp)
     }
     pub fn close(&mut self) {
         self.invalidate();
@@ -439,7 +447,7 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn undo_bulk(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn undo_bulk(&mut self, cx: &mut Context<Self>) {
         self.sync_thread_bulk(cx);
         if !self.thread_bulk.binding.available {
             self.thread_bulk.status = "Return to the conversation list before Undo.".into();
@@ -461,6 +469,7 @@ impl Coincide {
     pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_bulk.close_selection();
         self.thread_list_open = !self.thread_list_open;
+        self.remember_sidebar_visibility();
         if !self.thread_list_open && self.thread_list_focus.contains_focused(window, cx) {
             self.navigation_focus.focus(window, cx);
         }
