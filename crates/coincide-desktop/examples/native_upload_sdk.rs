@@ -450,6 +450,11 @@ impl Fixture {
                         (None, true) => Ok(()),
                         (None, false) => Err("native callback owners did not return".into()),
                     };
+                    // macOS quit terminates the process inside run, so report first.
+                    match &outcome {
+                        Ok(()) => println!("{}", pass_line()),
+                        Err(reason) => eprintln!("synthetic native upload: FAIL {reason}"),
+                    }
                     *self.result.lock().unwrap() = Some(outcome);
                     // Only Rust callback/worker owners are drained. SDK view/context
                     // deallocation remains Unknown; runner teardown owns the profile.
@@ -743,22 +748,22 @@ fn main() -> anyhow::Result<()> {
         .expect("owned fixture window unavailable");
         cx.activate(true);
     });
-    let outcome = observed.lock().unwrap().take();
-    match outcome {
-        Some(Ok(())) => {
-            println!(
-                "synthetic native upload: PASS (production probe/worker/attachment scripts, exact bytes, reader refusals, stale-ticket refusal{}; native SDK deallocation unconfirmed)",
-                if cfg!(target_os = "macos") {
-                    ", hidden-tab chooser declined, key-window open panel sheet shown and cancelled"
-                } else if cfg!(target_os = "linux") {
-                    ", hidden-tab chooser declined, visible view's standard chooser shown and cancelled"
-                } else {
-                    ""
-                }
-            );
-            Ok(())
-        }
+    // Hosts whose run returns also report the verdict through the exit status.
+    match observed.lock().unwrap().take() {
+        Some(Ok(())) => Ok(()),
         Some(Err(reason)) => anyhow::bail!("synthetic native upload fixture failed: {reason}"),
         None => anyhow::bail!("synthetic native upload fixture returned no result"),
     }
+}
+fn pass_line() -> String {
+    format!(
+        "synthetic native upload: PASS (production probe/worker/attachment scripts, exact bytes, reader refusals, stale-ticket refusal{}; native SDK deallocation unconfirmed)",
+        if cfg!(target_os = "macos") {
+            ", hidden-tab chooser declined, key-window open panel sheet shown and cancelled"
+        } else if cfg!(target_os = "linux") {
+            ", hidden-tab chooser declined, visible view's standard chooser shown and cancelled"
+        } else {
+            ""
+        }
+    )
 }
