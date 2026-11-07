@@ -311,12 +311,12 @@ fn group_exited(leader: u32) -> Result<bool> {
     let mut pids = [0i32; LIMIT];
     // Native constants/ABI are from the current SDK sys/proc_info.h and the
     // already locked libc definitions. Query ONLY this owned process group.
-    ensure!(
-        unsafe { libc::getpgid(leader as i32) } == leader as i32,
-        "Owned checkout group anchor changed"
-    );
-    // A retained zombie may be omitted from libproc enumeration. Zero entries
-    // is valid only with a successful native query and our unreaped PGID anchor.
+    // Owner::drain has already observed this exact owned Child through
+    // waitid(WNOWAIT), and has not reaped it. That is the PID/PGID anchor.
+    // Darwin getpgid(zombie) returns ESRCH, so it cannot revalidate a returned
+    // leader. Native group enumeration still includes its retained PID.
+    // Zero entries is valid only with a successful native query and the owned
+    // unreaped Child; it never follows a semantic stdout success marker.
     unsafe {
         *libc::__error() = 0;
     }
