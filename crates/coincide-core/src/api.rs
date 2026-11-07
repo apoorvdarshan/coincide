@@ -84,10 +84,10 @@ mod composer_astra_api_tests;
 mod composer_context_api;
 #[path = "composer_file_reference.rs"]
 mod composer_file_reference;
-#[path = "terminal_activity_api.rs"]
-mod terminal_activity_api;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
+#[path = "terminal_activity_api.rs"]
+mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
 mod terminal_context_api;
 #[cfg(test)]
