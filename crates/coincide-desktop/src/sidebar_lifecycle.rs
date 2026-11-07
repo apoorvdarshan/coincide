@@ -27,6 +27,8 @@ enum Undo {
 pub(super) struct State {
     review: Option<Review>,
     undo: Option<Undo>,
+    /// When `undo` was made, among the inbox's Undo receipts (`inbox_undo`).
+    undo_stamp: u64,
     stopping: bool,
     auto_apply: bool,
     status: String,
@@ -34,6 +36,9 @@ pub(super) struct State {
 impl State {
     fn initial_delete(&self) -> bool {
         !self.stopping && !matches!(self.review, Some(Review::Waiting(_)))
+    }
+    pub(super) fn undo_stamp(&self) -> Option<u64> {
+        self.undo.as_ref().map(|_| self.undo_stamp)
     }
     pub(super) fn visible(&self) -> bool {
         self.review.is_some() || self.undo.is_some() || !self.status.is_empty()
@@ -205,6 +210,7 @@ impl Coincide {
         match result {
             Ok(undo) => {
                 self.sidebar_lifecycle.undo = Some(undo);
+                self.sidebar_lifecycle.undo_stamp = inbox_undo::stamp();
                 self.sidebar_lifecycle.status =
                     "Completed. Undo is available while the reviewed content remains unchanged."
                         .into();
@@ -233,7 +239,7 @@ impl Coincide {
         };
         cx.notify();
     }
-    fn undo_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn undo_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }

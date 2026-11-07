@@ -106,6 +106,11 @@ pub fn checkpoints(directory: &Path) -> Result<Value> {
         let id = reference
             .strip_prefix("refs/coincide/checkpoints/")
             .context("Invalid checkpoint namespace")?;
+        // Per-turn snapshots (<thread>/<turn>/<phase>, also written by the
+        // Swift app) share the namespace; only staged checkpoints are listed.
+        if id.contains('/') {
+            continue;
+        }
         checkpoint_ref(id)?;
         validate_oid(commit)?;
         entries.push(json!({"id":id,"commit":commit}));

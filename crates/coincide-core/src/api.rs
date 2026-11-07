@@ -1,4 +1,6 @@
 //! One command dispatcher for the desktop and the local CLI/API.
+#[path = "github_checkout_api.rs"]
+mod github_checkout_api;
 #[path = "reply_selection_api.rs"]
 mod reply_selection_api;
 use crate::{
@@ -17,6 +19,11 @@ use uuid::Uuid;
 
 #[path = "appshots_api.rs"]
 mod appshots_api;
+#[path = "checkpoint_api.rs"]
+mod checkpoint_api;
+#[cfg(test)]
+#[path = "checkpoint_api_tests.rs"]
+mod checkpoint_api_tests;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -51,6 +58,9 @@ mod browser_bookmarks_api;
 mod browser_history_api;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
+#[cfg(test)]
+#[path = "run_clock_tests.rs"]
+mod run_clock_tests;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
@@ -196,6 +206,11 @@ struct Running {
     events: VecDeque<Event>,
     persistence_error: Option<String>,
 }
+#[derive(Clone, Copy)]
+struct RunClock {
+    started_at: f64,
+    connected: bool,
+}
 pub struct Engine {
     appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
@@ -215,6 +230,9 @@ pub struct Engine {
     github: github_engine::GithubState,
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
+    /// When each run started and whether its provider has answered yet, for the
+    /// toolbar's "Connecting…" and "Working m:ss" (`app.status` `runClocks`).
+    run_clocks: HashMap<String, RunClock>,
     /// Runs whose provider has reported anything yet. The others are still
     /// starting, which the transcript's live line says ("Starting Claude…").
     answered_runs: HashSet<String>,
@@ -253,6 +271,7 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
 impl Engine {
@@ -303,6 +322,7 @@ impl Engine {
                 github_engine::GithubState::unavailable()
             },
             runs: HashMap::new(),
+            run_clocks: HashMap::new(),
             answered_runs: HashSet::new(),
             provider_workers: Vec::new(),
             background_workers,
@@ -337,6 +357,7 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            turn_checkpoints: checkpoint_api::State::default(),
             composer_commands: Default::default(),
         }
     }
@@ -390,15 +411,18 @@ impl Engine {
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
         }
+        if checkpoint_api::METHODS.contains(&method) {
+            return self.checkpoint_command(method, p);
+        }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
             "cli.sessions.preview" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
-                session_import_api::preview(p)
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
+                session_import_api::preview(&self.store, p)
             }
             "cli.sessions.import" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
                 let result = session_import_api::import(&mut self.store, p)?;
                 self.revision += 1;
                 Ok(result)
@@ -516,6 +540,7 @@ impl Engine {
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
                 ensure!(self.browser_pending.len()<128,"Too many browser requests; collect completed results first");
+                crate::browser_protocol::validate_screenshot_parameters(p)?;
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
                 let request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
@@ -608,7 +633,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -636,6 +661,7 @@ impl Engine {
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(checkpoint_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
                 methods.push("composer.context.attachTerminalSelection");
@@ -645,7 +671,7 @@ impl Engine {
                 methods.extend_from_slice(github_engine::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(github_threads_engine::METHODS);
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))
             },
@@ -660,7 +686,7 @@ impl Engine {
             "projects.create"=>{let v=self.store.create_project(std::path::Path::new(required(p,"path")?),p["name"].as_str())?;self.revision+=1;Ok(v)}
             "projects.patch"=>{let v=self.store.patch_project(required(p,"projectId")?,&p["patch"])?;self.revision+=1;Ok(v)}
             "settings.read"=>Ok(provider_configuration::public_settings(self.store.document("settings.json")?.unwrap_or(json!({})))),
-            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
+            "settings.patch"=>{let current=self.store.document("settings.json")?.unwrap_or(json!({}));ensure!(p["patch"].get(crate::computer_use::SETTING).is_none_or(|value|current.get(crate::computer_use::SETTING)==Some(value)),"Computer Use can only be turned on or off in Settings › Computer Use");let patch=provider_configuration::retain_legacy_environment(&current,&p["patch"])?;let v=self.store.patch_document("settings.json",&patch)?;self.revision+=1;Ok(provider_configuration::public_settings(v))}
             "threads.list" => Ok(serde_json::to_value(self.store.summaries(
                 p["query"].as_str().unwrap_or(""),
                 p["includeArchived"].as_bool().unwrap_or(false),
@@ -1020,7 +1046,16 @@ impl Engine {
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
-        let runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        let mut runtime_prompt = crate::composer_context::prompt(prompt, &context)?;
+        // Per-thread capabilities valid only for this running app; never saved
+        // as user text (Swift ThreadRunner.ephemeralRuntimeContexts).
+        if let Some(capability) = Uuid::parse_str(&id)
+            .ok()
+            .and_then(|thread| self.computer_use_runtime_context(thread))
+        {
+            runtime_prompt.push_str("\n\n");
+            runtime_prompt.push_str(&capability);
+        }
         let codex_profile = self.codex_login_context(&v)?;
         if let Some(configuration) = provider_configuration::current() {
             configuration.validate_named_profile(
@@ -1330,6 +1365,12 @@ impl Engine {
             SendOrigin::Queued(claim) => Some(claim.id().to_owned()),
             _ => None,
         };
+        let user_item_id = v["items"]
+            .as_array()
+            .and_then(|items| items.last())
+            .map(|item| text(item, "id"))
+            .unwrap_or_default();
+        let checkpoint = self.prepare_turn_checkpoint(&id, &user_item_id, &cwd);
         self.insert_running(
             id,
             Running {
@@ -1349,6 +1390,7 @@ impl Engine {
                     bot_instructions,
                     mode_policy,
                     named_launch,
+                    checkpoint,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1366,7 +1408,30 @@ impl Engine {
     fn insert_running(&mut self, id: String, run: Running) {
         self.answered_runs.remove(&id);
         self.provider_workers.push(run.session.worker_completion());
+        self.run_clocks.insert(
+            id.clone(),
+            RunClock {
+                started_at: swift_timestamp(),
+                connected: false,
+            },
+        );
         self.runs.insert(id, run);
+    }
+    /// Each running thread's start (Swift reference seconds) and whether it is
+    /// still connecting: its provider has sent nothing since the run began.
+    fn run_clocks_status(&self) -> Value {
+        Value::Object(
+            self.runs
+                .keys()
+                .filter_map(|id| {
+                    let clock = self.run_clocks.get(id)?;
+                    Some((
+                        id.clone(),
+                        json!({"startedAt":clock.started_at,"connecting":!clock.connected}),
+                    ))
+                })
+                .collect(),
+        )
     }
     /// Nonblocking observer for trusted native owners. Background observers join
     /// provider threads; completed observations fold into sticky counters here.
@@ -1838,6 +1903,7 @@ impl Engine {
             self.revision += 1;
         }
         self.poll_workspace_completions();
+        self.poll_turn_checkpoints();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
@@ -1852,6 +1918,8 @@ impl Engine {
             }
         }
 
+        let runs = &self.runs;
+        self.run_clocks.retain(|id, _| runs.contains_key(id));
         let ids = self.runs.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             if let Some(run) = self.runs.get_mut(&id)
@@ -1861,6 +1929,9 @@ impl Engine {
             }
             if self.runs[&id].events.is_empty() {
                 continue;
+            }
+            if let Some(clock) = self.run_clocks.get_mut(&id) {
+                clock.connected = true;
             }
             self.answered_runs.insert(id.clone());
             // A worker publishes steering ACK before Finished. Recheck after
@@ -2231,6 +2302,9 @@ impl Engine {
                 }
             }
             self.revision += 1;
+            if finished {
+                self.finish_turn_checkpoint(&id);
+            }
             if finished
                 && let Some(run) = self.runs.remove(&id)
                 && let Some(claim) = run.schedule_claim
