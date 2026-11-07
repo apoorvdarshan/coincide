@@ -1367,3 +1367,27 @@ is built for the remaining close/profile checks. Native terminal132 verified
 stable split resize and actual input routing, then exposed a dead-key composition
 carrying between panes; that concrete native defect is assigned for correction.
 Find far-row verification remains active. No release or user-data cutover occurred.
+
+## Whole-app smoke checkpoint (2026-11-07, after #325–#327)
+
+The parity batch (#325) and its build/launch fixes (#326, #327) are on `main`.
+The macOS binary (`cargo build -p coincide-desktop --bin coincide-rust` with
+`native-microphone,native-notifications,native-computer-use`) now builds and
+starts; the window, menu bar and these surfaces rendered and responded:
+
+- Settings: General (appearance, font size, reply font, message side, themes,
+  terminal placement), Keyboard (rebindable shortcuts with defaults and
+  terminal notes), Browser (search engine, profiles, import, bookmarks),
+  Computer Use (permission state and grant controls), Archive, Usage, Models.
+- Main window: sidebar (bots, pinned, projects, search, schedules), transcript,
+  composer with model/effort/speed/access controls.
+- Terminal drawer: live shell, tabs, history/page/live controls.
+- Scheduled tasks: grouped by bot, recurrence, approval state and
+  "Approve in Rust".
+- Browser preview: tabs, address bar, Agent Control, bookmarks and saved login.
+- Pull Requests panel: Diff, Local Git, GitHub pull requests and inline review
+  tabs, repository entry and first-run action-ledger state.
+- Bot conversation: bot title/avatar, model and schedule context.
+
+This is a functional smoke pass, not side-by-side acceptance. No checkbox above
+is closed by it; each group still needs its documented acceptance run.
