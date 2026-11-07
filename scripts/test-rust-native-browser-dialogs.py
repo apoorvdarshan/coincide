@@ -5,12 +5,9 @@ The caller owns app startup/Quit and supplies its synthetic thread. This never
 opens a personal browser/profile, runs providers, or touches a password manager.
 No local invocation is authorized by this fixture's existence.
 """
-import argparse
 import http.server
 import json
 import os
-from pathlib import Path
-import subprocess
 import threading
 import time
 import uuid
@@ -82,6 +79,9 @@ def exercise_dialogs(rpc, thread_id):
     tab = None
     spare = None
     checks = []
+    report = {'scope': 'Actual native dialogs on owned loopback page only',
+              'checks': checks, 'cleanupErrors': [], 'passed': False}
+    first_error = None
     try:
         opened = browser('new-tab', url=f'http://127.0.0.1:{server.server_port}/owned-dialog-fixture')
         assert 'error' not in opened, opened
@@ -126,48 +126,26 @@ def exercise_dialogs(rpc, thread_id):
         assert 'error' in browser('dialog', tab=tab, dialogId=pending['id'], accept=True)
         tab = None
         checks.append('wrong-tab-and-close-cancellation')
-        return {'scope': 'Actual native dialogs on owned loopback page only', 'checks': checks, 'passed': True}
+    except BaseException as error:
+        first_error = error
+        report['failure'] = repr(error)
     finally:
         for owned in (tab, spare):
             if owned:
                 try:
-                    browser('close-tab', tab=owned)
-                except Exception:
-                    # Do not replace the original failure. App lifetime belongs
-                    # to the outer native fixture and its normal Quit custody.
-                    pass
+                    closed = browser('close-tab', tab=owned)
+                    assert 'error' not in closed, closed
+                except Exception as error:
+                    report['cleanupErrors'].append({'tab': owned, 'error': repr(error)})
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
-        assert not worker.is_alive(), 'Owned HTTP fixture worker did not return'
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--client', required=True)
-    parser.add_argument('--data-dir', required=True)
-    parser.add_argument('--home', required=True)
-    parser.add_argument('--thread', required=True)
-    parser.add_argument('--report', required=True)
-    args = parser.parse_args()
-    assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Fresh GitHub runner only'
-    runner = Path(os.environ['RUNNER_TEMP']).resolve()
-    for value in (args.data_dir, args.home, args.report):
-        assert Path(value).resolve().is_relative_to(runner), 'Fixture must remain in owned runner scratch'
-    env = {name: value for name, value in os.environ.items() if name in ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP')}
-    env.update(HOME=args.home, USERPROFILE=args.home, COINCIDE_RUST_DATA_DIR=args.data_dir)
-    def rpc(method, **params):
-        process = subprocess.run([args.client, 'api'], input=json.dumps({'id': 1, 'method': method, 'params': params})+'\n',
-                                 text=True, capture_output=True, timeout=20, env=env, check=True)
-        response = json.loads(process.stdout)
-        assert 'error' not in response, f'{method}: local request failed'
-        return response['result']
-    assert rpc('app.status').get('preview'), 'Owned application control required'
-    # browser.request additionally requires the actual desktop UI owner; a
-    # standalone client/Core fallback cannot pass any of the tests below.
-    report = exercise_dialogs(rpc, args.thread)
-    Path(args.report).write_text(json.dumps(report, indent=2)+'\n')
-
-
-if __name__ == '__main__':
-    main()
+        if worker.is_alive():
+            report['cleanupErrors'].append({'worker': 'owned HTTP server', 'error': 'did not actually return'})
+    if first_error is not None or report['cleanupErrors']:
+        # Preserve the actual original exception as the cause, plus all exact
+        # cleanup failures. A successful assertion sequence cannot mask a close
+        # failure; the outer fixture retains normal app Quit/process custody.
+        raise AssertionError(json.dumps(report)) from first_error
+    report['passed'] = True
+    return report
