@@ -16,10 +16,18 @@ pub(super) struct Adapter {
     got: Option<i64>,
     lost: Option<i64>,
     focus: Arc<std::sync::atomic::AtomicBool>,
+    focus_window: Arc<std::sync::atomic::AtomicIsize>,
 }
 impl Adapter {
     pub fn focused(&self, _: &wry::WebView) -> bool {
+        use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::IsChild};
+        let anchor = self.focus_window.load(Ordering::Acquire);
+        let current = focused_window();
         self.focus.load(Ordering::Acquire)
+            && anchor != 0
+            && current != 0
+            && (anchor == current
+                || unsafe { IsChild(HWND(anchor as *mut _), HWND(current as *mut _)) }.as_bool())
     }
     pub fn install(
         view: &wry::WebView,
@@ -29,18 +37,39 @@ impl Adapter {
     ) -> Result<Self> {
         let controller = view.controller();
         let focus = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let focus_window = Arc::new(std::sync::atomic::AtomicIsize::new(0));
         let mut adapter = Self {
             controller: controller.clone(),
             token: None,
             got: None,
             lost: None,
             focus: focus.clone(),
+            focus_window: focus_window.clone(),
         };
         for got in [true, false] {
             let focus = focus.clone();
+            let focus_window = focus_window.clone();
+            let controller_for_focus = controller.clone();
             let lease = callbacks.lifetimes().block();
             let handler = FocusChangedEventHandler::create(Box::new(move |_, _| {
                 let _held = &lease;
+                if got {
+                    let mut parent = windows::Win32::Foundation::HWND::default();
+                    let current = focused_window();
+                    let valid = unsafe { controller_for_focus.ParentWindow(&mut parent) }.is_ok()
+                        && current != 0
+                        && current != parent.0 as isize
+                        && unsafe {
+                            windows::Win32::UI::WindowsAndMessaging::IsChild(
+                                parent,
+                                windows::Win32::Foundation::HWND(current as *mut _),
+                            )
+                        }
+                        .as_bool();
+                    focus_window.store(if valid { current } else { 0 }, Ordering::Release);
+                } else {
+                    focus_window.store(0, Ordering::Release);
+                }
                 focus.store(got, Ordering::Release);
                 Ok(())
             }));
@@ -120,5 +149,21 @@ impl Drop for Adapter {
         if let Some(token) = self.lost.take() {
             let _ = unsafe { self.controller.remove_LostFocus(token) };
         }
+    }
+}
+
+// Query the foreground queue now, rather than treating asynchronous LostFocus
+// delivery as proof of current focus. A GPUI composer uses the parent window,
+// while a sibling WebView owns a different descendant HWND.
+fn focused_window() -> isize {
+    use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo};
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetGUIThreadInfo(0, &mut info) }.is_ok() {
+        info.hwndFocus.0 as isize
+    } else {
+        0
     }
 }

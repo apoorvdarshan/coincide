@@ -291,6 +291,16 @@ impl Fixture {
                 Err(error) => self.fail(format!("owned view focus failed: {error}")),
             }
         } else if self.focused.unwrap().elapsed() > Duration::from_millis(100) {
+            // Exercise the same current-focus predicate production dispatch uses,
+            // independently of merely receiving an accelerator callback.
+            if !self.targets[case.view].focused(self.views[case.view].read(cx).raw())
+                || self.targets[1 - case.view].focused(self.views[1 - case.view].read(cx).raw())
+            {
+                self.fail(
+                    "current native focus did not belong exclusively to the owned selected view",
+                );
+                return false;
+            }
             match key(self.views[case.view].read(cx).raw(), case) {
                 Ok(guard) => {
                     self.waiting = Some(Waiting {
