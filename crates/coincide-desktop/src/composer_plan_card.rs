@@ -10,7 +10,7 @@ use gpui_kit::component::text::TextViewState;
 pub(super) const IMPLEMENT_PROMPT: &str = "Implement the plan.";
 pub(super) const PLAN_PLACEHOLDER: &str =
     "Add feedback to refine the plan, or leave this blank to implement it";
-pub(super) const DEFAULT_PLACEHOLDER: &str = "Write a message…";
+pub(super) const DEFAULT_PLACEHOLDER: &str = "Ask anything. @ files, / commands";
 /// Swift keeps the collapsed threads in its interface preferences, most
 /// recent first and capped so threads deleted long ago don't pile up.
 const COLLAPSED_KEY: &str = "composerCollapsedPlanThreads";

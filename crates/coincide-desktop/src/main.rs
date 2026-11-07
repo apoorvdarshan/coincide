@@ -1028,7 +1028,7 @@ impl Coincide {
         quit_shortcut::configure(&settings, cx);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Write a message…")
+                .placeholder("Ask anything. @ files, / commands")
                 .submit_on_enter(settings["sendOnReturn"].as_bool().unwrap_or(true))
         });
         let mut transcription_events = None;
