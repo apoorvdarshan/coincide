@@ -79,7 +79,7 @@ impl Adapter {
                 let raw = &mut (*raw).key;
                 raw.window = window.to_glib_full();
                 raw.send_event = 0;
-                raw.time = gdk::CURRENT_TIME;
+                raw.time = gdk::ffi::GDK_CURRENT_TIME as u32;
                 raw.state = state.bits();
                 raw.keyval = keyval.into_glib();
                 raw.hardware_keycode = u16::try_from(physical.keycode())?;
