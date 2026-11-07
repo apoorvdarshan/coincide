@@ -243,6 +243,160 @@ pub(super) fn installed() -> Vec<Target> {
     }
     targets
 }
+/// T3's picker order: editors, then terminals, then the file manager.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Editor,
+    Terminal,
+    FileManager,
+}
+impl Target {
+    pub(super) fn kind(&self) -> Kind {
+        if self.editor {
+            Kind::Editor
+        } else if matches!(
+            self.id,
+            "com.apple.finder" | "windows.explorer" | "linux.files"
+        ) {
+            Kind::FileManager
+        } else {
+            Kind::Terminal
+        }
+    }
+    /// The installed application bundle (macOS), whose icon menus show.
+    #[cfg(target_os = "macos")]
+    fn application(&self) -> Option<&str> {
+        match self.args.as_slice() {
+            [flag, app] if flag == "-a" => Some(app),
+            _ if self.id == "com.apple.finder" => Some("/System/Library/CoreServices/Finder.app"),
+            _ => None,
+        }
+    }
+}
+/// Swift `OpenTargets.menuItems`: every installed target grouped by kind, in
+/// catalog order within each group.
+pub(super) fn menu_groups(targets: &[Target]) -> Vec<Vec<&Target>> {
+    [Kind::Editor, Kind::Terminal, Kind::FileManager]
+        .into_iter()
+        .map(|kind| {
+            targets
+                .iter()
+                .filter(|target| target.kind() == kind)
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| !group.is_empty())
+        .collect()
+}
+/// The app's own icon, sized for menus, read once per app (macOS).
+#[cfg(target_os = "macos")]
+pub(super) fn icon(target: &Target) -> Option<Arc<Image>> {
+    use std::collections::HashMap;
+    static ICONS: std::sync::Mutex<Option<HashMap<String, Option<Arc<Image>>>>> =
+        std::sync::Mutex::new(None);
+    let app = target.application()?.to_owned();
+    let mut icons = ICONS.lock().ok()?;
+    icons
+        .get_or_insert_with(HashMap::new)
+        .entry(app.clone())
+        .or_insert_with(|| {
+            let path = std::ffi::CString::new(app).ok()?;
+            let bytes = crate::app_shell::application_icon_png(&path, 32)?;
+            Some(Arc::new(Image::from_bytes(ImageFormat::Png, bytes)))
+        })
+        .clone()
+}
+#[cfg(not(target_os = "macos"))]
+pub(super) fn icon(_: &Target) -> Option<Arc<Image>> {
+    None
+}
+/// URL schemes of editors that open `scheme://file/path:line` (Swift `FileOpener`).
+fn line_scheme(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "com.microsoft.VSCode" => "vscode",
+        "com.microsoft.VSCodeInsiders" => "vscode-insiders",
+        "com.vscodium" => "vscodium",
+        "com.todesktop.230313mzl4w4u92" => "cursor",
+        "com.exafunction.windsurf" => "windsurf",
+        "dev.zed.Zed" => "zed",
+        _ => return None,
+    })
+}
+/// Percent-encodes a path as Foundation's `urlPathAllowed` does.
+fn url_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"!$&'()*+,-./:;=@_~".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+/// How a file opens in the editor the "Open in" button uses, at a line when
+/// the editor takes one (Swift `FileOpener.open`): an editor URL, Xcode's
+/// `xed --line`, or the editor's own `file:line` argument off macOS. Without
+/// an editor the system opens the file with its default app.
+pub(super) fn file_launch(
+    target: Option<&Target>,
+    file: &Path,
+    line: Option<usize>,
+) -> Vec<(PathBuf, Vec<std::ffi::OsString>)> {
+    use std::ffi::OsString;
+    let file = file.as_os_str().to_owned();
+    let Some(editor) = target.filter(|target| target.editor) else {
+        #[cfg(target_os = "macos")]
+        return vec![("/usr/bin/open".into(), vec![file])];
+        #[cfg(target_os = "windows")]
+        return vec![(
+            PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
+                .join("explorer.exe"),
+            vec![file],
+        )];
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        return executable("xdg-open")
+            .map(|program| vec![(program, vec![file])])
+            .unwrap_or_default();
+    };
+    let mut launches = Vec::new();
+    if let Some(line) = line {
+        if cfg!(target_os = "macos") {
+            if let Some(scheme) = line_scheme(editor.id) {
+                let url = format!(
+                    "{scheme}://file{}:{line}",
+                    url_path(&file.to_string_lossy())
+                );
+                launches.push(("/usr/bin/open".into(), vec![OsString::from(url)]));
+            } else if editor.id == "com.apple.dt.Xcode" {
+                launches.push((
+                    "/usr/bin/xed".into(),
+                    vec!["--line".into(), line.to_string().into(), file.clone()],
+                ));
+            }
+        } else {
+            let mut at = file.clone();
+            at.push(format!(":{line}"));
+            match editor.id {
+                "com.microsoft.VSCode"
+                | "com.microsoft.VSCodeInsiders"
+                | "com.vscodium"
+                | "com.todesktop.230313mzl4w4u92"
+                | "com.exafunction.windsurf"
+                | "dev.kiro.desktop" => {
+                    launches.push((editor.program.clone(), vec!["--goto".into(), at]))
+                }
+                "dev.zed.Zed" | "com.sublimetext.4" => {
+                    launches.push((editor.program.clone(), vec![at]))
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut args = editor.args.iter().map(OsString::from).collect::<Vec<_>>();
+    args.push(file);
+    launches.push((editor.program.clone(), args));
+    launches
+}
 pub(super) fn preferred<'a>(targets: &'a [Target], settings: &Value) -> Option<&'a Target> {
     targets
         .iter()
@@ -434,12 +588,18 @@ impl Coincide {
             cx.notify();
             return;
         }
+        // Xcode opens a workspace, project or package better than a bare folder.
+        let item = if target.id == "com.apple.dt.Xcode" {
+            coincide_core::project_search::xcode_document(&folder)
+        } else {
+            folder
+        };
         let launch = cx.background_executor().spawn(async move {
             // Spawn is the OS application handoff, not a managed agent process.
             // We intentionally do not wait for the user's editor to exit.
             std::process::Command::new(target.program)
                 .args(target.args)
-                .arg(Path::new(&folder))
+                .arg(Path::new(&item))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -457,6 +617,44 @@ impl Coincide {
                     }
                     Err(error) => error.into(),
                 };
+                cx.notify();
+            });
+        });
+        self.navigation_tasks.push(completion);
+    }
+    /// Opens a palette file in the preferred editor, at `line` where it can.
+    pub(super) fn open_file_at_line(
+        &mut self,
+        file: PathBuf,
+        line: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
+        let launches = file_launch(preferred(&self.open_targets, &self.settings), &file, line);
+        let launch = cx.background_executor().spawn(async move {
+            // The first form the editor accepts wins; none is waited on.
+            launches
+                .into_iter()
+                .find_map(|(program, args)| {
+                    std::process::Command::new(program)
+                        .args(args)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .ok()
+                })
+                .ok_or("The file could not be opened.")
+        });
+        let completion = cx.spawn(async move |this, cx| {
+            let result = launch.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(child) => this.open_target_children.push(child),
+                    Err(error) => this.status = error.into(),
+                }
                 cx.notify();
             });
         });
@@ -497,6 +695,49 @@ mod tests {
         assert_eq!(saved, before);
         assert_eq!(preference_choices(&[], None).len(), 1);
         assert_eq!(preference_choices(&targets, Some("editor")).len(), 4);
+    }
+    #[::core::prelude::v1::test]
+    fn menus_group_editors_terminals_then_the_file_manager() {
+        let mut terminal = target("terminal");
+        terminal.editor = false;
+        let mut files = target("com.apple.finder");
+        files.editor = false;
+        let targets = vec![files, terminal, target("editor"), target("other-editor")];
+        let groups = menu_groups(&targets)
+            .into_iter()
+            .map(|group| group.iter().map(|target| target.id).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups,
+            [
+                vec!["editor", "other-editor"],
+                vec!["terminal"],
+                vec!["com.apple.finder"]
+            ]
+        );
+        assert!(menu_groups(&[]).is_empty());
+    }
+    #[::core::prelude::v1::test]
+    fn files_open_at_a_line_through_the_editor_or_with_the_system_default() {
+        let mut code = target("com.microsoft.VSCode");
+        code.program = "/editor".into();
+        let file = Path::new("/repo/src/a b.rs");
+        let launches = file_launch(Some(&code), file, Some(12));
+        assert_eq!(launches.len(), 2);
+        if cfg!(target_os = "macos") {
+            assert_eq!(launches[0].1, ["vscode://file/repo/src/a%20b.rs:12"]);
+        } else {
+            assert_eq!(launches[0].1, ["--goto", "/repo/src/a b.rs:12"]);
+        }
+        // The plain form always follows, for an editor that refuses the line.
+        assert_eq!(launches[1].0, Path::new("/editor"));
+        assert_eq!(launches[1].1.last().unwrap(), file.as_os_str());
+        assert_eq!(file_launch(Some(&code), file, None).len(), 1);
+        let mut terminal = target("terminal");
+        terminal.editor = false;
+        let system = file_launch(Some(&terminal), file, Some(3));
+        assert!(system.iter().all(|(_, args)| args == &[file.as_os_str()]));
+        assert_eq!(url_path("/a/ü?#"), "/a/%C3%BC%3F%23");
     }
     #[::core::prelude::v1::test]
     fn saved_installed_choice_wins_and_missing_choice_falls_back_without_rewriting_settings() {

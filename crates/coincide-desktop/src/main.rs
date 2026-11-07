@@ -20,6 +20,8 @@ use anyhow::{Context as _, Result};
 mod about_settings;
 mod app_menu;
 mod app_menu_mount;
+mod app_shell;
+mod app_shell_mount;
 mod archive_settings;
 mod assets;
 mod bot_settings;
@@ -76,6 +78,7 @@ mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
+mod palette_catalog;
 mod presentation;
 mod project_defaults_ui;
 mod project_management;
@@ -84,6 +87,7 @@ mod provider_configuration_ui;
 mod provider_settings;
 mod provider_setup_terminal;
 mod queue;
+mod quit_confirmation;
 mod quit_mount;
 mod quit_shortcut;
 mod reply_selection_mount;
@@ -379,6 +383,7 @@ struct Coincide {
     find_last_serial: u64,
     palette_revision: u64,
     palette_entries: Vec<command_palette::PaletteEntry>,
+    palette_menus: Vec<command_palette::PaletteMenu>,
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
@@ -410,6 +415,10 @@ struct Coincide {
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
+    /// The open "Quit Coincide?" prompt.
+    quit_confirmation: Option<Task<()>>,
+    /// Whether this launch already offered the starter bots.
+    starter_bots_checked: bool,
     settings_section: settings::SettingsSection,
     settings_scroll: settings_scroll::State,
     settings_window: Option<gpui_kit::AnyWindowHandle>,
@@ -1079,8 +1088,14 @@ impl Coincide {
                 if matches!(event, InputEvent::Change) { this.selection_model_changed(cx); }
             }),
             cx.subscribe_in(&command_palette, window, |this, _, event, window, cx| {
-                if let command_palette::PaletteEvent::Activated { revision, command } = event {
-                    this.activate_palette(*revision, command.clone(), window, cx);
+                match event {
+                    command_palette::PaletteEvent::Activated { revision, command } => {
+                        this.activate_palette(*revision, command.clone(), window, cx)
+                    }
+                    command_palette::PaletteEvent::Search(request) => {
+                        this.run_palette_search(request.clone(), cx)
+                    }
+                    command_palette::PaletteEvent::Dismissed => {}
                 }
                 this.sync_transcription_binding(cx);
                 cx.notify();
@@ -1339,6 +1354,7 @@ impl Coincide {
             find_last_serial: 0,
             palette_revision: 0,
             palette_entries: Vec::new(),
+            palette_menus: Vec::new(),
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
@@ -1372,6 +1388,8 @@ impl Coincide {
             archive_settings,
             instruction_quit_prompt_pending: false,
             instruction_quit_task: None,
+            quit_confirmation: None,
+            starter_bots_checked: false,
             settings_window: None,
             settings_window_pending: false,
             main_window: window.window_handle(),
@@ -2378,64 +2396,6 @@ impl Coincide {
         }
         transcript::markdown(thread, item, source, window, cx)
     }
-    fn palette_catalog(&self) -> Vec<command_palette::PaletteEntry> {
-        use command_palette::{PaletteCommand as C, PaletteEntry as E};
-        let entry = |command, title, subtitle| E {
-            command,
-            title,
-            subtitle,
-            keywords: Vec::new(),
-            enabled: true,
-            disabled_reason: None,
-        };
-        let mut entries = vec![
-            entry(
-                C::NewThread { project_id: None },
-                "New projectless conversation".into(),
-                None,
-            ),
-            entry(C::OpenSettings, "Open settings".into(), None),
-            entry(C::ShowSchedules, "Show schedules".into(), None),
-            entry(
-                C::SelectProject { project_id: None },
-                "All projects".into(),
-                None,
-            ),
-        ];
-        for project in &self.projects {
-            let id = text(project, "id");
-            if id.is_empty() {
-                continue;
-            }
-            let name = text(project, "name");
-            entries.push(entry(
-                C::SelectProject {
-                    project_id: Some(id.clone()),
-                },
-                format!("Show project: {name}"),
-                None,
-            ));
-            if !id.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
-                entries.push(entry(
-                    C::NewThread {
-                        project_id: Some(id),
-                    },
-                    format!("New conversation in {name}"),
-                    None,
-                ));
-            }
-        }
-        for thread in &self.threads {
-            entries.push(entry(
-                C::OpenThread {
-                    thread_id: thread.id.clone(),
-                },
-                thread.title.clone(),
-                Some("Conversation".into()),
-            ));
-        }
-        entries
-    }
     fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.command_palette
             .update(cx, |palette, cx| palette.dismiss(window, cx));
@@ -2448,15 +2408,14 @@ impl Coincide {
             self.credential_panel
                 .update(cx, |panel, cx| panel.cancel(cx));
             self.palette_revision = self.palette_revision.saturating_add(1);
-            self.palette_entries = self.palette_catalog();
-            let snapshot = command_palette::PaletteSnapshot {
-                revision: self.palette_revision,
-                entries: self.palette_entries.clone(),
-            };
-            if let Err(error) = self
-                .command_palette
-                .update(cx, |palette, cx| palette.open(snapshot, window, cx))
-            {
+            let snapshot = self.palette_snapshot();
+            self.palette_entries = snapshot.entries.clone();
+            self.palette_menus = snapshot.menus.clone();
+            let colors = self.palette_colors();
+            if let Err(error) = self.command_palette.update(cx, |palette, cx| {
+                palette.set_colors(colors);
+                palette.open(snapshot, window, cx)
+            }) {
                 self.status = format!("Palette unavailable: {error}");
             }
         }
@@ -2471,19 +2430,20 @@ impl Coincide {
             self.dismiss_palette(window, cx);
             return;
         }
-        let entries = self.palette_catalog();
-        if !palette_entries_equal(&entries, &self.palette_entries) {
+        let mut snapshot = self.palette_snapshot();
+        if snapshot.entries != self.palette_entries || snapshot.menus != self.palette_menus {
             self.palette_revision = self.palette_revision.saturating_add(1);
-            let snapshot = command_palette::PaletteSnapshot {
-                revision: self.palette_revision,
-                entries: entries.clone(),
-            };
+            snapshot.revision = self.palette_revision;
+            let (entries, menus) = (snapshot.entries.clone(), snapshot.menus.clone());
             if self
                 .command_palette
-                .update(cx, |palette, cx| palette.replace_snapshot(snapshot, cx))
+                .update(cx, |palette, cx| {
+                    palette.replace_snapshot(snapshot, window, cx)
+                })
                 .is_ok()
             {
                 self.palette_entries = entries;
+                self.palette_menus = menus;
             } else {
                 self.dismiss_palette(window, cx);
             }
@@ -2497,12 +2457,29 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         use command_palette::PaletteCommand as C;
-        let current = self.palette_catalog();
-        if revision != self.palette_revision
-            || !palette_entries_equal(&current, &self.palette_entries)
-            || !current
+        let (current, menus) = self.palette_catalog();
+        // Search results are checked against the open thread's folder and the
+        // disk instead of the catalog.
+        let listed = match &command {
+            C::OpenFile { root, path, .. } => self.palette_file(root, path).is_some(),
+            C::AddProject { path } => {
+                std::path::Path::new(path).is_absolute() && std::path::Path::new(path).is_dir()
+            }
+            C::OpenMenu { .. } => false,
+            command => current
                 .iter()
-                .any(|entry| entry.enabled && entry.command == command)
+                .chain(menus.iter().flat_map(|menu| match &menu.content {
+                    command_palette::MenuContent::Lists(lists) => {
+                        lists.iter().flat_map(|list| list.entries.iter()).collect()
+                    }
+                    command_palette::MenuContent::Search(_) => Vec::new(),
+                }))
+                .any(|entry| entry.enabled && &entry.command == command),
+        };
+        if revision != self.palette_revision
+            || current != self.palette_entries
+            || menus != self.palette_menus
+            || !listed
         {
             self.status = "Palette context changed; reopen it to choose again".into();
             return;
@@ -2519,11 +2496,22 @@ impl Coincide {
             ),
             C::OpenSettings => self.open_settings_panel(window, cx),
             C::ShowSchedules => {
-                self.hide_inline_settings();
-                self.workspace_open = false;
-                self.session_import_open = false;
-                self.open_global_schedules(cx);
+                self.run_keyboard_command(keyboard_settings::Command::Schedules, window, cx)
             }
+            C::Action { id } => self.run_palette_action(&id, window, cx),
+            C::AddProject { path } => {
+                if self.project_ui_admitted()
+                    && let Err((_, error)) = self.add_project_paths(&[path.into()], window, cx)
+                {
+                    self.status = format!("The folder was not added: {error}");
+                }
+            }
+            C::OpenFile { root, path, line } => {
+                if let Some(file) = self.palette_file(&root, &path) {
+                    self.open_file_at_line(file, line, cx);
+                }
+            }
+            C::OpenMenu { .. } => {}
         }
         self.sync_transcription_binding(cx);
         cx.notify();
@@ -2616,10 +2604,29 @@ impl Coincide {
         if paths.is_empty() {
             return;
         }
+        match self.add_project_paths(&paths, window, cx) {
+            Ok(()) => self.close_project_form(window, cx),
+            Err((added, error)) => {
+                self.project_management.session.error = format!(
+                    "Added {added} of {} folders. The remaining folder was not added: {error}. Already-added folders will be reused on review.",
+                    paths.len()
+                )
+            }
+        }
+        cx.notify();
+    }
+    /// Adds folders as projects and opens the first one's latest thread, or a
+    /// new one. On failure, how many were added and why the next one was not.
+    fn add_project_paths(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> std::result::Result<(), (usize, String)> {
         let mut first = None;
         let mut added = 0;
         let mut failure = None;
-        for path in &paths {
+        for path in paths {
             match call(&self.engine, "projects.create", json!({"path":path})) {
                 Ok(project) => {
                     if first.is_none() {
@@ -2657,15 +2664,8 @@ impl Coincide {
                 }
             }
         }
-        if let Some(error) = failure {
-            self.project_management.session.error = format!(
-                "Added {added} of {} folders. The remaining folder was not added: {error}. Already-added folders will be reused on review.",
-                paths.len()
-            );
-        } else {
-            self.close_project_form(window, cx);
-        }
         cx.notify();
+        failure.map_or(Ok(()), |error| Err((added, error)))
     }
     fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
         if let Some(v) = self.selected.as_ref() {
@@ -2985,11 +2985,7 @@ impl Coincide {
             && !self.block_voice_close(window, cx)
             && !self.block_provider_configuration_close(window, cx)
         {
-            if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
-                self.prompt_instruction_close(true, window, cx);
-            } else {
-                self.media.shutdown_requested = true;
-            }
+            self.request_quit(window, cx);
         }
         // Persistence must precede either close path, including API app.quit.
         let drafts_saved = self.flush_pending_drafts();
@@ -3082,6 +3078,7 @@ impl Coincide {
             return;
         }
         self.poll_app_menu(window, cx);
+        self.poll_app_shell(window, cx);
         self.poll_appshots(window, cx);
         self.poll_computer_use(cx);
         self.sync_composer_selection(window, cx);
@@ -3206,6 +3203,7 @@ impl Coincide {
                 self.status = "Agent turn ended.".into();
                 cx.notify();
             }
+            app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
                 self.refresh_settings(window, cx);
@@ -4370,6 +4368,8 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Swift's palette floats about a sixth of the way down the window.
+        let palette_top = (f32::from(window.viewport_size().height) * 0.16).max(64.);
         self.sync_context_details();
         // Revoke image-modal input immediately on either close path, before its
         // ordinary conversation surface is replaced by cleanup-only controls.
@@ -4803,37 +4803,28 @@ impl Render for Coincide {
                         .inset_0()
                         .flex()
                         .justify_center()
-                        .pt_16()
-                        .bg(rgba(0x00000080))
+                        .pt(px(palette_top))
+                        .px(px(24.))
+                        // A click beside the palette closes it, as the Swift
+                        // panel closes when it loses focus.
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                            cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.dismiss_palette(window, cx);
+                            }),
                         )
                         .child(
                             div()
                                 .w_full()
-                                .max_w(px(680.))
-                                .h(px(580.))
+                                .max_w(px(640.))
                                 .max_h_full()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .child(self.command_palette.clone()),
                         ),
                 )
             })
     }
-}
-fn palette_entries_equal(
-    a: &[command_palette::PaletteEntry],
-    b: &[command_palette::PaletteEntry],
-) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(a, b)| {
-            a.command == b.command
-                && a.title == b.title
-                && a.subtitle == b.subtitle
-                && a.keywords == b.keywords
-                && a.enabled == b.enabled
-                && a.disabled_reason == b.disabled_reason
-        })
 }
 fn schedule_date(value: &Value) -> String {
     if value.is_null() {
@@ -4859,6 +4850,11 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
     let data = control::data_directory()?;
+    // A second copy hands over to the one already running and quits, as
+    // Swift's SecondInstance does.
+    if app_shell::hand_off(&data.join("control.sock")) {
+        return Ok(());
+    }
     let store = Store::open(&data.join("coincide.sqlite"))?;
     let media_data = store.data_directory()?;
     let media_config = coincide_core::legacy_media_service::ServiceConfig {
@@ -4879,43 +4875,96 @@ fn main() -> Result<()> {
     let application = gpui_kit::platform::linux(WindowingModes::X11);
     #[cfg(not(target_os = "linux"))]
     let application = gpui_kit::application();
-    application
-        .with_assets(assets::CoincideAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            composer_file_picker::init(cx);
-            composer_follow_up_mount::init(cx);
-            let quit_requested = app_menu::install(cx);
-            transcript::init(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
-            let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
-            gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(820.), px(520.))),
-                    ..Default::default()
-                },
-                cx,
-                |window, cx| {
-                    window.set_window_title("Coincide Rust Preview");
-                    cx.new(|cx| {
-                        Coincide::new(
-                            engine,
-                            native_editors,
-                            quit_requested,
-                            control_owner,
-                            data.join("browser-profile"),
-                            media_config,
-                            window,
-                            cx,
-                        )
-                    })
-                },
-            )
-            .expect("Unable to open Coincide window");
-            cx.activate(true);
+    let application = application.with_assets(assets::CoincideAssets);
+    // Clicking the Dock icon brings the main window back after it was closed.
+    application.on_reopen(reopen_main_window);
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        composer_file_picker::init(cx);
+        composer_follow_up_mount::init(cx);
+        let quit_requested = app_menu::install(cx);
+        app_shell::install(cx);
+        transcript::init(cx);
+        Theme::change(ThemeMode::Dark, None, cx);
+        cx.set_global(Launch {
+            engine,
+            native_editors,
+            quit_requested,
+            control_owner,
+            profile_dir: data.join("browser-profile"),
+            media_config,
         });
+        open_main_window(cx).expect("Unable to open Coincide window");
+        cx.activate(true);
+    });
     Ok(())
+}
+
+/// What a main window is made from, kept so the Dock can open it again.
+#[derive(Clone)]
+struct Launch {
+    engine: SharedEngine,
+    native_editors: coincide_core::native_ui_edits::NativeUiEditors,
+    quit_requested: Arc<std::sync::atomic::AtomicBool>,
+    control_owner: Arc<Mutex<control::Server>>,
+    profile_dir: std::path::PathBuf,
+    media_config: coincide_core::legacy_media_service::ServiceConfig,
+}
+impl Global for Launch {}
+/// The open main window, for the Dock to bring forward.
+struct MainWindow(AnyWindowHandle, WeakEntity<Coincide>);
+impl Global for MainWindow {}
+
+fn open_main_window(cx: &mut App) -> Result<()> {
+    let launch = cx
+        .try_global::<Launch>()
+        .cloned()
+        .context("Coincide has not launched")?;
+    let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+    let (handle, root) = gpui_kit::open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(820.), px(520.))),
+            ..Default::default()
+        },
+        cx,
+        |window, cx| {
+            window.set_window_title("Coincide Rust Preview");
+            cx.new(|cx| {
+                Coincide::new(
+                    launch.engine,
+                    launch.native_editors,
+                    launch.quit_requested,
+                    launch.control_owner,
+                    launch.profile_dir,
+                    launch.media_config,
+                    window,
+                    cx,
+                )
+            })
+        },
+    )?;
+    cx.set_global(MainWindow(handle, root.downgrade()));
+    Ok(())
+}
+
+/// Swift `applicationShouldHandleReopen`: the main window comes forward, or a
+/// new one opens when it was closed. Never while quitting.
+fn reopen_main_window(cx: &mut App) {
+    let open = cx.try_global::<MainWindow>().and_then(|main| {
+        (main.1.upgrade().is_some() && cx.windows().contains(&main.0)).then_some(main.0)
+    });
+    if let Some(main) = open {
+        let _ = main.update(cx, |_, window, _| window.activate_window());
+    } else if !cx
+        .try_global::<Launch>()
+        .is_some_and(|launch| launch.engine.try_lock().is_ok_and(|engine| engine.shutdown))
+        && let Err(error) = open_main_window(cx)
+    {
+        eprintln!("Unable to reopen the Coincide window: {error}");
+        return;
+    }
+    cx.activate(true);
 }
 
 #[cfg(test)]
