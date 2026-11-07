@@ -109,21 +109,6 @@ def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
         request("viewport", first, width=400, height=300)
         wait_text(first, "NativeViewport400x300")
         request("viewport", first, reset=True)
-        # The native banner belongs to app chrome, never to the page. Keep its
-        # owned request pending during the actual parent screenshot capture.
-        operation = rpc("browser.request", threadId=thread_id, action="ask-user",
-                        message="Owned native Your turn fixture", timeout=3)["operationId"]
-        time.sleep(.2)
-        capture_visible()
-        deadline = time.monotonic() + 10
-        while True:
-            reply = rpc("browser.result", threadId=thread_id, operationId=operation)
-            if reply.get("ready"):
-                assert reply["result"] == {"result": "timeout"}, reply
-                receipts.append("ask-user-timeout")
-                break
-            assert time.monotonic() < deadline, "Native user-turn timeout receipt missing"
-            time.sleep(.05)
         request("input", first, selector="#fixture-field", text=text)
         request("click", first, selector="#fixture-commit")
         wait_text(first, text)
@@ -145,7 +130,22 @@ def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
         wait_text(second, marker)
         request("select-tab", first)
         wait_text(first, "NativeBrowserSecondReady")
+        # The native banner belongs to app chrome, never to the page. Keep its
+        # owned request pending at the parent's existing SecondReady capture stage.
+        # Its OCR assertion must still observe the selected second page.
+        operation = rpc("browser.request", threadId=thread_id, action="ask-user",
+                        message="Owned native Your turn fixture", timeout=3)["operationId"]
+        time.sleep(.2)
         capture_visible()
+        deadline = time.monotonic() + 10
+        while True:
+            reply = rpc("browser.result", threadId=thread_id, operationId=operation)
+            if reply.get("ready"):
+                assert reply["result"] == {"result": "timeout"}, reply
+                receipts.append("ask-user-timeout")
+                break
+            assert time.monotonic() < deadline, "Native user-turn timeout receipt missing"
+            time.sleep(.05)
         request("hide", first)
         request("close-tab", second)
         tabs.remove(second)

@@ -30,6 +30,8 @@ mod browser_dialog_ui;
 mod browser_login_mount;
 mod browser_settings;
 mod browser_user_turn_ui;
+#[cfg(any(target_os = "windows", test))]
+mod browser_viewport_geometry;
 mod chat_inspector;
 mod chat_layout;
 mod chat_turns;

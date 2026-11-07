@@ -98,9 +98,43 @@ impl Coincide {
         let area = self.browser_page_bounds.clone();
         let measured = area.get();
         let scale = viewport.map_or(1., |size| viewport_scale(size, measured));
+        let zoom = f64::from(scale);
+        let dimensions =
+            viewport.map(|(width, height)| (width as f32 * scale, height as f32 * scale));
+        #[cfg(target_os = "windows")]
+        let (zoom, dimensions) = {
+            let (mut zoom, mut dimensions) = (zoom, dimensions);
+            if let (Some(size), Some(area), Some(view)) = (viewport, measured, webview.as_ref()) {
+                use windows::Win32::{Foundation::HWND, UI::HiDpi::GetDpiForWindow};
+                use wry::WebViewExtWindows;
+                let mut parent = HWND::default();
+                if unsafe { view.read(cx).raw().controller().ParentWindow(&mut parent) }.is_ok() {
+                    let dpi = unsafe { GetDpiForWindow(parent) };
+                    if dpi > 0 {
+                        let fit = (f64::from(f32::from(area.size.width)) / f64::from(size.0))
+                            .min(f64::from(f32::from(area.size.height)) / f64::from(size.1))
+                            .clamp(0.1, 1.);
+                        if let Some(layout) = crate::browser_viewport_geometry::aligned(
+                            size,
+                            fit,
+                            f64::from(dpi) / 96.,
+                        ) {
+                            zoom = layout.zoom;
+                            dimensions = Some((layout.width, layout.height));
+                        }
+                    }
+                }
+            }
+            (zoom, dimensions)
+        };
         if let Some(view) = &webview {
-            let zoom = f64::from(scale);
-            if (view.read(cx).zoom() - zoom).abs() > 0.001 {
+            if (view.read(cx).zoom() - zoom).abs()
+                > if cfg!(target_os = "windows") {
+                    1e-9
+                } else {
+                    0.001
+                }
+            {
                 let _ = view.read(cx).set_zoom(zoom);
             }
         }
@@ -117,14 +151,14 @@ impl Coincide {
             .absolute()
             .size_full(),
         );
-        match (webview, viewport) {
+        match (webview, dimensions) {
             (Some(view), Some((width, height))) => page.child(
                 div()
                     .absolute()
                     .top_0()
                     .left_0()
-                    .w(px(width as f32 * scale))
-                    .h(px(height as f32 * scale))
+                    .w(px(width))
+                    .h(px(height))
                     .child(view),
             ),
             (Some(view), None) => page.child(div().absolute().size_full().child(view)),
