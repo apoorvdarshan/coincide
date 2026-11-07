@@ -2,8 +2,8 @@
 //! which resolves authoritative stored thread roots and runs prepare off UI locks.
 //! Official semantics: docs.github.com/en/rest/pulls/{pulls,reviews}.
 //! No CLI merge/review convenience command: fixed REST routes, explicit host,
-//! JSON stdin, no auto-merge/admin/queue or retries. COMMENT targets a commit;
-//! APPROVE/REQUEST_CHANGES remain disabled (no atomic current-head condition).
+//! JSON stdin, no auto-merge/admin/queue or retries. Reviews explicitly target
+//! the confirmed commit; no review claims an atomic current-head condition.
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -151,12 +151,14 @@ impl Action {
         match self {
             Self::Review { event, body } => {
                 ensure!(
-                    event == "COMMENT",
-                    "Only commit-targeted COMMENT reviews are supported"
+                    ["COMMENT", "APPROVE", "REQUEST_CHANGES"].contains(&event.as_str()),
+                    "Unsupported commit-targeted review event"
                 );
                 ensure!(
-                    !body.trim().is_empty() && body.len() <= 32768 && !body.contains('\0'),
-                    "Review body must contain 1–32768 bytes without NUL"
+                    (event == "APPROVE" || !body.trim().is_empty())
+                        && body.len() <= 32768
+                        && !body.contains('\0'),
+                    "Review body must be at most 32768 bytes without NUL; comments and change requests need text"
                 );
             }
             Self::Merge { method } => ensure!(
@@ -929,6 +931,12 @@ impl GithubWriteService {
         let endpoint = format!("repos/{}/pulls/{}", scope.repository, scope.number);
         match action {
             Action::Review { event, body } => {
+                let state = match event.as_str() {
+                    "COMMENT" => "COMMENTED",
+                    "APPROVE" => "APPROVED",
+                    "REQUEST_CHANGES" => "CHANGES_REQUESTED",
+                    _ => bail!("Unsupported confirmed review event"),
+                };
                 let bytes = self.0.gh.run(
                     &scope.expected_root,
                     &api("POST", &format!("{endpoint}/reviews"), true),
@@ -952,7 +960,7 @@ impl GithubWriteService {
                 ensure!(
                     verified["id"].as_u64() == Some(id)
                         && verified["commit_id"].as_str() == Some(scope.expected_head.as_str())
-                        && verified["state"] == "COMMENTED"
+                        && verified["state"] == state
                         && verified["body"].as_str() == Some(body.as_str())
                         && verified["html_url"]
                             .as_str()
@@ -960,7 +968,7 @@ impl GithubWriteService {
                     "Review verification mismatch"
                 );
                 Ok(
-                    json!({"kind":"review","reviewId":id,"url":url,"commit":scope.expected_head,"state":"COMMENTED"}),
+                    json!({"kind":"review","reviewId":id,"url":url,"commit":scope.expected_head,"state":state}),
                 )
             }
             Action::Merge { method } => {
@@ -1005,15 +1013,27 @@ fn availability(snapshot: &Value) -> Result<Value> {
     let bytes = serde_json::to_vec(snapshot)?;
     let pr = crate::workspace_github::parse_snapshot(&bytes)?;
     let merge = cfg!(unix) && pr.preflight(&pr.head_ref_oid)?["eligible"] == true;
-    let comment = cfg!(unix) && pr.state == "OPEN";
-    Ok(
-        json!({"review":{"COMMENT":{"available":comment,"reason":if comment{Value::Null}else{json!("PR not open or backend unavailable")}},"APPROVE":{"available":false,"reason":"Atomic current-head review condition unavailable"},"REQUEST_CHANGES":{"available":false,"reason":"Atomic current-head review condition unavailable"}},"merge":{"available":merge,"reason":if merge{Value::Null}else{json!("Fresh checks/review/mergeability preflight is not eligible")},"methods":["merge","squash","rebase"]},"notice":NOTICE}),
-    )
+    let review = cfg!(unix) && pr.state == "OPEN";
+    let reason = if review {
+        Value::Null
+    } else {
+        json!("PR not open or backend unavailable")
+    };
+    Ok(json!({
+        "review": {
+            "COMMENT": {"available":review,"reason":reason},
+            "APPROVE": {"available":review,"reason":reason},
+            "REQUEST_CHANGES": {"available":review,"reason":reason}
+        },
+        "merge": {"available":merge,"reason":if merge{Value::Null}else{json!("Fresh checks/review/mergeability preflight is not eligible")},"methods":["merge","squash","rebase"]},
+        "notice":NOTICE
+    }))
 }
+
 fn permitted(action: &Action, snapshot: &Value) -> Result<bool> {
     let value = availability(snapshot)?;
     Ok(match action {
-        Action::Review { .. } => value["review"]["COMMENT"]["available"] == true,
+        Action::Review { event, .. } => value["review"][event]["available"] == true,
         Action::Merge { .. } => value["merge"]["available"] == true,
     })
 }
@@ -1191,8 +1211,8 @@ else:
  endpoint=next(v for v in args if v.startswith('repos/'))
  if method=='POST':
   assert endpoint=='repos/owner/project/pulls/7/reviews'
-  assert set(body)=={'commit_id','event','body'} and body['event']=='COMMENT' and body['commit_id']=='a'*40
-  value={'id':19,'state':'COMMENTED','body':body['body'],'commit_id':body['commit_id'],'html_url':'https://github.com/owner/project/pull/7#pullrequestreview-19'}
+  assert set(body)=={'commit_id','event','body'} and body['event'] in ['COMMENT','APPROVE','REQUEST_CHANGES'] and body['commit_id']=='a'*40
+  value={'id':19,'state':{'COMMENT':'COMMENTED','APPROVE':'APPROVED','REQUEST_CHANGES':'CHANGES_REQUESTED'}[body['event']],'body':body['body'],'commit_id':body['commit_id'],'html_url':'https://github.com/owner/project/pull/7#pullrequestreview-19'}
   json.dump(value,open('review.json','w'))
   if os.path.exists('timeout-response'):
    with open('timeout-pid','w') as f:f.write(str(os.getpid()))
@@ -1389,6 +1409,35 @@ else:
         assert_eq!(writes(dir.path()), 1);
     }
     #[test]
+    fn explicit_commit_approval_and_change_request_are_verified_once_and_cannot_change_event() {
+        for (event, state, body) in [
+            ("APPROVE", "APPROVED", ""),
+            (
+                "REQUEST_CHANGES",
+                "CHANGES_REQUESTED",
+                "Please handle the specified commit's failure.",
+            ),
+        ] {
+            let (dir, service, p) = fixture();
+            let request = request(
+                &service,
+                &p,
+                json!({"kind":"review","event":event,"body":body}),
+            );
+            submit(&service, &request).unwrap();
+            let verified = wait(&service, &request);
+            assert_eq!(verified["status"], "succeeded");
+            assert_eq!(verified["result"]["state"], state);
+            assert_eq!(verified["result"]["commit"], "a".repeat(40));
+            assert_eq!(submit(&service, &request).unwrap(), verified);
+            assert_eq!(writes(dir.path()), 1);
+            let mut changed = request.clone();
+            changed["action"]["event"] = json!("COMMENT");
+            assert!(submit(&service, &changed).is_err());
+            assert_eq!(writes(dir.path()), 1);
+        }
+    }
+    #[test]
     fn synchronous_merge_has_server_head_condition_no_queue_and_verified_merge_commit() {
         let (dir, service, p) = fixture();
         let request = request(&service, &p, json!({"kind":"merge","method":"squash"}));
@@ -1474,13 +1523,13 @@ else:
         let baseline = prepare(&service, &p);
         assert_eq!(
             baseline["availability"]["review"]["APPROVE"]["available"],
-            false
+            true
         );
         assert_eq!(baseline["availability"]["notice"], NOTICE);
         let mut request = p.clone();
         request["baselineId"] = baseline["baselineId"].clone();
         request["mutationId"] = json!(uuid::Uuid::new_v4().to_string());
-        request["action"] = json!({"kind":"review","event":"APPROVE","body":""});
+        request["action"] = json!({"kind":"review","event":"DISMISS","body":""});
         assert!(submit(&service, &request).is_err());
         assert!(result(&service, &request).is_err());
         let wrong = tempfile::tempdir().unwrap();
