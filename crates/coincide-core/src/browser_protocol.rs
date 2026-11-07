@@ -1155,7 +1155,7 @@ mod dialog_request_tests {
     #[test]
     fn dialog_identity_is_distinct_from_operation_and_cannot_target_frame_or_oversize_reply() {
         let dialog_id = uuid::Uuid::new_v4().to_string();
-        let value = serde_json::json!({"id":"operation-1","threadId":"thread-1","action":"dialog","dialogId":dialog_id,"accept":true,"text":"synthetic"});
+        let value = serde_json::json!({"id":"operation-1","threadId":uuid::Uuid::new_v4().to_string(),"action":"dialog","dialogId":dialog_id,"accept":true,"text":"synthetic"});
         let mut request: BrowserRequest = serde_json::from_value(value).unwrap();
         request.validate().unwrap();
         assert_eq!(request.id, "operation-1");
