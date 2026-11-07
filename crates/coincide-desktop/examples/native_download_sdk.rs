@@ -196,7 +196,10 @@ struct Fixture {
     stage: u8,
     seen: Vec<String>,
     started: Instant,
-    failure: Option<String>,
+    case_started: Instant,
+    sibling_rows: usize,
+    closing: bool,
+    failures: Vec<String>,
     drain_reported: bool,
     result: Arc<Mutex<Option<bool>>>,
 }
@@ -251,6 +254,8 @@ impl Fixture {
             };
             let view = gpui_webview::WebView::build(builder, window, cx)
                 .context("synthetic native view construction failed")?;
+            #[cfg(target_os = "linux")]
+            trace_webkitgtk(view.raw(), tabs.len());
             let owner = native_downloads::Owner::install(
                 &view,
                 &thread,
@@ -292,7 +297,10 @@ impl Fixture {
             stage: 0,
             seen: Vec::new(),
             started: Instant::now(),
-            failure: None,
+            case_started: Instant::now(),
+            sibling_rows: 0,
+            closing: false,
+            failures: Vec::new(),
             drain_reported: false,
             result,
         })
@@ -348,123 +356,166 @@ impl Fixture {
         }
         Ok(())
     }
-    fn step(&mut self, cx: &mut Context<Self>) -> Result<bool> {
+    /// Each case is independent: a failed or stalled case is recorded and the
+    /// next one still runs, so one runner attempt reports every outcome.
+    const CASES: [&'static str; 5] = [
+        "download attribute in the first view",
+        "same URL in the sibling view",
+        "document-origin blob",
+        "response-policy attachment from an API navigation",
+        "closing the first view cancels its active transfer",
+    ];
+    fn begin(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        self.case_started = Instant::now();
+        self.sibling_rows = self.rows(1).len();
         match self.stage {
-            0 if self
-                .tabs
-                .iter()
-                .all(|tab| tab.loaded.load(Ordering::Acquire)) =>
-            {
-                // API navigation to an attachment: the response-policy path, no script.
-                self.tabs[0]
-                    .view
-                    .read(cx)
-                    .raw()
-                    .load_url(&self.server.url("/attachment"))?;
-            }
-            1 => {
-                let Some(row) = self.new_finished(0) else {
-                    return Ok(false);
-                };
-                self.verify(&row, ATTACHMENT_BODY)?;
-                ensure!(row["name"] == "owned-attachment.txt", "suggested name lost");
-                self.click(0, "#http", cx)?;
-            }
+            1 => self.click(0, "#http", cx),
             2 => {
-                let Some(row) = self.new_finished(0) else {
-                    return Ok(false);
-                };
-                self.verify(&row, HTTP_BODY)?;
-                ensure!(
-                    self.rows(1).is_empty(),
-                    "sibling view in the same context received a download"
-                );
-                self.click(1, "#http", cx)?;
+                self.sibling_rows = self.rows(0).len();
+                self.click(1, "#http", cx)
             }
-            3 => {
-                let Some(row) = self.new_finished(1) else {
-                    return Ok(false);
-                };
-                self.verify(&row, HTTP_BODY)?;
-                ensure!(self.rows(0).len() == 2, "first view changed");
-                self.click(0, "#blob", cx)?;
-            }
-            4 => {
-                let Some(row) = self.new_finished(0) else {
-                    return Ok(false);
-                };
-                self.verify(&row, BLOB_BODY)?;
-                ensure!(self.rows(1).len() == 1, "blob reached the sibling view");
-                self.click(0, "#slow", cx)?;
-            }
-            5 => {
-                let active = self.rows(0).iter().any(|row| row["state"] == "downloading");
-                if !active || !self.server.slow_started.load(Ordering::Acquire) {
-                    return Ok(false);
-                }
-                self.tabs[0].owner.close();
-            }
-            6 => {
-                let rows = self.rows(0);
-                let Some(row) = rows.iter().find(|row| row["name"] == "owned-slow.bin") else {
-                    return Ok(false);
-                };
-                if row["state"] == "downloading" || row["state"] == "unconfirmed" {
-                    return Ok(false);
-                }
-                ensure!(row["state"] == "cancelled", "closing did not cancel: {row}");
-                ensure!(
-                    row.get("path").is_none(),
-                    "cancelled download published a path"
-                );
-                if !self.server.slow_returned.load(Ordering::Acquire) {
-                    return Ok(false);
-                }
-                let sibling = self.rows(1);
-                ensure!(
-                    sibling.len() == 1 && sibling[0]["state"] == "finished",
-                    "closing one view changed its sibling"
-                );
-                self.tabs[1].owner.close();
-            }
-            _ => return Ok(false),
+            3 => self.click(0, "#blob", cx),
+            4 => Ok(self.tabs[0]
+                .view
+                .read(cx)
+                .raw()
+                .load_url(&self.server.url("/attachment"))?),
+            5 => self.click(0, "#slow", cx),
+            _ => Ok(()),
         }
-        println!("synthetic native download stage {} passed", self.stage);
-        self.stage += 1;
+    }
+    /// Ok(true) once the current case's actual native outcome was verified.
+    fn check(&mut self) -> Result<bool> {
+        let (tab, sibling, expected): (usize, usize, &[u8]) = match self.stage {
+            1 => (0, 1, HTTP_BODY),
+            2 => (1, 0, HTTP_BODY),
+            3 => (0, 1, BLOB_BODY),
+            4 => (0, 1, ATTACHMENT_BODY),
+            _ => return self.check_cancellation(),
+        };
+        let Some(row) = self.new_finished(tab) else {
+            return Ok(false);
+        };
+        self.verify(&row, expected)?;
+        if self.stage == 4 {
+            ensure!(row["name"] == "owned-attachment.txt", "suggested name lost");
+        }
+        ensure!(
+            self.rows(sibling).len() == self.sibling_rows,
+            "the other view in the same context received this download"
+        );
         Ok(true)
     }
-    fn poll(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.failure.is_none() {
-            if self.started.elapsed() > Duration::from_secs(90) {
-                // A deadline is a failure, never a native callback receipt.
-                self.failure = Some(format!("deadline exceeded at stage {}", self.stage));
-            } else if let Err(error) = self.step(cx) {
-                self.failure = Some(format!("stage {}: {error:#}", self.stage));
+    fn check_cancellation(&mut self) -> Result<bool> {
+        let rows = self.rows(0);
+        let Some(row) = rows.iter().find(|row| row["name"] == "owned-slow.bin") else {
+            return Ok(false);
+        };
+        if !self.closing {
+            if row["state"] != "downloading" || !self.server.slow_started.load(Ordering::Acquire) {
+                ensure!(
+                    row["state"] == "downloading",
+                    "slow transfer ended early: {row}"
+                );
+                return Ok(false);
             }
-            if let Some(failure) = &self.failure {
-                eprintln!("synthetic native download failure: {failure}");
-                // Owned synthetic rows only: states, names, runner paths, errors.
-                for tab in &self.tabs {
-                    eprintln!(
-                        "synthetic native download rows: {}",
-                        self.registry.borrow().list(&self.thread, Some(&tab.id))
-                    );
-                }
-                for tab in &self.tabs {
-                    tab.owner.close();
-                }
-                self.stage = 7;
+            self.closing = true;
+            self.tabs[0].owner.close();
+            return Ok(false);
+        }
+        if row["state"] == "downloading" || row["state"] == "unconfirmed" {
+            return Ok(false);
+        }
+        ensure!(row["state"] == "cancelled", "closing did not cancel: {row}");
+        ensure!(
+            row.get("path").is_none(),
+            "cancelled download published a path"
+        );
+        if !self.server.slow_returned.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        ensure!(
+            self.rows(1).len() == self.sibling_rows,
+            "closing one view changed its sibling"
+        );
+        Ok(true)
+    }
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        loop {
+            self.stage += 1;
+            if self.stage > 5 {
+                return;
+            }
+            match self.begin(cx) {
+                Ok(()) => return,
+                Err(error) => self.fail(format!("{error:#}")),
             }
         }
-        if self.stage < 7 {
+    }
+    fn fail(&mut self, reason: String) {
+        let name = Self::CASES[usize::from(self.stage - 1)];
+        let failure = format!("case {} ({name}): {reason}", self.stage);
+        eprintln!("synthetic native download failure: {failure}");
+        // Owned synthetic rows only: states, names, runner paths, errors.
+        for tab in &self.tabs {
+            eprintln!(
+                "synthetic native download rows: {}",
+                self.registry.borrow().list(&self.thread, Some(&tab.id))
+            );
+        }
+        self.failures.push(failure);
+    }
+    fn poll(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.stage == 0 {
+            if self
+                .tabs
+                .iter()
+                .all(|tab| tab.loaded.load(Ordering::Acquire))
+            {
+                println!("synthetic native download pages loaded");
+                self.advance(cx);
+            } else if self.started.elapsed() > Duration::from_secs(30) {
+                // A deadline is a failure, never a native callback receipt.
+                self.failures
+                    .push("owned pages never finished loading".into());
+                eprintln!("synthetic native download failure: owned pages never loaded");
+                self.stage = 6;
+            }
             return false;
+        }
+        if self.stage <= 5 {
+            // A deadline only marks this case failed; it is never a receipt.
+            let expired = self.case_started.elapsed() > Duration::from_secs(25);
+            match self.check() {
+                Ok(true) => {
+                    println!(
+                        "synthetic native download case {} passed: {}",
+                        self.stage,
+                        Self::CASES[usize::from(self.stage - 1)]
+                    );
+                    self.advance(cx);
+                }
+                Ok(false) if expired => {
+                    self.fail("no verified native outcome within 25 seconds".into());
+                    self.advance(cx);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    self.fail(format!("{error:#}"));
+                    self.advance(cx);
+                }
+            }
+            return false;
+        }
+        for tab in &self.tabs {
+            tab.owner.close();
         }
         let pending = self.tabs.iter().map(|tab| tab.owner.pending()).sum();
         let status = self.shutdown.status(pending, 0, 0);
         // The production quit condition: every native download and callback
         // owner actually returned. Owners and views stay retained until then.
         if status.downloads_pending != 0 || status.callbacks_pending != 0 {
-            if self.started.elapsed() > Duration::from_secs(120) && !self.drain_reported {
+            if self.started.elapsed() > Duration::from_secs(240) && !self.drain_reported {
                 // Report once and keep waiting: unknown owners are retained.
                 self.drain_reported = true;
                 eprintln!(
@@ -474,10 +525,11 @@ impl Fixture {
             }
             return false;
         }
-        if !self.server.join() && self.failure.is_none() {
-            self.failure = Some("owned HTTP server did not return".into());
+        if !self.server.join() {
+            self.failures
+                .push("owned HTTP server did not return".into());
         }
-        *self.result.lock().unwrap() = Some(self.failure.is_none());
+        *self.result.lock().unwrap() = Some(self.failures.is_empty());
         cx.quit();
         true
     }
@@ -489,6 +541,45 @@ impl Render for Fixture {
             row = row.child(div().flex_1().h_full().child(tab.view.clone()));
         }
         row
+    }
+}
+/// Diagnostics only: the raw WebKitGTK policy and download signals, connected
+/// before the production owner so they observe without deciding anything.
+#[cfg(target_os = "linux")]
+fn trace_webkitgtk(view: &wry::WebView, label: usize) {
+    use webkit2gtk::{
+        DownloadExt, ResponsePolicyDecision, ResponsePolicyDecisionExt, URIRequestExt,
+        URIResponseExt, WebContextExt, WebViewExt,
+    };
+    use wry::WebViewExtUnix;
+    let view = view.webview();
+    view.connect_decide_policy(move |_, decision, kind| {
+        use gtk::glib::prelude::Cast;
+        let detail = decision
+            .downcast_ref::<ResponsePolicyDecision>()
+            .map(|response| {
+                format!(
+                    " supported={} uri={:?}",
+                    response.is_mime_type_supported(),
+                    response.response().and_then(|response| response.uri())
+                )
+            })
+            .unwrap_or_default();
+        eprintln!("trace view{label}: decide-policy {kind:?}{detail}");
+        false
+    });
+    if label == 0
+        && let Some(context) = view.context()
+    {
+        context.connect_download_started(|_, download| {
+            eprintln!(
+                "trace: download-started has_view={} uri={:?}",
+                download.web_view().is_some(),
+                download.request().and_then(|request| request.uri())
+            );
+            download.connect_failed(|_, error| eprintln!("trace: download failed: {error}"));
+            download.connect_finished(|_| eprintln!("trace: download finished signal"));
+        });
     }
 }
 fn fresh_runner_root() -> Result<PathBuf> {
