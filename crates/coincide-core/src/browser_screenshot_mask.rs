@@ -4,7 +4,13 @@
 //!
 //! Mask all editable controls conservatively, and whole embedded documents,
 //! canvases and custom-element hosts whose private/shadow content cannot be
-//! inspected reliably. A MutationObserver invalidates *any* intervening page
+//! inspected reliably. Native snapshot painting flushes layout/style; do not
+//! await requestAnimationFrame (hidden/minimized documents can suspend it).
+//! WebKitGTK2.40 FrameView::paintContentsForSnapshot calls
+//! updateLayoutAndStyleIfNeededRecursive before painting:
+//! https://github.com/WebKit/WebKit/blob/webkitgtk-2.40.0/Source/WebCore/page/FrameView.cpp#L4418
+//! WKSnapshotConfiguration additionally requests afterScreenUpdates.
+//! A MutationObserver invalidates *any* intervening page
 //! mutation. Moving/animated pages may therefore refuse a screenshot safely.
 //! This does not promise detection of secrets drawn as ordinary page content.
 
@@ -54,7 +60,12 @@ try {
  state.observer=new MutationObserver(()=>{state.dirty=true;});
  state.observer.observe(root,{subtree:true,childList:true,attributes:true,characterData:true});
  globalThis[key]=state;
- await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+ // Flush style synchronously; the actual native snapshot API paints current
+ // layout again after this real JS callback. No frame/timer is a completion ACK.
+ root.getBoundingClientRect();
+ for(const [node] of saved) if(getComputedStyle(node).opacity!=='0'){
+  state.observer.disconnect();restore();delete globalThis[key];return '';
+ }
  if(state.dirty || state.observer.takeRecords().length || root!==document.documentElement ||
     location.href!==expectedURL || innerWidth!==width || innerHeight!==height || scrollX!==sx || scrollY!==sy){
   state.observer.disconnect();restore();delete globalThis[key];return '';

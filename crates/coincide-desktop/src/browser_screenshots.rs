@@ -21,6 +21,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
+    time::{Duration, Instant},
 };
 
 pub(super) struct Binding {
@@ -40,6 +41,7 @@ impl Binding {
     }
 }
 struct Pending {
+    started: Instant,
     request: BrowserRequest,
     binding: Binding,
     raw: Option<Receiver<Result<screenshot_native::Pixels, &'static str>>>,
@@ -99,6 +101,7 @@ impl Owner {
         let (sender, raw) = mpsc::sync_channel(1);
         let native_returned = Arc::new(AtomicBool::new(false));
         self.job = Some(Pending {
+            started: Instant::now(),
             request,
             binding,
             raw: Some(raw),
@@ -139,7 +142,12 @@ impl Owner {
     ) -> Option<BrowserReply> {
         self.worker.poll();
         let job = self.job.as_mut()?;
-        if callbacks.closed() || !source_matches(&job.binding) {
+        // This deadline revokes delivery only. It neither ACKs a native SDK
+        // invocation nor releases an unjoined worker/unknown callback owner.
+        if callbacks.closed()
+            || job.started.elapsed() >= Duration::from_secs(20)
+            || !source_matches(&job.binding)
+        {
             job.binding.cancelled.store(true, Ordering::Release);
         }
         if let Some(raw) = &job.raw {
@@ -269,13 +277,13 @@ impl Owner {
 mod tests {
     use super::*;
     use coincide_core::browser_protocol::BrowserAction;
-    use std::time::{Duration, Instant};
     fn pending(
         owner: &mut Owner,
         delivered: bool,
     ) -> mpsc::SyncSender<Result<screenshot_native::Pixels, &'static str>> {
         let (sender, receiver) = mpsc::sync_channel(1);
         owner.job = Some(Pending {
+            started: Instant::now(),
             request: BrowserRequest {
                 id: "private-test".into(),
                 thread_id: uuid::Uuid::new_v4().to_string(),
@@ -336,6 +344,32 @@ mod tests {
         assert_eq!(callbacks.pending(), 0);
         assert!(!path.exists() || std::fs::read_dir(path).unwrap().next().is_none());
     }
+    #[test]
+    fn snapshot_budget_revokes_without_acknowledging_unknown_native_return() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut owner = Owner::new(temp.path().join("snapshots"));
+        let callbacks = Callbacks::default();
+        let sender = pending(&mut owner, false);
+        owner.job.as_mut().unwrap().started = Instant::now() - Duration::from_secs(21);
+        assert!(owner.poll(&callbacks, |_| true).is_none());
+        assert!(!owner.job.as_ref().unwrap().binding.current());
+        assert!(owner.job.is_some());
+        owner
+            .job
+            .as_ref()
+            .unwrap()
+            .native_returned
+            .store(true, Ordering::Release);
+        sender
+            .send(Ok(pixels()))
+            .unwrap_or_else(|_| panic!("private callback receiver"));
+        let reply = owner
+            .poll(&callbacks, |_| true)
+            .expect("only an actual fake-adapter return retires this owner");
+        assert!(reply.result.get("path").is_none());
+        assert_eq!(owner.worker.status().returned, 0);
+    }
+
     #[test]
     fn unknown_native_callback_release_cannot_ack_or_reopen_admission() {
         let temp = tempfile::tempdir().unwrap();
