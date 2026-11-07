@@ -112,6 +112,9 @@ impl Fixture {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // As in BrowserController::new: WebKitGTK contexts require GTK first.
+        #[cfg(target_os = "linux")]
+        gtk::init().expect("owned GTK initialization failed");
         let mut context = wry::WebContext::new(Some(files.root.join("runtime")));
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_incognito(true)
