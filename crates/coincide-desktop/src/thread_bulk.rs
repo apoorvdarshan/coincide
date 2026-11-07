@@ -408,7 +408,7 @@ impl Coincide {
     fn bulk_drafts_clean(&self, ids: &[String]) -> bool {
         !ids.iter().any(|id| self.pending_drafts.contains_key(id))
     }
-    fn review_bulk(&mut self, action: Action, cx: &mut Context<Self>) {
+    pub(super) fn review_bulk(&mut self, action: Action, cx: &mut Context<Self>) {
         self.sync_thread_bulk(cx);
         let ids: Vec<_> = self.thread_bulk.picked.iter().cloned().collect();
         if ids.is_empty() || !self.bulk_drafts_clean(&ids) {
@@ -557,6 +557,28 @@ impl Coincide {
                     .label(action.label())
                     .disabled(busy || state.picked.is_empty())
                     .on_click(cx.listener(move |this, _, _, cx| this.review_bulk(action, cx))),
+                );
+            }
+            // Swift's bulk Settle Threads, Unsettle Threads and Delete Threads.
+            let running = state.picked.iter().any(|id| self.running.contains(id));
+            for (id, label, action) in [
+                ("settle", "Settle", sidebar_menus::BulkAction::Settle(true)),
+                (
+                    "unsettle",
+                    "Unsettle",
+                    sidebar_menus::BulkAction::Settle(false),
+                ),
+                ("delete", "Delete…", sidebar_menus::BulkAction::Delete),
+            ] {
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("sidebar-bulk-{id}")))
+                        .compact()
+                        .label(label)
+                        .disabled(busy || state.picked.is_empty() || (id == "settle" && running))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let ids = this.thread_bulk.picked.iter().cloned().collect::<Vec<_>>();
+                            this.sidebar_bulk_action(&ids, action, window, cx)
+                        })),
                 );
             }
             panel = panel.child(actions);
