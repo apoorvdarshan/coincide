@@ -487,3 +487,25 @@ fn authentication_deadline_covers_a_stalled_tls_handshake() {
     fixture.server.stop();
     assert_eq!(shared.connections.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn explicit_reset_recovers_malformed_devices_without_startup_overwrite() {
+    use crate::remote::secrets::SecretBackend;
+    let mut fixture = fixture();
+    fixture
+        .secrets
+        .write("devices", b"damaged-fixture")
+        .unwrap();
+    fixture.server.set_enabled(true);
+    assert!(matches!(fixture.server.status(), Status::Failed(_)));
+    assert_eq!(
+        &*fixture.secrets.read("devices").unwrap().unwrap(),
+        b"damaged-fixture"
+    );
+    fixture.server.reset_identity().unwrap();
+    assert!(fixture.secrets.read("devices").unwrap().is_none());
+    fixture.server.set_enabled(false);
+    fixture.server.set_enabled(true);
+    assert!(matches!(fixture.server.status(), Status::Running { .. }));
+    fixture.server.stop();
+}

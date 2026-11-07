@@ -497,7 +497,9 @@ impl RemoteServer {
     pub fn reset_identity(&mut self) -> Result<()> {
         let was_running = self.running.is_some();
         self.stop();
-        Pairing::new(Box::new(SecretDeviceStorage(self.secrets.clone())))?.revoke_all();
+        // Explicit reset also recovers malformed credentials without parsing or
+        // silently overwriting them during ordinary startup.
+        self.secrets.delete("devices")?;
         Identity::reset(self.secrets.as_ref())?;
         self.fingerprint = None;
         if was_running {

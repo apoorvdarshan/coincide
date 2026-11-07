@@ -44,17 +44,19 @@ impl Identity {
 
     /// The saved identity, or a new one made and saved now.
     pub fn load_or_create(secrets: &dyn SecretBackend) -> Result<Self> {
-        if let Some(saved) = secrets.read(ENTRY)?
-            && let Ok(saved) = serde_json::from_slice::<Saved>(&saved)
-        {
+        if let Some(saved) = secrets.read(ENTRY)? {
+            let saved: Saved = serde_json::from_slice(&saved).context(
+                "The saved Remote identity is invalid; reset its certificate explicitly.",
+            )?;
             let engine = base64::engine::general_purpose::STANDARD;
             let identity = Self {
                 key: Zeroizing::new(engine.decode(saved.key)?),
                 certificate: engine.decode(saved.certificate)?,
             };
-            if identity.validate().is_ok() {
-                return Ok(identity);
-            }
+            identity.validate().context(
+                "The saved Remote identity is invalid; reset its certificate explicitly.",
+            )?;
+            return Ok(identity);
         }
         let identity = Self::create()?;
         let engine = base64::engine::general_purpose::STANDARD;
@@ -109,7 +111,7 @@ impl Identity {
         })
     }
 
-    /// Rejects a damaged saved identity, which is then made again.
+    /// Rejects a damaged saved identity without replacing saved credentials.
     fn validate(&self) -> Result<()> {
         EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_ASN1_SIGNING,
@@ -316,12 +318,15 @@ mod tests {
     }
 
     #[test]
-    fn a_damaged_saved_identity_is_made_again() {
+    fn a_damaged_saved_identity_is_preserved_until_explicit_reset() {
         let secrets = MemorySecrets::default();
         secrets
             .write(ENTRY, b"{\"key\":\"AA==\",\"certificate\":\"AA==\"}")
             .unwrap();
-        let identity = Identity::load_or_create(&secrets).unwrap();
-        assert_eq!(identity.certificate[0], 0x30);
+        let before = secrets.read(ENTRY).unwrap().unwrap();
+        assert!(Identity::load_or_create(&secrets).is_err());
+        assert_eq!(&*secrets.read(ENTRY).unwrap().unwrap(), &*before);
+        Identity::reset(&secrets).unwrap();
+        assert!(Identity::load_or_create(&secrets).is_ok());
     }
 }

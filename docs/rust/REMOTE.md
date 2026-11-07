@@ -7,7 +7,9 @@ pairing QR/code, paired devices, revoke, and certificate reset.
 
 TLS identities and token hashes use the platform secret store, scoped to the
 app data directory. No secret-store access occurs while disabled. Pairing
-requires a saved credential before returning success. The listener admits
+requires a saved credential before returning success. Malformed existing
+identities/device credentials fail closed and retain their original bytes until
+an explicit certificate reset. The listener admits
 local/private/link-local/Tailscale peers, limits concurrent connections, rate
 limits failed authentication, and bounds complete authentication including TLS
 and WebSocket handshakes. Disable/quit interrupts owned sockets before joining

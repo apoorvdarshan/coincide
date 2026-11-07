@@ -85,7 +85,8 @@ pub struct SecretDeviceStorage(pub Arc<dyn SecretBackend>);
 impl super::pairing::DeviceStorage for SecretDeviceStorage {
     fn load(&self) -> Result<Vec<super::pairing::PairedDevice>> {
         Ok(match self.0.read("devices")? {
-            Some(json) => serde_json::from_slice(&json).unwrap_or_default(),
+            Some(json) => serde_json::from_slice(&json)
+                .context("Saved Remote devices are invalid and have been retained")?,
             None => Vec::new(),
         })
     }
@@ -120,5 +121,18 @@ impl SecretBackend for MemorySecrets {
             .map_err(|_| anyhow::anyhow!("poisoned"))?
             .remove(id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::pairing::DeviceStorage;
+    #[test]
+    fn malformed_device_credentials_are_retained_and_block_loading() {
+        let secrets = Arc::new(MemorySecrets::default());
+        secrets.write("devices", b"not-json").unwrap();
+        assert!(SecretDeviceStorage(secrets.clone()).load().is_err());
+        assert_eq!(&*secrets.read("devices").unwrap().unwrap(), b"not-json");
     }
 }
