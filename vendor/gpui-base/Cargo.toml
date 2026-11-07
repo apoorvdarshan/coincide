@@ -36,6 +36,7 @@ repository = "https://github.com/longbridge/gpui-kit"
 resolver = "2"
 
 [features]
+native-edit-test-support = []
 decimal = ["dep:rust_decimal"]
 gpui-fast = ["dep:gpui-fast"]
 inspector = [

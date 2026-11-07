@@ -210,7 +210,7 @@ impl InputBaseState<TextareaMode> {
     }
     /// Fixed synthetic unwind probe for private TestPlatform fixtures only.
     /// No callback or source/authority constructor is exposed.
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "native-edit-test-support")]
     #[doc(hidden)]
     pub fn native_transient_unwind_fixture(&mut self) -> bool {
         let emit = self.emit_events;
