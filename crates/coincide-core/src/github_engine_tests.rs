@@ -238,7 +238,7 @@ fn executable_discovery_is_metadata_only_and_explicit_invalid_never_falls_back()
     assert!(!root.join("argv.txt").exists());
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[test]
 fn unavailable_platform_does_not_advertise_or_start_github() {
     let directory = tempfile::tempdir().unwrap();
@@ -256,5 +256,35 @@ fn unavailable_platform_does_not_advertise_or_start_github() {
             .unwrap_err()
             .to_string()
             .contains("not supported")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_missing_or_invalid_cli_does_not_fall_back_or_advertise() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing-gh.exe");
+    assert!(
+        resolve(
+            Some(missing.as_os_str()),
+            Some(directory.path().as_os_str())
+        )
+        .is_err()
+    );
+    let invalid = directory.path().join("gh.exe");
+    std::fs::write(&invalid, b"not a Windows executable").unwrap();
+    assert!(resolve(Some(invalid.as_os_str()), None).is_err());
+    let mut owner = Engine::new(Store::open(&directory.path().join("data.sqlite")).unwrap());
+    owner.github = GithubState::configured(
+        Some(missing.as_os_str()),
+        Some(directory.path().as_os_str()),
+    );
+    assert!(owner.github_cli_path().is_err());
+    let engine = Arc::new(Mutex::new(owner));
+    let capabilities = call(&engine, "app.capabilities", json!({})).unwrap();
+    assert!(
+        METHODS
+            .iter()
+            .all(|method| !capabilities.as_array().unwrap().contains(&json!(method)))
     );
 }
