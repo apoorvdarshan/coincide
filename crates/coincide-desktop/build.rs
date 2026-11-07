@@ -181,17 +181,35 @@ fn compile_apple_speech() {
     let object_bytes = std::fs::read(&object).expect("Read compiled Swift object");
     let options = swift_link_options::extract(&object_bytes)
         .expect("Extract Darwin Swift runtime requirements");
+    // Validate only. Darwin's linker already consumes LC_LINKER_OPTION with
+    // native availability semantics. Re-emitting options as explicit flags
+    // strengthens weak dependencies and wrongly links header-only frameworks.
     let mut flags = options.iter().map(String::as_str);
     while let Some(flag) = flags.next() {
         if let Some(library) = flag.strip_prefix("-l") {
             assert!(!library.is_empty());
-            println!("cargo:rustc-link-lib={library}");
+            assert!(
+                library
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.".contains(&byte)),
+                "Invalid Swift autolink library"
+            );
         } else if flag == "-framework" {
             let framework = flags.next().expect("Framework name");
-            println!("cargo:rustc-link-lib=framework={framework}");
+            assert!(
+                framework
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.".contains(&byte)),
+                "Invalid Swift autolink framework"
+            );
         } else if flag == "-weak_framework" {
             let framework = flags.next().expect("Weak framework name");
-            println!("cargo:rustc-link-arg=-Wl,-weak_framework,{framework}");
+            assert!(
+                framework
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.".contains(&byte)),
+                "Invalid Swift weak framework"
+            );
         } else {
             panic!("Unrecognized Swift autolink requirement: {flag}");
         }
@@ -208,7 +226,6 @@ fn compile_apple_speech() {
         println!("cargo:rustc-link-search=native={}", path.display());
     }
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
-    println!("cargo:rustc-link-lib=framework=Speech");
 }
 #[cfg(not(target_os = "macos"))]
 fn compile_apple_speech() {
