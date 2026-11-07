@@ -119,7 +119,16 @@ fn shortcut_matches(path: &Path, exe: &Path, app_id: &str) -> Result<bool> {
         native_file::path_identity(path)? == identity,
         "Notification shortcut changed"
     );
-    Ok(args[0] == 0 && target == exe && stored == app_id)
+    // IShellLink may normalize a Win32 path while std canonicalize uses the
+    // verbatim prefix. Compare canonical paths and actual file identities,
+    // never reject a legitimate shortcut because of representation alone.
+    let target = target.canonicalize()?;
+    let target_file = native_file::open_regular(&target, false)?;
+    let executable_file = native_file::open_regular(exe, false)?;
+    let same_target = target.as_path() == exe
+        && native_file::file_identity(&target_file)?
+            == native_file::file_identity(&executable_file)?;
+    Ok(args[0] == 0 && same_target && stored == app_id)
 }
 fn status(exe: &Path, shortcut: &Path, app_id: &str) -> Result<Permission> {
     match fs::symlink_metadata(shortcut) {
