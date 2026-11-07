@@ -576,3 +576,21 @@ fn distinct_commands_have_distinct_keys() {
     let unique = keys.iter().collect::<std::collections::HashSet<_>>();
     assert_eq!(unique.len(), keys.len());
 }
+
+#[test]
+fn reopening_cannot_accept_an_earlier_openings_search_reply() {
+    let mut previous = Model::new(snapshot(1, Vec::new())).unwrap();
+    previous.query("/old");
+    let old = previous.take_request().unwrap();
+    let mut reopened = Model::new(snapshot(2, Vec::new())).unwrap();
+    reopened.continue_generation(previous.generation);
+    reopened.query("/new");
+    let current = reopened.take_request().unwrap();
+    assert!(current.generation > old.generation);
+    assert!(!reopened.set_results(old.generation, Vec::new()).unwrap());
+    assert!(
+        reopened
+            .set_results(current.generation, Vec::new())
+            .unwrap()
+    );
+}

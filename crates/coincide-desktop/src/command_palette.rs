@@ -565,6 +565,13 @@ impl Model {
         m.rebuild();
         Ok(m)
     }
+    // Keep request identities unique across openings as well as queries.
+    fn continue_generation(&mut self, previous: u64) {
+        self.generation += previous;
+        if let Some(request) = &mut self.request {
+            request.generation = self.generation;
+        }
+    }
     fn prepare(&mut self) {
         let prefix = self.snapshot.branch_prefix.clone();
         self.prepared = prepare(&self.snapshot.entries, &prefix);
@@ -1076,12 +1083,7 @@ impl CommandPalette {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let mut model = Model::new(snapshot)?;
-        // Generations keep counting across openings, so a search an earlier
-        // opening asked for can never deliver into this one.
-        model.generation += self.model.as_ref().map_or(0, |model| model.generation);
-        if let Some(request) = &mut model.request {
-            request.generation = model.generation;
-        }
+        model.continue_generation(self.model.as_ref().map_or(0, |model| model.generation));
         if !self.is_open() {
             self.restore = window.focused(cx);
         }
