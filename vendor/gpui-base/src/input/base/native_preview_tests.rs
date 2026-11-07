@@ -65,11 +65,13 @@ fn native_transient_preview_restores_original_and_keeps_one_final_undo(cx: &mut 
                     receipt = state
                         .replace_without_undo(
                             &receipt,
-                            &expected,
-                            7..previous_end,
-                            text,
-                            end..end,
-                            false,
+                            TransientReplacement {
+                                expected: &expected,
+                                range: 7..previous_end,
+                                replacement: text,
+                                selection_after: end..end,
+                                reversed: false,
+                            },
                             window,
                             cx,
                         )
@@ -81,11 +83,13 @@ fn native_transient_preview_restores_original_and_keeps_one_final_undo(cx: &mut 
                 state
                     .replace_without_undo(
                         &receipt,
-                        &expected,
-                        7..end,
-                        "🦀",
-                        7..11,
-                        false,
+                        TransientReplacement {
+                            expected: &expected,
+                            range: 7..end,
+                            replacement: "🦀",
+                            selection_after: 7..11,
+                            reversed: false,
+                        },
                         window,
                         cx,
                     )
