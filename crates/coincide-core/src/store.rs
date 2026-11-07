@@ -10,6 +10,9 @@ pub(crate) use thread_idle::NewThreadRow;
 mod navigation_cache;
 #[path = "store_project_defaults.rs"]
 mod project_defaults;
+#[path = "store_project_scripts.rs"]
+mod store_project_scripts;
+pub use store_project_scripts::ScriptEdit;
 #[path = "project_management.rs"]
 mod project_management;
 #[path = "store_provider_account_removal.rs"]

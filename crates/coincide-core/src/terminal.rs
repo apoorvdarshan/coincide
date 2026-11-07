@@ -86,6 +86,17 @@ impl Terminal {
         }
     }
     pub fn spawn(cwd: &Path, shell: &str, rows: u16, cols: u16) -> Result<Self> {
+        Self::spawn_with_environment(cwd, shell, rows, cols, &[])
+    }
+    /// `environment` is set after inherited agent bindings are removed, as a
+    /// project script's `COINCIDE_PROJECT_ROOT` and worktree path are.
+    pub fn spawn_with_environment(
+        cwd: &Path,
+        shell: &str,
+        rows: u16,
+        cols: u16,
+        environment: &[(String, String)],
+    ) -> Result<Self> {
         ensure!(cwd.is_dir(), "Terminal working directory does not exist");
         check_size(rows, cols)?;
         let pty = native_pty_system().openpty(PtySize {
@@ -117,6 +128,19 @@ impl Terminal {
             "COINCIDE_CONTROL_SOCKET",
             std::env::temp_dir().join(format!("coincide-unbound-{}.sock", uuid::Uuid::new_v4())),
         );
+        for (name, value) in environment {
+            ensure!(
+                matches!(
+                    name.as_str(),
+                    "COINCIDE_PROJECT_ROOT"
+                        | "COINCIDE_WORKTREE_PATH"
+                        | "T3CODE_PROJECT_ROOT"
+                        | "T3CODE_WORKTREE_PATH"
+                ),
+                "Terminal environment may name only project script locations"
+            );
+            command.env(name, value);
+        }
         let shell_launch = shell::ShellLaunch::prepare(
             shell,
             command
@@ -1183,6 +1207,10 @@ impl PendingTerminalShutdown {
                 // Avoid signalling an already reaped PID. Signal only the directly
                 // owned child; never a process group. Confirmed wait resolves a
                 // benign kill error; a failed wait remains unknown.
+                // Release the owner's controlling PTY endpoint before waiting
+                // for a Unix session leader to finish terminal teardown.
+                #[cfg(unix)]
+                drop(resources.master.take());
                 let waited = match resources.child.try_wait() {
                     Ok(Some(status)) => Ok(status),
                     _ => {
@@ -1682,5 +1710,38 @@ mod shutdown_tests {
         assert!(state.error.is_some());
         assert!(!state.ready());
         assert!(pending._resources.lock().unwrap().is_some());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod active_shell_shutdown_regression {
+    use super::*;
+    use std::time::{Duration, Instant};
+    #[test]
+    fn active_private_shell_is_reaped_before_owner_drain_reports_ready() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ready");
+        let mut terminal = Terminal::spawn(root.path(), "/bin/sh", 6, 40).unwrap();
+        terminal
+            .write(&format!("printf ready > '{}'\r", marker.display()))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(&marker).ok().as_deref() != Some("ready") {
+            assert!(
+                Instant::now() < deadline,
+                "private shell did not execute builtin"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pending = terminal.request_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !pending.poll().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private shell drain stalled: {:?}",
+                pending.poll()
+            );
+            thread::yield_now();
+        }
     }
 }

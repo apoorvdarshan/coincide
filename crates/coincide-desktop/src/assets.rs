@@ -29,6 +29,11 @@ icon_assets!(
         Brain,
         CornerUpRight,
         Hammer,
+        // Project script icons (Swift ProjectScript.Icon) and the scripts menu.
+        BadgeCheck,
+        WandSparkles,
+        Bug,
+        SquarePlay,
         ListPlus,
         Lock,
         LockOpen,
@@ -233,6 +238,11 @@ mod tests {
             "icons/bug.svg",
             "icons/lightbulb.svg",
             "icons/circle-question-mark.svg",
+            // Project script icons and the scripts menu.
+            "icons/play.svg",
+            "icons/badge-check.svg",
+            "icons/wand-sparkles.svg",
+            "icons/settings.svg",
             // Pull request glyphs and schedule row marks.
             // The Diff inspector's empty states.
             // The bot editor's personality chips.
@@ -243,6 +253,16 @@ mod tests {
             "icons/pin.svg",
             // Empty states shared by sidebar chrome and Diff inspector.
             "icons/diff.svg",
+
+            // Project script icons and the scripts menu.
+            "icons/play.svg",
+            "icons/badge-check.svg",
+            "icons/wand-sparkles.svg",
+            "icons/settings.svg",
+            "icons/bug.svg",
+            "icons/square-play.svg",
+            // Empty states shared by sidebar chrome and Diff inspector.
+>>>>>>> origin/feat/parity-project-scripts-52f19
             "icons/folder-x.svg",
             "icons/git-pull-request.svg",
             "icons/shield-alert.svg",

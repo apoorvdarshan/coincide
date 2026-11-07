@@ -78,6 +78,8 @@ mod codex_tool_metadata;
 mod composer_choices_api;
 #[path = "project_management_api.rs"]
 mod project_management_api;
+#[path = "project_scripts_api.rs"]
+mod project_scripts_api;
 #[path = "provider_restore_api.rs"]
 mod provider_restore_api;
 #[path = "provider_switch_api.rs"]
@@ -580,14 +582,8 @@ impl Engine {
             "app.quit"=>{ensure!(self.native_ui_editors.pending() == 0,"Unsaved native editor changes require Save or Discard before quitting");ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
             "app.activate"=>{self.activation_requested=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
-                ensure!(self.terminals.len()<32,"Too many terminal panes");
-                let thread=required(p,"threadId")?;
-                let v=self.store.thread(thread)?;
-                let cwd=self.working_directory(&v)?;
                 let shell=std::env::var("SHELL").unwrap_or_else(|_|if cfg!(windows){"powershell.exe".into()}else{"/bin/sh".into()});
-                let terminal=crate::terminal::Terminal::spawn(&cwd,&shell,24,100)?;
-                let id=Uuid::new_v4().to_string();self.terminals.insert(id.clone(),(thread.into(),terminal));self.revision+=1;
-                Ok(json!({"terminalId":id}))
+                self.create_terminal(p,&shell)
             }
             "terminal.list"=>Ok(json!(self.terminals.iter().filter(|(_, (thread,_))|p["threadId"].as_str().is_none_or(|id|thread==id)).map(|(id,(thread,terminal))|json!({"terminalId":id,"threadId":thread,"title":terminal.title})).collect::<Vec<_>>())),
             "terminal.read"=>{

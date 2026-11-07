@@ -101,6 +101,7 @@ mod presentation;
 mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
+mod project_scripts_ui;
 mod provider_configuration_ui;
 mod provider_settings;
 mod provider_setup_terminal;
@@ -553,6 +554,7 @@ struct Coincide {
     archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
     project_defaults: project_defaults_ui::State,
+    project_scripts: project_scripts_ui::State,
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
@@ -1061,6 +1063,7 @@ impl Coincide {
         let models_settings = models_settings::ModelsSettings::new(window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
         let general_settings = general_settings::State::new(cx);
+        let project_scripts = project_scripts_ui::State::new(window, cx);
         let model_picker_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
@@ -1376,6 +1379,7 @@ impl Coincide {
         subscriptions.extend(models_settings.subscriptions(window, cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(general_settings.subscriptions(window, cx));
+        subscriptions.extend(project_scripts.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
@@ -1592,6 +1596,7 @@ impl Coincide {
             archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
             project_defaults: project_defaults_ui::State::new(window, cx),
+            project_scripts,
             project_picker_open: false,
             project_path,
             selected: None,
@@ -2101,6 +2106,12 @@ impl Coincide {
         }
         if let Ok(projects) = call(&self.engine, "projects.list", json!({})) {
             self.projects = projects.as_array().cloned().unwrap_or_default();
+            // The project scripts' one-click script (Swift UIState lastScripts).
+            if let Ok(engine) = try_state(&self.engine)
+                && let Ok(document) = engine.store.native_inspector_document()
+            {
+                self.project_scripts.remember(document.as_ref());
+            }
             self.collapsed_projects = self
                 .projects
                 .iter()
@@ -4450,6 +4461,16 @@ impl Coincide {
         self.turn_decorated(index, row, plan.header, cx)
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_terminal(None, window, cx);
+    }
+    /// With `script`, the panel this opens runs that project script in a new
+    /// tab instead of showing or starting a plain shell.
+    fn toggle_terminal(
+        &mut self,
+        script: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_inspector_placeholders();
         if self.selected.is_none() {
             return;
@@ -4478,7 +4499,10 @@ impl Coincide {
             && let Some(id) = &self.terminal_visible_thread
             && let Some(workspace) = self.terminal_workspaces.get(id).cloned()
         {
-            workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
+            workspace.update(cx, |workspace, cx| match script {
+                Some(script) => workspace.run_script(script, window, cx),
+                None => workspace.activate(window, cx),
+            });
         }
         if self.terminal_on_right() {
             self.remember_current_inspector(cx);
@@ -5031,6 +5055,7 @@ impl Render for Coincide {
                     && !this.inbox_undo_shortcut(event, window, cx)
                     && !this.context_details_shortcut(event, window, cx)
                     && !this.project_defaults_key(event, window, cx)
+                    && !this.project_script_editor_key(event, window, cx)
                     && !this.historical_image_shortcut(event, window, cx)
                     && !this.reply_selection_shortcut(event, window, cx)
                 {
@@ -5051,6 +5076,9 @@ impl Render for Coincide {
             .child(chat_inspector::columns(chat_column, inspector_pane))
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| {
+                view.child(form)
+            })
+            .when_some(self.project_script_editor(cx), |view, form| {
                 view.child(form)
             })
             .when_some(self.context_details_overlay(cx), |view, details| {
