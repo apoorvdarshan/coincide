@@ -1,9 +1,16 @@
 //! Bounded explicit local-file attachment. Paths are never included in page data.
+#[cfg(windows)]
+#[path = "browser_upload_windows.rs"]
+mod windows;
+#[cfg(any(windows, test))]
+#[path = "browser_upload_windows_path.rs"]
+mod windows_path;
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
+#[cfg(not(windows))]
+use std::fs;
 use std::{
-    fs,
     io::Read,
     path::Path,
     sync::{
@@ -13,6 +20,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Flip only after the exact Windows SDK filesystem fixture passes on a fresh runner.
+const WINDOWS_UPLOAD_SDK_VALIDATED: bool = false;
+pub fn available() -> bool {
+    !cfg!(windows) || WINDOWS_UPLOAD_SDK_VALIDATED
+}
 const MAX_FILES: usize = 8;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -48,12 +60,14 @@ pub(super) fn prepare(paths: &[String]) -> Result<Vec<UploadFile>> {
 }
 
 pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<UploadFile>> {
-    // Fail before touching the filesystem until descriptor-based reparse checks
-    // are implemented. A pre-open symlink check alone is racy on Windows.
     ensure!(
-        !cfg!(windows),
-        "Browser uploads are disabled on Windows until safe reparse-point handling is implemented"
+        available(),
+        "Windows uploads await native filesystem SDK acceptance; local-drive-only attachment is not enabled"
     );
+    prepare_admitted(paths, work)
+}
+
+fn prepare_admitted(paths: &[String], work: &UploadWork) -> Result<Vec<UploadFile>> {
     validate_paths(paths)?;
     work.check()?;
     let mut remaining = MAX_BYTES;
@@ -61,22 +75,29 @@ pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<Upl
     for path in paths {
         work.check()?;
         let path = Path::new(path);
-        // Reject the final symlink and special files before opening. On Unix,
-        // NOFOLLOW closes the final-component race and NONBLOCK avoids a FIFO
-        // swapped in after this check. The opened descriptor is checked again.
-        let metadata = fs::symlink_metadata(path)?;
-        ensure!(
-            metadata.is_file(),
-            "Upload requires regular files, not symlinks or directories"
-        );
-        let mut options = fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let mut file = options.open(path)?;
+        #[cfg(windows)]
+        let mut retained = windows::RetainedFile::open(path, work)?;
+        #[cfg(windows)]
+        let file = &mut retained.file;
+        #[cfg(not(windows))]
+        let mut file = {
+            // Reject the final symlink and special files before opening. On Unix,
+            // NOFOLLOW closes the final-component race and NONBLOCK avoids a FIFO
+            // swapped in after this check. The opened descriptor is checked again.
+            let metadata = fs::symlink_metadata(path)?;
+            ensure!(
+                metadata.is_file(),
+                "Upload requires regular files, not symlinks or directories"
+            );
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            options.open(path)?
+        };
         work.check()?;
         let metadata = file.metadata()?;
         ensure!(metadata.is_file(), "Upload requires regular files");
@@ -84,6 +105,9 @@ pub fn prepare_controlled(paths: &[String], work: &UploadWork) -> Result<Vec<Upl
             metadata.len() <= remaining,
             "Upload exceeds the 4 MiB combined limit"
         );
+        #[cfg(windows)]
+        let bytes = read_bounded(file, remaining, work)?;
+        #[cfg(not(windows))]
         let bytes = read_bounded(&mut file, remaining, work)?;
         remaining -= bytes.len() as u64;
         let name = path
