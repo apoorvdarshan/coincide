@@ -25,6 +25,24 @@ use x11rb::{
     rust_connection::RustConnection,
 };
 type R<T> = Result<T, Failure>;
+#[track_caller]
+fn stale() -> Failure {
+    #[cfg(test)]
+    {
+        let caller = std::panic::Location::caller();
+        stale_trace(&format!("source-line {}:{}", caller.file(), caller.line()));
+    }
+    Failure::StaleObservation
+}
+fn stale_trace(_stage: &str) {
+    #[cfg(test)]
+    {
+        static LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if LINES.fetch_add(1, Ordering::Relaxed) < 32 {
+            eprintln!("owned-x11-freshness {_stage}");
+        }
+    }
+}
 macro_rules! x {
     ($e:expr) => {
         $e.map_err(|_| Failure::Native)?
@@ -35,7 +53,7 @@ fn native<T, E>(result: Result<T, E>) -> R<T> {
     result.map_err(|_| Failure::Native)
 }
 fn io<T>(result: std::io::Result<T>) -> R<T> {
-    result.map_err(|_| Failure::StaleObservation)
+    result.map_err(|_| stale())
 }
 fn bounded_file(path: impl AsRef<std::path::Path>, cap: usize) -> R<String> {
     let mut data = String::new();
@@ -80,7 +98,7 @@ impl Process {
             return Err(Failure::Unsupported);
         }
         let start = policy::process_start(&bounded_file(format!("{base}/stat"), 8192)?, pid)
-            .ok_or(Failure::StaleObservation)?;
+            .ok_or(stale())?;
         let boot = bounded_file("/proc/sys/kernel/random/boot_id", 128)?;
         let name = shared::bounded_text(
             path.file_name().and_then(|s| s.to_str()).unwrap_or("app"),
@@ -109,7 +127,7 @@ impl Process {
                 != Some(self.start)
             || bounded_file("/proc/sys/kernel/random/boot_id", 128)? != self.boot
         {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         Ok(())
     }
@@ -159,7 +177,7 @@ fn client(connection: &shared::XConnection<'_>, window: u32) -> R<(u32, u32, u32
         .filter(|c| window & !c.resource_mask == c.resource_base)
         .collect();
     if clients.len() != 1 {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     let c = &clients[0];
     let ids = x!(x!(connection.res_query_client_ids(&[res::ClientIdSpec {
@@ -180,7 +198,7 @@ fn client(connection: &shared::XConnection<'_>, window: u32) -> R<(u32, u32, u32
     }
     let declared = native(shared::owner_pid(connection, window))?;
     if declared != pids[0] {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     Ok((c.resource_base, c.resource_mask, pids[0]))
 }
@@ -232,18 +250,19 @@ impl Watch {
             let Some(event) = x!(self.connection.poll_for_event()) else {
                 return Ok(());
             };
-            let changed = match event {
-                Event::DestroyNotify(e) => e.window == self.window,
-                Event::ConfigureNotify(e) => e.window == self.window,
-                Event::ReparentNotify(e) => e.window == self.window,
-                Event::UnmapNotify(e) => e.window == self.window,
-                Event::MapNotify(e) => e.window == self.window,
-                Event::PropertyNotify(e) => e.window == self.window,
-                Event::Error(_) => true,
-                _ => false,
+            let (changed, stage) = match event {
+                Event::DestroyNotify(e) => (e.window == self.window, "watch-destroy"),
+                Event::ConfigureNotify(e) => (e.window == self.window, "watch-configure"),
+                Event::ReparentNotify(e) => (e.window == self.window, "watch-reparent"),
+                Event::UnmapNotify(e) => (e.window == self.window, "watch-unmap"),
+                Event::MapNotify(e) => (e.window == self.window, "watch-map"),
+                Event::PropertyNotify(e) => (e.window == self.window, "watch-property"),
+                Event::Error(_) => (true, "watch-native-error"),
+                _ => (false, "watch-unrelated"),
             };
             if changed {
-                return Err(Failure::StaleObservation);
+                stale_trace(stage);
+                return Err(stale());
             }
         }
         Err(Failure::TooLarge)
@@ -264,7 +283,7 @@ impl Window {
         protected(connection, window)?;
         let (client, mask, actual) = client(connection, window)?;
         if actual != pid {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         let process = Process::open(pid)?;
         let geometry = geometry(connection, window)?;
@@ -302,7 +321,7 @@ impl Window {
         if !self.identity.matches(now)
             || geometry(connection, self.identity.window)? != self.geometry
         {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         self.watch.unchanged()
     }
@@ -325,7 +344,7 @@ fn proxy<'a>(
 }
 fn bus_pid(bus: &zbus::blocking::Connection, name: &str) -> R<u32> {
     if !name.starts_with(':') {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     let dbus = zbus::blocking::Proxy::new(
         bus,
@@ -335,7 +354,7 @@ fn bus_pid(bus: &zbus::blocking::Connection, name: &str) -> R<u32> {
     )
     .map_err(|_| Failure::Native)?;
     dbus.call("GetConnectionUnixProcessID", &(name,))
-        .map_err(|_| Failure::StaleObservation)
+        .map_err(|_| stale())
 }
 fn children(
     bus: &zbus::blocking::Connection,
@@ -354,7 +373,7 @@ fn children(
     let result = native(shared::children(&accessible, deadline, &allowed))?;
     checked(permit, deadline)?;
     if result.len() != count as usize {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     Ok(result)
 }
@@ -384,7 +403,7 @@ fn tree_root(
         for object in children(bus, &app, permit, deadline, 64)? {
             if bounds(bus, &object).is_ok_and(|b| b == window.geometry.frame) {
                 if selected.replace(object).is_some() {
-                    return Err(Failure::StaleObservation);
+                    return Err(stale());
                 }
             }
         }
@@ -413,10 +432,10 @@ fn element(
     let states = accessible.get_state().map_err(|_| Failure::Native)?;
     let actual_parent = shared::object(accessible.parent().map_err(|_| Failure::Native)?);
     if parent.is_some() && parent != actual_parent {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     if states.contains(State::Defunct) {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     let secure = role == Role::PasswordText;
     let title = if secure {
@@ -462,10 +481,10 @@ fn tree(
             return Err(Failure::TooLarge);
         }
         if !seen.insert(object.clone()) {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         if object.0 != root.0 || bus_pid(bus, &object.0)? != window.identity.pid {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         let entry = element(bus, object.clone(), parent)?;
         // Password descendants may expose their content through a generic text
@@ -643,7 +662,7 @@ impl NativeBackend {
                         return Err(Failure::PermissionDenied);
                     }
                     if post != source_nodes {
-                        return Err(Failure::StaleObservation);
+                        return Err(stale());
                     }
                     Some(Image {
                         png_base64: base64::engine::general_purpose::STANDARD.encode(png),
@@ -673,13 +692,13 @@ impl NativeBackend {
                 }))
             }
             action => {
-                let observed = self.observed.as_ref().ok_or(Failure::StaleObservation)?;
+                let observed = self.observed.as_ref().ok_or(stale())?;
                 observed.window.verify(&connection)?;
                 checked(permit, deadline)?;
                 if native(shared::active_window(&connection, root))?
                     != observed.window.identity.window
                 {
-                    return Err(Failure::StaleObservation);
+                    return Err(stale());
                 }
                 let bus = native(shared::accessibility_bus())?;
                 let (current_root, entries) = tree(&bus, &observed.window, permit, deadline)?;
@@ -693,20 +712,17 @@ impl NativeBackend {
                     _ => None,
                 };
                 let target = if let Some(id) = id {
-                    let prior = observed
-                        .elements
-                        .get(&id)
-                        .ok_or(Failure::StaleObservation)?;
+                    let prior = observed.elements.get(&id).ok_or(stale())?;
                     let current = entries
                         .iter()
                         .find(|entry| entry.object == prior.object)
-                        .ok_or(Failure::StaleObservation)?;
+                        .ok_or(stale())?;
                     if current != prior
                         || current.secure
                         || !current.states.contains(State::Enabled)
                         || !current.states.contains(State::Sensitive)
                     {
-                        return Err(Failure::StaleObservation);
+                        return Err(stale());
                     }
                     Some(current)
                 } else {
@@ -768,7 +784,7 @@ impl NativeBackend {
                         let target = target.ok_or(Failure::Native)?;
                         // No focus-stealing: the observed target must already own focus.
                         if !target.focused {
-                            return Err(Failure::StaleObservation);
+                            return Err(stale());
                         }
                         let symbol = match key {
                             Key::Enter => 0xff0d,
@@ -820,7 +836,7 @@ impl NativeBackend {
                             || pid as u32 != observed.window.identity.pid
                             || window != observed.window.identity.window
                         {
-                            return Err(Failure::StaleObservation);
+                            return Err(stale());
                         }
                         let (px, py) = policy::point(observed.window.geometry.frame, x, y)
                             .ok_or(Failure::InvalidRequest)?;
@@ -834,10 +850,7 @@ impl NativeBackend {
                         let hit = native(
                             shared::object(hit).ok_or_else(|| anyhow::anyhow!("No accessible hit")),
                         )?;
-                        let entry = entries
-                            .iter()
-                            .find(|e| e.object == hit)
-                            .ok_or(Failure::StaleObservation)?;
+                        let entry = entries.iter().find(|e| e.object == hit).ok_or(stale())?;
                         if entry.secure || !entry.states.contains(State::Enabled) {
                             return Err(Failure::PermissionDenied);
                         }
@@ -874,7 +887,7 @@ impl NativeBackend {
 }
 fn recheck_element(bus: &zbus::blocking::Connection, prior: &Element) -> R<()> {
     if element(bus, prior.object.clone(), prior.parent.clone())? != *prior {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     Ok(())
 }
@@ -893,7 +906,7 @@ fn input_pair(
     let (release, screen) = native(shared::connect_guarded(always as fn() -> bool))?;
     let root = observed.window.identity.root;
     if release.setup().roots.get(screen).map(|screen| screen.root) != Some(root) {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     policy::paired_input(
         || {
@@ -926,10 +939,10 @@ fn input_pair(
 fn keyboard_focus(connection: &shared::XConnection<'_>, observed: &Observed) -> R<()> {
     let mut current = x!(x!(connection.get_input_focus()).reply()).focus;
     if current == 0 || current == observed.window.identity.root {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     if client(connection, current)?.2 != observed.window.identity.pid {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     for _ in 0..32 {
         if current == observed.window.identity.window {
@@ -937,7 +950,7 @@ fn keyboard_focus(connection: &shared::XConnection<'_>, observed: &Observed) -> 
         }
         let tree = x!(x!(connection.query_tree(current)).reply());
         if tree.parent == 0 || tree.parent == tree.root {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         current = tree.parent;
     }
@@ -950,13 +963,13 @@ fn pointer_target(connection: &shared::XConnection<'_>, observed: &Observed) -> 
         inside |= current == observed.window.identity.window;
         let pointer = x!(x!(connection.query_pointer(current)).reply());
         if !pointer.same_screen {
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         if pointer.child == 0 {
             if inside && client(connection, current)?.2 == observed.window.identity.pid {
                 return Ok(());
             }
-            return Err(Failure::StaleObservation);
+            return Err(stale());
         }
         current = pointer.child;
     }
@@ -974,7 +987,7 @@ fn input_guard(
         observed.window.identity.root,
     ))? != observed.window.identity.window
     {
-        return Err(Failure::StaleObservation);
+        return Err(stale());
     }
     let pointer = x!(x!(connection.query_pointer(observed.window.identity.root)).reply());
     if u16::from(pointer.mask) != 0 {
