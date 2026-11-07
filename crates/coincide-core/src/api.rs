@@ -19,6 +19,8 @@ use uuid::Uuid;
 mod appshots_api;
 #[path = "git_actions_api.rs"]
 mod git_actions_api;
+#[path = "terminal_api.rs"]
+mod terminal_api;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -399,6 +401,9 @@ impl Engine {
         if git_actions_api::METHODS.contains(&method) {
             return self.git_actions_command(method, p);
         }
+        if terminal_api::METHODS.contains(&method) {
+            return self.terminal_command(method, p);
+        }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
@@ -557,7 +562,7 @@ impl Engine {
             "terminal.read"=>{
                 let terminal=&mut self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1;
                 if p["styled"]==true {
-                    terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
+                    terminal.styled_snapshot_with(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?,&crate::terminal::Palette::from_value(&p["palette"])?)
                 } else {terminal.snapshot()}
             },
             "terminal.prompt_marks"=>{
@@ -609,13 +614,12 @@ impl Engine {
                 let cols=u16::try_from(p["cols"].as_u64().context("Missing cols")?)?;
                 self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.resize(rows,cols)?;Ok(json!({"resized":true}))
             }
-            "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
                 json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close", "terminal.status", "terminal.restart",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",

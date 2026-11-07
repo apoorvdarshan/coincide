@@ -109,7 +109,7 @@ impl Coincide {
                     cx,
                 ),
             );
-        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. Interim text appears as a preview; final text is inserted after Stop."}else{"Apple Speech is unavailable on this platform/build. Select Local Whisper for equivalent offline dictation."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
+        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. Interim text appears as a preview; final text is inserted after Stop."}else{"Apple Speech is only on macOS. On this computer, dictation stays on this device with Local Whisper, using the executable and model selected below; the saved choice stays Apple Speech for your Mac."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
         let models: &[(&str, &str)] = match voice.engine {
             Engine::OpenAi => &[
                 ("gpt-transcribe", "GPT Transcribe"),
@@ -191,6 +191,29 @@ impl Coincide {
         pane = pane
             .child("Microphone")
             .child(self.voice_picker("voice-input-picker", label, device_choices, cx))
+            .when(
+                microphones.denial() == Some(voice_system::Denial::Microphone),
+                |pane| {
+                    pane.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child("Coincide doesn’t have access to the microphone."),
+                            )
+                            .child(
+                                Button::new("voice-microphone-system-settings")
+                                    .label("Open System Settings")
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url(voice_system::Denial::Microphone.settings_url())
+                                    }),
+                            ),
+                    )
+                },
+            )
             .child(
                 Button::new("voice-input-refresh")
                     .label(if refreshing {
@@ -330,6 +353,22 @@ impl Coincide {
         pane=pane.child(self.voice_picker("voice-modifier-picker",voice.shortcut.clone(),modifiers.iter().map(|(key,label)|(label.to_string(),*key==voice.shortcut,Edit::Shortcut(key.to_string()))).collect(),cx))
             .child(Button::new("voice-shortcut-record").label(if self.voice.recording_shortcut{"Press shortcut…"}else{"Record shortcut"}).on_click(cx.listener(|this,_,_,cx|{this.voice.recording_shortcut=true;cx.notify();})))
             .child("Shortcuts work only in the active composer window. The OS may reserve Fn or system shortcuts; AltGr character input is preserved.");
+        // Swift: when 🌐 fn is the shortcut and macOS also acts on 🌐.
+        if let Some(conflict) = voice_system::fn_conflict(&voice, self.voice.fn_usage()) {
+            pane = pane.child(
+                div()
+                    .id("voice-fn-conflict")
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().text_sm().child(conflict))
+                    .child(
+                        Button::new("voice-keyboard-settings")
+                            .label("Open Keyboard Settings")
+                            .on_click(|_, _, cx| cx.open_url(voice_system::KEYBOARD_SETTINGS)),
+                    ),
+            );
+        }
         pane.into_any_element()
     }
     pub(super) fn block_voice_close(
@@ -365,21 +404,21 @@ impl Coincide {
                     } else {
                         "Microphone"
                     })
-                    .disabled(
-                        !voice.enabled
-                            || (voice.engine == Engine::Apple && !voice_speech::compiled())
-                            || !microphone::compiled_backend_available(),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.microphone_window_active =
-                            window.is_window_active() && window.visibility().is_visible();
-                        this.sync_transcription_binding(cx);
-                        if this.microphone_panel.read(cx).dictation_active() {
-                            this.microphone_panel
-                                .update(cx, |panel, cx| panel.stop_dictation(cx));
+                    // Swift's microphone tooltip names the shortcut while it's on.
+                    .tooltip({
+                        let title = if active { "Stop dictating" } else { "Dictate" };
+                        if voice.shortcut_enabled {
+                            format!(
+                                "{title} ({})",
+                                voice_system::shortcut_label(&voice.shortcut)
+                            )
                         } else {
-                            this.begin_composer_dictation(window, cx);
+                            title.to_owned()
                         }
+                    })
+                    .disabled(!voice.enabled || !microphone::compiled_backend_available())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_composer_dictation(window, cx)
                     })),
             )
             .when(active, |pane| {
@@ -425,9 +464,42 @@ impl Coincide {
                     )
                 },
             )
-            .when(!active && self.microphone_panel.read(cx).failed(), |pane| {
-                pane.child(self.microphone_panel.read(cx).status_text())
-            })
+            .when(
+                !active
+                    && (self.microphone_panel.read(cx).failed()
+                        || self.microphone_panel.read(cx).denial().is_some()),
+                |pane| pane.child(self.microphone_panel.read(cx).status_text()),
+            )
+            // Swift's "Dictation stopped" alert offers the privacy pane.
+            .when_some(
+                (!active)
+                    .then(|| self.microphone_panel.read(cx).denial())
+                    .flatten(),
+                |pane, denial| {
+                    pane.child(
+                        Button::new("composer-dictation-system-settings")
+                            .label("Open System Settings")
+                            .on_click(move |_, _, cx| cx.open_url(denial.settings_url())),
+                    )
+                },
+            )
             .into_any_element()
+    }
+    /// Starts or stops the composer's dictation, as its microphone button and
+    /// Swift's Edit › Dictate do.
+    pub(super) fn toggle_composer_dictation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.microphone_window_active =
+            window.is_window_active() && window.visibility().is_visible();
+        self.sync_transcription_binding(cx);
+        if self.microphone_panel.read(cx).dictation_active() {
+            self.microphone_panel
+                .update(cx, |panel, cx| panel.stop_dictation(cx));
+        } else {
+            self.begin_composer_dictation(window, cx);
+        }
     }
 }
