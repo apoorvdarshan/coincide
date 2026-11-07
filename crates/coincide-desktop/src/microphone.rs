@@ -88,7 +88,47 @@ enum BackendEvent {
     Ready(Vec<f32>, bool),
     Failed(CaptureError),
 }
+#[derive(Clone, PartialEq, Eq)]
+pub struct InputDevice {
+    pub uid: String,
+    pub name: String,
+    pub is_default: bool,
+}
+fn valid_device_uid(uid: &str) -> bool {
+    !uid.is_empty() && uid.len() <= 4096 && !uid.chars().any(char::is_control)
+}
+fn validate_devices(devices: &[InputDevice]) -> Result<(), CaptureError> {
+    if devices.len() > 128 {
+        return Err(CaptureError::Overflow);
+    }
+    let mut ids = std::collections::HashSet::new();
+    for device in devices {
+        if !valid_device_uid(&device.uid)
+            || device.name.is_empty()
+            || device.name.len() > 512
+            || device.name.chars().any(char::is_control)
+            || !ids.insert(&device.uid)
+        {
+            return Err(CaptureError::InvalidBinding);
+        }
+    }
+    Ok(())
+}
 trait CaptureBackend {
+    fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+        Err(CaptureError::Unavailable)
+    }
+    fn start_on_device(
+        &mut self,
+        maximum_samples: usize,
+        uid: Option<&str>,
+    ) -> Result<(), CaptureError> {
+        if uid.is_some() {
+            Err(CaptureError::NoInput)
+        } else {
+            self.start(maximum_samples)
+        }
+    }
     fn available(&self) -> bool;
     fn permission(&self) -> Permission;
     fn request_permission(&mut self) -> Result<(), CaptureError>;
@@ -175,6 +215,26 @@ impl Microphone {
     /// Native Record action only; requires separate prior authorization. No
     /// automatic permission request or recognition is performed here.
     pub fn start(&mut self, maximum_seconds: usize) -> Result<Uuid, CaptureError> {
+        self.start_on_device(maximum_seconds, None)
+    }
+    /// Enumeration is an explicit native worker action, never permission or
+    /// capture. A chosen ID is metadata until a later explicit Record action.
+    pub fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+        if self.session.is_some() {
+            return Err(CaptureError::Busy);
+        }
+        let devices = self.backend.input_devices()?;
+        validate_devices(&devices)?;
+        Ok(devices)
+    }
+    pub fn start_on_device(
+        &mut self,
+        maximum_seconds: usize,
+        uid: Option<&str>,
+    ) -> Result<Uuid, CaptureError> {
+        if uid.is_some_and(|uid| !valid_device_uid(uid)) {
+            return Err(CaptureError::InvalidBinding);
+        }
         if self.session.is_some() || self.permission_generation.is_some() {
             return Err(CaptureError::Busy);
         }
@@ -197,7 +257,7 @@ impl Microphone {
         self.completed = None;
         self.events.clear();
         let maximum_samples = maximum_seconds * SAMPLE_RATE;
-        self.backend.start(maximum_samples)?;
+        self.backend.start_on_device(maximum_samples, uid)?;
         let id = Uuid::new_v4();
         self.session = Some(Session {
             id,
@@ -358,13 +418,37 @@ mod platform {
 #[cfg(all(target_os = "macos", feature = "native-microphone"))]
 mod platform {
     use super::*;
-    use std::{ffi::c_void, ptr::NonNull};
+    use std::{
+        ffi::{CStr, CString, c_char, c_void},
+        ptr::NonNull,
+    };
+    #[repr(C)]
+    struct CInputDevice {
+        uid: *mut c_char,
+        name: *mut c_char,
+        is_default: i32,
+    }
+    struct DeviceList {
+        ptr: *mut CInputDevice,
+        count: usize,
+    }
+    impl Drop for DeviceList {
+        fn drop(&mut self) {
+            unsafe { cc_mic_input_devices_free(self.ptr, self.count) }
+        }
+    }
     unsafe extern "C" {
         fn cc_mic_permission_status() -> i32;
         fn cc_mic_request_permission() -> *mut c_void;
         fn cc_mic_permission_poll(request: *mut c_void) -> i32;
         fn cc_mic_permission_destroy(request: *mut c_void);
-        fn cc_mic_start(maximum_samples: usize, error: *mut i32) -> *mut c_void;
+        fn cc_mic_start_device(
+            maximum_samples: usize,
+            uid: *const c_char,
+            error: *mut i32,
+        ) -> *mut c_void;
+        fn cc_mic_input_devices(out: *mut *mut CInputDevice, count: *mut usize) -> i32;
+        fn cc_mic_input_devices_free(devices: *mut CInputDevice, count: usize);
         fn cc_mic_stop(handle: *mut c_void);
         fn cc_mic_cancel(handle: *mut c_void);
         fn cc_mic_poll(handle: *mut c_void) -> i32;
@@ -410,6 +494,51 @@ mod platform {
         }
     }
     impl CaptureBackend for Native {
+        fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+            if self.capture.is_some() {
+                return Err(CaptureError::Busy);
+            }
+            let mut ptr = std::ptr::null_mut();
+            let mut count = 0;
+            let code = unsafe { cc_mic_input_devices(&mut ptr, &mut count) };
+            if code != 0 {
+                return Err(error(code));
+            }
+            // Pinned bridge allocates at most128 entries and terminates every
+            // UID/name (4096/512 bytes). Guard frees them on every decode path.
+            if count > 128 {
+                // This violates the pinned bridge's contract. Do not iterate
+                // an untrusted count while reporting the failed receipt.
+                unsafe { cc_mic_input_devices_free(ptr, 0) };
+                return Err(CaptureError::Overflow);
+            }
+            let list = DeviceList { ptr, count };
+            if ptr.is_null() {
+                return Err(CaptureError::Unavailable);
+            }
+            let native = unsafe { std::slice::from_raw_parts(list.ptr, list.count) };
+            let mut devices = Vec::with_capacity(count);
+            for device in native {
+                if device.uid.is_null() || device.name.is_null() {
+                    return Err(CaptureError::InvalidBinding);
+                }
+                let uid = unsafe { CStr::from_ptr(device.uid) }
+                    .to_str()
+                    .map_err(|_| CaptureError::InvalidBinding)?
+                    .to_owned();
+                let name = unsafe { CStr::from_ptr(device.name) }
+                    .to_str()
+                    .map_err(|_| CaptureError::InvalidBinding)?
+                    .to_owned();
+                devices.push(InputDevice {
+                    uid,
+                    name,
+                    is_default: device.is_default != 0,
+                });
+            }
+            validate_devices(&devices)?;
+            Ok(devices)
+        }
         fn available(&self) -> bool {
             true
         }
@@ -447,11 +576,28 @@ mod platform {
             }
         }
         fn start(&mut self, maximum_samples: usize) -> Result<(), CaptureError> {
+            self.start_on_device(maximum_samples, None)
+        }
+        fn start_on_device(
+            &mut self,
+            maximum_samples: usize,
+            uid: Option<&str>,
+        ) -> Result<(), CaptureError> {
+            let uid = uid
+                .map(CString::new)
+                .transpose()
+                .map_err(|_| CaptureError::InvalidBinding)?;
             if self.capture.is_some() {
                 return Err(CaptureError::Busy);
             }
             let mut code = -1;
-            self.capture = NonNull::new(unsafe { cc_mic_start(maximum_samples, &mut code) });
+            self.capture = NonNull::new(unsafe {
+                cc_mic_start_device(
+                    maximum_samples,
+                    uid.as_ref().map_or(std::ptr::null(), |uid| uid.as_ptr()),
+                    &mut code,
+                )
+            });
             self.capture.map(|_| ()).ok_or_else(|| error(code))
         }
         fn stop(&mut self) {
@@ -598,6 +744,46 @@ mod tests {
         let mut controller = Microphone::with_backend(Box::new(Fake(state.clone())));
         controller.set_binding(Some(binding(1)));
         (controller, state)
+    }
+    #[::core::prelude::v1::test]
+    fn unimplemented_selected_device_adapter_never_calls_default_start() {
+        let (mut controller, state) = setup(Permission::Authorized);
+        assert_eq!(
+            controller.start_on_device(1, Some("missing-input")),
+            Err(CaptureError::NoInput)
+        );
+        assert_eq!(state.borrow().starts, 0);
+        assert_eq!(state.borrow().requests, 0);
+        assert_eq!(
+            controller.start_on_device(1, Some("")),
+            Err(CaptureError::InvalidBinding)
+        );
+        assert_eq!(state.borrow().starts, 0);
+        controller.start_on_device(1, None).unwrap();
+        assert_eq!(state.borrow().starts, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn device_metadata_is_bounded_unambiguous_and_not_capture_authority() {
+        let valid = InputDevice {
+            uid: "synthetic-mic".into(),
+            name: "Synthetic microphone".into(),
+            is_default: true,
+        };
+        assert!(validate_devices(std::slice::from_ref(&valid)).is_ok());
+        assert_eq!(
+            validate_devices(&[valid.clone(), valid.clone()]),
+            Err(CaptureError::InvalidBinding)
+        );
+        assert_eq!(
+            validate_devices(&vec![valid.clone(); 129]),
+            Err(CaptureError::Overflow)
+        );
+        let mut invalid = valid;
+        invalid.uid = "x".repeat(4097);
+        assert_eq!(
+            validate_devices(&[invalid]),
+            Err(CaptureError::InvalidBinding)
+        );
     }
     #[::core::prelude::v1::test]
     fn permission_is_explicit_and_grant_never_starts_recording() {

@@ -2,8 +2,8 @@
 //! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
-        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, Microphone,
-        Permission,
+        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, InputDevice,
+        Microphone, Permission,
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
@@ -52,6 +52,7 @@ impl RecordingConfig {
 struct Target {
     binding: Option<ComposerBinding>,
     settings_revision: u64,
+    input_device_uid: Option<String>,
     config: Option<RecordingConfig>,
 }
 impl Target {
@@ -78,6 +79,7 @@ enum Phase {
 #[derive(Clone, Copy)]
 enum Action {
     BeginDictation,
+    RefreshDevices,
     Enable,
     Record,
     Stop,
@@ -96,6 +98,10 @@ struct Snapshot {
     progress: Option<CaptureProgress>,
     text_pending: bool,
 }
+struct DeviceReply {
+    generation: u64,
+    result: Result<Vec<InputDevice>, CaptureError>,
+}
 struct Shared {
     enabled: AtomicBool,
     generation: AtomicU64,
@@ -103,6 +109,16 @@ struct Shared {
     controller_constructed: AtomicBool,
 }
 trait Controller {
+    fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+        Err(CaptureError::Unavailable)
+    }
+    fn start_on_device(&mut self, seconds: usize, uid: Option<&str>) -> Result<Uuid, CaptureError> {
+        if uid.is_some() {
+            Err(CaptureError::NoInput)
+        } else {
+            self.start(seconds)
+        }
+    }
     fn progress(&self) -> Option<CaptureProgress> {
         None
     }
@@ -115,6 +131,16 @@ trait Controller {
     fn accepts(&self, audio: &CapturedAudio, binding: &CaptureBinding) -> bool;
 }
 impl Controller for Microphone {
+    fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+        Microphone::input_devices(self)
+    }
+    fn start_on_device(&mut self, seconds: usize, uid: Option<&str>) -> Result<Uuid, CaptureError> {
+        if uid.is_none() {
+            Microphone::start(self, seconds)
+        } else {
+            Microphone::start_on_device(self, seconds, uid)
+        }
+    }
     fn progress(&self) -> Option<CaptureProgress> {
         Microphone::progress(self)
     }
@@ -210,6 +236,7 @@ struct Owner {
     shared: Arc<Shared>,
     snapshots: Sender<Snapshot>,
     text: Sender<TextReady>,
+    devices: SyncSender<DeviceReply>,
     generation: u64,
     target: Option<Target>,
     phase: Phase,
@@ -302,6 +329,17 @@ impl Owner {
             return;
         }
         match command.action {
+            Action::RefreshDevices
+                if matches!(self.phase, Phase::Idle | Phase::Captured | Phase::Failed) =>
+            {
+                let result = self.controller.as_mut().unwrap().input_devices();
+                if self.current() {
+                    let _ = self.devices.try_send(DeviceReply {
+                        generation: self.generation,
+                        result,
+                    });
+                }
+            }
             Action::BeginDictation if matches!(self.phase, Phase::Idle | Phase::Failed) => {
                 // This closed native intent authorizes permission followed by
                 // capture for this exact target. Manual Enable stays separate.
@@ -354,12 +392,10 @@ impl Owner {
                     return;
                 }
                 self.audio = None;
-                match self
-                    .controller
-                    .as_mut()
-                    .unwrap()
-                    .start(configuration.maximum_seconds())
-                {
+                match self.controller.as_mut().unwrap().start_on_device(
+                    configuration.maximum_seconds(),
+                    target.input_device_uid.as_deref(),
+                ) {
                     Ok(session) => {
                         self.session = Some(session);
                         self.phase = Phase::Recording;
@@ -367,7 +403,7 @@ impl Owner {
                     }
                     Err(error) => {
                         self.phase = Phase::Failed;
-                        self.publish(match error { CaptureError::Busy => "Another native owner is using the microphone.", _ => "Recording could not start. Check authorization, device and configured limits." });
+                        self.publish(match error { CaptureError::Busy => "Another native owner is using the microphone.", CaptureError::NoInput => "The requested microphone is unavailable or unsupported. No fallback input was opened.", _ => "Recording could not start. Check authorization, device and configured limits." });
                     }
                 }
             }
@@ -596,6 +632,7 @@ struct Connection {
     shared: Arc<Shared>,
     commands: SyncSender<Command>,
     snapshots: Receiver<Snapshot>,
+    devices: Receiver<DeviceReply>,
     completion: Option<WorkerCompletion>,
     spawn_error: Option<String>,
 }
@@ -609,6 +646,7 @@ impl Connection {
     }
     fn discard_snapshots(&self) {
         for _ in self.snapshots.try_iter() {}
+        for _ in self.devices.try_iter() {}
     }
     fn shutdown_status(&self) -> ShutdownStatus {
         let requested = !self.shared.alive.load(Ordering::Acquire);
@@ -644,6 +682,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
     let (commands, receiver) = mpsc::sync_channel(8);
     let (snapshots, updates) = mpsc::channel();
     let (text, events) = mpsc::channel();
+    let (device_sender, devices) = mpsc::sync_channel(1);
     let state = shared.clone();
     let worker = std::thread::Builder::new()
         .name("coincide-microphone-owner".into())
@@ -657,6 +696,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 shared: state,
                 snapshots,
                 text,
+                devices: device_sender,
                 generation: 0,
                 target: None,
                 phase: Phase::Idle,
@@ -690,6 +730,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
             shared,
             commands,
             snapshots: updates,
+            devices,
             completion,
             spawn_error,
         },
@@ -716,6 +757,9 @@ pub struct MicrophoneSettings {
     listening_since: Option<std::time::Instant>,
     progress: Option<CaptureProgress>,
     text_pending: bool,
+    device_catalog: Option<Vec<InputDevice>>,
+    device_refreshing: bool,
+    device_status: String,
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
@@ -725,7 +769,7 @@ impl MicrophoneSettings {
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(factory);
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false }, events)
+        (Self { connection, target: Target { binding: None, settings_revision: 0, input_device_uid:None, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false, device_catalog:None,device_refreshing:false,device_status:"Input devices have not been refreshed.".into() }, events)
     }
     #[cfg(test)]
     pub fn set_target(
@@ -740,6 +784,7 @@ impl MicrophoneSettings {
             binding,
             settings_revision,
             configuration.map(RecordingConfig::Local),
+            None,
             backend_enabled,
             cx,
         );
@@ -749,6 +794,7 @@ impl MicrophoneSettings {
         binding: Option<ComposerBinding>,
         settings_revision: u64,
         configuration: Option<RecordingConfig>,
+        input_device_uid: Option<String>,
         backend_enabled: bool,
         cx: &mut Context<Self>,
     ) {
@@ -758,6 +804,7 @@ impl MicrophoneSettings {
         let target = Target {
             binding,
             settings_revision,
+            input_device_uid,
             config: configuration,
         };
         if self.target != target || self.backend_enabled != backend_enabled {
@@ -772,6 +819,8 @@ impl MicrophoneSettings {
                 .fetch_add(1, Ordering::AcqRel)
                 .wrapping_add(1);
             self.text_pending = false;
+            self.device_refreshing = false;
+            self.device_refreshing = false;
             self.target = target;
             self.backend_enabled = backend_enabled;
             self.phase = Phase::Idle;
@@ -787,6 +836,7 @@ impl MicrophoneSettings {
     pub fn request_shutdown(&mut self) {
         self.connection.request_shutdown();
         self.text_pending = false;
+        self.device_refreshing = false;
         self.generation = self.connection.shared.generation.load(Ordering::Acquire);
         self.backend_enabled = false;
         self.target.binding = None;
@@ -810,7 +860,38 @@ impl MicrophoneSettings {
         self.phase = Phase::Idle;
         self.permission = Permission::Unavailable;
         self.text_pending = false;
+        self.device_refreshing = false;
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
+        cx.notify();
+    }
+    pub fn devices(&self) -> Option<&[InputDevice]> {
+        self.device_catalog.as_deref()
+    }
+    pub fn device_status(&self) -> &str {
+        &self.device_status
+    }
+    pub fn device_refreshing(&self) -> bool {
+        self.device_refreshing
+    }
+    pub fn refresh_devices(&mut self, cx: &mut Context<Self>) {
+        if !self.backend_enabled
+            || self.device_refreshing
+            || self.dictation_active()
+            || !self.connection.shared.alive.load(Ordering::Acquire)
+        {
+            return;
+        }
+        let command = Command {
+            generation: self.generation,
+            target: self.target.clone(),
+            action: Action::RefreshDevices,
+        };
+        if self.connection.commands.try_send(command).is_ok() {
+            self.device_refreshing = true;
+            self.device_status = "Refreshing input metadata on the owned worker…".into();
+        } else {
+            self.device_status = "The capture owner is busy. Device refresh was not queued.".into();
+        }
         cx.notify();
     }
     pub fn configured_for_dictation(&self) -> bool {
@@ -888,6 +969,14 @@ impl MicrophoneSettings {
             self.connection.discard_snapshots();
             return;
         }
+        while let Ok(reply) = self.connection.devices.try_recv() {
+            if reply.generation != self.generation || !self.backend_enabled {
+                continue;
+            }
+            self.device_refreshing = false;
+            match reply.result {Ok(devices)=>{self.device_catalog=Some(devices);self.device_status="Input metadata refreshed. Selecting a device does not record.".into();},Err(_)=>self.device_status="Input devices could not be refreshed. The saved choice was retained; no permission was requested.".into()}
+            cx.notify();
+        }
         while let Ok(snapshot) = self.connection.snapshots.try_recv() {
             if snapshot.generation == self.generation && self.backend_enabled {
                 if snapshot.phase == Phase::Recording && self.phase != Phase::Recording {
@@ -915,6 +1004,7 @@ impl MicrophoneSettings {
             Action::Enable | Action::Record | Action::BeginDictation
         ) {
             self.text_pending = false;
+            self.device_refreshing = false;
         }
         if matches!(
             action,
@@ -974,6 +1064,8 @@ mod tests {
         cancels: usize,
         inference: usize,
         ready_permission: bool,
+        device_queries: usize,
+        selected_inputs: Vec<Option<String>>,
         empty_inference: bool,
         fail_inference: bool,
         progress: Option<CaptureProgress>,
@@ -988,6 +1080,31 @@ mod tests {
         events: VecDeque<CaptureEvent>,
     }
     impl Controller for FakeController {
+        fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+            self.trace.lock().unwrap().device_queries += 1;
+            Ok(vec![InputDevice {
+                uid: "fixture-mic".into(),
+                name: "Synthetic input".into(),
+                is_default: true,
+            }])
+        }
+        fn start_on_device(
+            &mut self,
+            seconds: usize,
+            uid: Option<&str>,
+        ) -> Result<Uuid, CaptureError> {
+            self.trace
+                .lock()
+                .unwrap()
+                .selected_inputs
+                .push(uid.map(str::to_owned));
+            if uid.is_some_and(|uid| uid != "fixture-mic") {
+                Err(CaptureError::NoInput)
+            } else {
+                self.start(seconds)
+            }
+        }
+
         fn progress(&self) -> Option<CaptureProgress> {
             self.trace.lock().unwrap().progress
         }
@@ -1158,6 +1275,7 @@ mod tests {
                 selection: 0..0,
             }),
             settings_revision: 1,
+            input_device_uid: None,
             config: Some(RecordingConfig::Local(LocalRecordingConfig {
                 executable: PathBuf::from("/synthetic/whisper"),
                 model: PathBuf::from("/synthetic/model"),
@@ -1180,6 +1298,7 @@ mod tests {
         let trace = Arc::new(Mutex::new(Trace::default()));
         let (text, events) = mpsc::channel();
         let (snapshots, _) = mpsc::channel();
+        let (devices, _) = mpsc::sync_channel(1);
         let owner = Owner {
             factory: Some(factory(
                 trace.clone(),
@@ -1190,6 +1309,7 @@ mod tests {
             shared,
             snapshots,
             text,
+            devices,
             generation: 0,
             target: None,
             phase: Phase::Idle,
@@ -1216,6 +1336,47 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn explicit_device_refresh_is_metadata_only_and_never_requests_permission_or_records() {
+        let (mut owner, events, trace) = setup(true, false);
+        let (sender, results) = mpsc::sync_channel(1);
+        owner.devices = sender;
+        action(&mut owner, Action::RefreshDevices);
+        let reply = results.try_recv().unwrap();
+        assert_eq!(reply.generation, 1);
+        let devices = reply.result.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].uid, "fixture-mic");
+        let trace = trace.lock().unwrap();
+        assert_eq!(trace.device_queries, 1);
+        assert_eq!(trace.requests, 0);
+        assert_eq!(trace.starts, 0);
+        assert_eq!(trace.inference, 0);
+        assert!(events.try_recv().is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn missing_selected_input_never_falls_back_and_exact_selection_is_forwarded() {
+        for (uid, expected_starts) in [("removed-mic", 0), ("fixture-mic", 1)] {
+            let (mut owner, events, trace) = setup(true, false);
+            let mut target = target();
+            target.input_device_uid = Some(uid.into());
+            owner.command(Command {
+                generation: 1,
+                target,
+                action: Action::BeginDictation,
+            });
+            owner.tick();
+            let trace = trace.lock().unwrap();
+            assert_eq!(trace.selected_inputs, vec![Some(uid.into())]);
+            assert_eq!(trace.starts, expected_starts);
+            assert_eq!(trace.inference, 0);
+            assert!(events.try_recv().is_err());
+            assert_eq!(
+                owner.target.as_ref().unwrap().input_device_uid.as_deref(),
+                Some(uid)
+            );
+        }
     }
     #[::core::prelude::v1::test]
     fn hosted_dictation_runs_exact_private_snapshot_through_fake_transport_on_owned_path() {
@@ -1552,6 +1713,9 @@ mod tests {
             listening_since: None,
             progress: None,
             text_pending: false,
+            device_catalog: None,
+            device_refreshing: false,
+            device_status: String::new(),
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {

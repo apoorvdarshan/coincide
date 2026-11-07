@@ -2,7 +2,8 @@
 //! CPAL 0.18.2's two stream implementations terminate and join their owned
 //! callback thread in Drop; we drop on this owner before reading sample storage.
 use super::{
-    BackendEvent, BackendProgress, CaptureBackend, CaptureError, Permission, samples::Samples,
+    BackendEvent, BackendProgress, CaptureBackend, CaptureError, InputDevice, Permission,
+    samples::Samples,
 };
 use cpal::{
     ErrorKind, SampleFormat,
@@ -157,6 +158,34 @@ impl CaptureBackend for Native {
         self.permission_pending = false;
     }
     fn start(&mut self, maximum_samples: usize) -> Result<(), CaptureError> {
+        self.start_on_device(maximum_samples, None)
+    }
+    fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
+        if self.capture.is_some() {
+            return Err(CaptureError::Busy);
+        }
+        let host = cpal::default_host();
+        let default = host
+            .default_input_device()
+            .and_then(|device| device.id().ok());
+        let mut devices = Vec::new();
+        for device in host.input_devices().map_err(error)?.take(129) {
+            let id = device.id().map_err(error)?;
+            let name = device.description().map_err(error)?.name().to_owned();
+            devices.push(InputDevice {
+                uid: id.to_string(),
+                name,
+                is_default: default.as_ref() == Some(&id),
+            });
+        }
+        super::validate_devices(&devices)?;
+        Ok(devices)
+    }
+    fn start_on_device(
+        &mut self,
+        maximum_samples: usize,
+        uid: Option<&str>,
+    ) -> Result<(), CaptureError> {
         if self.capture.is_some() {
             return Err(CaptureError::Busy);
         }
@@ -164,9 +193,18 @@ impl CaptureBackend for Native {
             return Err(CaptureError::PermissionRequired);
         }
         self.finished = None;
-        let device = cpal::default_host()
-            .default_input_device()
-            .ok_or(CaptureError::NoInput)?;
+        let host = cpal::default_host();
+        let device = match uid {
+            None => host.default_input_device().ok_or(CaptureError::NoInput)?,
+            Some(uid) => {
+                let id: cpal::DeviceId = uid.parse().map_err(|_| CaptureError::NoInput)?;
+                let device = host.device_by_id(&id).ok_or(CaptureError::NoInput)?;
+                if device.id().map_err(error)? != id {
+                    return Err(CaptureError::NoInput);
+                }
+                device
+            }
+        };
         let config = device.default_input_config().map_err(error)?;
         let samples = Samples::new(config.sample_rate(), config.channels(), maximum_samples)?;
         let shared = Arc::new(Buffer {

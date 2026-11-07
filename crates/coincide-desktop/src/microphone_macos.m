@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <AVFAudio/AVFAudio.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreAudio/CoreAudio.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <stdatomic.h>
 #import <stdbool.h>
 #import <math.h>
@@ -114,12 +116,19 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
     BOOL tapInstalled;
     BOOL ownsCapture;
     BOOL limited;
+    AudioDeviceID selectedDevice;
     double deadline;
 }
 - (void)consume;
 - (void)finishCancelled:(BOOL)cancelled;
 - (void)publishProgressFrom:(size_t)previous;
 @end
+static BOOL CCSelectedInputMatches(CCMicrophone *capture) {
+    if (capture->selectedDevice == kAudioObjectUnknown) return YES;
+    AudioDeviceID current = kAudioObjectUnknown; UInt32 size = sizeof(current);
+    AudioUnit unit = capture->engine.inputNode.audioUnit;
+    return unit && AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size) == noErr && current == capture->selectedDevice;
+}
 @implementation CCMicrophone
 - (void)publishProgressFrom:(size_t)previous {
     float peak = 0;
@@ -132,6 +141,7 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
 }
 - (void)consume {
     if (atomic_load_explicit(&state, memory_order_acquire) != 1) return;
+    if (!CCSelectedInputMatches(self)) atomic_store(&fault, -6);
     if (atomic_load(&fault)) { [self finishCancelled:YES]; return; }
     if (CCNow() >= deadline) { limited = YES; [self finishCancelled:NO]; return; }
     size_t first = atomic_load_explicit(&head, memory_order_relaxed);
@@ -151,6 +161,7 @@ static int CCConvert(AVAudioConverter *converter, AVAudioPCMBuffer *input, BOOL 
 }
 - (void)finishCancelled:(BOOL)cancelled {
     if (atomic_load_explicit(&state, memory_order_acquire) != 1) return;
+    if (!cancelled && !CCSelectedInputMatches(self)) atomic_store(&fault, -6);
     atomic_store_explicit(&accepting, false, memory_order_release);
     @try { if (tapInstalled) { [engine.inputNode removeTapOnBus:0]; tapInstalled = NO; } }
     @catch (NSException *exception) { (void)exception; atomic_store(&fault, -3); }
@@ -213,7 +224,8 @@ static void CCTap(CCMicrophone *capture, AVAudioPCMBuffer *buffer) {
     atomic_fetch_sub_explicit(&capture->callbacks, 1, memory_order_release);
 }
 
-void *cc_mic_start(size_t maximum_samples, int *error) {
+void *cc_mic_start(size_t maximum_samples, int *error) { return cc_mic_start_device(maximum_samples, NULL, error); }
+void *cc_mic_start_device(size_t maximum_samples, const char *uid, int *error) {
     @autoreleasepool {
         if (error) *error = -1;
         if (!maximum_samples || maximum_samples > CC_MAX_SAMPLES) { if (error) *error = -7; return NULL; }
@@ -235,6 +247,17 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
             if (!capture->samples) @throw [NSException exceptionWithName:@"CaptureAllocation" reason:nil userInfo:nil];
             capture->engine = [AVAudioEngine new];
             AVAudioInputNode *input = capture->engine.inputNode;
+            if (uid) {
+                AudioDeviceID selected = cc_mic_resolve_input_device(uid);
+                capture->selectedDevice = selected;
+                if (selected == kAudioObjectUnknown || !input.audioUnit || AudioUnitSetProperty(input.audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &selected, sizeof(selected)) != noErr) {
+                    @throw [NSException exceptionWithName:@"SelectedInputUnavailable" reason:nil userInfo:nil];
+                }
+                AudioDeviceID actual = kAudioObjectUnknown; UInt32 size = sizeof(actual);
+                if (AudioUnitGetProperty(input.audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &actual, &size) != noErr || actual != selected) {
+                    @throw [NSException exceptionWithName:@"SelectedInputUnavailable" reason:nil userInfo:nil];
+                }
+            }
             capture->inputFormat = [input outputFormatForBus:0];
             double rate = capture->inputFormat.sampleRate;
             if (!isfinite(rate) || rate < 8000 || rate > 192000 || !capture->inputFormat.channelCount || capture->inputFormat.channelCount > 8) @throw [NSException exceptionWithName:@"CaptureFormat" reason:nil userInfo:nil];
@@ -259,9 +282,10 @@ void *cc_mic_start(size_t maximum_samples, int *error) {
             capture->tapInstalled = YES;
             capture->configurationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioEngineConfigurationChangeNotification object:capture->engine queue:nil usingBlock:^(NSNotification *note) { (void)note; CCMicrophone *strong = weakCapture; if (strong && atomic_load_explicit(&strong->accepting, memory_order_acquire)) atomic_store(&strong->fault, -6); }];
             capture->deadline = CCNow() + (double)maximum_samples / CC_RATE;
-            atomic_store_explicit(&capture->accepting, true, memory_order_release);
             NSError *startError = nil;
             if (![capture->engine startAndReturnError:&startError]) @throw [NSException exceptionWithName:@"CaptureStart" reason:nil userInfo:nil];
+            if (!CCSelectedInputMatches(capture)) @throw [NSException exceptionWithName:@"SelectedInputChanged" reason:nil userInfo:nil];
+            atomic_store_explicit(&capture->accepting, true, memory_order_release);
             capture->timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, capture->queue);
             dispatch_source_set_timer(capture->timer, dispatch_time(DISPATCH_TIME_NOW, 0), 5 * NSEC_PER_MSEC, NSEC_PER_MSEC);
             dispatch_source_set_event_handler(capture->timer, ^{ CCMicrophone *strong = weakCapture; if (strong) [strong consume]; });
