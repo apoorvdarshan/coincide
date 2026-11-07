@@ -81,6 +81,7 @@ struct Snapshot {
     permission: Permission,
     message: &'static str,
     progress: Option<CaptureProgress>,
+    text_pending: bool,
 }
 struct Shared {
     enabled: AtomicBool,
@@ -181,6 +182,7 @@ struct Owner {
     audio: Option<CapturedAudio>,
     dictation: bool,
     progress_bucket: Option<usize>,
+    text_pending: bool,
 }
 impl Owner {
     fn current(&self) -> bool {
@@ -196,6 +198,7 @@ impl Owner {
                 permission: self.permission,
                 message,
                 progress: self.progress(),
+                text_pending: self.text_pending,
             });
         }
     }
@@ -212,6 +215,7 @@ impl Owner {
     }
     fn reset(&mut self) {
         self.progress_bucket = None;
+        self.text_pending = false;
         if let Some(controller) = self.controller.as_mut() {
             controller.cancel();
         }
@@ -427,12 +431,14 @@ impl Owner {
                     }
                 }
                 CaptureEvent::Failed(_) => {
+                    self.text_pending = false;
                     self.audio = None;
                     self.session = None;
                     self.phase = Phase::Failed;
                     self.publish("Native capture failed. Nothing was transcribed or sent.");
                 }
                 CaptureEvent::Cancelled => {
+                    self.text_pending = false;
                     self.audio = None;
                     self.session = None;
                     self.phase = Phase::Idle;
@@ -470,6 +476,7 @@ impl Owner {
             self.reset();
             return;
         }
+        self.text_pending = false;
         self.phase = Phase::Transcribing;
         self.publish("Transcribing the stopped recording locally… Cancel discards the result; inference may finish cleanup in the background.");
         // Runs on the same dedicated owner, with capture already stopped. The
@@ -493,11 +500,14 @@ impl Owner {
         self.phase = Phase::Idle;
         match result {
             Ok(text) if !text.trim().is_empty() => {
-                let _ = self.text.send(TextReady {
-                    generation: self.generation,
-                    binding,
-                    text,
-                });
+                self.text_pending = self
+                    .text
+                    .send(TextReady {
+                        generation: self.generation,
+                        binding,
+                        text,
+                    })
+                    .is_ok();
                 self.publish("Transcript ready for the matching composer. Nothing was sent.");
             }
             Ok(_) => self.publish("No speech text was returned. Composer unchanged."),
@@ -618,6 +628,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 audio: None,
                 dictation: false,
                 progress_bucket: None,
+                text_pending: false,
             };
             while owner.shared.alive.load(Ordering::Acquire) {
                 match receiver.recv_timeout(Duration::from_millis(10)) {
@@ -666,6 +677,7 @@ pub struct MicrophoneSettings {
     status: String,
     listening_since: Option<std::time::Instant>,
     progress: Option<CaptureProgress>,
+    text_pending: bool,
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
@@ -675,7 +687,7 @@ impl MicrophoneSettings {
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(factory);
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None }, events)
+        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false }, events)
     }
     pub fn set_target(
         &mut self,
@@ -704,6 +716,7 @@ impl MicrophoneSettings {
                 .generation
                 .fetch_add(1, Ordering::AcqRel)
                 .wrapping_add(1);
+            self.text_pending = false;
             self.target = target;
             self.backend_enabled = backend_enabled;
             self.phase = Phase::Idle;
@@ -718,6 +731,7 @@ impl MicrophoneSettings {
     }
     pub fn request_shutdown(&mut self) {
         self.connection.request_shutdown();
+        self.text_pending = false;
         self.generation = self.connection.shared.generation.load(Ordering::Acquire);
         self.backend_enabled = false;
         self.target.binding = None;
@@ -740,11 +754,19 @@ impl MicrophoneSettings {
             .wrapping_add(1);
         self.phase = Phase::Idle;
         self.permission = Permission::Unavailable;
+        self.text_pending = false;
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
         cx.notify();
     }
-    pub fn begin_dictation(&mut self, cx: &mut Context<Self>) {
+    pub fn begin_dictation(&mut self, cx: &mut Context<Self>) -> u64 {
         self.action(Action::BeginDictation, cx);
+        self.generation
+    }
+    pub fn intent_generation(&self) -> Option<u64> {
+        (self.connection.shared.alive.load(Ordering::Acquire)
+            && self.backend_enabled
+            && (self.dictation_active() || self.text_pending))
+            .then_some(self.generation)
     }
     pub fn stop_dictation(&mut self, cx: &mut Context<Self>) {
         if self.phase == Phase::Recording {
@@ -811,6 +833,7 @@ impl MicrophoneSettings {
                     self.listening_since = None;
                 }
                 self.progress = snapshot.progress;
+                self.text_pending = snapshot.text_pending;
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
                 self.status = snapshot.message.into();
@@ -823,6 +846,12 @@ impl MicrophoneSettings {
             return;
         }
         // Beginning a new explicit request invalidates any older queued text.
+        if matches!(
+            action,
+            Action::Enable | Action::Record | Action::BeginDictation
+        ) {
+            self.text_pending = false;
+        }
         if matches!(
             action,
             Action::Enable | Action::Record | Action::BeginDictation
@@ -881,6 +910,8 @@ mod tests {
         cancels: usize,
         inference: usize,
         ready_permission: bool,
+        empty_inference: bool,
+        fail_inference: bool,
         progress: Option<CaptureProgress>,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
@@ -1001,6 +1032,12 @@ mod tests {
                     "worker generation revocation must reach local process cancellation"
                 );
             }
+            if trace.fail_inference {
+                return Err(InferenceFailure::Failed);
+            }
+            if trace.empty_inference {
+                return Ok(String::new());
+            }
             Ok("synthetic recorded transcript".into())
         }
     }
@@ -1071,6 +1108,7 @@ mod tests {
             audio: None,
             dictation: false,
             progress_bucket: None,
+            text_pending: false,
         };
         (owner, events, trace)
     }
@@ -1087,6 +1125,26 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn empty_or_failed_actual_inference_produces_no_pending_send_receipt() {
+        for failure in [false, true] {
+            let (mut owner, events, trace) = setup(true, false);
+            trace.lock().unwrap().empty_inference = !failure;
+            trace.lock().unwrap().fail_inference = failure;
+            action(&mut owner, Action::BeginDictation);
+            action(&mut owner, Action::Stop);
+            assert_eq!(trace.lock().unwrap().inference, 1);
+            assert!(
+                !owner.text_pending,
+                "only a successfully queued nonempty transcript produces a delivery receipt"
+            );
+            assert!(events.try_recv().is_err());
+            assert!(!matches!(
+                owner.phase,
+                Phase::Recording | Phase::Transcribing | Phase::Stopping
+            ));
+        }
     }
     #[::core::prelude::v1::test]
     fn native_progress_is_bound_to_actual_recording_session_and_generation() {
@@ -1354,6 +1412,7 @@ mod tests {
             status: String::new(),
             listening_since: None,
             progress: None,
+            text_pending: false,
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {

@@ -676,14 +676,9 @@ impl Coincide {
                 continue;
             }
             let send_dictation = if from_microphone {
-                self.voice
-                    .ticket
-                    .take()
-                    .is_some_and(|(target, send, voice)| {
-                        target == binding
-                            && send
-                            && self.settings.get("voice").unwrap_or(&Value::Null) == &voice
-                    })
+                self.voice.ticket.take().is_some_and(|intent| {
+                    intent.accepts(&event, self.settings.get("voice").unwrap_or(&Value::Null))
+                })
             } else {
                 false
             };

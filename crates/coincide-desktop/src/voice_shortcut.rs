@@ -2,13 +2,28 @@
 use super::*;
 use coincide_core::voice::{Action, Engine, Settings, Trigger};
 use std::time::Instant;
+pub(super) struct SendIntent {
+    target: transcription_settings::ComposerBinding,
+    generation: u64,
+    send: bool,
+    voice: Value,
+}
+impl SendIntent {
+    pub(super) fn accepts(&self, event: &transcription_settings::TextReady, voice: &Value) -> bool {
+        self.send
+            && !event.text.trim().is_empty()
+            && self.generation == event.generation
+            && self.target == event.binding
+            && self.voice == *voice
+    }
+}
 pub(super) struct State {
     pub recording_shortcut: bool,
     settings: Option<Settings>,
     machine: Trigger,
     clock: Instant,
     was_active: bool,
-    pub ticket: Option<(transcription_settings::ComposerBinding, bool, Value)>,
+    pub ticket: Option<SendIntent>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -75,13 +90,15 @@ impl Coincide {
             self.voice.machine = Trigger::new(voice.mode, lone(&voice.shortcut));
             self.voice.settings = Some(voice.clone());
         }
-        self.voice.ticket = Some((
-            binding,
-            voice.sends_when_stopped,
-            self.settings.get("voice").cloned().unwrap_or(Value::Null),
-        ));
-        self.microphone_panel
+        let generation = self
+            .microphone_panel
             .update(cx, |panel, cx| panel.begin_dictation(cx));
+        self.voice.ticket = Some(SendIntent {
+            target: binding,
+            generation,
+            send: voice.sends_when_stopped,
+            voice: self.settings.get("voice").cloned().unwrap_or(Value::Null),
+        });
         self.voice.machine.recording_started();
     }
     fn voice_target_available(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -140,7 +157,16 @@ impl Coincide {
             self.voice_action(action, window, cx);
             window.request_animation_frame();
         }
-        let active = self.microphone_panel.read(cx).dictation_active();
+        let panel = self.microphone_panel.read(cx);
+        if self
+            .voice
+            .ticket
+            .as_ref()
+            .is_some_and(|ticket| panel.intent_generation() != Some(ticket.generation))
+        {
+            self.voice.ticket = None;
+        }
+        let active = panel.dictation_active();
         if self.voice.was_active && !active {
             self.voice.machine.recording_ended();
         }
@@ -292,5 +318,51 @@ impl Coincide {
             Action::None
         };
         self.voice_action(action, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SendIntent;
+    use crate::transcription_settings::{ComposerBinding, TextReady};
+    use serde_json::json;
+    #[::core::prelude::v1::test]
+    fn send_intent_requires_exact_actual_producer_generation_and_voice_target() {
+        let voice = json!({"engine":"whisper","sendsWhenStopped":true,"language":"en-US"});
+        let binding = ComposerBinding {
+            thread_id: "synthetic-thread".into(),
+            composer_revision: 4,
+            selection: 7..11,
+        };
+        let intent = SendIntent {
+            target: binding.clone(),
+            generation: 7,
+            send: true,
+            voice: voice.clone(),
+        };
+        let mut event = TextReady {
+            generation: 7,
+            binding,
+            text: "synthetic transcript".into(),
+        };
+        assert!(intent.accepts(&event, &voice));
+        event.generation = 8;
+        assert!(
+            !intent.accepts(&event, &voice),
+            "later manual capture must never borrow a failed or empty dictation's send opt-in"
+        );
+        event.generation = 7;
+        event.binding.composer_revision += 1;
+        assert!(!intent.accepts(&event, &voice));
+        event.binding.composer_revision -= 1;
+        event.binding.thread_id = "another-thread".into();
+        assert!(!intent.accepts(&event, &voice));
+        event.binding.thread_id = "synthetic-thread".into();
+        assert!(!intent.accepts(
+            &event,
+            &json!({"engine":"openAI","sendsWhenStopped":true,"language":"en-US"})
+        ));
+        event.text.clear();
+        assert!(!intent.accepts(&event, &voice));
     }
 }
