@@ -284,6 +284,7 @@ try {
     $browserInfo.UseShellExecute=$false;$browserInfo.RedirectStandardOutput=$true;$browserInfo.RedirectStandardError=$true
     $browserInfo.Environment.Clear();foreach($key in $Environment.Keys){$browserInfo.Environment[$key]=$Environment[$key]}
     $browserInfo.Environment['GITHUB_ACTIONS']='true';$browserInfo.Environment['PYTHONUTF8']='1';$browserInfo.Environment['PYTHONDONTWRITEBYTECODE']='1'
+    $browserInfo.Environment['RUNNER_TEMP']=$env:RUNNER_TEMP
     $browserProcess=[Diagnostics.Process]::Start($browserInfo)
     $script:PendingClients.Add($browserProcess)
     $browserDeadline=[DateTime]::UtcNow.AddSeconds(90);$browserCaptured=$false
