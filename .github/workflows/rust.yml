@@ -158,6 +158,22 @@ jobs:
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
+      - name: Test production native host before UI compilation
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-fake-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero production native host fake tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -SimpleMatch 'constructor_is_inert_and_has_no_native_handles ... ok')) { throw 'Expected inert production Windows constructor' }
+      - name: Test exact owned Windows fixture before UI compilation
+        shell: pwsh
+        run: |
+          $env:COINCIDE_CU_NATIVE_CI = 'owned-window-v1'
+          try {
+            cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::windows::native_tests::actual_owned_window_actions_and_capture_drain -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-owned-window.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one unchanged owned-window native host test' }
+          } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
@@ -167,8 +183,24 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/microphone-pcm-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/microphone-pcm-tests.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly two native PCM conversion tests' }
+      - name: Test opted-in Computer Use with inert constructors and fake backends only
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust computer_use --features native-computer-use --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/computer-use-fake-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/computer-use-fake-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero Computer Use fake tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/computer-use-fake-tests.log" -SimpleMatch 'constructor_is_inert_and_has_no_native_handles ... ok')) { throw 'Expected Windows native constructor to remain inert' }
+      - name: Test actual Computer Use only against an owned synthetic Windows child
+        shell: pwsh
+        run: |
+          $env:COINCIDE_CU_NATIVE_CI = 'owned-window-v1'
+          try {
+            cargo test -p coincide-desktop --bin coincide-rust --features native-computer-use --locked computer_use::windows::native_tests::actual_owned_window_actions_and_capture_drain -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/computer-use-owned-window.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/computer-use-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one owned-window native Computer Use test' }
+          } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
       - name: Build actual Windows native application and owner-aware control CLI
-        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone --locked
+        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone,coincide-desktop/native-computer-use --locked
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"

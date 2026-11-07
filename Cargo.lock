@@ -1221,6 +1221,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atspi",
+ "base64 0.23.1",
  "block2 0.6.2",
  "cc",
  "coincide-core",
@@ -1244,6 +1245,19 @@ dependencies = [
  "x11rb",
  "zbus",
  "zeroize",
+]
+
+[[package]]
+name = "coincide-native-host-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "coincide-core",
+ "serde_json",
+ "uuid",
+ "windows 0.61.3",
+ "windows-capture",
 ]
 
 [[package]]
