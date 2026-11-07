@@ -871,6 +871,16 @@ fn capture(window: &WindowBinding, permit: &Permit) -> R<Image> {
                 LPARAM(0),
             )
         }
+        .or_else(|error| {
+            // The one-frame callback may already have ended its message loop.
+            // Missing queue is harmless only because the owned join below
+            // still waits for the actual thread/TLS return and checks its result.
+            if error.code() == ::windows::core::HRESULT::from_win32(1444) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
         .map_err(|_| ())
     })
     .map_err(|_| Failure::Native)?;
