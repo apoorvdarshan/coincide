@@ -397,6 +397,42 @@ pub(super) fn file_launch(
     launches.push((editor.program.clone(), args));
     launches
 }
+/// A conversation's worktree, else its project's folder.
+pub(super) fn folder_of(thread: &Value, projects: &[Value]) -> Option<PathBuf> {
+    thread["worktreePath"]
+        .as_str()
+        .filter(|path| !path.is_empty())
+        .or_else(|| {
+            projects
+                .iter()
+                .find(|project| project["id"] == thread["projectID"])
+                .and_then(|project| project["path"].as_str())
+                .filter(|path| !path.is_empty())
+        })
+        .map(PathBuf::from)
+}
+fn is_file_manager(id: &str) -> bool {
+    matches!(id, "com.apple.finder" | "windows.explorer" | "linux.files")
+}
+/// The menu title of Reveal in Finder on this platform.
+pub(super) fn reveal_title() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in File Explorer"
+    } else {
+        "Show in Files"
+    }
+}
+/// The file manager's arguments that select `folder`, and the path appended
+/// after them: `open -R` and `explorer /select,` select it in its parent.
+fn reveal_arguments(id: &str, folder: &Path, parent: PathBuf) -> (Vec<String>, PathBuf) {
+    match id {
+        "com.apple.finder" => (vec!["-R".into()], folder.to_path_buf()),
+        "windows.explorer" => (vec!["/select,".into()], folder.to_path_buf()),
+        _ => (Vec::new(), parent),
+    }
+}
 pub(super) fn preferred<'a>(targets: &'a [Target], settings: &Value) -> Option<&'a Target> {
     targets
         .iter()
@@ -546,18 +582,20 @@ impl Coincide {
             .into_any_element()
     }
     pub(super) fn open_folder(&self) -> Option<PathBuf> {
-        let selected = self.selected.as_ref()?;
-        selected["worktreePath"]
-            .as_str()
-            .filter(|path| !path.is_empty())
-            .or_else(|| {
-                self.projects
-                    .iter()
-                    .find(|project| project["id"] == selected["projectID"])
-                    .and_then(|project| project["path"].as_str())
-                    .filter(|path| !path.is_empty())
-            })
-            .map(PathBuf::from)
+        folder_of(self.selected.as_ref()?, &self.projects)
+    }
+    /// The folder of any conversation, for sidebar actions that leave the open
+    /// one open (Swift's `ThreadActions.folder(for:)`).
+    pub(super) fn thread_folder(&self, id: &str) -> Option<PathBuf> {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| thread["id"] == id)
+        {
+            return self.open_folder();
+        }
+        let thread = call(&self.engine, "threads.read", json!({"threadId":id})).ok()?;
+        folder_of(&thread, &self.projects)
     }
     pub(super) fn open_in_target(
         &mut self,
@@ -573,6 +611,27 @@ impl Coincide {
             return;
         };
         self.open_in_folder(target, folder, cx);
+    }
+    /// Swift's Reveal in Finder: the folder selected in its parent, never opened
+    /// with its default app. Linux has no standard selection request, so the
+    /// parent folder opens instead.
+    pub(super) fn reveal_in_file_manager(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        let Some(mut target) = self
+            .open_targets
+            .iter()
+            .find(|target| is_file_manager(target.id))
+            .cloned()
+        else {
+            self.status = "No file manager is available.".into();
+            cx.notify();
+            return;
+        };
+        let Some(parent) = folder.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let (args, opened) = reveal_arguments(target.id, &folder, parent);
+        target.args = args;
+        self.open_in_folder(target, opened, cx);
     }
     pub(super) fn open_in_folder(
         &mut self,
@@ -749,5 +808,22 @@ mod tests {
         assert_eq!(preferred(&targets, &missing).unwrap().id, "editor");
         assert_eq!(missing["preferredOpenTarget"], "uninstalled");
         assert!(preferred(&[], &settings).is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn reveal_selects_the_folder_in_finder_and_explorer_and_opens_its_parent_elsewhere() {
+        let folder = Path::new("/work/project");
+        let parent = PathBuf::from("/work");
+        assert_eq!(
+            reveal_arguments("com.apple.finder", folder, parent.clone()),
+            (vec!["-R".to_owned()], folder.to_path_buf())
+        );
+        assert_eq!(
+            reveal_arguments("windows.explorer", folder, parent.clone()),
+            (vec!["/select,".to_owned()], folder.to_path_buf())
+        );
+        assert_eq!(
+            reveal_arguments("linux.files", folder, parent.clone()),
+            (Vec::new(), parent)
+        );
     }
 }
