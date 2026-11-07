@@ -74,11 +74,8 @@ impl Coincide {
         if !self.voice_target_available(window, cx) {
             return;
         }
-        self.composer
-            .read(cx)
-            .focus_handle()
-            .clone()
-            .focus(window, cx);
+        let focus = self.composer.read(cx).focus_handle(cx).clone();
+        focus.focus(window, cx);
         let Some(binding) = self.sync_transcription_binding(cx) else {
             return;
         };
