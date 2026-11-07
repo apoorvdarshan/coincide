@@ -4,6 +4,7 @@ use coincide_core::{
     dictation::voice_secret::{Backend, Failure},
     native_ui_edits::NativeUiEditors,
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, TestAppContext,
     VisualTestContext, Window, div,
