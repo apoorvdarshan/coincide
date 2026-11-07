@@ -726,7 +726,7 @@ impl Engine {
             self.park_named_departure(&current)?;
         }
         let configuration = if let Some(target) = target {
-            Some(self.native_account_launch_configuration(&provider, target)?)
+            Some(self.native_account_configuration_mode(&provider, target, true)?)
         } else {
             self.provider_launch_configuration(&provider)?
         };
@@ -761,13 +761,6 @@ impl Engine {
             .save_native_account_selection(&current, &changed, grant.as_deref())?;
         self.revision += 1;
         Ok(changed)
-    }
-    pub(super) fn native_account_launch_configuration(
-        &self,
-        provider: &str,
-        id: &str,
-    ) -> Result<LaunchConfiguration> {
-        self.native_account_configuration_mode(provider, id, false)
     }
     pub(super) fn native_account_configuration_mode(
         &self,
@@ -1173,6 +1166,29 @@ mod tests {
         );
         thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
         assert!(!engine.routes_native_provider_account(&thread).unwrap());
+    }
+    #[test]
+    fn ordinary_selection_write_revokes_native_marker_before_old_id_can_reappear() {
+        let (_root, mut engine, _binary) = fixture("grok");
+        let account = engine.create_native_login_account("grok", "Work").unwrap();
+        let source = thread(&mut engine, "grok");
+        let selected = engine
+            .select_native_provider_account(&source, Some(&account.id))
+            .unwrap();
+        assert!(engine.validate_native_account_selection(&selected).is_ok());
+        let mut default = selected.clone();
+        default["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("accountID");
+        engine.store.save(&default).unwrap();
+        engine.store.save(&selected).unwrap();
+        assert!(engine.validate_native_account_selection(&selected).is_err());
+        assert!(
+            engine
+                .provider_launch_configuration_for_thread(&selected)
+                .is_err()
+        );
     }
     #[test]
     fn mixed_native_accounts_keep_creation_order_after_mode_and_name_changes() {

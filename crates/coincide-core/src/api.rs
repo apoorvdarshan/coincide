@@ -746,6 +746,10 @@ impl Engine {
                         self.apply_provider_preferences(&mut named)?;
                         return Ok(named);
                     }
+                    if provider_configuration::native_account_matches(&thread["selection"]) && let Some(provider)=result["providers"].as_array_mut().and_then(|rows|rows.iter_mut().find(|provider|provider["provider"]==thread["selection"]["provider"])) {
+                        provider["accountPolicy"]=json!("selected_native_account");
+                        provider["selectedNativeAccountID"]=thread["selection"]["accountID"].clone();
+                    }
                     let reason = if let Err(error) = self.require_provider_enabled(text(&thread["selection"], "provider").as_str()) {
                         Some(error.to_string())
                     } else if !thread["rustBotContext"].is_null() {

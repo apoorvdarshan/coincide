@@ -895,6 +895,12 @@ impl Engine {
     ) -> Result<Option<LaunchConfiguration>> {
         self.provider_launch_configuration_for_thread_mode(thread, false)
     }
+    pub(crate) fn provider_metadata_configuration_for_thread(
+        &self,
+        thread: &Value,
+    ) -> Result<Option<LaunchConfiguration>> {
+        self.provider_launch_configuration_for_thread_mode(thread, true)
+    }
     fn provider_launch_configuration_for_thread_mode(
         &self,
         thread: &Value,
@@ -931,7 +937,10 @@ impl Engine {
         if (method.starts_with("providers.codex.profiles.")
             || matches!(
                 method,
-                "agent.models.refresh" | "agent.models.status" | "agent.selection.capabilities"
+                "agent.models.refresh"
+                    | "agent.models.status"
+                    | "agent.selection.capabilities"
+                    | "agent.select"
             ))
             && let Some(id) = params["threadId"].as_str()
         {

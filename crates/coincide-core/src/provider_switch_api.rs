@@ -154,6 +154,14 @@ impl Engine {
         {
             crate::codex_login_profiles::validate_model_thread(&current)?;
         } else {
+            let configuration = if !crate::composer_selection::default_account(
+                &current["selection"]["accountID"],
+            ) {
+                self.provider_metadata_configuration_for_thread(&current)?
+            } else {
+                provider_configuration::current()
+            };
+            let _source = provider_configuration::enter(configuration);
             crate::composer_selection::validate_thread_base(&current)?;
         }
         let capabilities = crate::composer_selection::capabilities();
