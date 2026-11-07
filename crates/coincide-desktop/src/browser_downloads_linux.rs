@@ -3,7 +3,8 @@
 use super::shutdown::{CallbackAck, Callbacks, NativeLease};
 use anyhow::{Context, Result};
 use coincide_core::browser_protocol::{
-    DownloadRegistry, NativeDownloadReceipt, allow_native_navigation, validate_native_download,
+    DownloadRegistry, NativeDownloadOutcome, NativeDownloadReceipt, allow_native_navigation,
+    validate_native_download,
 };
 use gtk::glib::{
     self, SignalHandlerId,
@@ -380,7 +381,10 @@ impl Transfer {
                     self.download.set_allow_overwrite(false);
                     self.download.set_destination(&destination);
                 } else {
-                    owner.registry.borrow_mut().complete_native(&receipt, false);
+                    owner
+                        .registry
+                        .borrow_mut()
+                        .complete_native(&receipt, NativeDownloadOutcome::Failed);
                     self.cancel();
                 }
             }
@@ -394,10 +398,19 @@ impl Transfer {
         }
         if let Some(owner) = self.owner.upgrade() {
             if let Some(receipt) = self.receipt.borrow_mut().take() {
+                // WebKitGTK emits finished after every outcome; only an accepted
+                // transfer is cancelled after its receipt, when its tab closes.
+                let outcome = if self.cancelled.get() {
+                    NativeDownloadOutcome::Cancelled
+                } else if self.failed.get() {
+                    NativeDownloadOutcome::Failed
+                } else {
+                    NativeDownloadOutcome::Finished
+                };
                 owner
                     .registry
                     .borrow_mut()
-                    .complete_native(&receipt, !self.failed.get() && !self.cancelled.get());
+                    .complete_native(&receipt, outcome);
             }
             (owner.changed)();
         }
