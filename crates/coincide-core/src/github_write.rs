@@ -2,8 +2,8 @@
 //! which resolves authoritative stored thread roots and runs prepare off UI locks.
 //! Official semantics: docs.github.com/en/rest/pulls/{pulls,reviews}.
 //! No CLI merge/review convenience command: fixed REST routes, explicit host,
-//! JSON stdin, no auto-merge/admin/queue or retries. COMMENT targets a commit;
-//! APPROVE/REQUEST_CHANGES remain disabled (no atomic current-head condition).
+//! JSON stdin, no auto-merge/admin/queue or retries. Reviews explicitly target
+//! the confirmed commit; no review claims an atomic current-head condition.
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,8 @@ struct Scope {
     expected_head: String,
     device: u64,
     inode: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_id: Option<[u8; 16]>,
 }
 impl Scope {
     fn bind(thread: &str, stored: &Path, p: &Value, require_head: bool) -> Result<Self> {
@@ -108,7 +110,11 @@ impl Scope {
             let m = fs::metadata(&root)?;
             (m.dev(), m.ino())
         };
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let (device, file_id) = crate::native_file::path_identity(&root)?;
+        #[cfg(windows)]
+        let inode = u64::from_le_bytes(file_id[..8].try_into().unwrap());
+        #[cfg(not(any(unix, windows)))]
         let (device, inode) = (0, 0);
         Ok(Self {
             thread_id: thread.into(),
@@ -118,6 +124,10 @@ impl Scope {
             expected_head,
             device,
             inode,
+            #[cfg(windows)]
+            file_id: Some(file_id),
+            #[cfg(not(windows))]
+            file_id: None,
         })
     }
     fn key(&self) -> String {
@@ -130,6 +140,7 @@ impl Scope {
             && self.number == other.number
             && self.device == other.device
             && self.inode == other.inode
+            && self.file_id == other.file_id
     }
     fn wire(&self) -> Value {
         json!({"threadId":self.thread_id,"expectedRoot":self.expected_root,"repository":self.repository,"number":self.number,"expectedHead":self.expected_head})
@@ -151,12 +162,14 @@ impl Action {
         match self {
             Self::Review { event, body } => {
                 ensure!(
-                    event == "COMMENT",
-                    "Only commit-targeted COMMENT reviews are supported"
+                    ["COMMENT", "APPROVE", "REQUEST_CHANGES"].contains(&event.as_str()),
+                    "Unsupported commit-targeted review event"
                 );
                 ensure!(
-                    !body.trim().is_empty() && body.len() <= 32768 && !body.contains('\0'),
-                    "Review body must contain 1–32768 bytes without NUL"
+                    (event == "APPROVE" || !body.trim().is_empty())
+                        && body.len() <= 32768
+                        && !body.contains('\0'),
+                    "Review body must be at most 32768 bytes without NUL; comments and change requests need text"
                 );
             }
             Self::Merge { method } => ensure!(
@@ -302,7 +315,12 @@ struct Inner {
     slots: Arc<AtomicUsize>,
     _lease: LedgerLease,
     workers: WriteWorkers,
+    #[cfg(windows)]
+    _windows_custody: windows_ledger::Custody,
 }
+#[cfg(windows)]
+#[path = "github_write_windows_ledger.rs"]
+mod windows_ledger;
 #[derive(Clone)]
 pub struct GithubWriteService(Arc<Inner>);
 struct Slot(Arc<AtomicUsize>);
@@ -314,6 +332,10 @@ struct LedgerLease {
 }
 impl Drop for LedgerLease {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            let _ = File::unlock(&self._file);
+        }
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -350,9 +372,12 @@ impl GithubWriteService {
             ledger_directory.is_absolute(),
             "Absolute trusted ledger directory required"
         );
+        #[cfg(not(windows))]
         if initialize {
             fs::create_dir_all(&ledger_directory)?;
         }
+        #[cfg(windows)]
+        let windows_custody = windows_ledger::Custody::open(&ledger_directory, initialize)?;
         ensure!(
             ledger_directory.is_dir(),
             "Ledger missing; do not recreate automatically"
@@ -373,7 +398,9 @@ impl GithubWriteService {
             fs::set_permissions(&ledger_directory, fs::Permissions::from_mode(0o700))?;
         }
         let lease_path = ledger_directory.join("writer.lock");
+        #[cfg(not(windows))]
         let mut options = fs::OpenOptions::new();
+        #[cfg(not(windows))]
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
         {
@@ -381,7 +408,10 @@ impl GithubWriteService {
             options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
         let lease = LedgerLease {
+            #[cfg(not(windows))]
             _file: options.open(lease_path)?,
+            #[cfg(windows)]
+            _file: windows_ledger::lock(&lease_path)?,
         };
         #[cfg(unix)]
         {
@@ -406,7 +436,9 @@ impl GithubWriteService {
         }
         let identity = if initialize {
             let value = uuid::Uuid::new_v4().to_string();
+            #[cfg(not(windows))]
             let mut options = fs::OpenOptions::new();
+            #[cfg(not(windows))]
             options.write(true).create_new(true);
             #[cfg(unix)]
             {
@@ -414,7 +446,10 @@ impl GithubWriteService {
                 options.mode(0o600);
             }
             use std::io::Write;
+            #[cfg(not(windows))]
             let mut file = options.open(&identity_path)?;
+            #[cfg(windows)]
+            let mut file = crate::private_fs::windows::open_file(&identity_path, true)?;
             file.write_all(value.as_bytes())?;
             file.sync_all()?;
             value
@@ -435,16 +470,25 @@ impl GithubWriteService {
                 "Ledger cannot be symlink"
             );
         } else {
+            #[cfg(not(windows))]
             let mut o = fs::OpenOptions::new();
+            #[cfg(not(windows))]
             o.write(true).create_new(true);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
                 o.mode(0o600);
             }
+            #[cfg(not(windows))]
             o.open(&path)?.sync_all()?;
+            #[cfg(windows)]
+            crate::private_fs::windows::open_file(&path, true)?.sync_all()?;
         }
-        let db = Connection::open(path)?;
+        #[cfg(windows)]
+        let windows_custody = windows_custody.hold_files(&path, &identity_path)?;
+        let db = Connection::open(&path)?;
+        #[cfg(windows)]
+        windows_custody.validate(&path, &identity_path)?;
         db.busy_timeout(Duration::from_secs(1))?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
         if initialize {
@@ -511,6 +555,8 @@ impl GithubWriteService {
             slots: Arc::new(AtomicUsize::new(0)),
             _lease: lease,
             workers: WriteWorkers::default(),
+            #[cfg(windows)]
+            _windows_custody: windows_custody,
         })))
     }
     /// Close admission without cancelling or retrying any dispatched mutation.
@@ -929,6 +975,12 @@ impl GithubWriteService {
         let endpoint = format!("repos/{}/pulls/{}", scope.repository, scope.number);
         match action {
             Action::Review { event, body } => {
+                let state = match event.as_str() {
+                    "COMMENT" => "COMMENTED",
+                    "APPROVE" => "APPROVED",
+                    "REQUEST_CHANGES" => "CHANGES_REQUESTED",
+                    _ => bail!("Unsupported confirmed review event"),
+                };
                 let bytes = self.0.gh.run(
                     &scope.expected_root,
                     &api("POST", &format!("{endpoint}/reviews"), true),
@@ -952,7 +1004,7 @@ impl GithubWriteService {
                 ensure!(
                     verified["id"].as_u64() == Some(id)
                         && verified["commit_id"].as_str() == Some(scope.expected_head.as_str())
-                        && verified["state"] == "COMMENTED"
+                        && verified["state"] == state
                         && verified["body"].as_str() == Some(body.as_str())
                         && verified["html_url"]
                             .as_str()
@@ -960,7 +1012,7 @@ impl GithubWriteService {
                     "Review verification mismatch"
                 );
                 Ok(
-                    json!({"kind":"review","reviewId":id,"url":url,"commit":scope.expected_head,"state":"COMMENTED"}),
+                    json!({"kind":"review","reviewId":id,"url":url,"commit":scope.expected_head,"state":state}),
                 )
             }
             Action::Merge { method } => {
@@ -1004,16 +1056,28 @@ fn api(method: &str, endpoint: &str, input: bool) -> Vec<String> {
 fn availability(snapshot: &Value) -> Result<Value> {
     let bytes = serde_json::to_vec(snapshot)?;
     let pr = crate::workspace_github::parse_snapshot(&bytes)?;
-    let merge = cfg!(unix) && pr.preflight(&pr.head_ref_oid)?["eligible"] == true;
-    let comment = cfg!(unix) && pr.state == "OPEN";
-    Ok(
-        json!({"review":{"COMMENT":{"available":comment,"reason":if comment{Value::Null}else{json!("PR not open or backend unavailable")}},"APPROVE":{"available":false,"reason":"Atomic current-head review condition unavailable"},"REQUEST_CHANGES":{"available":false,"reason":"Atomic current-head review condition unavailable"}},"merge":{"available":merge,"reason":if merge{Value::Null}else{json!("Fresh checks/review/mergeability preflight is not eligible")},"methods":["merge","squash","rebase"]},"notice":NOTICE}),
-    )
+    let merge = cfg!(any(unix, windows)) && pr.preflight(&pr.head_ref_oid)?["eligible"] == true;
+    let review = cfg!(any(unix, windows)) && pr.state == "OPEN";
+    let reason = if review {
+        Value::Null
+    } else {
+        json!("PR not open or backend unavailable")
+    };
+    Ok(json!({
+        "review": {
+            "COMMENT": {"available":review,"reason":reason},
+            "APPROVE": {"available":review,"reason":reason},
+            "REQUEST_CHANGES": {"available":review,"reason":reason}
+        },
+        "merge": {"available":merge,"reason":if merge{Value::Null}else{json!("Fresh checks/review/mergeability preflight is not eligible")},"methods":["merge","squash","rebase"]},
+        "notice":NOTICE
+    }))
 }
+
 fn permitted(action: &Action, snapshot: &Value) -> Result<bool> {
     let value = availability(snapshot)?;
     Ok(match action {
-        Action::Review { .. } => value["review"]["COMMENT"]["available"] == true,
+        Action::Review { event, .. } => value["review"][event]["available"] == true,
         Action::Merge { .. } => value["merge"]["available"] == true,
     })
 }
@@ -1025,7 +1089,19 @@ struct Gh {
     _expire_after_dispatch_marker: bool,
 }
 impl Gh {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn run(&self, root: &Path, args: &[String], input: Option<&Value>) -> Result<Vec<u8>> {
+        let mut runner = crate::github_api::GhRunner::new(self.executable.clone())?;
+        runner.timeout = self.timeout;
+        crate::github_api::windows::capture_with_input(
+            &runner,
+            root,
+            args,
+            &std::sync::atomic::AtomicBool::new(false),
+            input.map(serde_json::to_vec).transpose()?,
+        )
+    }
+    #[cfg(not(any(unix, windows)))]
     fn run(&self, _: &Path, _: &[String], _: Option<&Value>) -> Result<Vec<u8>> {
         bail!("Write backend unavailable on this platform")
     }
@@ -1191,8 +1267,8 @@ else:
  endpoint=next(v for v in args if v.startswith('repos/'))
  if method=='POST':
   assert endpoint=='repos/owner/project/pulls/7/reviews'
-  assert set(body)=={'commit_id','event','body'} and body['event']=='COMMENT' and body['commit_id']=='a'*40
-  value={'id':19,'state':'COMMENTED','body':body['body'],'commit_id':body['commit_id'],'html_url':'https://github.com/owner/project/pull/7#pullrequestreview-19'}
+  assert set(body)=={'commit_id','event','body'} and body['event'] in ['COMMENT','APPROVE','REQUEST_CHANGES'] and body['commit_id']=='a'*40
+  value={'id':19,'state':{'COMMENT':'COMMENTED','APPROVE':'APPROVED','REQUEST_CHANGES':'CHANGES_REQUESTED'}[body['event']],'body':body['body'],'commit_id':body['commit_id'],'html_url':'https://github.com/owner/project/pull/7#pullrequestreview-19'}
   json.dump(value,open('review.json','w'))
   if os.path.exists('timeout-response'):
    with open('timeout-pid','w') as f:f.write(str(os.getpid()))
@@ -1389,6 +1465,35 @@ else:
         assert_eq!(writes(dir.path()), 1);
     }
     #[test]
+    fn explicit_commit_approval_and_change_request_are_verified_once_and_cannot_change_event() {
+        for (event, state, body) in [
+            ("APPROVE", "APPROVED", ""),
+            (
+                "REQUEST_CHANGES",
+                "CHANGES_REQUESTED",
+                "Please handle the specified commit's failure.",
+            ),
+        ] {
+            let (dir, service, p) = fixture();
+            let request = request(
+                &service,
+                &p,
+                json!({"kind":"review","event":event,"body":body}),
+            );
+            submit(&service, &request).unwrap();
+            let verified = wait(&service, &request);
+            assert_eq!(verified["status"], "succeeded");
+            assert_eq!(verified["result"]["state"], state);
+            assert_eq!(verified["result"]["commit"], "a".repeat(40));
+            assert_eq!(submit(&service, &request).unwrap(), verified);
+            assert_eq!(writes(dir.path()), 1);
+            let mut changed = request.clone();
+            changed["action"]["event"] = json!("COMMENT");
+            assert!(submit(&service, &changed).is_err());
+            assert_eq!(writes(dir.path()), 1);
+        }
+    }
+    #[test]
     fn synchronous_merge_has_server_head_condition_no_queue_and_verified_merge_commit() {
         let (dir, service, p) = fixture();
         let request = request(&service, &p, json!({"kind":"merge","method":"squash"}));
@@ -1474,13 +1579,13 @@ else:
         let baseline = prepare(&service, &p);
         assert_eq!(
             baseline["availability"]["review"]["APPROVE"]["available"],
-            false
+            true
         );
         assert_eq!(baseline["availability"]["notice"], NOTICE);
         let mut request = p.clone();
         request["baselineId"] = baseline["baselineId"].clone();
         request["mutationId"] = json!(uuid::Uuid::new_v4().to_string());
-        request["action"] = json!({"kind":"review","event":"APPROVE","body":""});
+        request["action"] = json!({"kind":"review","event":"DISMISS","body":""});
         assert!(submit(&service, &request).is_err());
         assert!(result(&service, &request).is_err());
         let wrong = tempfile::tempdir().unwrap();

@@ -92,20 +92,37 @@ impl ActionScope {
             && v["number"].as_u64() == Some(self.number)
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReviewEvent {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+impl ReviewEvent {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Comment => "COMMENT",
+            Self::Approve => "APPROVE",
+            Self::RequestChanges => "REQUEST_CHANGES",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Action {
-    Comment(String),
+    Review(ReviewEvent, String),
     Merge(String),
 }
 impl Action {
     fn value(&self) -> Result<Value> {
         Ok(match self {
-            Self::Comment(body) => {
+            Self::Review(event, body) => {
                 ensure!(
-                    !body.trim().is_empty() && body.len() <= 32768 && !body.contains('\0'),
-                    "Comment must be nonblank, contain no NUL bytes, and be at most 32768 UTF-8 bytes"
+                    (*event == ReviewEvent::Approve || !body.trim().is_empty())
+                        && body.len() <= 32768
+                        && !body.contains('\0'),
+                    "Review must be at most 32768 UTF-8 bytes without NUL; comments and change requests need text"
                 );
-                json!({"kind":"review","event":"COMMENT","body":body})
+                json!({"kind":"review","event":event.key(),"body":body})
             }
             Self::Merge(method) => {
                 ensure!(
@@ -118,7 +135,10 @@ impl Action {
     }
     fn label(&self) -> String {
         match self {
-            Self::Comment(body) => format!("Post COMMENT review with exact body:\n{body}"),
+            Self::Review(event, body) => format!(
+                "Post {} review for the specified commit with exact body:\n{body}",
+                event.key()
+            ),
             Self::Merge(method) => format!(
                 "Merge using {method}. No queue, automatic merge, branch deletion or admin bypass requested."
             ),
@@ -178,10 +198,10 @@ impl Confirmation {
             "Missing review head-race disclosure"
         );
         match &action {
-            Action::Comment(_) => ensure!(
-                availability["review"]["COMMENT"]["available"] == true,
-                "COMMENT is unavailable: {}",
-                availability["review"]["COMMENT"]["reason"]
+            Action::Review(event, _) => ensure!(
+                availability["review"][event.key()]["available"] == true,
+                "Review event is unavailable: {}",
+                availability["review"][event.key()]["reason"]
                     .as_str()
                     .unwrap_or("not enabled")
             ),
@@ -371,14 +391,14 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
                 "Confirmation expired; reload the baseline"
             );
             let sent_body = match &c.action {
-                Action::Comment(body) => Some(body.clone()),
+                Action::Review(_, body) => Some(body.clone()),
                 Action::Merge(_) => None,
             };
             let value = api("github.write.submit", c.submit_params()?)?;
             status(&value, &c.mutation, &c.scope)?;
             if value["status"] == "succeeded" {
                 let expected_kind = match &c.action {
-                    Action::Comment(_) => "review",
+                    Action::Review(_, _) => "review",
                     Action::Merge(_) => "merge",
                 };
                 ensure!(
@@ -429,14 +449,19 @@ pub struct GitHubActions {
 impl GitHubActions {
     pub fn new(transport: WriteTransport, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
+        let owner_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
-                if this
-                    .update_in(cx, |this, window, cx| this.poll(window, cx))
-                    .is_err()
+                if crate::main_window_poll::update_visible_or_owner(
+                    owner_window,
+                    &this,
+                    cx,
+                    |this, window, cx| this.poll(window, cx),
+                )
+                .is_err()
                 {
                     break;
                 }
@@ -454,7 +479,7 @@ impl GitHubActions {
             confirmation: None,
             body: cx.new(|cx| {
                 TextareaState::new(window, cx)
-                    .placeholder("Comment review body")
+                    .placeholder("Review body (optional for approval)")
                     .submit_on_enter(false)
             }),
             content_scroll: ScrollHandle::new(),
@@ -725,28 +750,26 @@ impl Render for GitHubActions {
             )
             .child(Textarea::new(&self.body).h(px(110.)))
             .child(
-                Button::new("github-prepare-comment")
-                    .label("Prepare COMMENT review…")
-                    .disabled(disabled)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let body = this.body.read(cx).value().to_string();
-                        this.prepare(Action::Comment(body), cx);
-                    })),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("github-approve-unavailable")
-                            .label("Approve (unavailable)")
-                            .disabled(true),
-                    )
-                    .child(
-                        Button::new("github-request-changes-unavailable")
-                            .label("Request changes (unavailable)")
-                            .disabled(true),
-                    ),
+                div().flex().flex_wrap().gap_2().children(
+                    [
+                        (ReviewEvent::Comment, "Comment…"),
+                        (ReviewEvent::Approve, "Approve…"),
+                        (ReviewEvent::RequestChanges, "Request changes…"),
+                    ]
+                    .into_iter()
+                    .map(|(event, label)| {
+                        Button::new(SharedString::from(format!(
+                            "github-prepare-{}",
+                            event.key()
+                        )))
+                        .label(label)
+                        .disabled(disabled)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let body = this.body.read(cx).value().to_string();
+                            this.prepare(Action::Review(event, body), cx);
+                        }))
+                    }),
+                ),
             )
             .child(div().text_sm().child(NOTICE))
             .child(div().flex().flex_wrap().gap_2().children(
@@ -847,8 +870,8 @@ impl Render for GitHubActions {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, ActionScope, Confirmation, NOTICE, Reply, Work, blocked, execute, history, now,
-        status,
+        Action, ActionScope, Confirmation, NOTICE, Reply, ReviewEvent, Work, blocked, execute,
+        history, now, status,
     };
     use anyhow::Result;
     use serde_json::{Value, json};
@@ -877,7 +900,7 @@ mod tests {
         v["fingerprint"] = json!("f".repeat(64));
         v["expiresAt"] = json!(now() + 60);
         v["snapshot"] = json!({"number":42,"title":"Fixture PR","url":"https://github.com/fixture/repo/pull/42","state":"OPEN","isDraft":false,"headRefOid":s.head,"headRefName":"fixture","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","reviews":[],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]});
-        v["availability"] = json!({"review":{"COMMENT":{"available":true,"reason":null},"APPROVE":{"available":false,"reason":"No atomic current-head assertion"},"REQUEST_CHANGES":{"available":false,"reason":"No atomic current-head assertion"}},"merge":{"available":true,"reason":null,"methods":["merge","squash","rebase"]},"notice":NOTICE});
+        v["availability"] = json!({"review":{"COMMENT":{"available":true,"reason":null},"APPROVE":{"available":true,"reason":null},"REQUEST_CHANGES":{"available":true,"reason":null}},"merge":{"available":true,"reason":null,"methods":["merge","squash","rebase"]},"notice":NOTICE});
         v
     }
     #[::core::prelude::v1::test]
@@ -894,7 +917,10 @@ mod tests {
                     prepared(&s)
                 })
             },
-            Work::Prepare(s.clone(), Action::Comment(body.clone())),
+            Work::Prepare(
+                s.clone(),
+                Action::Review(ReviewEvent::Comment, body.clone()),
+            ),
         )
         .unwrap();
         assert_eq!(calls[0].0, "github.write.history");
@@ -942,7 +968,13 @@ mod tests {
             let mut v = prepared(&s);
             v[field] = json!("changed");
             assert!(
-                Confirmation::parse(s.clone(), Action::Comment("body".into()), v, now()).is_err(),
+                Confirmation::parse(
+                    s.clone(),
+                    Action::Review(ReviewEvent::Comment, "body".into()),
+                    v,
+                    now()
+                )
+                .is_err(),
                 "{field}"
             );
         }
@@ -954,7 +986,15 @@ mod tests {
         assert!(Confirmation::parse(s.clone(), Action::Merge("merge".into()), v, now()).is_err());
         let mut v = prepared(&s);
         v["availability"]["notice"] = json!("");
-        assert!(Confirmation::parse(s, Action::Comment("body".into()), v, now()).is_err());
+        assert!(
+            Confirmation::parse(
+                s,
+                Action::Review(ReviewEvent::Comment, "body".into()),
+                v,
+                now()
+            )
+            .is_err()
+        );
     }
     #[::core::prelude::v1::test]
     fn old_head_uncertain_history_blocks_new_prepare_after_reconstruction() {
@@ -972,7 +1012,7 @@ mod tests {
                     assert_eq!(method, "github.write.history");
                     Ok(records.clone())
                 },
-                Work::Prepare(s, Action::Comment("never post".into()))
+                Work::Prepare(s, Action::Review(ReviewEvent::Comment, "never post".into()))
             )
             .is_err()
         );
@@ -989,7 +1029,7 @@ mod tests {
                     assert_eq!(method, "github.write.history");
                     anyhow::bail!("ledger unavailable")
                 },
-                Work::Prepare(s, Action::Comment("body".into()))
+                Work::Prepare(s, Action::Review(ReviewEvent::Comment, "body".into()))
             )
             .is_err()
         );
@@ -1000,7 +1040,7 @@ mod tests {
         let s = scope();
         let c = Confirmation::parse(
             s.clone(),
-            Action::Comment("body".into()),
+            Action::Review(ReviewEvent::Comment, "body".into()),
             prepared(&s),
             now(),
         )
@@ -1025,11 +1065,65 @@ mod tests {
         assert!(matches!(reply,Reply::Mutation {value,..} if value["status"]=="uncertain"));
     }
     #[::core::prelude::v1::test]
+    fn confirmed_review_events_keep_the_exact_event_commit_and_body() {
+        for (event, body) in [
+            (ReviewEvent::Approve, ""),
+            (ReviewEvent::RequestChanges, "Please fix this commit."),
+        ] {
+            let s = scope();
+            let confirmation = Confirmation::parse(
+                s.clone(),
+                Action::Review(event, body.into()),
+                prepared(&s),
+                now(),
+            )
+            .unwrap();
+            let params = confirmation.submit_params().unwrap();
+            assert_eq!(
+                params["action"],
+                json!({"kind":"review","event":event.key(),"body":body})
+            );
+            assert_eq!(params["expectedHead"], s.head);
+            let mut unavailable = prepared(&s);
+            unavailable["availability"]["review"][event.key()]["available"] = json!(false);
+            assert!(
+                Confirmation::parse(s, Action::Review(event, body.into()), unavailable, now())
+                    .is_err()
+            );
+        }
+        assert!(
+            Action::Review(ReviewEvent::RequestChanges, "".into())
+                .value()
+                .is_err()
+        );
+        assert!(
+            Action::Review(ReviewEvent::Approve, "".into())
+                .value()
+                .is_ok()
+        );
+    }
+    #[::core::prelude::v1::test]
     fn comment_utf8_byte_limit_and_merge_method_allowlist() {
-        assert!(Action::Comment(" \n".into()).value().is_err());
-        assert!(Action::Comment("text\0text".into()).value().is_err());
-        assert!(Action::Comment("中".repeat(10923)).value().is_err());
-        assert!(Action::Comment("x".repeat(32768)).value().is_ok());
+        assert!(
+            Action::Review(ReviewEvent::Comment, " \n".into())
+                .value()
+                .is_err()
+        );
+        assert!(
+            Action::Review(ReviewEvent::Comment, "text\0text".into())
+                .value()
+                .is_err()
+        );
+        assert!(
+            Action::Review(ReviewEvent::Comment, "中".repeat(10923))
+                .value()
+                .is_err()
+        );
+        assert!(
+            Action::Review(ReviewEvent::Comment, "x".repeat(32768))
+                .value()
+                .is_ok()
+        );
         assert!(Action::Merge("admin".into()).value().is_err());
         assert_eq!(
             Action::Merge("rebase".into()).value().unwrap(),
@@ -1056,7 +1150,7 @@ mod tests {
         let s = scope();
         let mut c = Confirmation::parse(
             s.clone(),
-            Action::Comment("body".into()),
+            Action::Review(ReviewEvent::Comment, "body".into()),
             prepared(&s),
             now(),
         )

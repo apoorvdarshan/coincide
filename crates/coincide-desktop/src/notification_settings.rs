@@ -751,7 +751,7 @@ impl NotificationSettingsPanel {
                     .timer(Duration::from_millis(100))
                     .await;
                 if this
-                    .update_in(cx, |this, _, cx| {
+                    .update(cx, |this, cx| {
                         if let Some(status) =
                             this.bridge.as_ref().and_then(|b| b.handle.try_status())
                             && status != this.status

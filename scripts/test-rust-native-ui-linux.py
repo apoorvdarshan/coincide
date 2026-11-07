@@ -167,6 +167,10 @@ def main():
     def quit_normally(*, guarded=False):
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
+        report["quitInputFocusBefore"] = command("xdotool", "getwindowfocus", env=env)
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        report["quitInputFocus"] = command("xdotool", "getwindowfocus", env=env)
+        assert int(report["quitInputFocus"]) == int(window), "Native Quit input must target the observed main window"
         first = time.monotonic()
         command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
         if guarded:
@@ -180,7 +184,25 @@ def main():
             command("xdotool", "key", "--clearmodifiers", "ctrl+q", env=env)
             report["guardedQuitFirstPressAlive"] = True
             report["guardedQuitSecondPressSeconds"] = elapsed
-        assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
+        try:
+            assert process.wait(timeout=25) == 0, "Normal Quit must exit successfully"
+        except (subprocess.TimeoutExpired, AssertionError):
+            # Read-only failure evidence. Do not issue another Quit key, extend
+            # the timeout or let a successful cleanup request erase this failure.
+            for key, action in [
+                ("quitFailureFocus", lambda: command("xdotool", "getwindowfocus", env=env)),
+                ("quitFailureWindows", lambda: command("xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), env=env)),
+                ("quitFailureControlStatus", lambda: rpc("app.status")),
+            ]:
+                try:
+                    report[key] = action()
+                except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as diagnostic:
+                    report[key + "Error"] = str(diagnostic)
+            try:
+                capture(window, "quit-failure")
+            except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as diagnostic:
+                report["quitFailureFrameError"] = str(diagnostic)
+            raise
         process = None
         log.close()
         log = None
@@ -273,6 +295,43 @@ def main():
         click_rendered_word(settings_window, "settings-return-general", "General")
         capture(settings_window, "settings-general-returned", "General")
         report["checks"].append("native Settings search opened Codex provider page and returned to General without provider actions")
+        # Visit the remaining actual Settings routes for screenshot review. A
+        # matching sidebar label alone is insufficient: the native window title
+        # must acknowledge navigation, then real body text must be rendered.
+        # These are presentation checks; do not click permission, login,
+        # microphone/device-refresh, install, capture or credential operations.
+        pages = [
+            ("Models", "Models", "Favorite"),
+            ("Usage", "Usage", "Usage"),
+            ("Instructions", "Instructions", "Global"),
+            ("Archive", "Archive", "archived"),
+            ("Keyboard", "Keyboard", "shortcuts"),
+            ("Voice", "Voice", "Engine"),
+            ("Browser", "Browser", "Browser profiles"),
+            ("Computer Use", "Computer", "Computer Use"),
+            ("Appshots", "Appshots", "Permissions"),
+            ("Historical images", "Historical", "Historical images"),
+            ("About", "About", "Help"),
+            ("Claude Code", "Claude", "Executable"),
+            ("Cursor", "Cursor", "Executable"),
+            ("Grok Build", "Grok", "Executable"),
+            ("OpenCode", "OpenCode", "Executable"),
+            ("Antigravity", "Antigravity", "Executable"),
+        ]
+        report["settingsScreens"] = []
+        for index, (title, word, body_text) in enumerate(pages):
+            stage = f"settings-screen-{index:02}"
+            click_rendered_word(settings_window, stage + "-search", "Search")
+            command("xdotool", "type", "--clearmodifiers", title, env=env)
+            capture(settings_window, stage + "-filtered", "Results")
+            click_rendered_word(settings_window, stage + "-result", word, min_y=80)
+            wait_for(f"native Settings title {title}", lambda title=title: command("xdotool", "getwindowname", settings_window, env=env).strip() == title)
+            capture(settings_window, stage, body_text)
+            report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True})
+        click_rendered_word(settings_window, "settings-all-pages-return-general", "General")
+        wait_for("native General title after all pages", lambda: command("xdotool", "getwindowname", settings_window, env=env).strip() == "General")
+        capture(settings_window, "settings-all-pages-general", "Appearance")
+        report["checks"].append("native Settings title, rendered body and screenshots verified for 16 additional routes; no feature actions were invoked")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
@@ -315,10 +374,11 @@ def main():
         drained = process is None or process.poll() is not None
         if process is not None and process.poll() is None:
             try:
-                rpc("app.quit")  # Failure cleanup only; cannot turn failed UI input into PASS.
+                report["failureCleanupQuitReply"] = rpc("app.quit")  # Failure cleanup only; cannot turn failed UI input into PASS.
                 process.wait(timeout=25)
                 drained = True
-            except (OSError, ValueError, AssertionError, subprocess.TimeoutExpired):
+            except (OSError, ValueError, AssertionError, subprocess.TimeoutExpired) as cleanup_error:
+                report["failureCleanupQuitError"] = str(cleanup_error)
                 report["ownerPending"] = True
                 report["fixtureRetained"] = True
         if log is not None:

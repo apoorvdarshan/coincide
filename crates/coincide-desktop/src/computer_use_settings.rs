@@ -20,7 +20,7 @@ impl ComputerUseSettingsPanel {
                     .timer(Duration::from_millis(100))
                     .await;
                 if this
-                    .update_in(cx, |this, _, cx| {
+                    .update(cx, |this, cx| {
                         if let Some(status) = this.handle.try_status() {
                             this.status = status;
                             cx.notify();

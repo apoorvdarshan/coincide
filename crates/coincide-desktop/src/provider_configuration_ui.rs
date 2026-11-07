@@ -124,14 +124,19 @@ impl Panel {
         cx: &mut Context<Self>,
     ) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let owner_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
-                if this
-                    .update_in(cx, |this, window, cx| this.poll(window, cx))
-                    .is_err()
+                if crate::main_window_poll::update_visible_or_owner(
+                    owner_window,
+                    &this,
+                    cx,
+                    |this, window, cx| this.poll(window, cx),
+                )
+                .is_err()
                 {
                     break;
                 }
