@@ -1417,7 +1417,7 @@ impl Render for BrowserSettings {
                     ),
             );
         }
-        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.").into_any_element()
+        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and the system passkey sheet are unavailable; Bitwarden passkeys sign in where supported (see Passwords). Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.")
     }
 }
 

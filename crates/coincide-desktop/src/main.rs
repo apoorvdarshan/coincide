@@ -36,6 +36,7 @@ mod browser_address_bar;
 mod browser_controls;
 mod browser_dialog_ui;
 mod browser_login_mount;
+mod browser_passkey_ui;
 mod browser_settings;
 mod browser_tab_shortcuts;
 mod browser_tab_shortcuts_mount;
@@ -1105,8 +1106,14 @@ impl Coincide {
         });
         // Discovery checks executable metadata only. Vault reads require a
         // password-manager button click in this native panel.
+        // Discovery checks executable metadata only. Vault reads for filling
+        // require a password-manager button click in this native panel; a page's
+        // passkey request lists Bitwarden's passkeys only while "Use passkeys
+        // from Bitwarden" is on and Bitwarden is unlocked (browser_passkeys.rs).
+        let credential_sources = credential_settings::installed_sources();
+        let passkey_vault = credential_settings::bitwarden_passkeys(&credential_sources);
         let (credential_settings, credential_jobs) =
-            credential_settings::CredentialSettings::new(credential_settings::installed_sources());
+            credential_settings::CredentialSettings::new(credential_sources);
         let credential_panel = cx.new(|_| credential_settings);
         let mut browser_profile_requests = None;
         let browser_settings_panel = cx.new(|cx| {
@@ -1154,7 +1161,11 @@ impl Coincide {
         let (browser, browser_error) = match control::download_directory()
             .and_then(|downloads| BrowserController::new(profile_dir, downloads))
         {
-            Ok(browser) => (Some(browser), None),
+            Ok(mut browser) => {
+                // `bw` runs only after a page asks and, for the key, after Sign In.
+                browser.set_passkey_vault(passkey_vault);
+                (Some(browser), None)
+            }
             Err(error) => (None, Some(format!("Browser unavailable: {error}"))),
         };
         if let Ok(mut engine) = engine.try_lock() {
@@ -2016,6 +2027,9 @@ impl Coincide {
         for request in requests {
             browser.execute(request, window, cx);
         }
+        changed |= browser.set_passkey_preferences(browser::passkeys::Preferences::from_settings(
+            &self.settings,
+        ));
         changed |= browser.poll(window, cx);
         self.browser_completion.poll();
         if close_visible_last_tab
@@ -2146,6 +2160,7 @@ impl Coincide {
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
         let page = self.browser_page(&thread, webview, cx);
+        let passkey_banner = self.browser_passkey_banner(cx);
         Some(
             div()
                 .track_focus(&self.browser_focus)
@@ -2246,6 +2261,13 @@ impl Coincide {
                 .children(dialog_banner)
                 .children(user_turn_banner)
                 .child(page)
+                .children(passkey_banner)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .when_some(webview, |pane, view| pane.child(view)),
+                )
                 .into_any_element(),
         )
     }

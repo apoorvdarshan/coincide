@@ -158,7 +158,8 @@ SOFTWARE.
 ## Public Suffix List
 
 https://publicsuffix.org, Mozilla's list of domain suffixes under which separate parties register names, bundled
-unmodified as `CoincideKit/Preview/WebAuthn/public_suffix_list.dat` (inside `CoincideKit.framework/Resources`) under the
+unmodified as `CoincideKit/Preview/WebAuthn/public_suffix_list.dat` (inside `CoincideKit.framework/Resources`), and
+built into the Rust desktop app from the identical `crates/coincide-core/resources/public_suffix_list.dat`, under the
 Mozilla Public License 2.0. Its version is on the file's `// VERSION:` line; `scripts/update-public-suffix-list.sh`
 replaces it with the current list. Signing in with a Bitwarden passkey uses it to decide which relying party IDs a
 site may claim. The file is its own source form; the license is at https://mozilla.org/MPL/2.0/.

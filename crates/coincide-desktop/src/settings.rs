@@ -706,7 +706,8 @@ impl Coincide {
                                 .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
                                 .child(self.browser_settings_panel.clone())
                                 .child(div().p_3().text_lg().child("Passwords"))
-                                .child(self.credential_panel.clone()))
+                                .child(self.credential_panel.clone())
+                                .child(self.passkey_settings(cx)))
                             .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
                                 .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
                     )
@@ -728,7 +729,8 @@ impl Coincide {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .child(self.credential_panel.clone()),
+                            .child(self.credential_panel.clone())
+                            .child(self.passkey_settings(cx)),
                     ),
                 )
                 .into_any_element()

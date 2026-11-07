@@ -31,6 +31,7 @@ pub mod dictation;
 pub mod git_actions;
 pub mod local_usage;
 pub mod organization;
+pub mod passkeys;
 pub mod platform_host;
 pub mod remote;
 pub mod turn_checkpoints;
