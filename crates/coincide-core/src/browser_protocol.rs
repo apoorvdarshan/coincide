@@ -65,6 +65,11 @@ pub enum BrowserAction {
         #[serde(default)]
         by: Option<i32>,
     },
+    /// Native own-WebView capture; no caller path, script, source, or screen ID.
+    Screenshot {
+        #[serde(default, rename = "fullPage")]
+        full_page: bool,
+    },
     Frames,
     Console {
         #[serde(default)]
@@ -355,6 +360,29 @@ impl BrowserRequest {
         }
         Ok(())
     }
+}
+
+/// Screenshot accepts only its closed native request fields. In particular no
+/// path, script, clip, SDK method, source identity or allocation budget is JSON
+/// authority. Other existing browser actions retain their existing admission.
+pub fn validate_screenshot_parameters(value: &Value) -> Result<()> {
+    if value.get("action").and_then(Value::as_str) == Some("screenshot") {
+        let object = value
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid screenshot request"))?;
+        ensure!(
+            object.keys().all(|key| matches!(
+                key.as_str(),
+                "id" | "threadId" | "tab" | "action" | "fullPage"
+            )),
+            "Unsupported screenshot request field"
+        );
+        ensure!(
+            object.get("fullPage").is_none_or(Value::is_boolean),
+            "fullPage must be a boolean"
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_url(address: &str) -> Result<Url> {
@@ -1469,6 +1497,28 @@ mod tests {
         let long = clean_user_turn_message(&"é".repeat(600));
         assert_eq!(long.chars().count(), USER_TURN_MAXIMUM_MESSAGE);
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn screenshot_is_native_only_with_closed_parameters_and_no_frame_route() {
+        let value = serde_json::json!({"id":"shot","threadId":uuid::Uuid::new_v4().to_string(),"action":"screenshot","fullPage":true});
+        validate_screenshot_parameters(&value).unwrap();
+        let request: BrowserRequest = serde_json::from_value(value.clone()).unwrap();
+        request.validate().unwrap();
+        assert!(script_for_request(&request).unwrap().is_none());
+        for key in [
+            "path", "script", "source", "clip", "frame", "method", "budget",
+        ] {
+            let mut invalid = value.clone();
+            invalid[key] = serde_json::json!("untrusted");
+            assert!(validate_screenshot_parameters(&invalid).is_err());
+        }
+        let mut framed = request.clone();
+        framed.frame = Some("frame-id".into());
+        assert!(framed.validate().is_err());
+        let mut invalid = value;
+        invalid["fullPage"] = serde_json::json!("yes");
+        assert!(validate_screenshot_parameters(&invalid).is_err());
     }
 
     #[test]

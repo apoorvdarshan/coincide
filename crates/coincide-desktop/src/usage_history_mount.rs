@@ -1,5 +1,7 @@
-//! Local saved-document transport. No provider/account/session discovery.
+//! Local saved-document transport. Account rows come from saved provider
+//! configuration only: no provider launch, network or session discovery.
 use crate::{
+    usage_dashboard::{Dashboard, Data},
     usage_history_view::{UsageHistoryEvent, UsageHistoryView},
     worker_owner::{ShutdownStatus, WorkerOwner},
 };
@@ -10,17 +12,25 @@ use coincide_core::{
 use gpui_kit::*;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
-type Reply = (u64, Result<Report, String>);
-#[derive(Default)]
-struct Reader {
+type Reply<T> = (u64, Result<T, String>);
+struct Reader<T> {
     owner: WorkerOwner,
     generation: u64,
-    receiver: Option<Receiver<Reply>>,
+    receiver: Option<Receiver<Reply<T>>>,
 }
-impl Reader {
+impl<T> Default for Reader<T> {
+    fn default() -> Self {
+        Self {
+            owner: WorkerOwner::default(),
+            generation: 0,
+            receiver: None,
+        }
+    }
+}
+impl<T: Send + 'static> Reader<T> {
     fn start(
         &mut self,
-        read: impl FnOnce() -> Result<Report, String> + Send + 'static,
+        read: impl FnOnce() -> Result<T, String> + Send + 'static,
     ) -> Result<(), String> {
         if !self.owner.can_start() {
             return Err("A saved-history read is still finishing, or this view is closing.".into());
@@ -30,7 +40,7 @@ impl Reader {
             .checked_add(1)
             .ok_or("Saved-history generation exhausted")?;
         let generation = self.generation;
-        let (tx, rx): (SyncSender<Reply>, Receiver<Reply>) = mpsc::sync_channel(1);
+        let (tx, rx): (SyncSender<Reply<T>>, Receiver<Reply<T>>) = mpsc::sync_channel(1);
         if !self.owner.spawn(move |admission| {
             if !admission.allowed() {
                 return;
@@ -45,7 +55,7 @@ impl Reader {
         self.receiver = Some(rx);
         Ok(())
     }
-    fn poll(&mut self) -> Option<Result<Report, String>> {
+    fn poll(&mut self) -> Option<Result<T, String>> {
         self.owner.poll();
         if self.owner.closed() {
             self.receiver = None;
@@ -71,15 +81,34 @@ impl Reader {
 }
 pub struct Mount {
     pub panel: Entity<UsageHistoryView>,
+    pub dashboard: Dashboard,
     engine: SharedEngine,
-    reader: Reader,
+    reader: Reader<Report>,
+    dashboard_reader: Reader<Data>,
 }
 impl Mount {
     pub fn new(engine: SharedEngine, cx: &mut App) -> Self {
         Self {
             panel: cx.new(|_| UsageHistoryView::new()),
+            dashboard: Dashboard::default(),
             engine,
             reader: Reader::default(),
+            dashboard_reader: Reader::default(),
+        }
+    }
+    /// Reads saved turns and account rows for Settings › Usage in the background.
+    pub fn load_dashboard(&mut self) {
+        if self.dashboard.loading {
+            return;
+        }
+        self.dashboard.attempted_at = Some(chrono::Utc::now());
+        let engine = self.engine.clone();
+        match self
+            .dashboard_reader
+            .start(move || crate::usage_dashboard::read(&engine))
+        {
+            Ok(()) => self.dashboard.loading = true,
+            Err(error) => self.dashboard.error = Some(error),
         }
     }
     pub fn load(&mut self, event: &UsageHistoryEvent, cx: &mut App) {
@@ -109,17 +138,36 @@ impl Mount {
         }
     }
 
-    pub fn poll(&mut self, cx: &mut App) {
+    /// True when the dashboard changed and should be drawn again.
+    pub fn poll(&mut self, cx: &mut App) -> bool {
         if let Some(result) = self.reader.poll() {
             self.panel
                 .update(cx, |panel, cx| panel.set_snapshot(result, cx));
         }
+        let mut changed = false;
+        if let Some(result) = self.dashboard_reader.poll() {
+            self.dashboard.accept(result);
+            changed = true;
+        }
+        changed | self.dashboard.claude.poll(&self.engine)
     }
     pub fn request_shutdown(&mut self) {
         self.reader.close();
+        self.dashboard_reader.close();
+        self.dashboard.claude.close();
     }
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
-        self.reader.owner.status()
+        let history = self.reader.owner.status();
+        let dashboard = self.dashboard_reader.owner.status();
+        ShutdownStatus {
+            closed: history.closed && dashboard.closed,
+            unjoined: history.unjoined + dashboard.unjoined,
+            returned: history.returned.saturating_add(dashboard.returned),
+            panicked: history.panicked.saturating_add(dashboard.panicked),
+            unclassified: history.unclassified + dashboard.unclassified,
+            pending_pickers: history.pending_pickers + dashboard.pending_pickers,
+            spawn_error: history.spawn_error.or(dashboard.spawn_error),
+        }
     }
 }
 #[cfg(test)]
@@ -128,7 +176,7 @@ mod tests {
     use std::time::{Duration, Instant};
     #[::core::prelude::v1::test]
     fn close_discards_queued_reply_but_keeps_actual_reader_ownership() {
-        let mut reader = Reader::default();
+        let mut reader = Reader::<Report>::default();
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         reader
@@ -158,7 +206,7 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn superseded_reply_cannot_update_current_generation() {
-        let mut reader = Reader::default();
+        let mut reader = Reader::<Report>::default();
         let (tx, rx) = mpsc::sync_channel(1);
         reader.generation = 2;
         reader.receiver = Some(rx);

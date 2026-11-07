@@ -21,6 +21,9 @@ icon_assets!(
         ArrowLeft,
         ArrowRight,
         ArrowUp,
+        // Settings › Usage trend arrows.
+        ArrowUpRight,
+        ArrowDownRight,
         Asterisk,
         AtSign,
         Brain,
@@ -54,6 +57,11 @@ icon_assets!(
         SquareArrowOutUpRight,
         Clock,
         FolderPlus,
+        // Missing project folder, the toolbar's Diff and Pull Requests, and approvals.
+        FolderX,
+        Diff,
+        GitPullRequest,
+        ShieldAlert,
         Check,
         ChevronDown,
         ChevronLeft,
@@ -69,6 +77,7 @@ icon_assets!(
         Cpu,
         Dash,
         Delete,
+        Diff,
         EllipsisVertical,
         Ellipsis,
         ExternalLink,
@@ -78,6 +87,7 @@ icon_assets!(
         File,
         FolderClosed,
         FolderOpen,
+        FolderX,
         Folder,
         Frame,
         Gauge,
@@ -182,10 +192,16 @@ mod tests {
             "icons/corner-up-right.svg",
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
+            "icons/arrow-up-right.svg",
+            "icons/arrow-down-right.svg",
             "icons/square.svg",
+            // Empty states shared by sidebar chrome and Diff inspector.
+            "icons/folder-x.svg",
+            "icons/diff.svg",
+            "icons/git-pull-request.svg",
+            "icons/shield-alert.svg",
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
-            "icons/git-pull-request.svg",
             "icons/git-pull-request-draft.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
