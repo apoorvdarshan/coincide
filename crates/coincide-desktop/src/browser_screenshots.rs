@@ -41,6 +41,7 @@ impl Binding {
     }
 }
 struct Pending {
+    native: Option<screenshot_native::Handle>,
     started: Instant,
     request: BrowserRequest,
     binding: Binding,
@@ -101,6 +102,7 @@ impl Owner {
         let (sender, raw) = mpsc::sync_channel(1);
         let native_returned = Arc::new(AtomicBool::new(false));
         self.job = Some(Pending {
+            native: None,
             started: Instant::now(),
             request,
             binding,
@@ -112,7 +114,7 @@ impl Owner {
             native_returned: native_returned.clone(),
         });
         console_suppressed.store(true, Ordering::Release);
-        screenshot_native::capture(
+        let native = screenshot_native::capture(
             view,
             navigation,
             protected,
@@ -125,6 +127,10 @@ impl Owner {
                 let _ = sender.try_send(result);
             }),
         );
+        self.job
+            .as_mut()
+            .expect("owned native snapshot admission")
+            .native = Some(native);
         Ok(())
     }
     pub fn close(&mut self) {
@@ -149,6 +155,9 @@ impl Owner {
             || !source_matches(&job.binding)
         {
             job.binding.cancelled.store(true, Ordering::Release);
+        }
+        if let Some(native) = &job.native {
+            native.poll();
         }
         if let Some(raw) = &job.raw {
             match raw.try_recv() {
@@ -283,6 +292,7 @@ mod tests {
     ) -> mpsc::SyncSender<Result<screenshot_native::Pixels, &'static str>> {
         let (sender, receiver) = mpsc::sync_channel(1);
         owner.job = Some(Pending {
+            native: None,
             started: Instant::now(),
             request: BrowserRequest {
                 id: "private-test".into(),

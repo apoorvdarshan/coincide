@@ -20,38 +20,60 @@ pub(super) enum Data {
     },
 }
 pub(super) type Completion = Box<dyn FnOnce(Result<Pixels, &'static str>)>;
-#[cfg(target_os = "macos")]
-#[path = "browser_screenshot_macos.rs"]
-mod platform;
-#[cfg(target_os = "macos")]
-pub(super) use platform::capture;
+
 #[cfg(target_os = "linux")]
 #[path = "browser_screenshot_linux.rs"]
 mod linux;
-#[cfg(target_os = "linux")]
-pub(super) use linux::capture;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub(super) fn capture(
-    _view: &wry::WebView,
-    _navigation: Arc<AtomicU64>,
-    _protected: Arc<AtomicBool>,
-    _cancelled: Arc<AtomicBool>,
-    _callbacks: Callbacks,
-    _full_page: bool,
-    completion: Completion,
-) {
-    completion(Err(
-        "Native WebView screenshots are not yet available on this platform",
-    ));
-}
-// Keep the facade contract identical on every host.
 #[cfg(target_os = "macos")]
-const _: fn(
-    &wry::WebView,
-    Arc<AtomicU64>,
-    Arc<AtomicBool>,
-    Arc<AtomicBool>,
-    Callbacks,
-    bool,
-    Completion,
-) = capture;
+#[path = "browser_screenshot_macos.rs"]
+mod platform;
+#[cfg(target_os = "windows")]
+#[path = "browser_screenshot_windows.rs"]
+mod windows;
+#[cfg(any(target_os = "windows", test))]
+#[path = "browser_screenshot_windows_plan.rs"]
+mod windows_plan;
+
+#[derive(Default)]
+pub(super) struct Handle {
+    #[cfg(target_os = "windows")]
+    poll: Option<Box<dyn Fn()>>,
+}
+impl Handle {
+    pub fn poll(&self) {
+        #[cfg(target_os = "windows")]
+        if let Some(poll) = &self.poll {
+            poll();
+        }
+    }
+}
+pub(super) fn capture(
+    view: &wry::WebView,
+    navigation: Arc<AtomicU64>,
+    protected: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+    callbacks: Callbacks,
+    full_page: bool,
+    completion: Completion,
+) -> Handle {
+    #[cfg(target_os = "windows")]
+    {
+        windows::capture(
+            view, navigation, protected, cancelled, callbacks, full_page, completion,
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        platform::capture(
+            view, navigation, protected, cancelled, callbacks, full_page, completion,
+        );
+        Handle::default()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::capture(
+            view, navigation, protected, cancelled, callbacks, full_page, completion,
+        );
+        Handle::default()
+    }
+}

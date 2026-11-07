@@ -1701,9 +1701,6 @@ impl BrowserController {
             "full-page-screenshots-beyond-viewport",
             "passkeys",
         ];
-        if !cfg!(any(target_os = "macos", target_os = "linux")) {
-            unsupported.push("screenshots");
-        }
         if !cfg!(target_os = "linux") {
             unsupported.push("blob-downloads");
         }

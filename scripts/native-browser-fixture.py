@@ -199,6 +199,12 @@ def main():
         raise AssertionError("Native parent did not acknowledge its actual browser capture")
     try:
         report = exercise_browser(rpc, args.thread, capture_visible)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("owned_native_screenshot_fixture", Path(__file__).with_name("test-rust-native-browser-screenshots.py"))
+        snapshots = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(snapshots)
+        report["nativeBrowserScreenshots"] = snapshots.exercise_screenshots(rpc, args.thread, data)
+        assert report["nativeBrowserScreenshots"]["passed"]
         args.report.write_text(json.dumps(report, indent=2))
     except BaseException as error:
         args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000],
