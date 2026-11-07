@@ -12,6 +12,35 @@ pub(super) struct State {
     pub(super) preview_placeholder: bool,
     pub(super) error: Option<String>,
 }
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SavedChoice {
+    Deferred,
+    Ready(Option<SavedPanel>),
+}
+pub(super) fn read_saved_choice(engine: &SharedEngine, id: &str) -> Result<SavedChoice> {
+    let engine = match try_state(engine) {
+        Ok(engine) => engine,
+        // The next existing main-window poll retries this read. Contention did
+        // not read the document, so it must not close a pane or publish failure.
+        Err(error) if engine_busy(&error) => return Ok(SavedChoice::Deferred),
+        Err(error) => return Err(error),
+    };
+    let document = engine
+        .store
+        .native_inspector_document()?
+        .unwrap_or_else(|| json!({}));
+    preferences::saved(&document, id).map(SavedChoice::Ready)
+}
+impl State {
+    pub(super) fn clear_loaded_error(&mut self, id: &str, status: &mut String) {
+        if !self.failed.contains(id) {
+            if self.error.as_ref().is_some_and(|error| error == status) {
+                status.clear();
+            }
+            self.error = None;
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RestorePlan {
     workspace: bool,
@@ -95,19 +124,14 @@ impl Coincide {
             self.inspector_follow.bound = Some(id);
             return;
         }
-        let result = (|| -> Result<Option<SavedPanel>> {
-            if let Some(pending) = self.inspector_follow.pending.get(&id) {
-                return Ok(*pending);
-            }
-            let engine = try_state(&self.engine)?;
-            let document = engine
-                .store
-                .native_inspector_document()?
-                .unwrap_or_else(|| json!({}));
-            preferences::saved(&document, &id)
-        })();
+        let result = if let Some(pending) = self.inspector_follow.pending.get(&id) {
+            Ok(SavedChoice::Ready(*pending))
+        } else {
+            read_saved_choice(&self.engine, &id)
+        };
         let saved = match result {
-            Ok(saved) => saved,
+            Ok(SavedChoice::Deferred) => return,
+            Ok(SavedChoice::Ready(saved)) => saved,
             Err(error) => {
                 self.inspector_follow.error =
                     Some(format!("Inspector state was not restored: {error}"));
@@ -149,9 +173,8 @@ impl Coincide {
                 self.hide_selected_browser_surface(cx);
             }
         }
-        if !self.inspector_follow.failed.contains(&id) {
-            self.inspector_follow.error = None;
-        }
+        self.inspector_follow
+            .clear_loaded_error(&id, &mut self.status);
         self.inspector_follow.bound = Some(id);
         self.sync_github_context(cx);
     }
