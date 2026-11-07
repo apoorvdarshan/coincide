@@ -2,7 +2,6 @@
 //! provider page, subpage or General row, titled with its pane underneath.
 //! Choosing a row opens its pane, scrolls to the row and highlights it.
 use super::*;
-use coincide_core::provider_catalog::ProviderId;
 use settings::SettingsSection as Section;
 use std::{cell::RefCell, collections::HashMap};
 
@@ -70,9 +69,11 @@ impl Entry {
                 .chain(self.keywords.iter().copied())
                 .any(|text| text.to_lowercase().contains(&query))
     }
-    /// The pane shown under the title.
-    pub(super) fn subtitle(&self) -> &'static str {
-        self.destination.pane().label()
+    /// The pane shown under the title; none for a pane's own entry, whose
+    /// title already names it.
+    pub(super) fn subtitle(&self) -> Option<&'static str> {
+        let pane = self.destination.pane().label();
+        (pane != self.title.as_ref()).then_some(pane)
     }
 }
 
@@ -218,16 +219,6 @@ pub(super) fn entries() -> Vec<Entry> {
             &["Agents", "Check again", "Status"],
         ),
         Entry::new(
-            "Codex login profiles",
-            Subpage(S::Provider(ProviderId::Codex), "codex-accounts"),
-            &["OpenAI", "ChatGPT", "Subscription", "Accounts", "Sign in"],
-        ),
-        Entry::new(
-            "Antigravity accounts",
-            Subpage(S::Provider(ProviderId::Antigravity), "antigravity"),
-            &["Google", "Account risk", "Sign in"],
-        ),
-        Entry::new(
             "Models",
             Pane(S::Models, None),
             &["Custom model", "Context window", "Favorite", "Hidden"],
@@ -289,16 +280,21 @@ pub(super) fn entries() -> Vec<Entry> {
             &["Input device", "Test microphone", "Level"],
         ),
         Entry::new(
-            "Voice API keys",
+            "OpenAI API key for dictation",
             Pane(S::Voice, None),
             &[
                 "OpenAI",
-                "Groq",
+                "whisper-1",
                 "Codex",
                 "API key",
                 "Bring your own key",
                 "BYOK",
             ],
+        ),
+        Entry::new(
+            "Groq API key for dictation",
+            Pane(S::Voice, None),
+            &["Groq", "whisper-large-v3", "API key", "BYOK"],
         ),
         Entry::new(
             "Whisper models",
@@ -392,7 +388,6 @@ pub(super) fn entries() -> Vec<Entry> {
                 "Sign in",
                 "Executable path",
                 "Environment variables",
-                "Models",
             ],
         });
     }
@@ -444,12 +439,14 @@ impl Coincide {
                             .flex()
                             .flex_col()
                             .child(entry.title.clone())
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(self.color(0x98a6ba).opacity(0.7))
-                                    .child(entry.subtitle()),
-                            ),
+                            .when_some(entry.subtitle(), |row, pane| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(self.color(0x98a6ba).opacity(0.7))
+                                        .child(pane),
+                                )
+                            }),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_settings_destination(destination, window, cx)
@@ -555,7 +552,7 @@ mod tests {
             .find(|entry| entry.matches("ZOOM"))
             .unwrap();
         assert_eq!(zoom.title.as_ref(), "Font size");
-        assert_eq!(zoom.subtitle(), "General");
+        assert_eq!(zoom.subtitle(), Some("General"));
         assert_eq!(
             zoom.destination,
             Destination::Pane(Section::General, Some(Row::FontSize))
@@ -573,10 +570,16 @@ mod tests {
         // "dark light" appears in no single title or keyword.
         assert!(titles("dark light").is_empty());
         assert!(titles("light mode").contains(&"Appearance".to_owned()));
-        let subpage = entries()
-            .into_iter()
-            .find(|entry| entry.title.as_ref() == "Codex login profiles")
-            .unwrap();
-        assert_eq!(subpage.subtitle(), "Codex");
+        let pane = |title: &str| {
+            entries()
+                .into_iter()
+                .find(|entry| entry.title.as_ref() == title)
+                .unwrap()
+        };
+        // A pane's own entry doesn't repeat its name underneath.
+        assert_eq!(pane("Models").subtitle(), None);
+        assert_eq!(pane("Codex").subtitle(), None);
+        assert_eq!(pane("Passwords").subtitle(), Some("Browser"));
+        assert_eq!(pane("Keyboard shortcuts").subtitle(), Some("Keyboard"));
     }
 }
