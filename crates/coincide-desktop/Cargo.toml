@@ -51,7 +51,6 @@ cc = "=1.11.0"
 [dev-dependencies]
 tempfile.workspace = true
 gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }
-tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-capture = "=1.5.0"
