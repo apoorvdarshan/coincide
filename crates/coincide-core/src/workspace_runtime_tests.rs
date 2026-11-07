@@ -561,3 +561,41 @@ fn full_result_channel_preserves_mutation_completion_and_releases_after_poll() {
     assert!(engine.workspace_pending.is_empty());
     assert!(engine.workspace_git_operations.is_empty());
 }
+#[test]
+fn review_diff_route_validates_scope_and_reads_untracked_changes() {
+    let (_dir, mut engine, owner, root, _) = fixture();
+    std::fs::write(root.join("file.txt"), "original\nchanged\n").unwrap();
+    std::fs::write(root.join("new.txt"), "fresh\n").unwrap();
+    let status = git(&root, &["status", "--porcelain=v1", "-z"]);
+    for params in [
+        json!({"threadId":owner,"expectedRoot":root,"scope":"turn"}),
+        json!({"threadId":owner,"expectedRoot":root,"ignoreWhitespace":1}),
+        json!({"threadId":owner,"expectedRoot":root,"path":"file.txt"}),
+    ] {
+        let reply = call(&mut engine, "git.review.diff", params);
+        assert!(!reply["error"].is_null(), "{reply}");
+    }
+    assert!(engine.workspace_pending.is_empty());
+    let reply = call(
+        &mut engine,
+        "git.review.diff",
+        json!({"threadId":owner,"expectedRoot":root,"scope":"uncommitted","ignoreWhitespace":false}),
+    );
+    let review = complete(&mut engine, &owner, reply);
+    let crate::workspace_diff::Review::Diff { diff, .. } =
+        crate::workspace_diff::decode(&review).unwrap()
+    else {
+        panic!("fixture is a repository");
+    };
+    assert_eq!(
+        diff.files
+            .iter()
+            .map(|file| (file.path.as_str(), file.status))
+            .collect::<Vec<_>>(),
+        [
+            ("file.txt", crate::workspace_diff::ChangeStatus::Modified),
+            ("new.txt", crate::workspace_diff::ChangeStatus::Untracked),
+        ]
+    );
+    assert_eq!(git(&root, &["status", "--porcelain=v1", "-z"]), status);
+}

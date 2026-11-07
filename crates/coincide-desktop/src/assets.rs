@@ -72,6 +72,7 @@ icon_assets!(
         Cpu,
         Dash,
         Delete,
+        Diff,
         EllipsisVertical,
         Ellipsis,
         ExternalLink,
@@ -81,6 +82,7 @@ icon_assets!(
         File,
         FolderClosed,
         FolderOpen,
+        FolderX,
         Folder,
         Frame,
         Gauge,
@@ -202,6 +204,11 @@ mod tests {
             "icons/arrow-down-right.svg",
             "icons/square.svg",
             // Pull request glyphs and schedule row marks.
+            // The Diff inspector's empty states.
+            "icons/diff.svg",
+            "icons/folder-x.svg",
+            // Composer `/` and `#` suggestion rows.
+            "icons/gauge.svg",
             "icons/git-pull-request.svg",
             "icons/git-pull-request-draft.svg",
             "icons/git-merge.svg",
@@ -210,13 +217,11 @@ mod tests {
             "icons/circle-dashed.svg",
             "icons/user-check.svg",
             "icons/user-x.svg",
-            "icons/arrow-up-right.svg",
             "icons/sparkles.svg",
             "icons/pencil.svg",
             "icons/trash.svg",
             "icons/circle-arrow-right.svg",
             // Composer `/` and `#` suggestion rows.
-            "icons/gauge.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
