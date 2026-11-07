@@ -43,7 +43,7 @@ impl Controller for FakeCapture {
         assert_eq!(self.session, Some(session));
         self.events.push_back(CaptureEvent::Audio(CapturedAudio {
             session,
-            generation: 1,
+            generation: 2,
             binding: self.binding.clone().unwrap(),
             wav: coincide_core::dictation::transcription::encode_wav(&[0.0, 0.5], 16_000).unwrap(),
             limit_reached: false,
@@ -62,7 +62,8 @@ impl Controller for FakeCapture {
         event
     }
     fn accepts(&self, audio: &CapturedAudio, binding: &CaptureBinding) -> bool {
-        self.session == Some(audio.session)
+        audio.generation == 2
+            && self.session == Some(audio.session)
             && self.binding.as_ref() == Some(binding)
             && audio.binding == *binding
     }

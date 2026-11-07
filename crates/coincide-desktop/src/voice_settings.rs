@@ -224,7 +224,20 @@ impl Coincide {
                                 .update(cx, |panel, cx| panel.cancel(cx))
                         })),
                 )
-                .child(self.microphone_panel.read(cx).status_text().to_owned())
+                .child(self.microphone_panel.read(cx).status_text())
+                .when_some(
+                    self.microphone_panel.read(cx).level(),
+                    |pane, level| {
+                        pane.child(
+                            div()
+                                .id("dictation-native-level")
+                                .w(px(64.))
+                                .h(px(8.))
+                                .bg(rgb(0x303946))
+                                .child(div().w(px(level * 64.)).h_full().bg(rgb(0x5caf7d))),
+                        )
+                    },
+                )
             })
             .into_any_element()
     }

@@ -2,7 +2,8 @@
 //! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
-        CaptureBinding, CaptureError, CaptureEvent, CapturedAudio, Microphone, Permission,
+        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, Microphone,
+        Permission,
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
@@ -79,6 +80,7 @@ struct Snapshot {
     phase: Phase,
     permission: Permission,
     message: &'static str,
+    progress: Option<CaptureProgress>,
 }
 struct Shared {
     enabled: AtomicBool,
@@ -87,6 +89,9 @@ struct Shared {
     controller_constructed: AtomicBool,
 }
 trait Controller {
+    fn progress(&self) -> Option<CaptureProgress> {
+        None
+    }
     fn set_binding(&mut self, binding: Option<CaptureBinding>);
     fn request_permission(&mut self) -> Result<(), CaptureError>;
     fn start(&mut self, seconds: usize) -> Result<Uuid, CaptureError>;
@@ -96,6 +101,9 @@ trait Controller {
     fn accepts(&self, audio: &CapturedAudio, binding: &CaptureBinding) -> bool;
 }
 impl Controller for Microphone {
+    fn progress(&self) -> Option<CaptureProgress> {
+        Microphone::progress(self)
+    }
     fn set_binding(&mut self, binding: Option<CaptureBinding>) {
         Microphone::set_binding(self, binding);
     }
@@ -172,6 +180,7 @@ struct Owner {
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
     dictation: bool,
+    progress_bucket: Option<usize>,
 }
 impl Owner {
     fn current(&self) -> bool {
@@ -186,10 +195,23 @@ impl Owner {
                 phase: self.phase,
                 permission: self.permission,
                 message,
+                progress: self.progress(),
             });
         }
     }
+    fn progress(&self) -> Option<CaptureProgress> {
+        if self.phase != Phase::Recording || !self.current() {
+            return None;
+        }
+        self.controller.as_ref()?.progress().filter(|p| {
+            Some(p.session) == self.session
+                && p.captured_samples <= 16_000 * 60
+                && p.level.is_finite()
+                && (0.0..=1.0).contains(&p.level)
+        })
+    }
     fn reset(&mut self) {
+        self.progress_bucket = None;
         if let Some(controller) = self.controller.as_mut() {
             controller.cancel();
         }
@@ -418,6 +440,13 @@ impl Owner {
                 }
             }
         }
+        if let Some(progress) = self.progress() {
+            let bucket = progress.captured_samples / 1600;
+            if self.progress_bucket != Some(bucket) {
+                self.progress_bucket = Some(bucket);
+                self.publish("Listening…");
+            }
+        }
     }
     fn transcribe(&mut self) {
         let Some(target) = self.target.clone() else {
@@ -588,6 +617,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 session: None,
                 audio: None,
                 dictation: false,
+                progress_bucket: None,
             };
             while owner.shared.alive.load(Ordering::Acquire) {
                 match receiver.recv_timeout(Duration::from_millis(10)) {
@@ -635,6 +665,7 @@ pub struct MicrophoneSettings {
     permission: Permission,
     status: String,
     listening_since: Option<std::time::Instant>,
+    progress: Option<CaptureProgress>,
 }
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
@@ -644,7 +675,7 @@ impl MicrophoneSettings {
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(factory);
-        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None }, events)
+        (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None }, events)
     }
     pub fn set_target(
         &mut self,
@@ -732,7 +763,22 @@ impl MicrophoneSettings {
                 | Phase::Transcribing
         )
     }
+    pub fn level(&self) -> Option<f32> {
+        if self.phase == Phase::Recording {
+            self.progress.map(|p| p.level)
+        } else {
+            None
+        }
+    }
     pub fn status_text(&self) -> String {
+        if self.phase == Phase::Recording
+            && let Some(progress) = self.progress
+        {
+            return format!(
+                "Listening · {:.1}s",
+                progress.captured_samples as f64 / 16_000.0
+            );
+        }
         if self.phase == Phase::Recording {
             format!(
                 "Listening · {}s",
@@ -764,6 +810,7 @@ impl MicrophoneSettings {
                 if snapshot.phase != Phase::Recording {
                     self.listening_since = None;
                 }
+                self.progress = snapshot.progress;
                 self.phase = snapshot.phase;
                 self.permission = snapshot.permission;
                 self.status = snapshot.message.into();
@@ -834,6 +881,7 @@ mod tests {
         cancels: usize,
         inference: usize,
         ready_permission: bool,
+        progress: Option<CaptureProgress>,
         threads: Vec<ThreadId>,
         closed: Option<Sender<()>>,
         drop_gate: Option<Receiver<()>>,
@@ -845,6 +893,9 @@ mod tests {
         events: VecDeque<CaptureEvent>,
     }
     impl Controller for FakeController {
+        fn progress(&self) -> Option<CaptureProgress> {
+            self.trace.lock().unwrap().progress
+        }
         fn set_binding(&mut self, binding: Option<CaptureBinding>) {
             self.trace
                 .lock()
@@ -1019,6 +1070,7 @@ mod tests {
             session: None,
             audio: None,
             dictation: false,
+            progress_bucket: None,
         };
         (owner, events, trace)
     }
@@ -1035,6 +1087,45 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn native_progress_is_bound_to_actual_recording_session_and_generation() {
+        let (mut owner, _, trace) = setup(true, false);
+        action(&mut owner, Action::BeginDictation);
+        let session = owner.session.unwrap();
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: 0.5,
+        });
+        assert_eq!(owner.progress().unwrap().captured_samples, 16_000);
+        trace.lock().unwrap().progress.as_mut().unwrap().session = Uuid::new_v4();
+        assert!(
+            owner.progress().is_none(),
+            "another session must never animate this recording"
+        );
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: f32::NAN,
+        });
+        assert!(owner.progress().is_none());
+        trace.lock().unwrap().progress = Some(CaptureProgress {
+            session,
+            captured_samples: 16_000,
+            level: 0.5,
+        });
+        owner.shared.generation.store(2, Ordering::Release);
+        assert!(
+            owner.progress().is_none(),
+            "revoked targets must not retain native progress"
+        );
+        owner.shared.generation.store(1, Ordering::Release);
+        action(&mut owner, Action::Stop);
+        assert!(
+            owner.progress().is_none(),
+            "finished audio is not a live meter"
+        );
     }
     #[::core::prelude::v1::test]
     fn native_dictation_intent_continues_matching_permission_and_transcribes_stop_once() {
@@ -1262,6 +1353,7 @@ mod tests {
             permission: Permission::Unavailable,
             status: String::new(),
             listening_since: None,
+            progress: None,
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {
