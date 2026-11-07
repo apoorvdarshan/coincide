@@ -1,6 +1,6 @@
 //! Fresh-runner-only native download acceptance. Not a production command.
 //! Run explicitly with COINCIDE_SYNTHETIC_DOWNLOAD_SDK=1 on an isolated GitHub runner.
-//! Two real views share one owned private context and use this host's production
+//! Two real views share one owned context and use this host's production
 //! exact-object download owner. An owned loopback server is the only peer; files
 //! land only in a runner-owned root. Native SDK deallocation stays unconfirmed.
 #[cfg(target_os = "linux")]
@@ -221,8 +221,10 @@ impl Fixture {
             let loaded = Arc::new(AtomicBool::new(false));
             let page = server.url("/page");
             let (load_flag, load_page) = (loaded.clone(), page.clone());
+            // Wry gives each incognito GTK view its own context. Linux views share
+            // this owned one instead: the case exact-view attribution must guard.
             let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
-                .with_incognito(true)
+                .with_incognito(!cfg!(target_os = "linux"))
                 .with_devtools(false)
                 .with_clipboard(false)
                 .with_autoplay(false)
