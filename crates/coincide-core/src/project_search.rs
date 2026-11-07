@@ -265,14 +265,14 @@ fn walk_controlled(root: &Path, query: &str, control: &SearchControl) -> Vec<Tex
         let mut entries = entries
             .take(VISIT_LIMIT.saturating_sub(visited))
             .take_while(|_| control.allowed())
+            .inspect(|_| visited += 1)
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry)))
             .collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         let mut subfolders = Vec::new();
         for (name, entry) in entries {
-            visited += 1;
-            if !control.allowed() || visited > VISIT_LIMIT || bytes_left == 0 {
+            if !control.allowed() || bytes_left == 0 {
                 return matches;
             }
             let Ok(kind) = entry.file_type() else {
