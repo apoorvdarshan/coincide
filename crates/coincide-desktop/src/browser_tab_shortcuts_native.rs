@@ -21,6 +21,9 @@ pub(super) struct Target {
     _target: NativeLease,
 }
 impl Target {
+    pub fn focused(&self, view: &wry::WebView) -> bool {
+        self._adapter.focused(view)
+    }
     pub fn install(
         view: &wry::WebView,
         callbacks: &Callbacks,

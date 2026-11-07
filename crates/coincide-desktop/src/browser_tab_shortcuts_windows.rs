@@ -1,6 +1,7 @@
 use super::*;
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, Microsoft::Web::WebView2::Win32::*, take_pwstr,
+    AcceleratorKeyPressedEventHandler, FocusChangedEventHandler,
+    Microsoft::Web::WebView2::Win32::*, take_pwstr,
 };
 use windows::{
     Win32::UI::Input::KeyboardAndMouse::{
@@ -11,9 +12,15 @@ use windows::{
 use wry::WebViewExtWindows;
 pub(super) struct Adapter {
     controller: ICoreWebView2Controller,
-    token: i64,
+    token: Option<i64>,
+    got: Option<i64>,
+    lost: Option<i64>,
+    focus: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Adapter {
+    pub fn focused(&self, _: &wry::WebView) -> bool {
+        self.focus.load(Ordering::Acquire)
+    }
     pub fn install(
         view: &wry::WebView,
         callbacks: &Callbacks,
@@ -21,6 +28,31 @@ impl Adapter {
         emit: impl Fn(Command, u64, Option<String>) -> bool + 'static,
     ) -> Result<Self> {
         let controller = view.controller();
+        let focus = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut adapter = Self {
+            controller: controller.clone(),
+            token: None,
+            got: None,
+            lost: None,
+            focus: focus.clone(),
+        };
+        for got in [true, false] {
+            let focus = focus.clone();
+            let lease = callbacks.lifetimes().block();
+            let handler = FocusChangedEventHandler::create(Box::new(move |_, _| {
+                let _held = &lease;
+                focus.store(got, Ordering::Release);
+                Ok(())
+            }));
+            let mut token = 0;
+            if got {
+                unsafe { controller.add_GotFocus(&handler, &mut token)? };
+                adapter.got = Some(token);
+            } else {
+                unsafe { controller.add_LostFocus(&handler, &mut token)? };
+                adapter.lost = Some(token);
+            }
+        }
         let native = view.webview();
         let block = callbacks.lifetimes().block();
         let handler =
@@ -73,11 +105,20 @@ impl Adapter {
             }));
         let mut token = 0;
         unsafe { controller.add_AcceleratorKeyPressed(&handler, &mut token)? };
-        Ok(Self { controller, token })
+        adapter.token = Some(token);
+        Ok(adapter)
     }
 }
 impl Drop for Adapter {
     fn drop(&mut self) {
-        let _ = unsafe { self.controller.remove_AcceleratorKeyPressed(self.token) };
+        if let Some(token) = self.token.take() {
+            let _ = unsafe { self.controller.remove_AcceleratorKeyPressed(token) };
+        }
+        if let Some(token) = self.got.take() {
+            let _ = unsafe { self.controller.remove_GotFocus(token) };
+        }
+        if let Some(token) = self.lost.take() {
+            let _ = unsafe { self.controller.remove_LostFocus(token) };
+        }
     }
 }

@@ -71,7 +71,13 @@ impl Coincide {
             || !shortcuts::eligible(
                 window.is_window_active(),
                 self.browser_panels.contains(&source.thread),
-                native_focus || self.browser_focus.contains_focused(window, cx),
+                shortcuts::dispatch_focus(
+                    native_focus,
+                    self.browser
+                        .as_ref()
+                        .is_some_and(|browser| browser.native_shortcut_focused(&source, cx)),
+                    self.browser_focus.contains_focused(window, cx),
+                ),
                 self.browser_shortcut_blocked(cx),
             )
         {

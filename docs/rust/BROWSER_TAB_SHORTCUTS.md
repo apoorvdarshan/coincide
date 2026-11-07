@@ -8,7 +8,10 @@ closing the last tab returns focus to the composer.
 Chrome dispatch requires the active window and focused browser pane. Native
 callbacks belong to the exact owned page view, snapshot its navigation epoch,
 and enqueue a bounded typed command. Dispatch rechecks the selected thread,
-active tab, visibility, epoch and native URL. Hidden/sibling views, inactive
+active tab, visibility, epoch, native URL and current exact-view native focus.
+A queued key cannot borrow browser chrome focus after the composer, settings or
+another native view takes focus. Windows owns GotFocus/LostFocus registrations
+for this check; macOS and GTK read the actual responder/widget focus at dispatch. Hidden/sibling views, inactive
 windows, overlays, extra modifiers and ordinary page keys do not gain a global
 command route. Recognized stale native chords are consumed. Agent page-key host
 chords remain denied; no script or arbitrary-key API invokes this route.

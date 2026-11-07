@@ -11,6 +11,9 @@ pub(super) struct Adapter {
     token: Option<SignalHandlerId>,
 }
 impl Adapter {
+    pub fn focused(&self, _: &wry::WebView) -> bool {
+        self.view.is_visible() && self.view.is_mapped() && self.view.has_focus()
+    }
     pub fn install(
         view: &wry::WebView,
         callbacks: &Callbacks,

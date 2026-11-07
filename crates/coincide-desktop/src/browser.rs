@@ -1723,6 +1723,22 @@ impl BrowserController {
                 )
             })
     }
+    pub fn native_shortcut_focused(
+        &self,
+        source: &crate::browser_tab_shortcuts::Source,
+        cx: &App,
+    ) -> bool {
+        self.shortcut_source_current(source, cx)
+            && self
+                .tabs
+                .get(&source.thread)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == source.tab))
+                .is_some_and(|tab| {
+                    tab.tab_shortcuts
+                        .as_ref()
+                        .is_some_and(|target| target.focused(tab.view.read(cx).raw()))
+                })
+    }
     pub fn drain_tab_shortcuts(
         &mut self,
     ) -> Vec<(

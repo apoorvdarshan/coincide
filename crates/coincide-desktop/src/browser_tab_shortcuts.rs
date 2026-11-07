@@ -25,6 +25,17 @@ pub(crate) fn recognize(
         _ => None,
     }
 }
+pub(crate) fn dispatch_focus(
+    native: bool,
+    current_native_focus: bool,
+    current_chrome_focus: bool,
+) -> bool {
+    if native {
+        current_native_focus
+    } else {
+        current_chrome_focus
+    }
+}
 pub(crate) fn eligible(active_window: bool, shown: bool, focused: bool, blocked: bool) -> bool {
     active_window && shown && focused && !blocked
 }
@@ -132,5 +143,31 @@ mod tests {
         ] {
             assert!(!source.matches(thread, tab, epoch, url));
         }
+    }
+}
+
+#[cfg(test)]
+mod queued_focus_tests {
+    use super::*;
+    #[test]
+    fn queued_native_key_rechecks_focus_after_composer_settings_or_sibling_takes_it() {
+        let queued = Source {
+            thread: "t".into(),
+            tab: "a".into(),
+            epoch: 4,
+            url: Some("https://owned.invalid/".into()),
+        };
+        assert!(queued.matches("t", "a", 4, Some("https://owned.invalid/")));
+        assert!(dispatch_focus(true, true, false));
+        // Document binding stays unchanged; focus is an independent admission.
+        for (chrome_focused, blocked) in [(false, false), (false, true), (true, false)] {
+            assert!(!eligible(
+                true,
+                true,
+                dispatch_focus(true, false, chrome_focused),
+                blocked
+            ));
+        }
+        assert!(dispatch_focus(false, false, true));
     }
 }

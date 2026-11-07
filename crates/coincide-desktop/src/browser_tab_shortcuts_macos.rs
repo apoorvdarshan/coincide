@@ -15,6 +15,23 @@ pub(super) struct Adapter {
     _main: MainThreadMarker,
 }
 impl Adapter {
+    pub fn focused(&self, view: &wry::WebView) -> bool {
+        let native: Retained<WKWebView> = unsafe { Retained::cast_unchecked(view.webview()) };
+        let Some(window) = native.window() else {
+            return false;
+        };
+        if !window.isKeyWindow() || native.isHiddenOrHasHiddenAncestor() {
+            return false;
+        }
+        let Some(responder) = window.firstResponder() else {
+            return false;
+        };
+        if !responder.isKindOfClass(NSView::class()) {
+            return false;
+        }
+        let responder: Retained<NSView> = unsafe { Retained::cast_unchecked(responder) };
+        responder.isDescendantOf(&native)
+    }
     pub fn install(
         view: &wry::WebView,
         callbacks: &Callbacks,
