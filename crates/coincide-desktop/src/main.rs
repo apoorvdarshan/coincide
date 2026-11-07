@@ -1062,6 +1062,9 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
+                this.open_github_checkout(event, window, cx);
+            }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -2607,6 +2610,29 @@ impl Coincide {
             }
             Err(e) => self.status = e.to_string(),
         }
+    }
+    /// Swift ThreadActions.newThread(in:worktreePath:branch:) after a PR
+    /// checkout: the Engine already admitted the conversation, so only
+    /// navigation runs here. Selection is retried by ID until it reads.
+    fn open_github_checkout(
+        &mut self,
+        event: &github_review::CheckoutOpened,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.shutdown_requested {
+            return;
+        }
+        self.startup_selection_pending = false;
+        self.created_bot_thread_to_focus = Some(event.thread.clone());
+        self.schedules_open = false;
+        self.session_import_open = false;
+        self.refresh(cx);
+        self.select(&event.thread, window, cx);
+        if let Some(notice) = &event.notice {
+            self.status = notice.clone();
+        }
+        cx.notify();
     }
     fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project_ui_admitted() {

@@ -1,43 +1,111 @@
-//! Native-only PR checkout staging. No dispatcher route or serialized authority.
-//! This first boundary validates a source, plans fixed isolated Git operations,
-//! and materializes verified regular blobs. It does NOT fetch, import objects,
-//! mutate source refs, populate a linked worktree or admit a new conversation.
+//! Native-only GitHub PR checkout (Swift PullRequestService.prepareWorktree).
+//! No dispatcher route or serialized authority. A worktree that already has the
+//! PR's branch is reused as it is; the project folder having it is an error.
+//! Otherwise the PR head is fetched the way `gh pr checkout` does (the head
+//! repository's remote, else the base repository's `refs/pull/<n>/head`) and a
+//! new linked worktree is created on the branch. Neither the project folder nor
+//! a reused worktree is ever switched, reset or cleaned, so their changes stay.
 use crate::{
-    agent::native_instruction_git::StoreSource,
-    native_file::{self, Identity},
+    agent::{OwnedChild, native_instruction_git::StoreSource},
+    workspace::{external_git_directory, external_git_path},
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashSet},
-    fs::{self, File},
-    io::{Read, Write},
+    ffi::{OsStr, OsString},
+    fs,
+    io::Read,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
+    thread,
     time::{Duration, Instant},
 };
-#[path = "github_checkout_fs.rs"]
-mod filesystem;
 #[cfg(test)]
 #[path = "github_checkout_tests.rs"]
 mod tests;
-const MAX_FILES: usize = 10_000;
-const MAX_TREE: usize = 4 * 1024 * 1024;
-const MAX_BLOB: usize = 4 * 1024 * 1024;
-const MAX_TOTAL: u64 = 128 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(120);
-/// Native Engine capture only. Entire stored source documents are retained for
-/// exact later CAS, including all unknown fields; this is not JSON authority.
+
+const OUTPUT: usize = 3 * 1024 * 1024;
+const QUICK: Duration = Duration::from_secs(30);
+// Swift gives `worktree add` 300 s and `gh pr checkout` 600 s.
+const CREATE: Duration = Duration::from_secs(300);
+const NETWORK: Duration = Duration::from_secs(600);
+const FIELDS: &str = "number,url,state,headRefOid,headRefName,baseRefName,isCrossRepository,headRepository,headRepositoryOwner,maintainerCanModify";
+/// Swift's branch prefix default (AppSettings.worktreeBranchPrefix).
+pub(crate) const DEFAULT_PREFIX: &str = "coincide/";
+pub const NOT_REPOSITORY: &str = "This folder is not a Git repository.";
+pub const SETUP: &str =
+    "Install the GitHub CLI (gh) and run “gh auth login” to see this repository’s pull requests.";
+const INDEX_LOCKED: &str =
+    "Git's index is locked. Wait for other Git operations to finish, then try again.";
+
+/// Native Engine capture: the conversation's project and repository root, the
+/// GitHub CLI captured by read-service configuration and the branch prefix.
 pub struct Source {
     pub(crate) store: StoreSource,
-    pub(crate) thread: Value,
-    pub(crate) project: Value,
+    pub(crate) project_id: String,
+    pub(crate) project_path: Value,
     pub(crate) root: PathBuf,
     pub(crate) storage: PathBuf,
     pub(crate) repository: String,
     pub(crate) number: u64,
     pub(crate) head: String,
+    pub(crate) gh: PathBuf,
+    pub(crate) prefix: String,
+    pub(crate) _activity: Option<Box<dyn std::any::Any + Send>>,
 }
+impl Source {
+    pub fn number(&self) -> u64 {
+        self.number
+    }
+}
+/// The worktree a new thread opens in. `reused` matches Swift's banner case.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Checkout {
+    pub path: PathBuf,
+    pub branch: String,
+    pub reused: bool,
+    pub number: u64,
+}
+/// Swift GitError: a message and, when Git explained itself, its last lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    pub detail: Option<String>,
+}
+impl Failure {
+    fn new(message: impl Into<String>, detail: Option<String>) -> Self {
+        Self {
+            message: message.into(),
+            detail: detail.filter(|text| !text.is_empty()),
+        }
+    }
+    fn checkout(number: u64, detail: impl Into<String>) -> Self {
+        Self::new(
+            format!("Could not check out pull request #{number}."),
+            Some(detail.into()),
+        )
+    }
+    fn changed(number: u64) -> Self {
+        Self::new(
+            format!("Pull request #{number} has new commits since it was loaded."),
+            Some("Refresh the pull request, then check it out again.".into()),
+        )
+    }
+    fn create(detail: String) -> Self {
+        Self::new("Could not create the worktree.", Some(detail))
+    }
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.detail {
+            Some(detail) => write!(formatter, "{}\n{detail}", self.message),
+            None => formatter.write_str(&self.message),
+        }
+    }
+}
+impl std::error::Error for Failure {}
+
 pub(crate) fn validate_repository(repo: &str) -> Result<()> {
     let parts: Vec<_> = repo.split('/').collect();
     ensure!(
@@ -59,599 +127,931 @@ pub(crate) fn validate_head(head: &str) -> Result<()> {
     );
     Ok(())
 }
-fn small_file(path: &Path) -> Result<String> {
+
+/// Swift BranchNames.sanitizeFragment: lowercase, hyphenated and ref-safe, at
+/// most 64 characters.
+pub fn sanitize_fragment(raw: &str) -> String {
+    let lowered = raw.trim().to_lowercase();
     let mut value = String::new();
-    native_file::open_regular(path, false)?
-        .take(8193)
-        .read_to_string(&mut value)?;
-    ensure!(
-        value.len() <= 8192 && !value.contains('\0'),
-        "Invalid Git directory metadata"
-    );
-    Ok(value)
-}
-fn git_layout(root: &Path) -> Result<(PathBuf, PathBuf)> {
-    let dot = root.join(".git");
-    let metadata = fs::symlink_metadata(&dot)?;
-    ensure!(
-        !metadata.file_type().is_symlink(),
-        "Git directory cannot be a symbolic link"
-    );
-    let git = if metadata.is_dir() {
-        dot.canonicalize()?
+    let mut replaced = false;
+    for character in lowered.chars().filter(|c| !matches!(c, '\'' | '"' | '`')) {
+        if character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '/' | '_' | '-')
+        {
+            value.push(character);
+            replaced = false;
+        } else if !replaced {
+            value.push('-');
+            replaced = true;
+        }
+    }
+    let mut collapsed = String::new();
+    for character in value.chars() {
+        if matches!(character, '/' | '-') && collapsed.ends_with(character) {
+            continue;
+        }
+        collapsed.push(character);
+    }
+    let edge = |c: char| matches!(c, '.' | '/' | '_' | '-');
+    let trimmed = collapsed.trim_matches(edge);
+    let limited = trimmed
+        .chars()
+        .take(64)
+        .collect::<String>()
+        .trim_end_matches(edge)
+        .to_owned();
+    if limited.is_empty() {
+        "update".into()
     } else {
-        let file = small_file(&dot)?;
-        let value = file
-            .strip_prefix("gitdir: ")
-            .context("Invalid linked Git directory")?
-            .trim_end_matches(['\r', '\n']);
-        ensure!(
-            !value.is_empty() && !value.chars().any(char::is_control),
-            "Invalid Git directory"
-        );
-        root.join(value).canonicalize()?
+        limited
+    }
+}
+/// Swift PullRequestCheckout.localBranch: the PR's own head branch when it
+/// lives in this repository, `<prefix>pr-<number>/<head>` for one from a fork,
+/// whose branch name could be anything, such as `main`.
+pub fn local_branch(cross_repository: bool, number: u64, head: &str, prefix: &str) -> String {
+    if !cross_repository {
+        return head.to_owned();
+    }
+    format!("{prefix}pr-{number}/{}", sanitize_fragment(head))
+}
+
+struct Metadata {
+    open: bool,
+    head: String,
+    head_branch: String,
+    base_branch: String,
+    cross: bool,
+    head_repository: Option<(String, String)>,
+    maintainer_can_modify: bool,
+}
+fn branch_text(value: &Value, key: &str) -> Result<String> {
+    let text = value[key]
+        .as_str()
+        .context("Incomplete pull request metadata")?;
+    ensure!(
+        !text.is_empty() && text.len() <= 255 && !text.chars().any(char::is_control),
+        "Invalid pull request branch"
+    );
+    Ok(text.into())
+}
+fn metadata(bytes: &[u8], repository: &str, number: u64) -> Result<Metadata> {
+    ensure!(bytes.len() <= OUTPUT, "GitHub output exceeds 3 MiB");
+    let value: Value = serde_json::from_slice(bytes).context("Invalid GitHub JSON")?;
+    ensure!(
+        value["number"].as_u64() == Some(number),
+        "GitHub returned another pull request"
+    );
+    let expected = format!("https://github.com/{repository}/pull/{number}");
+    ensure!(
+        value["url"]
+            .as_str()
+            .is_some_and(|url| url.eq_ignore_ascii_case(&expected)),
+        "Pull request URL does not match repository/number"
+    );
+    let head = value["headRefOid"]
+        .as_str()
+        .context("Incomplete pull request metadata")?
+        .to_ascii_lowercase();
+    validate_head(&head)?;
+    let owner = value["headRepositoryOwner"]["login"].as_str();
+    let name = value["headRepository"]["name"].as_str();
+    let head_repository = match (owner, name) {
+        (Some(owner), Some(name)) => {
+            validate_repository(&format!("{owner}/{name}"))?;
+            Some((owner.to_owned(), name.to_owned()))
+        }
+        // A deleted fork leaves only the base repository's pull ref.
+        _ => None,
     };
-    let common = git.join("commondir");
-    match fs::symlink_metadata(&common) {
-        Ok(_) => {
-            let value = small_file(&common)?;
-            let value = value.trim_end_matches(['\r', '\n']);
-            ensure!(
-                !value.is_empty() && !value.chars().any(char::is_control),
-                "Invalid common Git directory"
-            );
-            let common = git.join(value).canonicalize()?;
-            Ok((git, common))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((git.clone(), git)),
-        Err(error) => Err(error.into()),
-    }
+    Ok(Metadata {
+        open: value["state"] == "OPEN",
+        head,
+        head_branch: branch_text(&value, "headRefName")?,
+        base_branch: branch_text(&value, "baseRefName")?,
+        cross: value["isCrossRepository"]
+            .as_bool()
+            .context("Incomplete pull request metadata")?,
+        head_repository,
+        maintainer_can_modify: value["maintainerCanModify"] == true,
+    })
 }
-/// Closed operation enum; all variable arguments have strict syntax. Network is
-/// described, not executed: incoming pack/closure ownership still needs its own
-/// reviewed adapter. No command accepts an arbitrary URL, ref, flag or cwd.
+
+/// A configured remote's GitHub repository, parsed the way gh matches remotes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Operation {
-    Initialize,
-    FetchPull,
-    VerifyHead,
-    Tree,
-    Blob(String),
+struct Remote {
+    name: String,
+    owner: String,
+    repository: String,
 }
-pub struct Invocation {
-    arguments: Vec<String>,
-    network: bool,
-    directory: PathBuf,
-    environment: Vec<(String, std::ffi::OsString)>,
-}
-impl Invocation {
-    pub fn arguments(&self) -> &[String] {
-        &self.arguments
-    }
-    pub fn network(&self) -> bool {
-        self.network
-    }
-    pub fn directory(&self) -> &Path {
-        &self.directory
-    }
-    /// The future runner MUST env_clear(), then install only this captured
-    /// non-secret environment plus required native loader/OS necessities.
-    pub fn environment(&self) -> &[(String, std::ffi::OsString)] {
-        &self.environment
-    }
-}
-/// Captured native paths only. No credential values are read or retained here.
-/// A future live runner must validate these identities and bound the incoming
-/// pack DURING transfer, then prove actual child/descendant return before import.
-pub struct Tools {
-    git: filesystem::PinnedFile,
-    gh: filesystem::PinnedFile,
-    home: filesystem::Directory,
-    gh_config: filesystem::Directory,
-}
-impl Tools {
-    pub fn capture(git: &Path, gh: &Path, home: &Path, gh_config: &Path) -> Result<Self> {
-        ensure!(
-            home.is_absolute() && gh_config.is_absolute() && home.is_dir() && gh_config.is_dir(),
-            "Native credential configuration is unavailable"
-        );
-        Ok(Self {
-            git: filesystem::PinnedFile::open(git)?,
-            gh: filesystem::PinnedFile::open(gh)?,
-            home: filesystem::Directory::pin(&home.canonicalize()?)?,
-            gh_config: filesystem::Directory::pin(&gh_config.canonicalize()?)?,
-        })
-    }
-    pub fn validate(&self) -> Result<()> {
-        self.git.check()?;
-        self.gh.check()?;
-        self.home.check()?;
-        self.gh_config.check()?;
-        Ok(())
-    }
-    pub fn git_executable(&self) -> &Path {
-        &self.git.path
-    }
-    pub fn home(&self) -> &Path {
-        &self.home.path
-    }
-    pub fn gh_config(&self) -> &Path {
-        &self.gh_config.path
-    }
-}
-fn shell_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-pub struct Plan {
-    source: Source,
-    root: filesystem::Directory,
-    common: filesystem::Directory,
-    git: filesystem::Directory,
-    storage: filesystem::Directory,
-    nonce: uuid::Uuid,
-    branch: String,
-}
-pub struct Review {
-    pub repository: String,
-    pub number: u64,
-    pub expected_head: String,
-    pub branch: String,
-    pub destination: PathBuf,
-    pub notice: &'static str,
-}
-impl Plan {
-    /// Run off the UI/Engine lock. Preparation only pins existing paths; it does
-    /// not create a destination, run Git or query credentials.
-    pub fn prepare(source: Source) -> Result<Self> {
-        validate_repository(&source.repository)?;
-        validate_head(&source.head)?;
-        ensure!(source.number > 0, "Positive PR number required");
-        let root = filesystem::Directory::pin(&source.root)?;
-        let (git_path, common_path) = git_layout(&source.root)?;
-        let git = filesystem::Directory::pin(&git_path)?;
-        let common = filesystem::Directory::pin(&common_path)?;
-        let storage = filesystem::Directory::pin(&source.storage)?;
-        ensure!(
-            !source.storage.starts_with(&source.root),
-            "Checkout staging must be outside the source repository"
-        );
-        let nonce = uuid::Uuid::new_v4();
-        let branch = format!("coincide/pr-{}-{}", source.number, nonce.simple());
-        Ok(Self {
-            source,
-            root,
-            common,
-            git,
-            storage,
-            nonce,
-            branch,
-        })
-    }
-    pub fn source(&self) -> &Source {
-        &self.source
-    }
-    pub fn check(&self) -> Result<()> {
-        self.root.check()?;
-        self.common.check()?;
-        self.git.check()?;
-        self.storage.check()?;
-        ensure!(
-            git_layout(&self.root.path)? == (self.git.path.clone(), self.common.path.clone()),
-            "Source common Git directory changed"
-        );
-        Ok(())
-    }
-    pub fn review(&self) -> Review {
-        Review {
-            repository: self.source.repository.clone(),
-            number: self.source.number,
-            expected_head: self.source.head.clone(),
-            branch: self.branch.clone(),
-            destination: self
-                .storage
-                .path
-                .join(format!("pr-checkout-{}", self.nonce)),
-            notice: "Verified regular files only. No network fetch, source branch change, linked-worktree admission or submodule initialization has occurred.",
+fn github_repository(url: &str) -> Option<(String, String)> {
+    let url = url.trim();
+    let path = if url.contains("://") {
+        let parsed = url::Url::parse(url).ok()?;
+        if !matches!(parsed.scheme(), "https" | "http" | "ssh" | "git") {
+            return None;
         }
-    }
-    pub fn invocation(&self, tools: &Tools, operation: Operation) -> Result<Invocation> {
-        self.check()?;
-        tools.validate()?;
-        let mut arguments = vec![
-            "--no-pager".into(),
-            "--no-replace-objects".into(),
-            "--literal-pathspecs".into(),
-            "-c".into(),
-            "core.fsmonitor=false".into(),
-            "-c".into(),
-            "core.untrackedCache=false".into(),
-            "-c".into(),
-            "http.sslVerify=true".into(),
-            "-c".into(),
-            "http.followRedirects=false".into(),
-            "-c".into(),
-            "protocol.allow=never".into(),
-        ];
-        let directory = self.review().destination;
-        arguments.extend([
-            "-c".into(),
-            format!(
-                "core.hooksPath={}",
-                directory
-                    .join("disabled-hooks")
-                    .to_str()
-                    .context("Private Git path is not UTF-8")?
-            ),
-        ]);
-        let environment = vec![
-            ("HOME".into(), tools.home().as_os_str().to_owned()),
-            (
-                "GH_CONFIG_DIR".into(),
-                tools.gh_config().as_os_str().to_owned(),
-            ),
-            ("GH_HOST".into(), "github.com".into()),
-            ("GH_PROMPT_DISABLED".into(), "1".into()),
-            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-            (
-                "GIT_CONFIG_SYSTEM".into(),
-                directory.join("empty-config").into_os_string(),
-            ),
-            (
-                "GIT_CONFIG_GLOBAL".into(),
-                directory.join("empty-config").into_os_string(),
-            ),
-            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
-            ("GIT_NO_LAZY_FETCH".into(), "1".into()),
-            ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
-        ];
-        if operation != Operation::Initialize {
-            arguments.push(format!(
-                "--git-dir={}",
-                directory
-                    .join("objects.git")
-                    .to_str()
-                    .context("Private Git path is not UTF-8")?
-            ));
+        let host = parsed.host_str()?.to_ascii_lowercase();
+        if host != "github.com" && host != "www.github.com" {
+            return None;
         }
-        let network = operation == Operation::FetchPull;
-        let args: Vec<String> = match operation {
-            Operation::Initialize => vec![
-                "init".into(),
-                "--bare".into(),
-                "--template=".into(),
-                "objects.git".into(),
-            ],
-            Operation::FetchPull => {
-                let external = crate::workspace::external_git_path(&tools.gh.path)?;
-                let gh = external.to_str().context("Native GH path is not UTF-8")?;
-                arguments.extend([
-                    "-c".into(),
-                    "protocol.https.allow=always".into(),
-                    "-c".into(),
-                    "credential.helper=".into(),
-                    "-c".into(),
-                    format!(
-                        "credential.helper=!{} auth git-credential",
-                        shell_literal(gh)
-                    ),
-                    "-c".into(),
-                    "credential.useHttpPath=false".into(),
-                ]);
-                vec![
-                    "fetch".into(),
-                    "--no-tags".into(),
-                    "--no-recurse-submodules".into(),
-                    "--no-write-fetch-head".into(),
-                    "--".into(),
-                    format!("https://github.com/{}", self.source.repository),
-                    format!(
-                        "+refs/pull/{}/head:refs/coincide/pull/head",
-                        self.source.number
-                    ),
-                ]
-            }
-            Operation::VerifyHead => vec![
-                "rev-parse".into(),
-                "--verify".into(),
-                "refs/coincide/pull/head^{commit}".into(),
-            ],
-            Operation::Tree => vec![
-                "ls-tree".into(),
-                "-r".into(),
-                "-z".into(),
-                "--full-tree".into(),
-                "--long".into(),
-                self.source.head.clone(),
-                "--".into(),
-            ],
-            Operation::Blob(oid) => {
-                validate_head(&oid)?;
-                vec!["cat-file".into(), "blob".into(), oid]
-            }
+        parsed.path().to_owned()
+    } else {
+        // scp-like `[user@]github.com:owner/name.git`.
+        let (host, path) = url.split_once(':')?;
+        let host = host.rsplit('@').next()?.to_ascii_lowercase();
+        if host != "github.com" {
+            return None;
+        }
+        path.to_owned()
+    };
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    validate_repository(&format!("{owner}/{name}")).ok()?;
+    Some((owner.to_owned(), name.to_owned()))
+}
+fn remote_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+}
+/// gh's remote order: upstream, github, origin, then the rest as configured.
+fn parse_remotes(bytes: &[u8]) -> Vec<Remote> {
+    let mut remotes = Vec::new();
+    for record in bytes.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let Ok(record) = std::str::from_utf8(record) else {
+            continue;
         };
-        arguments.extend(args);
-        Ok(Invocation {
-            arguments,
-            network,
-            directory,
-            environment,
-        })
-    }
-    /// Injected, bounded object reads only. A semantic fetch reply alone cannot
-    /// call this path: the future runner must own its full closure/return receipt.
-    pub fn stage_regular_tree(
-        &self,
-        verified_head: &str,
-        raw_tree: &[u8],
-        reader: &mut impl BlobReader,
-        cancelled: &AtomicBool,
-    ) -> Result<StageOutcome> {
-        self.check()?;
-        ensure!(verified_head == self.source.head, "Fetched PR head changed");
-        let entries = parse_tree(raw_tree)?;
-        let required = entries
-            .iter()
-            .map(|entry| entry.size)
-            .sum::<u64>()
-            .checked_add(16 * 1024 * 1024)
-            .context("Checkout size overflow")?;
-        ensure!(
-            self.storage.available_bytes()? >= required,
-            "Insufficient free space for bounded checkout staging"
-        );
-        ensure!(
-            !cancelled.load(Ordering::Acquire),
-            "Checkout staging cancelled"
-        );
-        let started = Instant::now();
-        let permit = ReadPermit {
-            cancelled,
-            deadline: started + TIMEOUT,
+        let Some((key, url)) = record.split_once('\n') else {
+            continue;
         };
-        let destination = self.review().destination;
-        let directory = self.storage.create_directory(
-            destination
-                .file_name()
-                .unwrap()
-                .to_str()
-                .context("Invalid private destination")?,
-        )?;
-        let mut staged = StagedTree {
-            directory,
-            files: BTreeMap::new(),
-            directories: BTreeMap::new(),
-            complete: false,
+        let Some(name) = key
+            .strip_prefix("remote.")
+            .and_then(|key| key.strip_suffix(".url"))
+        else {
+            continue;
         };
-        let result = (|| -> Result<()> {
-            for entry in entries {
-                ensure!(
-                    !cancelled.load(Ordering::Acquire),
-                    "Checkout staging cancelled"
-                );
-                ensure!(started.elapsed() < TIMEOUT, "Checkout staging timed out");
-                self.check()?;
-                let bytes = reader.read_blob(&entry.oid, entry.size as usize, &permit)?;
-                permit.check()?;
-                ensure!(
-                    bytes.len() == entry.size as usize && blob_identity(&bytes) == entry.oid,
-                    "Git blob source changed"
-                );
-                let mut parent = staged.directory.clone_handle()?;
-                let components = entry.path.split('/').collect::<Vec<_>>();
-                let mut prefix = String::new();
-                for name in &components[..components.len() - 1] {
-                    if !prefix.is_empty() {
-                        prefix.push('/');
-                    }
-                    prefix.push_str(name);
-                    if !staged.directories.contains_key(&prefix) {
-                        ensure!(
-                            staged.directories.len() < MAX_FILES,
-                            "Too many checkout directories"
-                        );
-                        let child = parent.create_directory(name)?;
-                        staged.directories.insert(prefix.clone(), child);
-                    }
-                    parent = staged.directories.get(&prefix).unwrap().clone_handle()?;
-                    parent.check()?;
-                }
-                let name = components.last().unwrap();
-                let mut file = parent.create_file(name)?;
-                file.write_all(&bytes)?;
-                file.sync_all()?;
-                filesystem::set_executable(&file, entry.executable)?;
-                let identity = native_file::file_identity(&file)?;
-                staged
-                    .files
-                    .insert(entry.path, (identity, entry.oid, entry.size));
-            }
-            self.check()?;
-            ensure!(
-                !cancelled.load(Ordering::Acquire),
-                "Checkout staging cancelled"
-            );
-            Ok(())
-        })();
-        if let Err(error) = result {
-            return Ok(StageOutcome::Retained {
-                tree: staged,
-                reason: error.to_string(),
+        if !remote_name(name) || remotes.iter().any(|r: &Remote| r.name == name) {
+            continue;
+        }
+        if let Some((owner, repository)) = github_repository(url) {
+            remotes.push(Remote {
+                name: name.into(),
+                owner,
+                repository,
             });
         }
-        staged.complete = true;
-        Ok(StageOutcome::Complete(staged))
     }
+    let score = |name: &str| match name.to_ascii_lowercase().as_str() {
+        "upstream" => 3,
+        "github" => 2,
+        "origin" => 1,
+        _ => 0,
+    };
+    remotes.sort_by_key(|remote| std::cmp::Reverse(score(&remote.name)));
+    remotes
 }
-/// Closed per-materialization deadline/cancellation, handed only to the owned
-/// blob adapter. It grants no network, ref mutation or thread admission.
-pub struct ReadPermit<'a> {
-    cancelled: &'a AtomicBool,
-    deadline: Instant,
+fn find_remote<'a>(remotes: &'a [Remote], owner: &str, repository: &str) -> Option<&'a Remote> {
+    remotes.iter().find(|remote| {
+        remote.owner.eq_ignore_ascii_case(owner)
+            && remote.repository.eq_ignore_ascii_case(repository)
+    })
 }
-impl ReadPermit<'_> {
-    pub fn check(&self) -> Result<()> {
-        ensure!(
-            !self.cancelled.load(Ordering::Acquire),
-            "Checkout staging cancelled"
-        );
-        ensure!(Instant::now() < self.deadline, "Checkout staging timed out");
-        Ok(())
-    }
-}
-/// Private typed adapter. It receives only a validated object ID and exact size;
-/// it cannot choose a path or source root. Returned bytes are independently hashed.
-pub trait BlobReader {
-    fn read_blob(
-        &mut self,
-        oid: &str,
-        expected_size: usize,
-        permit: &ReadPermit<'_>,
-    ) -> Result<Vec<u8>>;
-}
-struct Entry {
-    path: String,
-    oid: String,
-    size: u64,
-    executable: bool,
-}
-fn portable_path(path: &str) -> Result<()> {
-    ensure!(
-        !path.is_empty() && path.len() <= 4096 && !path.contains('\\'),
-        "Unsupported Git tree path"
-    );
-    ensure!(path.split('/').count() <= 32, "Checkout path is too deep");
-    for part in path.split('/') {
-        let upper = part.to_uppercase();
-        let stem = upper.split('.').next().unwrap_or("");
-        let hfs=upper.chars().filter(|ch|!matches!(*ch,'\u{200c}'..='\u{200f}'|'\u{202a}'..='\u{202e}'|'\u{206a}'..='\u{206f}'|'\u{feff}')).collect::<String>();
-        ensure!(
-            !part.is_empty()
-                && part.len() <= 240
-                && !matches!(upper.as_str(), "." | ".." | ".GIT" | ".GIT~1")
-                && !part.ends_with(['.', ' '])
-                && !part
-                    .chars()
-                    .any(|c| c.is_control() || "<>:\"|?*".contains(c))
-                && !matches!(
-                    stem,
-                    "CON"
-                        | "PRN"
-                        | "AUX"
-                        | "NUL"
-                        | "COM1"
-                        | "COM2"
-                        | "COM3"
-                        | "COM4"
-                        | "COM5"
-                        | "COM6"
-                        | "COM7"
-                        | "COM8"
-                        | "COM9"
-                        | "LPT1"
-                        | "LPT2"
-                        | "LPT3"
-                        | "LPT4"
-                        | "LPT5"
-                        | "LPT6"
-                        | "LPT7"
-                        | "LPT8"
-                        | "LPT9"
-                )
-                && upper != "GIT~1"
-                && hfs != ".GIT",
-            "Unsupported Git tree path"
-        );
-    }
-    Ok(())
-}
-fn parse_tree(bytes: &[u8]) -> Result<Vec<Entry>> {
-    ensure!(
-        bytes.len() <= MAX_TREE && (bytes.is_empty() || bytes.ends_with(&[0])),
-        "Invalid bounded Git tree"
-    );
-    let mut entries = Vec::new();
-    let mut paths = HashSet::new();
-    let mut total = 0u64;
-    for raw in bytes.split(|b| *b == 0).filter(|raw| !raw.is_empty()) {
-        ensure!(entries.len() < MAX_FILES, "Too many checkout files");
-        let raw = std::str::from_utf8(raw).context("Non-UTF-8 Git paths are unsupported")?;
-        let (metadata, path) = raw.split_once('\t').context("Invalid Git tree record")?;
-        portable_path(path)?;
-        let metadata = metadata.split_whitespace().collect::<Vec<_>>();
-        ensure!(
-            metadata.len() == 4
-                && matches!(metadata[0], "100644" | "100755")
-                && metadata[1] == "blob",
-            "Submodules, symlinks and special Git entries are not populated"
-        );
-        validate_head(metadata[2])?;
-        let size = metadata[3].parse::<u64>()?;
-        ensure!(size <= MAX_BLOB as u64, "Git blob exceeds staging bound");
-        total = total.checked_add(size).context("Checkout size overflow")?;
-        ensure!(total <= MAX_TOTAL, "Checkout tree exceeds staging bound");
-        let key = path.to_lowercase();
-        ensure!(paths.insert(key), "Checkout paths collide");
-        entries.push(Entry {
-            path: path.into(),
-            oid: metadata[2].into(),
-            size,
-            executable: metadata[0] == "100755",
-        });
-    }
-    let files = entries
-        .iter()
-        .map(|entry| entry.path.to_lowercase())
-        .collect::<HashSet<_>>();
-    for entry in &entries {
-        let mut prefix = String::new();
-        let parts = entry.path.split('/').collect::<Vec<_>>();
-        for part in &parts[..parts.len() - 1] {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(part);
-            ensure!(
-                !files.contains(&prefix.to_lowercase()),
-                "Checkout file/directory paths collide"
-            );
-        }
-    }
-    Ok(entries)
-}
-fn blob_identity(bytes: &[u8]) -> String {
-    let mut context = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
-    context.update(format!("blob {}\0", bytes.len()).as_bytes());
-    context.update(bytes);
-    context
-        .finish()
-        .as_ref()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-/// Staging custody only, deliberately not a linked-worktree/thread receipt.
-/// Drop retains files. Cleanup must separately prove exact directory/file
-/// identities and absence of user changes; partial/unknown state is retained.
-pub struct StagedTree {
-    directory: filesystem::Directory,
-    files: BTreeMap<String, (Identity, String, u64)>,
-    directories: BTreeMap<String, filesystem::Directory>,
-    complete: bool,
-}
-impl StagedTree {
-    pub fn path(&self) -> &Path {
-        &self.directory.path
-    }
-    pub fn complete(&self) -> bool {
-        self.complete
-    }
-    pub fn file_count(&self) -> usize {
-        self.files.len()
+/// gh's ghrepo.FormatRemoteURL for its configured git_protocol.
+fn remote_url(owner: &str, repository: &str, ssh: bool) -> String {
+    if ssh {
+        format!("git@github.com:{owner}/{repository}.git")
+    } else {
+        format!("https://github.com/{owner}/{repository}.git")
     }
 }
 
-/// Failure after creating storage retains typed custody; no Drop cleanup claim.
-pub enum StageOutcome {
-    Complete(StagedTree),
-    Retained { tree: StagedTree, reason: String },
+#[derive(Debug)]
+struct Worktree {
+    path: PathBuf,
+    head: Option<String>,
+    branch: Option<String>,
+    main: bool,
+}
+fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>> {
+    let mut worktrees: Vec<Worktree> = Vec::new();
+    for field in bytes.split(|b| *b == 0).filter(|f| !f.is_empty()) {
+        let field = std::str::from_utf8(field).context("Worktree path is not UTF-8")?;
+        if let Some(path) = field.strip_prefix("worktree ") {
+            let main = worktrees.is_empty();
+            worktrees.push(Worktree {
+                path: PathBuf::from(path),
+                head: None,
+                branch: None,
+                main,
+            });
+        } else if let Some(current) = worktrees.last_mut() {
+            if let Some(head) = field.strip_prefix("HEAD ") {
+                current.head = Some(head.to_owned());
+            } else if let Some(branch) = field.strip_prefix("branch ") {
+                current.branch = Some(branch.strip_prefix("refs/heads/").unwrap_or(branch).into());
+            }
+        }
+    }
+    Ok(worktrees)
+}
+
+/// Swift GitCLI.failed: Git's own diagnostic lines, without hints, and with
+/// any URL credentials removed before they reach the UI.
+fn failure_detail(output: &Output) -> String {
+    let text = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    });
+    if text.contains("unable to create '") && text.contains("index.lock': File exists") {
+        return INDEX_LOCKED.into();
+    }
+    let lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("hint:"))
+        .map(redact)
+        .collect::<Vec<_>>();
+    let detail = lines[lines.len().saturating_sub(12)..].join("\n");
+    if detail.is_empty() {
+        format!("Exit status {}.", output.code)
+    } else {
+        detail
+    }
+}
+fn redact(line: &str) -> String {
+    let mut result = String::new();
+    let mut rest = line;
+    while let Some(index) = rest.find("://") {
+        let (before, after) = rest.split_at(index + 3);
+        result.push_str(before);
+        let end = after
+            .find(|c: char| c == '/' || c.is_whitespace())
+            .unwrap_or(after.len());
+        rest = match after[..end].rfind('@') {
+            Some(at) => &after[at + 1..],
+            None => after,
+        };
+    }
+    result.push_str(rest);
+    result
+}
+
+struct Output {
+    code: i32,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+impl Output {
+    fn success(&self) -> bool {
+        self.code == 0
+    }
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).trim().to_owned()
+    }
+}
+static NEVER: AtomicBool = AtomicBool::new(false);
+/// Fixed hardening shared with workspace::git: no inherited GIT_* redirection,
+/// no hooks (a regular file is never a hook directory), no fsmonitor, and only
+/// HTTPS and SSH transports unless the user's own config allows another.
+struct Git<'a> {
+    cancelled: &'a AtomicBool,
+    hooks: OsString,
+    credentials: Vec<OsString>,
+}
+impl<'a> Git<'a> {
+    fn new(cancelled: &'a AtomicBool, gh: &Path) -> Result<Self> {
+        let mut hooks = OsString::from("core.hooksPath=");
+        hooks.push(external_git_path(&std::env::current_exe()?)?);
+        let gh = external_git_path(gh)?;
+        let gh = gh.to_str().context("Native GH path is not UTF-8")?;
+        // gh's AuthenticatedCommand: fetches answer credentials from gh only.
+        let credentials = vec![
+            "-c".into(),
+            "credential.helper=".into(),
+            "-c".into(),
+            format!(
+                "credential.helper=!'{}' auth git-credential",
+                gh.replace('\'', "'\\''")
+            )
+            .into(),
+        ];
+        Ok(Self {
+            cancelled,
+            hooks,
+            credentials,
+        })
+    }
+    /// Cleanup after cancellation or a timeout must still run, briefly.
+    fn uncancellable(&self) -> Git<'static> {
+        Git {
+            cancelled: &NEVER,
+            hooks: self.hooks.clone(),
+            credentials: self.credentials.clone(),
+        }
+    }
+    fn run(&self, directory: &Path, args: &[&str], timeout: Duration) -> Result<Output> {
+        let args = args.iter().map(OsStr::new).collect::<Vec<_>>();
+        self.execute(directory, &[], &args, timeout)
+    }
+    fn fetch(&self, directory: &Path, args: &[&str]) -> Result<Output> {
+        let args = args.iter().map(OsStr::new).collect::<Vec<_>>();
+        self.execute(directory, &self.credentials, &args, NETWORK)
+    }
+    fn execute(
+        &self,
+        directory: &Path,
+        options: &[OsString],
+        args: &[&OsStr],
+        timeout: Duration,
+    ) -> Result<Output> {
+        ensure!(
+            !self.cancelled.load(Ordering::Acquire),
+            "Checkout cancelled"
+        );
+        ensure!(directory.is_dir(), "Repository directory does not exist");
+        let mut command = Command::new("git");
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("GIT_") {
+                command.env_remove(name);
+            }
+        }
+        #[cfg(windows)]
+        command.args(["-c", "core.longpaths=true"]);
+        command
+            .arg("-c")
+            .arg(&self.hooks)
+            .args([
+                "--no-pager",
+                "--literal-pathspecs",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "protocol.allow=never",
+                "-c",
+                "protocol.https.allow=always",
+                "-c",
+                "protocol.ssh.allow=always",
+            ])
+            .args(options)
+            .arg("-C")
+            .arg(external_git_directory(directory)?)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_MERGE_AUTOEDIT", "no")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = OwnedChild::spawn(&mut command).context("Unable to start git")?;
+        let (stdout, stderr) = child.pipes();
+        let stdout = drain(stdout.context("Missing git stdout")?)?;
+        let stderr = drain(stderr.context("Missing git stderr")?)?;
+        let deadline = Instant::now() + timeout;
+        let outcome = loop {
+            if self.cancelled.load(Ordering::Acquire) {
+                break Err(anyhow::anyhow!("Checkout cancelled"));
+            }
+            if Instant::now() >= deadline {
+                break Err(anyhow::anyhow!("Git operation timed out"));
+            }
+            match child.exit_code() {
+                Ok(Some(code)) => break Ok(code),
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(error) => break Err(error),
+            }
+        };
+        // Kill and reap the whole owned group/Job before joining its pipes.
+        drop(child);
+        let stdout = join(stdout)?;
+        let stderr = join(stderr)?;
+        Ok(Output {
+            code: outcome?,
+            stdout,
+            stderr,
+        })
+    }
+    fn checked(
+        &self,
+        directory: &Path,
+        args: &[&str],
+        failure: impl FnOnce(String) -> Failure,
+    ) -> Result<String> {
+        let output = self.run(directory, args, QUICK)?;
+        if !output.success() {
+            return Err(failure(failure_detail(&output)).into());
+        }
+        Ok(output.text())
+    }
+    fn commit(&self, directory: &Path, reference: &str) -> Result<Option<String>> {
+        let spec = format!("{reference}^{{commit}}");
+        let output = self.run(
+            directory,
+            &["rev-parse", "--verify", "--quiet", &spec],
+            QUICK,
+        )?;
+        if !output.success() {
+            return Ok(None);
+        }
+        let oid = output.text().to_ascii_lowercase();
+        crate::workspace_git::validate_oid(&oid)?;
+        Ok(Some(oid))
+    }
+    fn reference_name(&self, directory: &Path, reference: &str) -> Result<bool> {
+        Ok(self
+            .run(directory, &["check-ref-format", reference], QUICK)?
+            .success())
+    }
+    fn ancestor(&self, directory: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
+        let output = self.run(
+            directory,
+            &["merge-base", "--is-ancestor", ancestor, descendant],
+            QUICK,
+        )?;
+        match output.code {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => bail!("{}", failure_detail(&output)),
+        }
+    }
+    /// None when the key is unset (git config exits 1).
+    fn config(&self, directory: &Path, key: &str) -> Result<Option<String>> {
+        let output = self.run(directory, &["config", "--get", key], QUICK)?;
+        match output.code {
+            0 => Ok(Some(output.text())),
+            1 => Ok(None),
+            _ => bail!("{}", failure_detail(&output)),
+        }
+    }
+}
+fn drain<R: Read + Send + 'static>(mut pipe: R) -> Result<thread::JoinHandle<Vec<u8>>> {
+    thread::Builder::new()
+        .name("coincide-checkout-git-output".into())
+        .spawn(move || {
+            let mut kept = Vec::new();
+            let mut chunk = [0u8; 16384];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        // Keep draining past the bound so Git never blocks on a full pipe.
+                        let room = OUTPUT.saturating_sub(kept.len());
+                        kept.extend_from_slice(&chunk[..n.min(room)]);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            kept
+        })
+        .context("Unable to read git output")
+}
+fn join(reader: thread::JoinHandle<Vec<u8>>) -> Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("Git output reader panicked"))
+}
+
+/// Mirrors Swift's prepareWorktreesRoot (owner-only) beside Rust's reserved
+/// worktrees, refusing a symbolic link in place of either folder.
+fn private_folder(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "Worktree storage must be a real directory"
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                // Best effort, like Swift: an odd volume must not block checkout.
+                let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(path)?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+/// A folder name that is valid on every desktop platform.
+fn portable(name: &str) -> String {
+    let mut value = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"|?*\\/".contains(c) {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim_end_matches(['.', ' '])
+        .to_owned();
+    if value.is_empty() || value == "." || value == ".." {
+        value = "worktree".into();
+    }
+    let stem = value.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        value.insert(0, '_');
+    }
+    value.chars().take(120).collect()
+}
+/// Swift GitService.newWorktreePath: `<worktrees>/<repository>/<branch with
+/// slashes as hyphens>`, with `-2`, `-3`… when that folder is taken.
+fn destination(storage: &Path, repository: &str, branch: &str) -> Result<PathBuf> {
+    let worktrees = storage.join("worktrees");
+    private_folder(&worktrees)?;
+    let folder = worktrees.join(portable(repository));
+    private_folder(&folder)?;
+    let name = portable(&branch.replace('/', "-"));
+    let mut candidate = folder.join(&name);
+    let mut suffix = 2;
+    while fs::symlink_metadata(&candidate).is_ok() {
+        ensure!(suffix < 10_000, "No free worktree folder");
+        candidate = folder.join(format!("{name}-{suffix}"));
+        suffix += 1;
+    }
+    Ok(candidate)
+}
+
+/// Runs off the UI/Engine lock with the user's own gh credentials. The fresh
+/// metadata read rebinds the displayed head before anything is fetched.
+pub fn run(source: &Source, cancelled: &AtomicBool) -> Result<Checkout> {
+    let runner = crate::github_api::GhRunner::new(source.gh.clone())
+        .map_err(|_| Failure::new(SETUP, None))?;
+    let root = source.root.clone();
+    check_out(
+        source,
+        &mut |args: &[String]| runner.capture(&root, args, cancelled),
+        cancelled,
+    )
+}
+/// gh is injected so tests use local bare repositories without network.
+pub(crate) fn check_out(
+    source: &Source,
+    gh: &mut dyn FnMut(&[String]) -> Result<Vec<u8>>,
+    cancelled: &AtomicBool,
+) -> Result<Checkout> {
+    let number = source.number;
+    let result = Git::new(cancelled, &source.gh).and_then(|git| prepare(source, &git, gh));
+    result.map_err(|error| match error.downcast::<Failure>() {
+        Ok(failure) => failure.into(),
+        Err(error) => Failure::checkout(number, error.to_string()).into(),
+    })
+}
+fn prepare(
+    source: &Source,
+    git: &Git<'_>,
+    gh: &mut dyn FnMut(&[String]) -> Result<Vec<u8>>,
+) -> Result<Checkout> {
+    let number = source.number;
+    let top = git.run(&source.root, &["rev-parse", "--show-toplevel"], QUICK)?;
+    if !top.success() || top.text().is_empty() {
+        return Err(Failure::new(NOT_REPOSITORY, None).into());
+    }
+    let root = PathBuf::from(top.text()).canonicalize()?;
+    let listed = git.checked(
+        &root,
+        &["worktree", "list", "--porcelain", "-z"],
+        |detail| Failure::new("Could not list worktrees.", Some(detail)),
+    )?;
+    let worktrees = parse_worktrees(listed.as_bytes())?;
+    let main = worktrees.first().context("Git reported no worktrees")?;
+    let arguments = [
+        "pr".to_owned(),
+        "view".to_owned(),
+        number.to_string(),
+        "--json".to_owned(),
+        FIELDS.to_owned(),
+        "--repo".to_owned(),
+        format!("github.com/{}", source.repository),
+    ];
+    let pr = gh(&arguments)
+        .and_then(|bytes| metadata(&bytes, &source.repository, number))
+        .map_err(|error| Failure::checkout(number, error.to_string()))?;
+    if !pr.open {
+        return Err(Failure::new(
+            format!("Pull request #{number} is no longer open."),
+            Some("Refresh the pull request list.".into()),
+        )
+        .into());
+    }
+    let branch = local_branch(pr.cross, number, &pr.head_branch, &source.prefix);
+    if let Some(existing) = worktrees
+        .iter()
+        .find(|worktree| worktree.branch.as_deref() == Some(branch.as_str()))
+    {
+        // git checks a branch out in one place only.
+        if existing.main {
+            return Err(Failure::new(
+                format!("Pull request #{number}’s branch is checked out in the project folder."),
+                Some("Switch the project folder to another branch, or start a thread in the project folder instead.".into()),
+            )
+            .into());
+        }
+        let path = existing.path.canonicalize().map_err(|_| {
+            Failure::new(
+                format!("Pull request #{number}’s branch is checked out in a worktree that no longer exists."),
+                Some(format!("Remove or prune the worktree at {}, then try again.", existing.path.display())),
+            )
+        })?;
+        return Ok(Checkout {
+            path,
+            branch,
+            reused: true,
+            number,
+        });
+    }
+    if pr.head != source.head {
+        return Err(Failure::changed(number).into());
+    }
+    for reference in [
+        format!("refs/heads/{branch}"),
+        format!("refs/heads/{}", pr.head_branch),
+    ] {
+        if !git.reference_name(&root, &reference)? {
+            let name = reference.trim_start_matches("refs/heads/");
+            return Err(
+                Failure::checkout(number, format!("“{name}” is not a valid branch name.")).into(),
+            );
+        }
+    }
+    let remotes = git.run(
+        &root,
+        &["config", "-z", "--get-regexp", r"^remote\..+\.url$"],
+        QUICK,
+    )?;
+    let remotes = parse_remotes(&remotes.stdout);
+    let (owner, name) = source
+        .repository
+        .split_once('/')
+        .context("Expected explicit GitHub owner/repository")?;
+    let base = find_remote(&remotes, owner, name);
+    let head_remote = if pr.cross {
+        pr.head_repository
+            .as_ref()
+            .and_then(|(owner, name)| find_remote(&remotes, owner, name))
+    } else {
+        base
+    };
+    let repository_name = main
+        .path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repository".into());
+    let mut protocol = Protocol(None);
+    // gh pr checkout: the head repository's remote when one is configured,
+    // otherwise the base repository's pull ref (its remote, else its URL).
+    let (fetch_source, spec, fetched_ref, temporary) = match head_remote {
+        Some(remote) => {
+            let tracking = format!("refs/remotes/{}/{}", remote.name, pr.head_branch);
+            if !git.reference_name(&root, &tracking)? {
+                return Err(Failure::checkout(number, "Invalid remote-tracking branch.").into());
+            }
+            let spec = format!("+refs/heads/{}:{tracking}", pr.head_branch);
+            (remote.name.clone(), spec, tracking, None)
+        }
+        None => {
+            let url = match base {
+                Some(remote) => remote.name.clone(),
+                None => remote_url(owner, name, protocol.ssh(gh)),
+            };
+            let temporary = format!("refs/coincide/pr-checkout/{}", uuid::Uuid::new_v4());
+            let spec = format!("+refs/pull/{number}/head:{temporary}");
+            (url, spec, temporary.clone(), Some(temporary))
+        }
+    };
+    let target = Target {
+        git,
+        root: &root,
+        storage: &source.storage,
+        repository_name: &repository_name,
+        branch: &branch,
+        number,
+        expected: &source.head,
+        pr: &pr,
+        tracking: head_remote.is_some(),
+        fetch_source: &fetch_source,
+        fetched_ref: &fetched_ref,
+        main_head: main.head.as_deref(),
+    };
+    let result = fetch(git, &root, &fetch_source, &spec, number)
+        .and_then(|()| target.create(gh, &mut protocol));
+    if let Some(temporary) = temporary {
+        let _ = git
+            .uncancellable()
+            .run(&root, &["update-ref", "-d", &temporary], QUICK);
+    }
+    result
+}
+/// gh's configured git_protocol, read only when a URL has to be written.
+struct Protocol(Option<bool>);
+impl Protocol {
+    fn ssh(&mut self, gh: &mut dyn FnMut(&[String]) -> Result<Vec<u8>>) -> bool {
+        *self.0.get_or_insert_with(|| {
+            let arguments =
+                ["config", "get", "git_protocol", "--host", "github.com"].map(str::to_owned);
+            gh(&arguments).is_ok_and(|bytes| String::from_utf8_lossy(&bytes).trim() == "ssh")
+        })
+    }
+}
+fn fetch(git: &Git<'_>, root: &Path, source: &str, spec: &str, number: u64) -> Result<()> {
+    let output = git.fetch(
+        root,
+        &[
+            "fetch",
+            "--no-write-fetch-head",
+            "--no-recurse-submodules",
+            "--",
+            source,
+            spec,
+        ],
+    )?;
+    if !output.success() {
+        return Err(Failure::checkout(number, failure_detail(&output)).into());
+    }
+    Ok(())
+}
+struct Target<'a> {
+    git: &'a Git<'a>,
+    root: &'a Path,
+    storage: &'a Path,
+    repository_name: &'a str,
+    branch: &'a str,
+    number: u64,
+    expected: &'a str,
+    pr: &'a Metadata,
+    tracking: bool,
+    fetch_source: &'a str,
+    fetched_ref: &'a str,
+    main_head: Option<&'a str>,
+}
+impl Target<'_> {
+    fn create(
+        &self,
+        gh: &mut dyn FnMut(&[String]) -> Result<Vec<u8>>,
+        protocol: &mut Protocol,
+    ) -> Result<Checkout> {
+        let (git, root, branch, number) = (self.git, self.root, self.branch, self.number);
+        let fetched = git.commit(root, self.fetched_ref)?.ok_or_else(|| {
+            Failure::checkout(number, "The fetched pull request head is unavailable.")
+        })?;
+        if fetched != self.expected {
+            return Err(Failure::changed(number).into());
+        }
+        let reference = format!("refs/heads/{branch}");
+        let local = git.commit(root, &reference)?;
+        if let Some(local) = &local
+            && local != &fetched
+        {
+            if git.ancestor(root, local, &fetched)? {
+                // The fast-forward `git merge --ff-only` or a non-forced fetch makes.
+                let reason = format!("coincide: check out pull request #{number}");
+                git.checked(
+                    root,
+                    &["update-ref", "-m", &reason, &reference, &fetched, local],
+                    |detail| Failure::checkout(number, detail),
+                )?;
+            } else if !self.tracking || !git.ancestor(root, &fetched, local)? {
+                // A remote-tracking checkout keeps a branch that is already ahead
+                // ("Already up to date"); a pull ref fetch refuses any non-fast-forward.
+                return Err(Failure::checkout(
+                    number,
+                    if self.tracking {
+                        "fatal: Not possible to fast-forward, aborting.".to_owned()
+                    } else {
+                        format!(
+                            "! [rejected] refs/pull/{number}/head -> {branch} (non-fast-forward)"
+                        )
+                    },
+                )
+                .into());
+            }
+        }
+        let path = destination(self.storage, self.repository_name, branch)?;
+        let destination = external_git_path(&path)?;
+        let (options, start) = match (&local, self.tracking) {
+            (Some(_), _) => (&[][..], branch),
+            (None, true) => (&["--track", "-b", branch][..], self.fetched_ref),
+            (None, false) => (&["--no-track", "-b", branch][..], fetched.as_str()),
+        };
+        let mut add = ["worktree", "add"]
+            .iter()
+            .chain(options)
+            .map(OsStr::new)
+            .collect::<Vec<_>>();
+        add.extend([OsStr::new("--"), &destination, OsStr::new(start)]);
+        let added = match git.execute(root, &[], &add, CREATE) {
+            Ok(output) => output,
+            Err(error) => {
+                // Killed mid-checkout: Git could not remove its partial worktree.
+                discard(git, root, &destination);
+                return Err(error);
+            }
+        };
+        if !added.success() {
+            return Err(Failure::create(failure_detail(&added)).into());
+        }
+        if let Err(error) = self.finish(&path, gh, protocol) {
+            // Nothing was made in it yet, so it goes without asking.
+            discard(git, root, &destination);
+            return Err(error);
+        }
+        // The branch diff compares against the pull request's base rather than guessing one.
+        let key = format!("branch.{branch}.coincide-merge-base");
+        if matches!(git.config(root, &key), Ok(None)) {
+            let _ = git.run(root, &["config", &key, &self.pr.base_branch], QUICK);
+        }
+        Ok(Checkout {
+            path: path.canonicalize()?,
+            branch: branch.to_owned(),
+            reused: false,
+            number,
+        })
+    }
+    fn finish(
+        &self,
+        path: &Path,
+        gh: &mut dyn FnMut(&[String]) -> Result<Vec<u8>>,
+        protocol: &mut Protocol,
+    ) -> Result<()> {
+        let (git, root, branch, number) = (self.git, self.root, self.branch, self.number);
+        if !self.tracking
+            && git
+                .config(root, &format!("branch.{branch}.merge"))?
+                .is_none()
+        {
+            // gh: .remote for `git pull`, .pushRemote for `git push` under
+            // remote.pushDefault, and the fork's branch when maintainers may push.
+            let (remote, merge) = match (&self.pr.head_repository, self.pr.maintainer_can_modify) {
+                (Some((owner, name)), true) => (
+                    remote_url(owner, name, protocol.ssh(gh)),
+                    format!("refs/heads/{}", self.pr.head_branch),
+                ),
+                _ => (
+                    self.fetch_source.to_owned(),
+                    format!("refs/pull/{number}/head"),
+                ),
+            };
+            for (key, value) in [
+                ("remote", &remote),
+                ("pushRemote", &remote),
+                ("merge", &merge),
+            ] {
+                let key = format!("branch.{branch}.{key}");
+                git.checked(root, &["config", &key, value], |detail| {
+                    Failure::checkout(number, detail)
+                })?;
+            }
+        }
+        // Swift passes --recurse-submodules when the new worktree, made from the
+        // project folder's HEAD, has a .gitmodules file.
+        let modules = match self.main_head {
+            Some(head) => {
+                let spec = format!("{head}:.gitmodules");
+                git.run(root, &["rev-parse", "--verify", "--quiet", &spec], QUICK)?
+                    .success()
+            }
+            None => false,
+        };
+        if modules {
+            for args in [
+                &["submodule", "sync", "--recursive"][..],
+                &["submodule", "update", "--init", "--recursive"][..],
+            ] {
+                let output = git.run(path, args, NETWORK)?;
+                if !output.success() {
+                    return Err(Failure::checkout(number, failure_detail(&output)).into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+fn discard(git: &Git<'_>, root: &Path, destination: &OsStr) {
+    let args = ["worktree", "remove", "--force", "--"].map(OsStr::new);
+    let args = args
+        .iter()
+        .copied()
+        .chain([destination])
+        .collect::<Vec<_>>();
+    let _ = git.uncancellable().execute(root, &[], &args, QUICK);
 }
