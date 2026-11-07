@@ -37,6 +37,7 @@ pub mod workspace_git;
 pub mod workspace_github;
 
 pub mod github_api;
+pub mod github_checkout;
 
 pub mod bot_runtime;
 
