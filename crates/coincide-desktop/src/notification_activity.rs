@@ -177,6 +177,34 @@ mod tests {
         assert!(!observed.locked);
         assert!(observed.display_asleep);
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "fresh Linux CI private Xvfb and bus only; never the user session"]
+    fn actual_private_x11_activity() {
+        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+        assert_eq!(
+            std::env::var("COINCIDE_PRIVATE_ACTIVITY_FIXTURE").as_deref(),
+            Ok("1")
+        );
+        assert!(std::env::var_os("DISPLAY").is_some());
+        let bus = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+        assert_eq!(std::env::var("DBUS_SYSTEM_BUS_ADDRESS").unwrap(), bus);
+        assert!(!bus.is_empty());
+        let observed = sample();
+        assert!(
+            observed.idle_seconds.is_some_and(|idle| idle < 60),
+            "Fresh owned Xvfb must expose actual XScreenSaver idle time"
+        );
+        assert!(
+            observed.locked.is_none(),
+            "The private bus has no logind session; unknown must stay unknown"
+        );
+        let routed = observed.apply(desktop());
+        assert!(
+            routed.locked,
+            "Unknown private-bus lock cannot assert an unlocked session"
+        );
+    }
     #[test]
     fn windows_input_age_handles_tick_rollover_without_negative_or_future_age() {
         let last = u32::MAX - 499;
