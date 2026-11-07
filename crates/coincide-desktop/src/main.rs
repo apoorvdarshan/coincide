@@ -670,6 +670,7 @@ impl Coincide {
                 microphone_binding,
                 settings_revision,
                 configuration,
+                voice.input_device_uid,
                 microphone::compiled_backend_available(),
                 cx,
             );

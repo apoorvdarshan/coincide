@@ -13,6 +13,7 @@ fn main() {
     compile_appshots();
     println!("cargo:rerun-if-changed=src/microphone_macos.m");
     println!("cargo:rerun-if-changed=src/microphone_macos.h");
+    println!("cargo:rerun-if-changed=src/microphone_devices_macos.m");
     println!("cargo:rerun-if-changed=src/computer_use_macos.m");
     println!("cargo:rerun-if-changed=src/computer_use_macos.h");
     if std::env::var_os("CARGO_FEATURE_NATIVE_COMPUTER_USE").is_some()
@@ -31,11 +32,18 @@ fn main() {
 fn compile_microphone() {
     cc::Build::new()
         .file("src/microphone_macos.m")
+        .file("src/microphone_devices_macos.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
         .flag("-std=gnu11")
         .compile("coincide_microphone");
-    for framework in ["Foundation", "AVFAudio", "AVFoundation"] {
+    for framework in [
+        "Foundation",
+        "AVFAudio",
+        "AVFoundation",
+        "CoreAudio",
+        "AudioToolbox",
+    ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }

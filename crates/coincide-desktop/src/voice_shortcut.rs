@@ -184,7 +184,12 @@ impl Coincide {
     pub(super) fn poll_voice_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_voice_interceptor(cx);
         let settings = Settings::decode(&self.settings);
-        if !self.settings_open || !self.transcription_open {
+        let recorder_active = if self.settings_window.is_some() {
+            self.microphone_settings_active
+        } else {
+            self.microphone_window_active && self.settings_in_main_window()
+        };
+        if !self.settings_open || !self.transcription_open || !recorder_active {
             self.voice.recording_shortcut = false;
         }
         let available = self.voice_target_available(window, cx)
