@@ -145,3 +145,8 @@ pub fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Capture> {
 pub fn sound() {
     backend::sound()
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn notification_activity() -> crate::notification_activity::Observation {
+    backend::notification_activity()
+}
