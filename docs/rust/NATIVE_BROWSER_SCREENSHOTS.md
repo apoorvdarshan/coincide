@@ -44,12 +44,12 @@ reported as retained; no recursive cleanup or force deletion is used.
   FullDocument has no preallocation clip; it is not used. Native Cairo pixels
   are converted and redacted on the owned encoder worker.
 - Windows uses fixed WebView2 SDK calls, a system-unique isolated context proved
-  by both creation and native context event, and a fixed
-  `Page.captureScreenshot` viewport clip. Native controller raster/zoom/bounds
+  by both creation and native context event, and native `CapturePreview`
+  writing to a hard-bounded in-memory COM IStream. Native controller raster/zoom/bounds
   and frame/loader identity are rechecked. There is no public CDP/JS endpoint,
   numeric-context fallback or credential-permit reuse. Cancellation removes the
   actual context listener and waits for call/event closure return. Requested
-  geometry, received PNG and our allocations are bounded; this does not impose
+  viewport admission, native stream PNG and our allocations are bounded; this does not impose
   a process-wide hard quota on undocumented native SDK compositor allocations.
 
 `fullPage` currently succeeds only if the entire document already fits its
@@ -76,4 +76,9 @@ Primary API/source references:
 - [WebKitGTK2.40 snapshot paint flushes style/layout](https://github.com/WebKit/WebKit/blob/webkitgtk-2.40.0/Source/WebCore/page/FrameView.cpp#L4418)
 - [WKSnapshotConfiguration](https://developer.apple.com/documentation/webkit/wksnapshotconfiguration)
 - [WebView2 SDK](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2)
-- [Official DevTools fixed page snapshot/viewport schema](https://github.com/ChromeDevTools/devtools-protocol/blob/master/json/browser_protocol.json)
+- [Official DevTools isolated-world schema](https://github.com/ChromeDevTools/devtools-protocol/blob/master/json/browser_protocol.json)
+
+The rejected clipped-CDP path was audited against the official
+[Chromium screenshot implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/browser/devtools/protocol/page_handler.cc),
+which changes emulation/view size internally. No native screenshot was executed
+through that rejected path.

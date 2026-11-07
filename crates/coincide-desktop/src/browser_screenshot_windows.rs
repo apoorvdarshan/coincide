@@ -1,10 +1,10 @@
 //! Closed WebView2 page snapshot pipeline. No desktop capture, ExecuteScript,
 //! public CDP endpoint, page-world evaluation or numeric-context fallback.
 //!
-//! Page.captureScreenshot receives one fixed bounded viewport clip. Native
+//! CapturePreview writes into a hard-bounded COM IStream. Native
 //! controller geometry/scale and unique frame/loader are bound before/after.
 //! The SDK's internal allocations are not under a process-wide hard quota; the
-//! requested rectangle, returned PNG and our decoder/encoder are bounded.
+//! admitted viewport, native stream and our decoder/encoder are bounded.
 use super::{Callbacks, Completion, Data, Handle, Pixels};
 #[path = "browser_credential_context.rs"]
 mod context;
@@ -22,7 +22,7 @@ use std::{
     thread::ThreadId,
 };
 use webview2_com::{
-    CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR,
+    CallDevToolsProtocolMethodCompletedHandler, CapturePreviewCompletedHandler, CoTaskMemPWSTR,
     DevToolsProtocolEventReceivedEventHandler, Microsoft::Web::WebView2::Win32::*,
 };
 use windows::{
@@ -31,15 +31,16 @@ use windows::{
 };
 use wry::WebViewExtWindows;
 const MAX_METADATA: usize = 512 * 1024;
-use super::windows_plan::{MAX_CAPTURE_REPLY, png_reply, viewport};
+#[path = "browser_screenshot_stream_windows.rs"]
+mod stream;
+use super::windows_plan::Buffer;
+use std::sync::Mutex;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Layout {
     width: f64,
     height: f64,
     masks: Vec<Rect>,
-    x: f64,
-    y: f64,
 }
 struct Source {
     view: ICoreWebView2,
@@ -74,6 +75,7 @@ impl Source {
         let mut bounds = RECT::default();
         let mut raster = 0.;
         let mut zoom = 0.;
+        let mut mode = COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS;
         result.is_ok()
             && url.as_deref() == Some(self.url.as_str())
             && unsafe { self.controller.Bounds(&mut bounds) }.is_ok()
@@ -82,6 +84,8 @@ impl Source {
             && raster == self.raster
             && unsafe { self.controller.ZoomFactor(&mut zoom) }.is_ok()
             && zoom == self.zoom
+            && unsafe { self.scaled.BoundsMode(&mut mode) }.is_ok()
+            && mode == COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS
             && self.navigation.load(Ordering::Acquire) == self.epoch
     }
 }
@@ -103,7 +107,6 @@ enum Method {
     Enable,
     Create,
     Prepare,
-    Snapshot,
     Restore,
 }
 impl Method {
@@ -113,7 +116,6 @@ impl Method {
             Self::Enable => "Runtime.enable",
             Self::Create => "Page.createIsolatedWorld",
             Self::Prepare | Self::Restore => "Runtime.callFunctionOn",
-            Self::Snapshot => "Page.captureScreenshot",
         }
     }
 }
@@ -265,11 +267,7 @@ impl Operation {
                     s.stage == stage && s.nonce == nonce
                 };
                 if eligible {
-                    let limit = if matches!(method, Method::Snapshot) {
-                        MAX_CAPTURE_REPLY
-                    } else {
-                        MAX_METADATA
-                    };
+                    let limit = MAX_METADATA;
                     if code.is_err() || body.len() > limit {
                         operation.stop("Native snapshot SDK request failed");
                     } else if let Ok(value) = serde_json::from_str::<Value>(&body) {
@@ -440,7 +438,7 @@ impl Operation {
             return;
         }
         let function = format!(
-            "async function(ticket,expectedURL,fullPage) {{const result=await(async()=>{{\n{}\n}})();if(!result)return '';const data=JSON.parse(result),state=globalThis.__coincidePrivateSnapshotV1;data.x=state.sx;data.y=state.sy;return JSON.stringify(data);}}",
+            "async function(ticket,expectedURL,fullPage) {{\n{}\n}}",
             mask::PREPARE
         );
         self.state.borrow_mut().mask_started = true;
@@ -456,13 +454,8 @@ impl Operation {
             operation.stop("Snapshot mask preparation failed");
             return;
         };
-        if value.get("exceptionDetails").is_some()
-            || !layout.x.is_finite()
-            || !layout.y.is_finite()
-            || layout.x.abs() > 1_000_000.
-            || layout.y.abs() > 1_000_000.
-        {
-            operation.stop("Snapshot layout is invalid");
+        if value.get("exceptionDetails").is_some() {
+            operation.stop("Snapshot mask preparation failed");
             return;
         }
         let geometry = match Geometry::checked(layout.width, layout.height, layout.masks) {
@@ -472,36 +465,63 @@ impl Operation {
                 return;
             }
         };
-        // Use the native controller's bound raster/zoom, never a caller JSON
-        // scale or a page-provided devicePixelRatio. A subsequent native scale
-        // or geometry change revokes/discards this snapshot.
-        let Some(parameters) = viewport(
-            layout.width,
-            layout.height,
-            layout.x,
-            layout.y,
-            operation.source.raster,
-            operation.source.zoom,
-        ) else {
-            operation.stop("Snapshot scale exceeds bounds");
-            return;
-        };
         operation.state.borrow_mut().geometry = Some(geometry);
-        operation.call(
-            Method::Snapshot,
-            parameters,
-            Stage::Snapshot,
-            Operation::captured,
-        );
+        operation.capture_preview();
     }
-    fn captured(operation: Rc<Self>, value: Value) {
-        let data = png_reply(&value);
-        if data.is_none() {
-            operation.stop("Native snapshot PNG exceeds bounds or is invalid");
+    fn capture_preview(self: &Rc<Self>) {
+        if !self.source.valid() {
+            self.stop("Snapshot source changed");
             return;
         }
-        operation.state.borrow_mut().png = data;
-        operation.call(Method::Frame, json!({}), Stage::Verify, Operation::verified);
+        let buffer = Arc::new(Mutex::new(Buffer::default()));
+        let output = stream::stream(buffer.clone(), self.source.callbacks.lifetimes().block());
+        let nonce = {
+            let mut s = self.state.borrow_mut();
+            s.stage = Stage::Snapshot;
+            s.pending = true;
+            s.nonce = uuid::Uuid::new_v4();
+            s.custody.began();
+            s.nonce
+        };
+        let operation = self.clone();
+        let ack = self.source.callbacks.begin();
+        let lease = self.source.callbacks.lifetimes().block();
+        let once = Cell::new(false);
+        let handler = CapturePreviewCompletedHandler::create(Box::new(move |code| {
+            let _held = &lease;
+            if once.replace(true) {
+                return Ok(());
+            }
+            ack.ack();
+            let eligible = {
+                let mut s = operation.state.borrow_mut();
+                s.custody.returned();
+                s.pending = false;
+                s.stage == Stage::Snapshot && s.nonce == nonce
+            };
+            let png = buffer.lock().unwrap_or_else(|e| e.into_inner()).seal();
+            if eligible {
+                if code.is_err() || png.is_none() {
+                    operation.stop("Native snapshot PNG failed or exceeded its byte budget");
+                } else {
+                    operation.state.borrow_mut().png = png;
+                    operation.call(Method::Frame, json!({}), Stage::Verify, Operation::verified);
+                }
+            }
+            operation.finish_if_returned();
+            Ok(())
+        }));
+        if unsafe {
+            self.source.view.CapturePreview(
+                COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                &output,
+                &handler,
+            )
+        }
+        .is_err()
+        {
+            self.stop("Native snapshot dispatch is unconfirmed");
+        }
     }
     fn verified(operation: Rc<Self>, value: Value) {
         let valid = {
