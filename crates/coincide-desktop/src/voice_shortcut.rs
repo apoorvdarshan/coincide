@@ -125,6 +125,13 @@ impl Coincide {
         if !voice.enabled || voice.engine == Engine::Apple {
             return;
         }
+        if !self.microphone_panel.read(cx).configured_for_dictation() {
+            self.voice.ticket = None;
+            self.voice.machine.recording_ended();
+            self.status=if voice.engine==Engine::Whisper{"Choose the local Whisper executable and model in Settings › Voice before dictating."}else{"Save or explicitly load the separate Voice API key in Settings › Voice before dictating."}.into();
+            cx.notify();
+            return;
+        }
         if self.voice.settings.as_ref() != Some(&voice) {
             self.voice.machine = Trigger::new(voice.mode, lone(&voice.shortcut));
             self.voice.settings = Some(voice.clone());

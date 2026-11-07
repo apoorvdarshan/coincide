@@ -305,6 +305,9 @@ impl Coincide {
                     },
                 )
             })
+            .when(!active && self.microphone_panel.read(cx).failed(), |pane| {
+                pane.child(self.microphone_panel.read(cx).status_text())
+            })
             .into_any_element()
     }
 }

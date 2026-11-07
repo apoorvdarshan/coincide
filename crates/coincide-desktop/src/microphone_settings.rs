@@ -813,6 +813,15 @@ impl MicrophoneSettings {
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
         cx.notify();
     }
+    pub fn configured_for_dictation(&self) -> bool {
+        self.backend_enabled
+            && self.connection.shared.alive.load(Ordering::Acquire)
+            && self.target.binding.is_some()
+            && self.target.config.is_some()
+    }
+    pub fn failed(&self) -> bool {
+        self.phase == Phase::Failed
+    }
     pub fn begin_dictation(&mut self, cx: &mut Context<Self>) -> u64 {
         self.action(Action::BeginDictation, cx);
         self.generation
