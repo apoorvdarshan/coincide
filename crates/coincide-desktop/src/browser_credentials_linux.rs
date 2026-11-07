@@ -10,7 +10,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -30,6 +30,7 @@ struct Pending {
 pub struct NativeCredentialTarget {
     view: WebView,
     navigation: Arc<AtomicU64>,
+    closed: Arc<AtomicBool>,
     pending: Rc<RefCell<Vec<Weak<RefCell<Pending>>>>>,
     lifetimes: Option<NativeLifetimes>,
     _view_lease: Option<NativeLease>,
@@ -39,6 +40,7 @@ impl NativeCredentialTarget {
         gtk::is_initialized_main_thread().then(|| Self {
             view: view.webview(),
             navigation,
+            closed: Arc::new(AtomicBool::new(false)),
             pending: Rc::new(RefCell::new(Vec::new())),
             lifetimes: None,
             _view_lease: None,
@@ -51,12 +53,15 @@ impl NativeCredentialTarget {
         }
         self
     }
+    pub(in super::super) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
     pub(in super::super) fn poll_ownership(&self) -> bool {
         let pending = self.pending.borrow().clone();
         for weak in pending {
             if let Some(state) = weak.upgrade() {
                 let mut state = state.borrow_mut();
-                let valid = state.permit.is_valid();
+                let valid = state.permit.is_valid() && !self.closed.load(Ordering::Acquire);
                 if let Some(attempt) = &mut state.attempt {
                     attempt.expire(valid);
                 }
@@ -76,6 +81,9 @@ impl NativeCredentialTarget {
         state
     }
     fn matches(&self, binding: &PageBinding) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         if self.navigation.load(Ordering::Acquire) != binding.navigation {
             return false;
         }
@@ -104,6 +112,13 @@ impl NativeCredentialTarget {
         }
         if !self.matches(&binding) {
             completion(Err(Failure::StalePage));
+            return;
+        }
+        if self.pending.borrow().iter().any(|weak| {
+            weak.upgrade()
+                .is_some_and(|state| state.borrow().attempt.is_some())
+        }) {
+            completion(Err(Failure::FillFailed));
             return;
         }
         let Some(slot) = FillSlot::reserve() else {

@@ -1,5 +1,7 @@
 //! Fixed private-world credential bodies, byte-identical to accepted macOS
 //! PROBE/FILL. Values are native SDK arguments, never executable source or IPC.
+#[cfg(any(target_os = "windows", test))]
+use coincide_core::credentials::Failure;
 use std::sync::atomic::{AtomicUsize, Ordering};
 // WebKit can retain an evaluation callback while its renderer is unresponsive.
 // Keep its secret-bearing closures bounded even if the caller times out/retries.
@@ -113,6 +115,12 @@ impl Attempt {
             committed: false,
         }
     }
+    #[cfg(target_os = "windows")]
+    pub(super) fn has_otp(&self) -> bool {
+        self.secrets
+            .as_ref()
+            .is_some_and(|secrets| secrets.totp.is_some())
+    }
     pub(super) fn expire(&mut self, permit_valid: bool) {
         if !permit_valid && !self.committed {
             self.secrets = None;
@@ -129,6 +137,52 @@ impl Attempt {
         }
     }
 }
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn windows_mutation_parameters(
+    context: &str,
+    ticket: &str,
+    origin: &str,
+    deadline: &str,
+    secrets: &Secrets,
+) -> Result<zeroize::Zeroizing<String>, Failure> {
+    fn push(output: &mut String, value: &str) -> Result<(), Failure> {
+        let encoded =
+            zeroize::Zeroizing::new(serde_json::to_string(value).map_err(|_| Failure::FillFailed)?);
+        output.push_str(&encoded);
+        Ok(())
+    }
+    let mut output = zeroize::Zeroizing::new(String::from("{\"functionDeclaration\":"));
+    let function =
+        format!("function(ticket,expectedOrigin,deadline,username,password,totp) {{\n{FILL}\n}}");
+    push(&mut output, &function)?;
+    output.push_str(",\"uniqueContextId\":");
+    push(&mut output, context)?;
+    output.push_str(",\"arguments\":[");
+    for (index, value) in [
+        ticket,
+        origin,
+        deadline,
+        secrets.username.as_str(),
+        secrets.password.as_str(),
+        secrets
+            .totp
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or(""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str("{\"value\":");
+        push(&mut output, value)?;
+        output.push('}');
+    }
+    output.push_str("],\"returnByValue\":true,\"silent\":true,\"awaitPromise\":false}");
+    Ok(output)
+}
 #[cfg(test)]
 mod pending_tests {
     use super::*;
@@ -136,6 +190,38 @@ mod pending_tests {
         cell::{Cell, RefCell},
         rc::Rc,
     };
+    #[::core::prelude::v1::test]
+    fn fixed_windows_sdk_payload_preserves_secret_strings_only_in_arguments_and_never_uses_numeric_context()
+     {
+        let secrets = Secrets::new("synthetic-user", "synthetic-only\0\"\\λ", Some("000000"));
+        let encoded = windows_mutation_parameters(
+            "owned-system-unique",
+            "owned-ticket",
+            "https://fixture.invalid",
+            "1234",
+            &secrets,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            value["arguments"][4]["value"].as_str(),
+            Some(secrets.password.as_str())
+        );
+        assert_eq!(value["uniqueContextId"], "owned-system-unique");
+        assert!(value.get("executionContextId").is_none());
+        assert!(
+            !value["functionDeclaration"]
+                .as_str()
+                .unwrap()
+                .contains(secrets.password.as_str())
+        );
+        assert_eq!(
+            value["functionDeclaration"].as_str().unwrap(),
+            format!(
+                "function(ticket,expectedOrigin,deadline,username,password,totp) {{\n{FILL}\n}}"
+            )
+        );
+    }
     #[::core::prelude::v1::test]
     fn private_string_arguments_round_trip_unicode_quotes_and_nul_without_truncation() {
         let original = "synthetic-only\0\"\\\nλ";

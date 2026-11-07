@@ -56,6 +56,7 @@ use uuid::Uuid;
 use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
+    credential: Option<credential_bridge::NativeCredentialTarget>,
     keys: native_keys::Target,
     dialogs: dialogs::Dialogs,
     id: String,
@@ -66,6 +67,13 @@ struct Tab {
     console: Rc<RefCell<BrowserConsole>>,
     credential_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
+}
+impl Drop for Tab {
+    fn drop(&mut self) {
+        if let Some(target) = self.credential.take() {
+            target.close();
+        }
+    }
 }
 struct PendingWait {
     request: BrowserRequest,
@@ -241,6 +249,9 @@ impl BrowserController {
                 tab.keys.close();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
+                if let Some(target) = &tab.credential {
+                    target.close();
+                }
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
@@ -824,6 +835,9 @@ impl BrowserController {
                 );
             }
         }
+        let credential =
+            credential_bridge::NativeCredentialTarget::new(view.raw(), navigation.clone())
+                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()));
         let keys = native_keys::Target::install(view.raw(), &self.shutdown.callbacks);
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
@@ -839,6 +853,7 @@ impl BrowserController {
         }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
+            credential,
             keys,
             dialogs,
             id: id.clone(),
@@ -1418,11 +1433,7 @@ impl BrowserController {
                     // still target these fields; the user must review again.
                     return None;
                 }
-                credential_bridge::NativeCredentialTarget::new(
-                    tab.view.read(cx).raw(),
-                    tab.navigation.clone(),
-                )
-                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()))
+                tab.credential.clone()
             });
             if let Some(target) = &target {
                 self.credential_targets.push(target.clone());

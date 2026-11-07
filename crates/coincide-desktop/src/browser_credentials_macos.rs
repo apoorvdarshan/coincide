@@ -31,7 +31,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -54,6 +54,7 @@ fn runtime_supported() -> bool {
 pub struct NativeCredentialTarget {
     view: Retained<WKWebView>,
     navigation: Arc<AtomicU64>,
+    closed: Arc<AtomicBool>,
     lifetimes: Option<NativeLifetimes>,
     // Declaration order matters: view is released before this target lease.
     _view_lease: Option<NativeLease>,
@@ -63,6 +64,7 @@ impl NativeCredentialTarget {
         (runtime_supported() && MainThreadMarker::new().is_some()).then(|| Self {
             view: view.webview().into_super(),
             navigation,
+            closed: Arc::new(AtomicBool::new(false)),
             lifetimes: None,
             _view_lease: None,
         })
@@ -77,10 +79,16 @@ impl NativeCredentialTarget {
         }
         self
     }
+    pub(in super::super) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
     pub(in super::super) fn poll_ownership(&self) -> bool {
         true
     }
     fn matches(&self, binding: &PageBinding) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         if self.navigation.load(Ordering::Acquire) != binding.navigation {
             return false;
         }

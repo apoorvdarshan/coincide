@@ -3,6 +3,9 @@
 //! final native dispatch is the commit boundary; see the native bridge contract.
 use crate::credentials::{FillPermit, PrivateBrowserHook};
 use coincide_core::credentials::{Failure, PageBinding};
+#[cfg(any(target_os = "windows", test))]
+#[path = "browser_credential_context.rs"]
+mod context;
 #[path = "browser_credential_scripts.rs"]
 mod scripts;
 
@@ -16,24 +19,11 @@ pub use native::NativeCredentialTarget;
 mod native_linux;
 #[cfg(target_os = "linux")]
 pub use native_linux::NativeCredentialTarget;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-#[derive(Clone)]
-pub struct NativeCredentialTarget;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-impl NativeCredentialTarget {
-    pub fn new(
-        _view: &wry::WebView,
-        _navigation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    ) -> Option<Self> {
-        None
-    }
-    pub(super) fn with_lifetimes(self, _lifetimes: super::shutdown::NativeLifetimes) -> Self {
-        self
-    }
-    pub(super) fn poll_ownership(&self) -> bool {
-        true
-    }
-}
+#[cfg(target_os = "windows")]
+#[path = "browser_credentials_windows.rs"]
+mod native_windows;
+#[cfg(target_os = "windows")]
+pub use native_windows::NativeCredentialTarget;
 pub fn credential_fill_available() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -43,9 +33,9 @@ pub fn credential_fill_available() -> bool {
     {
         native_linux::available()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
     {
-        false
+        native_windows::available()
     }
 }
 
@@ -105,7 +95,6 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
             completion(Err(error));
             return;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(target) = &self.target {
             target.fill(
                 binding.clone(),
@@ -117,8 +106,6 @@ impl<F: Fn(&str) -> Result<PageBinding, Failure>> PrivateBrowserHook for Browser
             );
             return;
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let _ = (&self.target, username, password, totp);
         completion(Err(Failure::Unavailable));
     }
 }
