@@ -229,17 +229,24 @@ impl Fixture {
             let (load_flag, load_page) = (loaded.clone(), page.clone());
             // Wry gives each incognito GTK view its own context. Linux views share
             // this owned one instead: the case exact-view attribution must guard.
-            let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
-                .with_incognito(!cfg!(target_os = "linux"))
-                .with_devtools(false)
-                .with_clipboard(false)
-                .with_autoplay(false)
-                .with_url("about:blank")
-                .with_on_page_load_handler(move |event, url| {
-                    if matches!(event, wry::PageLoadEvent::Finished) && url == load_page {
-                        load_flag.store(true, Ordering::Release);
-                    }
-                });
+            // Like production: never Wry's default download handler, which
+            // would save to the runner's working folder before the owner.
+            let builder = wry::WebViewBuilder::new_with_attributes(wry::WebViewAttributes {
+                context: Some(&mut context),
+                download_started_handler: None,
+                download_completed_handler: None,
+                ..Default::default()
+            })
+            .with_incognito(!cfg!(target_os = "linux"))
+            .with_devtools(false)
+            .with_clipboard(false)
+            .with_autoplay(false)
+            .with_url("about:blank")
+            .with_on_page_load_handler(move |event, url| {
+                if matches!(event, wry::PageLoadEvent::Finished) && url == load_page {
+                    load_flag.store(true, Ordering::Release);
+                }
+            });
             // Production's policy: Linux decides in its owner, others in Wry.
             #[cfg(not(target_os = "linux"))]
             let builder = {

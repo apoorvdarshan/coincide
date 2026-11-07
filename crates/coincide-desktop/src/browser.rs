@@ -756,15 +756,16 @@ impl BrowserController {
             self.contexts
                 .insert(profile_key.clone(), wry::WebContext::new(directory));
         }
-        let builder = if uses_related {
-            wry::WebViewBuilder::new()
+        let context = if uses_related {
+            None
         } else {
-            wry::WebViewBuilder::new_with_web_context(
+            Some(
                 self.contexts
                     .get_mut(&profile_key)
                     .context("Browser profile context unavailable")?,
             )
         };
+        let builder = wry::WebViewBuilder::new_with_attributes(without_wry_downloads(context));
         let builder = builder
             .with_incognito(matches!(profile, ProfileChoice::Private))
             // Private native identity is verified on blank before any caller
@@ -1821,6 +1822,17 @@ fn public_script_reply(
     parse_script_result(payload)
 }
 
+/// Wry's default attributes install its own download handler, which saves to
+/// the user's Downloads or working folder before an exact owner can decide.
+/// The native download owners must be the only path to a file.
+fn without_wry_downloads(context: Option<&mut wry::WebContext>) -> wry::WebViewAttributes<'_> {
+    wry::WebViewAttributes {
+        context,
+        download_started_handler: None,
+        download_completed_handler: None,
+        ..Default::default()
+    }
+}
 fn persistent_profiles_available() -> bool {
     #[cfg(target_os = "macos")]
     unsafe {
