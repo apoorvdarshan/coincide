@@ -14,7 +14,10 @@ use std::{
     ptr::null,
 };
 use windows_sys::Win32::{
-    Foundation::{ERROR_BROKEN_PIPE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0},
+    Foundation::{
+        ERROR_BROKEN_PIPE, ERROR_MORE_DATA, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
+    },
     Storage::FileSystem::{
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_SHARE_READ, FILE_SHARE_WRITE,
@@ -24,14 +27,17 @@ use windows_sys::Win32::{
             CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
         },
         JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+            AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
+            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+            TerminateJobObject,
         },
         Pipes::PeekNamedPipe,
         Threading::{
-            CREATE_NO_WINDOW, CREATE_SUSPENDED, GetExitCodeProcess, OpenThread, ResumeThread,
+            CREATE_NO_WINDOW, CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ResumeThread,
             THREAD_SUSPEND_RESUME, WaitForSingleObject,
         },
     },
@@ -47,6 +53,8 @@ struct Process {
     child: Child,
     job: OwnedHandle,
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+    members: process_members::Members<OwnedHandle>,
+    drained: bool,
 }
 impl Process {
     fn spawn(command: &mut Command) -> Result<Self> {
@@ -77,6 +85,8 @@ impl Process {
             child,
             job,
             writer: None,
+            members: Default::default(),
+            drained: false,
         };
         if let Err(error) = process.resume() {
             process.finish()?;
@@ -116,9 +126,13 @@ impl Process {
         Ok(Some(code == 0))
     }
     fn finish(&mut self) -> Result<()> {
-        let cleanup = self.drain();
+        // An error is no native release receipt. Keep this exact Process, Job,
+        // member handles and unknown observations owned by the read worker.
+        while self.drain().is_err() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let written = self.writer.take().map(|writer| writer.join());
-        cleanup?;
+        self.drained = true;
         if let Some(result) = written {
             result
                 .map_err(|_| anyhow::anyhow!("GitHub input worker panicked"))?
@@ -126,16 +140,104 @@ impl Process {
         }
         Ok(())
     }
+    /// A process leaves the Job's count before its own handles (one on the
+    /// root, say) are closed, so each member the Job lists is held open and
+    /// counts as stopped only once signalled.
+    fn member_ids(&self) -> Result<Vec<u32>> {
+        let offset = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
+            / size_of::<usize>();
+        let mut capacity = 64;
+        let buffer = loop {
+            let mut buffer = vec![0usize; offset + capacity];
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.job.as_raw_handle(),
+                    JobObjectBasicProcessIdList,
+                    buffer.as_mut_ptr().cast(),
+                    size_of_val(buffer.as_slice()) as u32,
+                    std::ptr::null_mut(),
+                )
+            } != 0;
+            let more = !queried && unsafe { GetLastError() } == ERROR_MORE_DATA;
+            let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+            if queried && list.NumberOfProcessIdsInList >= list.NumberOfAssignedProcesses {
+                break buffer;
+            }
+            ensure!(
+                (queried || more) && capacity < 65_536,
+                "GitHub Job cleanup unconfirmed"
+            );
+            capacity *= 4;
+        };
+        let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+        let listed = (list.NumberOfProcessIdsInList as usize).min(capacity);
+        buffer[offset..offset + listed]
+            .iter()
+            .map(|id| {
+                let id = u32::try_from(*id).context("GitHub member ID unavailable")?;
+                ensure!(id != 0, "GitHub member ID unavailable");
+                Ok(id)
+            })
+            .collect()
+    }
+    fn hold_members(&mut self) -> Result<()> {
+        let listed = match self.member_ids() {
+            Ok(ids) => ids,
+            Err(error) => {
+                // An unseen member may have left the Job list without signalling.
+                self.members.snapshot_failed();
+                return Err(error);
+            }
+        };
+        for id in self.members.pending(listed) {
+            let index =
+                if let Some(index) = self.members.held.iter().position(|(held, _)| *held == id) {
+                    if !self.members.unverified.contains(&id) {
+                        continue;
+                    }
+                    index
+                } else {
+                    let raw = unsafe {
+                        OpenProcess(
+                            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                            0,
+                            id,
+                        )
+                    };
+                    let error = unsafe { GetLastError() };
+                    if raw.is_null() {
+                        self.members.open_failed(id, error);
+                        continue;
+                    }
+                    // The opened handle is owned BEFORE any fallible membership query.
+                    self.members.opened(id, owned(raw)?)
+                };
+            let handle = self.members.held[index].1.as_raw_handle();
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                self.members.signaled(index);
+                continue;
+            }
+            let mut ours = 0;
+            let queried =
+                unsafe { IsProcessInJob(handle, self.job.as_raw_handle(), &mut ours) } != 0;
+            self.members.queried(index, queried, ours != 0);
+        }
+        Ok(())
+    }
     fn drain(&mut self) -> Result<()> {
+        // Held before termination, while every member is still listed.
+        let held = self.hold_members();
         ensure!(
             unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
             "GitHub Job cleanup incomplete"
         );
+        held?;
         self.child
             .wait()
             .context("GitHub child cleanup incomplete")?;
         let started = Instant::now();
         loop {
+            self.hold_members()?;
             let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
                 unsafe { std::mem::zeroed() };
             ensure!(
@@ -150,8 +252,11 @@ impl Process {
                 } != 0,
                 "GitHub Job cleanup unconfirmed"
             );
-            if accounting.ActiveProcesses == 0 {
-                return Ok(());
+            if self
+                .members
+                .may_wait_for_release(accounting.ActiveProcesses)
+            {
+                break;
             }
             ensure!(
                 started.elapsed() < Duration::from_secs(5),
@@ -159,17 +264,21 @@ impl Process {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+        for (_, member) in &self.members.held {
+            let left = Duration::from_secs(5).saturating_sub(started.elapsed());
+            ensure!(
+                unsafe { WaitForSingleObject(member.as_raw_handle(), left.as_millis() as u32) }
+                    == WAIT_OBJECT_0,
+                "GitHub descendants still stopping"
+            );
+        }
+        Ok(())
     }
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        unsafe {
-            TerminateJobObject(self.job.as_raw_handle(), 1);
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(writer) = self.writer.take() {
-            let _ = writer.join();
+        if !self.drained {
+            let _ = self.finish();
         }
     }
 }
@@ -456,22 +565,26 @@ mod tests {
         let signal = cancelled.clone();
         let path = root.path().to_owned();
         let cancel = std::thread::spawn(move || {
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
             let started = Instant::now();
-            loop {
-                if std::fs::read_to_string(path.join("descendant-pid"))
+            let descendant = loop {
+                if let Some(pid) = std::fs::read_to_string(path.join("descendant-pid"))
                     .ok()
                     .and_then(|s| s.parse::<u32>().ok())
-                    .is_some()
                 {
-                    break;
+                    // Hold the exact live process before cancellation. Looking up
+                    // its PID after cleanup can observe an unrelated process if
+                    // Windows has already reused the now-unreferenced PID.
+                    break owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) }).unwrap();
                 }
                 assert!(
                     started.elapsed() < Duration::from_secs(10),
                     "descendant fixture did not start"
                 );
                 std::thread::sleep(Duration::from_millis(10));
-            }
+            };
             signal.store(true, Ordering::Release);
+            descendant
         });
         let result = capture(
             &runner(Duration::from_secs(15)),
@@ -479,22 +592,13 @@ mod tests {
             &args(FIXTURE),
             &cancelled,
         );
-        cancel.join().unwrap();
+        let descendant = cancel.join().unwrap();
         assert!(result.unwrap_err().to_string().contains("cancelled"));
-        let pid = std::fs::read_to_string(root.path().join("descendant-pid"))
-            .unwrap()
-            .parse::<u32>()
-            .unwrap();
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
-        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-        if !handle.is_null() {
-            let handle = owned(handle).unwrap();
-            assert_eq!(
-                unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
-                WAIT_OBJECT_0,
-                "actual owned descendant must have exited before return"
-            );
-        }
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 0) },
+            WAIT_OBJECT_0,
+            "actual owned descendant must have exited before return"
+        );
         let renamed = root.path().with_extension("renamed");
         std::fs::rename(root.path(), &renamed).unwrap();
         std::fs::rename(&renamed, root.path()).unwrap();
