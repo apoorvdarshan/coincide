@@ -12,15 +12,39 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, Sender},
     },
     thread,
+    time::{Duration, Instant},
 };
+#[path = "terminal_launch.rs"]
+pub mod launch;
 #[path = "terminal_shell.rs"]
 pub mod shell;
+
+/// A shell that fails this soon keeps its pane to show why (Swift
+/// TerminalSession.shellExited); later exits close their terminal.
+const FAILED_START: Duration = Duration::from_secs(2);
+/// How long a progress bar stays without another report (Swift
+/// TerminalProgress.timeout), in case the program died mid-task.
+pub const PROGRESS_TIMEOUT: Duration = Duration::from_secs(15);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Exit {
+    /// None when a signal ended the shell.
+    code: Option<i32>,
+    keep_open: bool,
+}
+impl Exit {
+    fn message(self) -> String {
+        match self.code {
+            Some(code) => format!("Process exited with code {code}."),
+            None => "Process terminated.".into(),
+        }
+    }
+}
 
 struct Size {
     rows: u16,
@@ -59,6 +83,14 @@ pub struct Terminal {
     writer_worker: Option<thread::JoinHandle<()>>,
     pub revision: u64,
     pub title: String,
+    /// "Terminal N", the lowest number free in its thread when it was created.
+    pub number: u32,
+    started: Instant,
+    exit: Option<Exit>,
+    /// The shell's last known folder, followed through the kernel.
+    directory: PathBuf,
+    progress_at: Option<Instant>,
+    bells: u64,
 }
 impl Terminal {
     /// Test-only display engine: actual Alacritty parsing/filtering with no PTY, child or IO worker.
@@ -83,6 +115,12 @@ impl Terminal {
             writer_worker: None,
             revision: 0,
             title: "Terminal".into(),
+            number: 0,
+            started: Instant::now(),
+            exit: None,
+            directory: PathBuf::new(),
+            progress_at: None,
+            bells: 0,
         }
     }
     pub fn spawn(cwd: &Path, shell: &str, rows: u16, cols: u16) -> Result<Self> {
@@ -128,7 +166,18 @@ impl Terminal {
             command.env(name, value);
         }
         command.cwd(cwd);
-        command.env("TERM", "xterm-256color");
+        let inherited = command
+            .iter_full_env_as_str()
+            .map(|(name, _)| name.to_owned())
+            .collect::<Vec<_>>();
+        let environment =
+            launch::environment(inherited.iter().map(std::ffi::OsStr::new), shell, cwd);
+        for name in &environment.remove {
+            command.env_remove(name);
+        }
+        for (name, value) in &environment.set {
+            command.env(name, value);
+        }
         let child = pty.slave.spawn_command(command)?;
         drop(pty.slave);
         let mut pty_writer = pty.master.take_writer()?;
@@ -171,6 +220,93 @@ impl Terminal {
             _shell_launch: Some(shell_launch),
             revision: 0,
             title: "Terminal".into(),
+            number: 0,
+            started: Instant::now(),
+            exit: None,
+            directory: cwd.to_path_buf(),
+            progress_at: None,
+            bells: 0,
+        })
+    }
+    /// A shell in `start`, with the dimmed fallback notice above its first
+    /// prompt when the preferred folder is gone.
+    pub fn spawn_in(
+        start: &launch::StartDirectory,
+        shell: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Self> {
+        let mut terminal = Self::spawn(&start.path, shell, rows, cols)?;
+        if let Some(notice) = start.notice() {
+            terminal
+                .processor
+                .advance(&mut terminal.term, notice.as_bytes());
+            terminal.revision += 1;
+        }
+        Ok(terminal)
+    }
+    /// Whether the shell has exited; its pane stays until closed or restarted.
+    pub fn exited(&self) -> bool {
+        self.exit.is_some()
+    }
+    /// The folder the shell is in, or was in when it exited.
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+    /// Swift TerminalSession.restart: a new shell in the same pane, below the
+    /// old output, with the same number, size and title.
+    pub fn restart(&mut self, cwd: &Path, shell: &str) -> Result<()> {
+        ensure!(self.exit.is_some(), "Terminal is still running");
+        let rows = self.term.screen_lines() as u16;
+        let cols = self.term.columns() as u16;
+        let mut fresh = Self::spawn(cwd, shell, rows, cols)?;
+        // The screen and scrollback stay, with the events their listener sends.
+        std::mem::swap(&mut fresh.term, &mut self.term);
+        std::mem::swap(&mut fresh.events, &mut self.events);
+        std::mem::swap(&mut fresh.processor, &mut self.processor);
+        fresh.title = std::mem::take(&mut self.title);
+        fresh.number = self.number;
+        fresh.bells = self.bells;
+        fresh.revision = self.revision + 1;
+        fresh.processor.advance(&mut fresh.term, b"\r\n");
+        // The old shell already exited; dropping it reaps its child.
+        *self = fresh;
+        Ok(())
+    }
+    /// What the tab shows for this terminal (Swift TerminalSession.title,
+    /// isBusy, directory, progress and state). Reads the kernel, not output.
+    pub fn status(&mut self) -> Value {
+        let shell = self.child.as_ref().and_then(|child| child.process_id());
+        #[cfg(unix)]
+        let foreground = if self.exit.is_none() {
+            launch::foreground_command(
+                shell,
+                self.master
+                    .as_ref()
+                    .and_then(|master| master.process_group_leader()),
+            )
+        } else {
+            None
+        };
+        #[cfg(not(unix))]
+        let foreground: Option<String> = None;
+        if self.exit.is_none()
+            && let Some(directory) = shell.and_then(launch::process_directory)
+        {
+            self.directory = directory;
+        }
+        json!({
+            "number": self.number,
+            "name": foreground.clone().unwrap_or_else(|| format!("Terminal {}", self.number)),
+            "busy": foreground.is_some(),
+            "foreground": foreground,
+            "directory": self.directory,
+            "exited": self.exit.is_some(),
+            "exitCode": self.exit.and_then(|exit| exit.code),
+            "keepOpen": self.exit.is_some_and(|exit| exit.keep_open),
+            "exitMessage": self.exit.map(Exit::message),
+            "progress": self.shell.state.progress,
+            "bells": self.bells,
         })
     }
     /// Trusted owner-only transfer. Repeated calls reject; retain the returned owner
@@ -193,6 +329,7 @@ impl Terminal {
     }
     pub fn poll(&mut self) -> Result<bool> {
         let mut changed = false;
+        let mut drained = false;
         for _ in 0..64 {
             let Ok(bytes) = self
                 .output
@@ -200,12 +337,16 @@ impl Terminal {
                 .context("Terminal is stopping")?
                 .try_recv()
             else {
+                drained = true;
                 break;
             };
             let mut offset = 0;
             for (end, mark) in self.shell.events(&bytes) {
                 self.advance_screen(&bytes[offset..end]);
                 offset = end;
+                if matches!(mark, shell::Mark::Progress) {
+                    self.progress_at = Some(Instant::now());
+                }
                 if self.term.mode().contains(TermMode::ALT_SCREEN) {
                     self.shell_anchors.invalidate();
                 } else {
@@ -224,13 +365,42 @@ impl Terminal {
                     .context("Terminal is stopping")?
                     .try_send(text.into_bytes())?,
                 Event::Title(title) => self.title = title,
+                Event::Bell => self.bells = self.bells.wrapping_add(1),
                 _ => {}
             }
+        }
+        if self.shell.state.progress.is_some()
+            && self
+                .progress_at
+                .is_none_or(|at| at.elapsed() >= PROGRESS_TIMEOUT)
+        {
+            self.shell.state.progress = None;
+            changed = true;
+        }
+        // Only after the shell's last output, so the notice follows it.
+        if drained
+            && self.exit.is_none()
+            && let Some(exit) = self.observe_exit()
+        {
+            if exit.keep_open {
+                let notice = format!("\r\n\x1b[2m[{}]\x1b[0m\r\n", exit.message());
+                self.processor.advance(&mut self.term, notice.as_bytes());
+            }
+            self.exit = Some(exit);
+            changed = true;
         }
         if changed {
             self.revision += 1;
         }
         Ok(changed)
+    }
+    fn observe_exit(&mut self) -> Option<Exit> {
+        let status = self.child.as_mut()?.try_wait().ok()??;
+        let code = status.signal().is_none().then(|| status.exit_code() as i32);
+        Some(Exit {
+            code,
+            keep_open: code != Some(0) && self.started.elapsed() < FAILED_START,
+        })
     }
     fn shell_position(&self) -> shell::Position {
         let grid = self.term.grid();
@@ -555,11 +725,34 @@ impl Terminal {
     /// At most ten styled viewport rows per response. Cursor coordinates remain
     /// absolute viewport coordinates; grid/lines indices start at rowOffset.
     pub fn styled_snapshot(&mut self, row_offset: usize, row_limit: usize) -> Result<Value> {
+        self.styled_snapshot_with(row_offset, row_limit, &Palette::default())
+    }
+    /// A page with `palette`'s default colors, as `styled_snapshot`.
+    pub fn styled_snapshot_with(
+        &mut self,
+        row_offset: usize,
+        row_limit: usize,
+        palette: &Palette,
+    ) -> Result<Value> {
         ensure!(
             (1..=MAX_STYLED_ROWS).contains(&row_limit),
             "Styled row limit must be 1–10"
         );
         self.poll()?;
+        self.styled_rows(row_offset, row_limit, palette)
+    }
+    /// The whole viewport from one poll, for the in-process renderer (Swift
+    /// sizes the terminal to its pane). Not bounded by the API's page size.
+    pub fn styled_viewport(&mut self, palette: &Palette) -> Result<Value> {
+        self.poll()?;
+        self.styled_rows(0, self.term.screen_lines(), palette)
+    }
+    fn styled_rows(
+        &mut self,
+        row_offset: usize,
+        row_limit: usize,
+        palette: &Palette,
+    ) -> Result<Value> {
         let rows = self.term.screen_lines();
         let cols = self.term.columns();
         ensure!(row_offset <= rows, "Styled row offset exceeds viewport");
@@ -568,6 +761,7 @@ impl Terminal {
         let mut grid = vec![Vec::with_capacity(cols); row_count];
         let content = self.term.renderable_content();
         let mut truncated = self.title.chars().count() > MAX_TITLE_CHARS;
+        let mut links: Vec<String> = vec![];
         for row in row_offset..row_offset + row_count {
             let line = Line(row as i32 - content.display_offset as i32);
             for col in 0..cols {
@@ -587,8 +781,8 @@ impl Terminal {
                     text.extend(marks.iter().take(MAX_COMBINING_CHARS).copied());
                     truncated |= marks.len() > MAX_COMBINING_CHARS;
                 }
-                let mut foreground = resolve_color(cell.fg, content.colors);
-                let mut background = resolve_color(cell.bg, content.colors);
+                let mut foreground = resolve_color(cell.fg, content.colors, palette);
+                let mut background = resolve_color(cell.bg, content.colors, palette);
                 if flags.contains(Flags::DIM) {
                     foreground = foreground.map(|channel| (u16::from(channel) * 2 / 3) as u8);
                 }
@@ -598,8 +792,23 @@ impl Terminal {
                 if flags.contains(Flags::HIDDEN) {
                     foreground = background;
                 }
+                // OSC 8 targets are listed once per page and only ever opened
+                // on an explicit click; past the bound a cell has no link.
+                let link = cell.hyperlink().and_then(|link| {
+                    let uri = link.uri();
+                    if let Some(index) = links.iter().position(|known| known == uri) {
+                        Some(index)
+                    } else if links.len() < MAX_LINKS && uri.len() <= MAX_LINK_BYTES {
+                        links.push(uri.to_owned());
+                        Some(links.len() - 1)
+                    } else {
+                        truncated = true;
+                        None
+                    }
+                });
                 grid[page_row].push(json!({
                 "text": text,
+                "link": link,
                 "width": if continuation { 0 } else if flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 },
                 "continuation": continuation,
                 "wrapline": flags.contains(Flags::WRAPLINE),
@@ -642,7 +851,7 @@ impl Terminal {
             "title": self.title.chars().take(MAX_TITLE_CHARS).collect::<String>(),
             "lines": lines, "rows": rows, "cols": cols,
             "revision": self.revision, "exitCode": exited,
-            "grid": grid, "cursor": cursor, "truncated": truncated,
+            "grid": grid, "links": links, "cursor": cursor, "truncated": truncated,
             "rowOffset": row_offset, "rowCount": row_count,
             "viewport": self.viewport(), "modes": self.input_modes(), "shell":self.shell.state,
             "nextRowOffset": (row_offset + row_count < rows).then_some(row_offset + row_count),
@@ -1049,17 +1258,88 @@ fn copy_cells(
 // Styled wire contract: grid[page_row][col] includes blank cells; coordinates
 // are zero-based and page_row starts at rowOffset. RGB arrays are final display
 // colors (dim/inverse/conceal already applied); clients must not transform again.
-// Bold is font weight; underline variants collapse to a boolean. Defaults are
-// fixed dark colors; OSC palette overrides apply. Each page contains at most
+// Bold is font weight; underline variants collapse to a boolean. Defaults come
+// from the request's Palette (dark unless asked); OSC palette overrides apply. Each page contains at most
 // 10 * 500 cells, each with 1 base + 16 combining scalars and fixed-size style
-// metadata, safely below the control transport's 4 MiB frame. Title is bounded
+// metadata and a `links` index, safely below the control transport's 4 MiB
+// frame. Title is bounded
 // to 1024 scalars. `truncated` reports text/title clipping, not ordinary paging.
 // Plain snapshot() never allocates a styled grid or resolves cell colors.
 const MAX_STYLED_ROWS: usize = 10;
 const MAX_COMBINING_CHARS: usize = 16;
 const MAX_TITLE_CHARS: usize = 1024;
+/// At most 64 distinct OSC 8 targets of 2 KiB per page (128 KiB).
+const MAX_LINKS: usize = 64;
+const MAX_LINK_BYTES: usize = 2048;
 
-fn resolve_color(color: Color, colors: &Colors) -> [u8; 3] {
+/// Default terminal colors for one appearance (Swift TerminalTheme): T3 Code's
+/// ANSI palettes and caret colors, with the theme's text and background.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Palette {
+    pub dark: bool,
+    pub foreground: [u8; 3],
+    pub background: [u8; 3],
+}
+impl Default for Palette {
+    /// Coincide's legacy dark terminal colors.
+    fn default() -> Self {
+        Self {
+            dark: true,
+            foreground: [0xD4; 3],
+            background: [0x0C; 3],
+        }
+    }
+}
+impl Palette {
+    /// `{"appearance":"light"|"dark","foreground":[r,g,b],"background":[r,g,b]}`;
+    /// missing parts keep the dark defaults.
+    pub fn from_value(value: &Value) -> Result<Self> {
+        let mut palette = Self::default();
+        if value.is_null() {
+            return Ok(palette);
+        }
+        ensure!(value.is_object(), "Terminal palette must be an object");
+        palette.dark = match value["appearance"].as_str() {
+            None | Some("dark") => true,
+            Some("light") => false,
+            Some(_) => anyhow::bail!("Terminal appearance must be light or dark"),
+        };
+        for (key, slot) in [
+            ("foreground", &mut palette.foreground),
+            ("background", &mut palette.background),
+        ] {
+            if value[key].is_null() {
+                continue;
+            }
+            let channels: Vec<u8> = serde_json::from_value(value[key].clone())
+                .context("Terminal palette colors are [r, g, b]")?;
+            *slot = channels
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Terminal palette colors are [r, g, b]"))?;
+        }
+        Ok(palette)
+    }
+    /// The caret: T3 Code's light or dark cursor color.
+    pub fn cursor(&self) -> [u8; 3] {
+        unpack(if self.dark { 0xB4CBFF } else { 0x26384E })
+    }
+}
+const DARK_ANSI: [u32; 16] = [
+    0x000000, 0xCD3131, 0x0DBC79, 0xE5E510, 0x2472C8, 0xBC3FBC, 0x11A8CD, 0xE5E5E5, 0x666666,
+    0xF14C4C, 0x23D18B, 0xF5F543, 0x3B8EEA, 0xD670D6, 0x29B8DB, 0xE5E5E5,
+];
+const LIGHT_ANSI: [u32; 16] = [
+    0x000000, 0xCD3131, 0x107C10, 0x949800, 0x0451A5, 0xBC05BC, 0x0598BC, 0x555555, 0x666666,
+    0xCD3131, 0x14CE14, 0xB5BA00, 0x0451A5, 0xBC05BC, 0x0598BC, 0xA5A5A5,
+];
+fn unpack(packed: u32) -> [u8; 3] {
+    [(packed >> 16) as u8, (packed >> 8) as u8, packed as u8]
+}
+fn dim(rgb: [u8; 3]) -> [u8; 3] {
+    rgb.map(|channel| (u16::from(channel) * 2 / 3) as u8)
+}
+
+fn resolve_color(color: Color, colors: &Colors, palette: &Palette) -> [u8; 3] {
     let index = match color {
         Color::Spec(rgb) => return [rgb.r, rgb.g, rgb.b],
         Color::Indexed(index) => usize::from(index),
@@ -1068,13 +1348,13 @@ fn resolve_color(color: Color, colors: &Colors) -> [u8; 3] {
     if let Some(rgb) = colors[index] {
         return [rgb.r, rgb.g, rgb.b];
     }
-    // Coincide's legacy macOS dark ANSI palette.
-    const ANSI: [u32; 16] = [
-        0x000000, 0xCD3131, 0x0DBC79, 0xE5E510, 0x2472C8, 0xBC3FBC, 0x11A8CD, 0xE5E5E5, 0x666666,
-        0xF14C4C, 0x23D18B, 0xF5F543, 0x3B8EEA, 0xD670D6, 0x29B8DB, 0xE5E5E5,
-    ];
+    let ansi = if palette.dark {
+        &DARK_ANSI
+    } else {
+        &LIGHT_ANSI
+    };
     let packed = match index {
-        0..=15 => ANSI[index],
+        0..=15 => ansi[index],
         16..=231 => {
             let cube = index - 16;
             let levels = [0u32, 95, 135, 175, 215, 255];
@@ -1084,21 +1364,13 @@ fn resolve_color(color: Color, colors: &Colors) -> [u8; 3] {
             let gray = 8 + (index as u32 - 232) * 10;
             gray * 0x010101
         }
-        257 => 0x0C0C0C,
-        258 => 0xB4CBFF,
-        259..=266 => {
-            let rgb = ANSI[index - 259];
-            return [
-                ((rgb >> 16) & 255) as u8,
-                ((rgb >> 8) & 255) as u8,
-                (rgb & 255) as u8,
-            ]
-            .map(|channel| (u16::from(channel) * 2 / 3) as u8);
-        }
-        268 => 0x8D8D8D,
-        _ => 0xD4D4D4,
+        257 => return palette.background,
+        258 => return palette.cursor(),
+        259..=266 => return dim(unpack(ansi[index - 259])),
+        268 => return dim(palette.foreground),
+        _ => return palette.foreground,
     };
-    [(packed >> 16) as u8, (packed >> 8) as u8, packed as u8]
+    unpack(packed)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1577,5 +1849,85 @@ mod shutdown_tests {
         assert!(state.error.is_some());
         assert!(!state.ready());
         assert!(pending._resources.lock().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+
+    #[test]
+    fn light_and_dark_palettes_resolve_ansi_defaults_and_the_caret() {
+        use alacritty_terminal::vte::ansi::NamedColor;
+        let light = Palette::from_value(
+            &json!({"appearance":"light","foreground":[1,2,3],"background":[250,250,250]}),
+        )
+        .unwrap();
+        let colors = Colors::default();
+        let resolve = |color, palette: &Palette| resolve_color(color, &colors, palette);
+        let dark = Palette::default();
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Green), &light),
+            [0x10, 0x7C, 0x10]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Green), &dark),
+            [0x0D, 0xBC, 0x79]
+        );
+        assert_eq!(resolve(Color::Indexed(7), &light), [0x55, 0x55, 0x55]);
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Background), &light),
+            [250, 250, 250]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Foreground), &light),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Cursor), &light),
+            [0x26, 0x38, 0x4E]
+        );
+        // Dim default text is two thirds of the theme's text color.
+        assert_eq!(
+            resolve(Color::Named(NamedColor::DimForeground), &dark),
+            [0x8D; 3]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Background), &dark),
+            [12; 3]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Foreground), &dark),
+            [0xD4; 3]
+        );
+        assert_eq!(
+            resolve(Color::Named(NamedColor::Cursor), &dark),
+            [0xB4, 0xCB, 0xFF]
+        );
+        assert_eq!(resolve(Color::Indexed(196), &light), [255, 0, 0]);
+        assert_eq!(Palette::from_value(&Value::Null).unwrap(), dark);
+        for invalid in [
+            json!({"appearance":"sepia"}),
+            json!({"foreground":[1,2]}),
+            json!({"background":"white"}),
+            json!(5),
+        ] {
+            assert!(Palette::from_value(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn bells_are_counted_and_a_silent_progress_bar_times_out() {
+        let mut terminal = Terminal::fixture_output(2, 10, b"\x07\x1b]9;4;1;50\x07ok\x07");
+        terminal.poll().unwrap();
+        let status = terminal.status();
+        assert_eq!(status["bells"], 2);
+        assert_eq!(status["progress"], json!({"state":"normal","percent":50}));
+        assert_eq!(status["name"], "Terminal 0");
+        let revision = terminal.revision;
+        terminal.progress_at = Some(Instant::now() - PROGRESS_TIMEOUT);
+        assert!(terminal.poll().unwrap());
+        assert!(terminal.revision > revision);
+        assert_eq!(terminal.status()["progress"], Value::Null);
     }
 }

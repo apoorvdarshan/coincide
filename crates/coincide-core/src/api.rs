@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 #[path = "appshots_api.rs"]
 mod appshots_api;
+#[path = "terminal_api.rs"]
+mod terminal_api;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -382,6 +384,9 @@ impl Engine {
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
         }
+        if terminal_api::METHODS.contains(&method) {
+            return self.terminal_command(method, p);
+        }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
@@ -536,9 +541,8 @@ impl Engine {
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
                 let v=self.store.thread(thread)?;
-                let cwd=self.working_directory(&v)?;
                 let shell=std::env::var("SHELL").unwrap_or_else(|_|if cfg!(windows){"powershell.exe".into()}else{"/bin/sh".into()});
-                let terminal=crate::terminal::Terminal::spawn(&cwd,&shell,24,100)?;
+                let terminal=self.spawn_thread_terminal(thread,&v,&shell)?;
                 let id=Uuid::new_v4().to_string();self.terminals.insert(id.clone(),(thread.into(),terminal));self.revision+=1;
                 Ok(json!({"terminalId":id}))
             }
@@ -546,7 +550,7 @@ impl Engine {
             "terminal.read"=>{
                 let terminal=&mut self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1;
                 if p["styled"]==true {
-                    terminal.styled_snapshot(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?)
+                    terminal.styled_snapshot_with(usize::try_from(p["rowOffset"].as_u64().unwrap_or(0))?,usize::try_from(p["rowLimit"].as_u64().unwrap_or(10))?,&crate::terminal::Palette::from_value(&p["palette"])?)
                 } else {terminal.snapshot()}
             },
             "terminal.prompt_marks"=>{
@@ -604,7 +608,7 @@ impl Engine {
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close", "terminal.status", "terminal.restart",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",

@@ -1,4 +1,4 @@
-//! Thread-bound terminal tabs and binary splits. Parent mount:
+//! Thread-bound terminal tabs of up to four panes. Parent mount:
 //! `cx.new(|cx| TerminalWorkspace::new(engine.clone(), thread_id, window, cx))`.
 //! Cache the Entity per thread to retain layouts. Recreating it adopts existing
 //! PTYs as tabs; dropping it never closes shells. Only explicit Close does.
@@ -11,74 +11,111 @@
 use crate::terminal_selection::TerminalSelection;
 #[path = "terminal_context.rs"]
 mod context;
+#[path = "terminal_tabs.rs"]
+mod tabs;
 use anyhow::{Result, ensure};
 use coincide_core::{
     api::SharedEngine,
     store::text,
-    terminal::{KeyModifiers, TerminalInput, TerminalPoint, TerminalScroll},
+    terminal::{KeyModifiers, Palette, TerminalInput, TerminalPoint, TerminalScroll},
 };
 pub(crate) use context::{ComposerBaseline, SelectionRequest, TerminalContextEvent};
-use gpui_kit::{base::Disableable, component::button::*, prelude::FluentBuilder, *};
+use gpui_kit::{
+    assets::IconName,
+    base::Disableable,
+    component::{
+        ActiveTheme, Icon, Sizable,
+        button::*,
+        menu::{ContextMenuExt, PopupMenuItem},
+        progress::ProgressCircle,
+        tooltip::Tooltip,
+    },
+    prelude::FluentBuilder,
+    *,
+};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
 };
+use tabs::{Layout, PaneStatus, ProgressState};
 
 const MAX_PANES: usize = 32;
-const CELL_W: f32 = 8.;
-const CELL_H: f32 = 18.;
+/// How often the tabs re-read each terminal's job, folder, progress and exit.
+const STATUS_INTERVAL: Duration = Duration::from_millis(500);
+/// Input typed before the shell exists waits for it, up to this many events.
+const MAX_PENDING_INPUT: usize = 256;
 type PaneId = u64;
 
-/// Horizontal = side by side; Vertical = stacked. Each split has equal shares.
+/// Horizontal = side by side; Vertical = stacked. Panes have equal shares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplitAxis {
     Horizontal,
     Vertical,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Layout {
-    Pane(PaneId),
-    Split(SplitAxis, Box<Layout>, Box<Layout>),
+/// One terminal cell for the mono font, which follows the conversation font
+/// size one point smaller (Swift Theme.monoFont).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Metrics {
+    font: f32,
+    cell_w: f32,
+    cell_h: f32,
 }
-impl Layout {
-    fn panes(&self, out: &mut Vec<PaneId>) {
-        match self {
-            Self::Pane(id) => out.push(*id),
-            Self::Split(_, a, b) => {
-                a.panes(out);
-                b.panes(out);
-            }
+impl Metrics {
+    fn for_font(font: f32) -> Self {
+        let font = if font.is_finite() {
+            font.clamp(9., 23.)
+        } else {
+            12.
+        };
+        Self {
+            font,
+            cell_w: font * 2. / 3.,
+            cell_h: font * 1.5,
         }
     }
-    fn split(&mut self, target: PaneId, next: PaneId, axis: SplitAxis) -> bool {
-        match self {
-            Self::Pane(id) if *id == target => {
-                *self = Self::Split(
-                    axis,
-                    Box::new(Self::Pane(target)),
-                    Box::new(Self::Pane(next)),
-                );
-                true
-            }
-            Self::Split(_, a, b) => a.split(target, next, axis) || b.split(target, next, axis),
-            _ => false,
+}
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::for_font(12.)
+    }
+}
+/// The terminal's colors and font from the app's theme (Swift TerminalTheme):
+/// the conversation's background and text, and the light or dark palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerminalAppearance {
+    pub dark: bool,
+    pub foreground: u32,
+    pub background: u32,
+    pub font_size: f32,
+}
+impl Default for TerminalAppearance {
+    fn default() -> Self {
+        Self {
+            dark: true,
+            foreground: 0xd4d4d4,
+            background: 0x0c0c0c,
+            font_size: 12.,
         }
     }
-    fn without(self, target: PaneId) -> Option<Self> {
-        match self {
-            Self::Pane(id) => (id != target).then_some(Self::Pane(id)),
-            Self::Split(axis, a, b) => match (a.without(target), b.without(target)) {
-                (Some(a), Some(b)) => Some(Self::Split(axis, Box::new(a), Box::new(b))),
-                (a, b) => a.or(b),
-            },
+}
+impl TerminalAppearance {
+    fn palette(&self) -> Palette {
+        let channels = |rgb: u32| [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8];
+        Palette {
+            dark: self.dark,
+            foreground: channels(self.foreground),
+            background: channels(self.background),
         }
+    }
+    fn cursor(&self) -> u32 {
+        if self.dark { 0xb4cbff } else { 0x26384e }
     }
 }
 struct Tab {
@@ -206,6 +243,21 @@ fn valid_payload(text: &str, _paste: bool) -> Result<()> {
     );
     Ok(())
 }
+fn valid_input(input: &TerminalInput) -> bool {
+    match input {
+        TerminalInput::Text { text } | TerminalInput::Paste { text } => {
+            valid_payload(text, false).is_ok()
+        }
+        TerminalInput::Key { .. } => true,
+    }
+}
+/// Return, which restarts an exited shell (Swift looks for a carriage return).
+fn submits(input: &TerminalInput) -> bool {
+    match input {
+        TerminalInput::Key { key, .. } => key == "enter",
+        TerminalInput::Text { text } | TerminalInput::Paste { text } => text.contains('\r'),
+    }
+}
 impl Composition {
     fn replacement(&self, range: Option<Range<usize>>, text: &str) -> Result<(String, usize)> {
         valid_payload(text, false)?;
@@ -276,6 +328,7 @@ struct PaneInput {
     notice: String,
     anchor: Point<Pixels>,
     bounds: Option<Bounds<Pixels>>,
+    metrics: Metrics,
     _blur: Subscription,
     _activation: Subscription,
 }
@@ -294,7 +347,8 @@ impl PaneInput {
                 workspace
                     .panes
                     .get(&self.key)
-                    .map(|p| (p.ime_epoch, !p.closing && p.terminal.is_some())),
+                    // Text typed while the shell starts waits for it.
+                    .map(|p| (p.ime_epoch, !p.closing)),
             )
         })
     }
@@ -347,7 +401,9 @@ impl PaneInput {
             underline: None,
             strikethrough: None,
         };
-        window.text_system().shape_line(text, px(12.), &[run], None)
+        window
+            .text_system()
+            .shape_line(text, px(self.metrics.font), &[run], None)
     }
 }
 impl EntityInputHandler for PaneInput {
@@ -471,10 +527,10 @@ impl EntityInputHandler for PaneInput {
             .anchor
             .y
             .max(element.top())
-            .min((element.bottom() - px(CELL_H)).max(element.top()));
+            .min((element.bottom() - px(self.metrics.cell_h)).max(element.top()));
         Some(Bounds::from_corners(
             point(x, y),
-            point(right, y + px(CELL_H)),
+            point(right, y + px(self.metrics.cell_h)),
         ))
     }
     fn character_index_for_point(
@@ -534,6 +590,11 @@ struct Pane {
     ime: Option<Entity<PaneInput>>,
     ime_epoch: u64,
     ime_observer: Option<Subscription>,
+    /// What `terminal.status` last said about this pane's shell.
+    status: Option<PaneStatus>,
+    /// Typed before the shell existed; sent once it does (Swift pendingInput).
+    pending: Vec<TerminalInput>,
+    restarting: bool,
 }
 impl Pane {
     fn new(cx: &mut Context<TerminalWorkspace>) -> Self {
@@ -552,7 +613,14 @@ impl Pane {
             ime: None,
             ime_epoch: 0,
             ime_observer: None,
+            status: None,
+            pending: vec![],
+            restarting: false,
         }
+    }
+    /// The shell failed at once and its pane waits for Restart or Close.
+    fn stopped(&self) -> bool {
+        self.status.as_ref().is_some_and(|status| status.exited)
     }
     fn matches(&self, terminal: &str, expected: Option<Stamp>) -> bool {
         !self.closing
@@ -572,6 +640,10 @@ enum Command {
     Adopt(PaneId, String),
     Create(PaneId),
     Watch(Vec<PaneId>),
+    /// Re-read every terminal of the thread for its tab.
+    Status,
+    /// A new shell in an exited pane (Swift TerminalSession.restart).
+    Restart(PaneId),
     Copy(PaneId, u64, u64, TerminalPoint, TerminalPoint),
     AttachSelection(SelectionRequest, ComposerBaseline),
     Act(PaneId, u64, Action),
@@ -589,6 +661,8 @@ enum Update {
     ),
     // Command failure is not a frame: later input tickets must not hide it.
     ActionFailed(PaneId, String),
+    Status(Result<Vec<Value>>),
+    Restarted(PaneId, Result<()>),
 }
 struct Binding {
     terminal: String,
@@ -604,6 +678,7 @@ fn worker(
     rx: Receiver<Command>,
     tx: SyncSender<Update>,
     stop: Arc<AtomicBool>,
+    palette: Arc<Mutex<Palette>>,
 ) {
     let context_engine = engine.clone();
     run_worker(
@@ -614,9 +689,12 @@ fn worker(
         // This serialized worker is off the UI thread. Wait for Engine ownership
         // rather than dropping a keystroke/list/create during normal contention.
         |method, params| coincide_core::api::call(&engine, method, params),
-        |id| match crate::read_terminal_frame(&engine, id, 0) {
-            Err(error) if crate::engine_busy(&error) => Ok(None),
-            result => result,
+        |id| {
+            let palette = *palette.lock().unwrap_or_else(|error| error.into_inner());
+            match crate::read_terminal_frame(&engine, id, &palette) {
+                Err(error) if crate::engine_busy(&error) => Ok(None),
+                result => result,
+            }
         },
         |request, baseline| {
             let mut engine = context_engine
@@ -739,6 +817,28 @@ fn run_worker(
             Ok(Command::Watch(keys)) => {
                 visible = keys.into_iter().collect();
             }
+            Ok(Command::Status) => {
+                let list = call("terminal.status", json!({"threadId":thread})).and_then(|v| {
+                    v.as_array()
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid terminal status"))
+                });
+                if !send(&tx, Update::Status(list)) {
+                    return;
+                }
+            }
+            Ok(Command::Restart(key)) => {
+                let result = bound
+                    .get(&key)
+                    .ok_or_else(|| anyhow::anyhow!("Pane has no terminal"))
+                    .and_then(|binding| {
+                        call("terminal.restart", json!({"terminalId":binding.terminal}))
+                    })
+                    .map(|_| ());
+                if !send(&tx, Update::Restarted(key, result)) {
+                    return;
+                }
+            }
             Ok(Command::Act(key, ticket, action)) => {
                 let closing = matches!(action, Action::Close);
                 let failure = match &action {
@@ -855,6 +955,14 @@ pub struct TerminalWorkspace {
     activation: Activation,
     stopping: Arc<AtomicBool>,
     completion: coincide_core::agent::WorkerCompletion,
+    appearance: TerminalAppearance,
+    /// The worker's copy of the colors frames are read with.
+    palette: Arc<Mutex<Palette>>,
+    /// When the outstanding status request was sent, and when the next is due.
+    status_requested: Option<Instant>,
+    status_due: Instant,
+    /// The pending "still running" confirmation (Swift confirmClosing).
+    close_prompt: Option<Task<()>>,
     _poll: Task<()>,
 }
 impl TerminalWorkspace {
@@ -869,8 +977,19 @@ impl TerminalWorkspace {
         let worker_thread = thread_id.clone();
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
-        let worker =
-            std::thread::spawn(move || worker(engine, worker_thread, commands, updates, stop));
+        let appearance = TerminalAppearance::default();
+        let palette = Arc::new(Mutex::new(appearance.palette()));
+        let worker_palette = palette.clone();
+        let worker = std::thread::spawn(move || {
+            worker(
+                engine,
+                worker_thread,
+                commands,
+                updates,
+                stop,
+                worker_palette,
+            )
+        });
         let completion = coincide_core::agent::WorkerCompletion::observe(worker);
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -902,8 +1021,28 @@ impl TerminalWorkspace {
             activation: Activation::default(),
             stopping,
             completion,
+            appearance,
+            palette,
+            status_requested: None,
+            status_due: Instant::now(),
+            close_prompt: None,
             _poll: poll,
         }
+    }
+    /// The parent's theme colors and font; frames are re-read with them.
+    pub fn set_appearance(&mut self, appearance: TerminalAppearance, cx: &mut Context<Self>) {
+        if self.appearance == appearance {
+            return;
+        }
+        self.appearance = appearance;
+        *self
+            .palette
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = appearance.palette();
+        cx.notify();
+    }
+    fn metrics(&self) -> Metrics {
+        Metrics::for_font(self.appearance.font_size)
     }
     /// Explicit panel-open action only. Existing PTYs are discovered before a
     /// first shell can be created, so reopening cannot duplicate a running tab.
@@ -996,7 +1135,7 @@ impl TerminalWorkspace {
     fn tab_for(&mut self, key: PaneId) {
         self.tabs.push(Tab {
             key,
-            layout: Layout::Pane(key),
+            layout: Layout::single(key),
             focus: key,
         });
         self.active = Some(key);
@@ -1013,6 +1152,17 @@ impl TerminalWorkspace {
         if self.panes.len() >= MAX_PANES {
             self.notice = "At most 32 terminal panes".into();
             cx.notify();
+            return;
+        }
+        // Swift beeps when a split would put a fifth terminal in the tab.
+        if let Some((target, _)) = split
+            && self.tabs.iter().any(|tab| {
+                Some(tab.key) == self.active
+                    && tab.layout.panes.contains(&target)
+                    && tab.layout.full()
+            })
+        {
+            tabs::beep();
             return;
         }
         let key = self.allocate(cx);
@@ -1046,6 +1196,29 @@ impl TerminalWorkspace {
         let Some(pane) = self.panes.get_mut(&key) else {
             return false;
         };
+        if let Action::Input(input) = &action
+            && !pane.closing
+            && (pane.terminal.is_none() || pane.restarting)
+        {
+            // The shell gets what was typed once it starts (Swift pendingInput).
+            if pane.pending.len() < MAX_PENDING_INPUT && valid_input(input) {
+                pane.pending.push(input.clone());
+                return true;
+            }
+            pane.notice = WAIT_FOR_TERMINAL_CREATION.into();
+            cx.notify();
+            return false;
+        }
+        if let Action::Input(input) = &action
+            && pane.stopped()
+        {
+            // Swift inputWhileStopped: Return restarts an exited shell; other
+            // keys go nowhere.
+            if submits(input) {
+                self.restart(key, cx);
+            }
+            return false;
+        }
         if pane.closing || pane.terminal.is_none() {
             pane.notice = WAIT_FOR_TERMINAL_CREATION.into();
             cx.notify();
@@ -1089,6 +1262,100 @@ impl TerminalWorkspace {
         }
         cx.notify();
         true
+    }
+    /// Swift TerminalSession.restart from the exit banner or Return.
+    fn restart(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        if self.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(pane) = self.panes.get_mut(&key) else {
+            return;
+        };
+        if pane.closing || pane.restarting || !pane.stopped() || pane.terminal.is_none() {
+            return;
+        }
+        if self.tx.try_send(Command::Restart(key)).is_err() {
+            pane.notice = "Terminal worker busy; try again".into();
+        } else {
+            pane.restarting = true;
+            pane.selection.clear();
+        }
+        cx.notify();
+    }
+    /// Swift TerminalLinks.open for a Command-click (Control-click elsewhere):
+    /// web and mail links open; paths, relative to the shell's folder, show in
+    /// the file manager. False when the click is on no link at all.
+    fn open_link(&mut self, key: PaneId, row: usize, col: usize, cx: &mut Context<Self>) -> bool {
+        let Some(pane) = self.panes.get(&key) else {
+            return false;
+        };
+        let Some(frame) = &pane.frame else {
+            return false;
+        };
+        let Some(cells) = frame["grid"][row].as_array() else {
+            return false;
+        };
+        let Some(link) = tabs::link_at(frame, cells, col) else {
+            return false;
+        };
+        let directory = pane
+            .status
+            .as_ref()
+            .and_then(|status| status.directory.as_deref())
+            .map(std::path::Path::new);
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .map(std::path::PathBuf::from);
+        match tabs::resolve_link(&link, directory, home.as_deref()) {
+            Some(tabs::Link::Web(url)) => cx.open_url(&url),
+            Some(tabs::Link::File(path)) => cx.reveal_path(&path),
+            None if tabs::looks_like_link(&link) => tabs::beep(),
+            None => return false,
+        }
+        true
+    }
+    /// Closes panes, first asking when one still runs a job, as Terminal does
+    /// (Swift confirmClosing). Idle and exited shells close right away.
+    fn request_close(&mut self, keys: Vec<PaneId>, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = keys
+            .into_iter()
+            .filter(|key| self.panes.get(key).is_some_and(|pane| !pane.closing))
+            .collect::<Vec<_>>();
+        let busy = keys
+            .iter()
+            .filter_map(|key| self.panes[key].status.as_ref())
+            .filter(|status| status.busy && !status.exited)
+            .map(|status| status.name.clone())
+            .collect::<Vec<_>>();
+        let Some((title, detail)) = tabs::close_confirmation(&busy) else {
+            for key in keys {
+                self.act(key, Action::Close, cx);
+            }
+            return;
+        };
+        if self.close_prompt.is_some() {
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &title,
+            Some(&detail),
+            &["Close", "Cancel"],
+            cx,
+        );
+        self.close_prompt = Some(cx.spawn_in(window, async move |this, cx| {
+            let close = answer.await.is_ok_and(|answer| answer == 0);
+            this.update_in(cx, |this, window, cx| {
+                this.close_prompt = None;
+                if close {
+                    for key in keys {
+                        this.act(key, Action::Close, cx);
+                    }
+                    this.focus_active(window, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
     }
     fn remove(&mut self, key: PaneId) {
         self.invalidate_context();
@@ -1183,10 +1450,16 @@ impl TerminalWorkspace {
                 }
                 Update::Bound(key, result) => match result {
                     Ok(id) => {
+                        let mut pending = vec![];
                         if let Some(p) = self.panes.get_mut(&key) {
                             p.terminal = Some(id);
                             clear_creation_notice(&mut p.notice, p.closing);
+                            pending = std::mem::take(&mut p.pending);
                         }
+                        for input in pending {
+                            self.act(key, Action::Input(input), cx);
+                        }
+                        self.status_due = Instant::now();
                     }
                     Err(error) => {
                         self.notice = error.to_string();
@@ -1238,6 +1511,36 @@ impl TerminalWorkspace {
                         }
                     }
                 }
+                Update::Status(list) => {
+                    self.status_requested = None;
+                    self.status_due = Instant::now() + STATUS_INTERVAL;
+                    // A busy Engine or a failed listing only delays the tabs.
+                    if let Ok(list) = list {
+                        self.apply_status(&list, cx);
+                    }
+                }
+                Update::Restarted(key, result) => {
+                    let mut pending = vec![];
+                    if let Some(pane) = self.panes.get_mut(&key) {
+                        pane.restarting = false;
+                        match result {
+                            Ok(()) => {
+                                pane.status = None;
+                                pane.notice.clear();
+                                pending = std::mem::take(&mut pane.pending);
+                            }
+                            Err(error) => {
+                                pane.pending.clear();
+                                pane.notice = format!("Terminal did not restart: {error}");
+                            }
+                        }
+                    }
+                    for input in pending {
+                        self.act(key, Action::Input(input), cx);
+                    }
+                    self.status_due = Instant::now();
+                    self.focus(key, window, cx);
+                }
                 Update::Frame(key, ticket, result) => {
                     let Some(pane) = self.panes.get_mut(&key) else {
                         continue;
@@ -1271,6 +1574,16 @@ impl TerminalWorkspace {
         if self.watch_dirty {
             self.watch();
         }
+        // Hidden tabs keep their titles, folders and exits current too.
+        if self
+            .status_requested
+            .is_none_or(|at| at.elapsed() >= STATUS_INTERVAL * 4)
+            && Instant::now() >= self.status_due
+            && self.panes.values().any(|pane| pane.terminal.is_some())
+            && self.tx.try_send(Command::Status).is_ok()
+        {
+            self.status_requested = Some(Instant::now());
+        }
         // Cursor blink uses retained frames, never synchronous engine reads.
         if changed
             || (self.visible
@@ -1281,6 +1594,46 @@ impl TerminalWorkspace {
                 }))
         {
             cx.notify();
+        }
+    }
+    /// Applies `terminal.status` to the panes: tab titles and folders, a bell
+    /// from a visible terminal, and closing shells that exited on their own.
+    fn apply_status(&mut self, list: &[Value], cx: &mut Context<Self>) {
+        let visible = if self.visible { self.ids() } else { vec![] };
+        let mut ring = false;
+        let mut exited = vec![];
+        for (key, pane) in &mut self.panes {
+            let Some(id) = pane.terminal.as_deref() else {
+                continue;
+            };
+            let Some(status) = list
+                .iter()
+                .find(|entry| entry["terminalId"] == id)
+                .and_then(PaneStatus::parse)
+            else {
+                continue;
+            };
+            // A bell from a terminal the user can't see stays silent.
+            ring |= visible.contains(key)
+                && pane
+                    .status
+                    .as_ref()
+                    .is_some_and(|old| status.bells > old.bells);
+            // As in T3 Code, a shell that exits closes its terminal, unless
+            // it failed right away; that pane stays to show why.
+            if status.exited && !status.keep_open && !pane.closing && !pane.restarting {
+                exited.push(*key);
+            }
+            if pane.status.as_ref() != Some(&status) {
+                pane.status = Some(status);
+                cx.notify();
+            }
+        }
+        if ring {
+            tabs::beep();
+        }
+        for key in exited {
+            self.act(key, Action::Close, cx);
         }
     }
     fn revoke_inputs(&mut self, cx: &mut Context<Self>) {
@@ -1305,12 +1658,9 @@ impl TerminalWorkspace {
             epoch,
             self.visible,
             &self.ids(),
-            self.panes.get(&key).map(|p| {
-                (
-                    p.ime_epoch,
-                    p.focus.is_focused(window) && !p.closing && p.terminal.is_some(),
-                )
-            }),
+            self.panes
+                .get(&key)
+                .map(|p| (p.ime_epoch, p.focus.is_focused(window) && !p.closing)),
         ) {
             return false;
         }
@@ -1333,6 +1683,7 @@ impl TerminalWorkspace {
         if !same {
             self.revoke_inputs(cx);
             let owner = cx.entity().downgrade();
+            let metrics = self.metrics();
             let pane = self.panes.get_mut(&key).unwrap();
             let epoch = pane.ime_epoch;
             let focus = pane.focus.clone();
@@ -1359,6 +1710,7 @@ impl TerminalWorkspace {
                     notice: String::new(),
                     anchor: point(px(0.), px(0.)),
                     bounds: None,
+                    metrics,
                     _blur: blur,
                     _activation: activation,
                 }
@@ -1392,6 +1744,7 @@ impl TerminalWorkspace {
         if event.modifiers.control || event.modifiers.platform || event.modifiers.alt {
             return;
         }
+        let cell_h = self.metrics().cell_h;
         let Some(pane) = self.panes.get_mut(&key) else {
             return;
         };
@@ -1402,7 +1755,7 @@ impl TerminalWorkspace {
         {
             return;
         }
-        let delta = event.delta.pixel_delta(px(CELL_H));
+        let delta = event.delta.pixel_delta(px(cell_h));
         let dy = f32::from(delta.y);
         if !dy.is_finite() || dy == 0. || delta.x.abs() > delta.y.abs() {
             return;
@@ -1419,7 +1772,7 @@ impl TerminalWorkspace {
         if pane.wheel.signum() != dy.signum() {
             pane.wheel = 0.;
         }
-        pane.wheel += (dy / CELL_H).clamp(-40., 40.);
+        pane.wheel += (dy / cell_h).clamp(-40., 40.);
         let lines = pane.wheel.trunc() as i32;
         pane.wheel -= lines as f32;
         cx.stop_propagation();
@@ -1573,44 +1926,14 @@ impl TerminalWorkspace {
             return div().into_any_element();
         };
         let id = pane.terminal.clone().unwrap_or_default();
-        let title = pane
-            .frame
+        let appearance = self.appearance;
+        let metrics = self.metrics();
+        let (cell_w, cell_h) = (metrics.cell_w, metrics.cell_h);
+        let name = pane
+            .status
             .as_ref()
-            .map(|f| text(f, "title"))
-            .filter(|s| !s.is_empty())
+            .map(|status| status.name.clone())
             .unwrap_or_else(|| "Terminal".into());
-        let mut header = div().flex().items_center().gap_1().flex_wrap().child(
-            div()
-                .flex_1()
-                .child(title.chars().take(28).collect::<String>()),
-        );
-        for (name, label, axis) in [
-            ("horizontal", "Split ↔", SplitAxis::Horizontal),
-            ("vertical", "Split ↕", SplitAxis::Vertical),
-        ] {
-            header = header.child(
-                Button::new(SharedString::from(format!("{name}-{key}")))
-                    .label(label)
-                    .disabled(pane.closing)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.create(Some((key, axis)), window, cx)
-                    })),
-            );
-        }
-        header = header
-            .child(
-                Button::new(SharedString::from(format!("focus-{key}")))
-                    .label("Focus")
-                    .on_click(cx.listener(move |this, _, window, cx| this.focus(key, window, cx))),
-            )
-            .child(
-                Button::new(SharedString::from(format!("close-{key}")))
-                    .label("Close")
-                    .disabled(pane.closing || pane.terminal.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(key, Action::Close, cx);
-                    })),
-            );
         let mut body = div()
             .id(SharedString::from(format!("terminal-body-{key}")))
             .relative()
@@ -1620,14 +1943,17 @@ impl TerminalWorkspace {
             .overflow_scroll()
             .track_scroll(&pane.scroll)
             .track_focus(&pane.focus)
-            .bg(rgb(0x0c0c0c))
+            .role(Role::Terminal)
+            .aria_label(name.clone())
+            .bg(rgb(appearance.background))
+            .text_color(rgb(appearance.foreground))
             .font_family(if cfg!(target_os = "macos") {
                 "Menlo"
             } else {
                 "monospace"
             })
-            .text_size(px(12.))
-            .line_height(px(CELL_H))
+            .text_size(px(metrics.font))
+            .line_height(px(cell_h))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| this.focus(key, window, cx)),
@@ -1663,14 +1989,14 @@ impl TerminalWorkspace {
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
-                .w(px(cols as f32 * CELL_W));
+                .w(px(cols as f32 * cell_w));
             if let Some(grid) = frame["grid"].as_array() {
                 for (row_index, row_cells) in grid.iter().enumerate() {
                     let mut row = div()
                         .relative()
                         .flex()
                         .flex_shrink_0()
-                        .h(px(CELL_H))
+                        .h(px(cell_h))
                         .w_full();
                     if let Some(cells) = row_cells.as_array() {
                         for (col, cell) in cells.iter().enumerate() {
@@ -1694,11 +2020,17 @@ impl TerminalWorkspace {
                                 div()
                                     .relative()
                                     .flex_shrink_0()
-                                    .w(px(width as f32 * CELL_W))
-                                    .h(px(CELL_H))
+                                    .w(px(width as f32 * cell_w))
+                                    .h(px(cell_h))
                                     .overflow_hidden()
-                                    .bg(crate::terminal_rgb(&cell["background"], 0x0c0c0c))
-                                    .text_color(crate::terminal_rgb(&cell["foreground"], 0xd4d4d4))
+                                    .bg(crate::terminal_rgb(
+                                        &cell["background"],
+                                        appearance.background,
+                                    ))
+                                    .text_color(crate::terminal_rgb(
+                                        &cell["foreground"],
+                                        appearance.foreground,
+                                    ))
                                     .when(cell["bold"] == true, |view| {
                                         view.font_weight(FontWeight::BOLD)
                                     })
@@ -1717,6 +2049,18 @@ impl TerminalWorkspace {
                                         MouseButton::Left,
                                         cx.listener(
                                             move |this, event: &MouseDownEvent, window, cx| {
+                                                let opens = if cfg!(target_os = "macos") {
+                                                    event.modifiers.platform
+                                                } else {
+                                                    event.modifiers.control
+                                                };
+                                                if opens
+                                                    && !event.modifiers.shift
+                                                    && this.open_link(key, row_index, col, cx)
+                                                {
+                                                    cx.stop_propagation();
+                                                    return;
+                                                }
                                                 let Some(p) = this.panes.get_mut(&key) else {
                                                     return;
                                                 };
@@ -1772,21 +2116,22 @@ impl TerminalWorkspace {
                         } else {
                             "hollowBlock"
                         };
+                        let caret = appearance.cursor();
                         row = row.child(
                             div()
                                 .absolute()
-                                .left(px(cursor["col"].as_u64().unwrap_or(0) as f32 * CELL_W))
+                                .left(px(cursor["col"].as_u64().unwrap_or(0) as f32 * cell_w))
                                 .bottom_0()
-                                .w(px(if shape == "beam" { 2. } else { CELL_W }))
-                                .h(px(if shape == "underline" { 2. } else { CELL_H }))
+                                .w(px(if shape == "beam" { 2. } else { cell_w }))
+                                .h(px(if shape == "underline" { 2. } else { cell_h }))
                                 .when(shape == "hollowBlock", |view| {
-                                    view.border_1().border_color(rgb(0xb4cbff))
+                                    view.border_1().border_color(rgb(caret))
                                 })
                                 .when(shape != "hollowBlock", |view| {
                                     view.bg(rgba(if shape == "block" {
-                                        0xb4cbff70
+                                        (caret << 8) | 0x70
                                     } else {
-                                        0xb4cbffff
+                                        (caret << 8) | 0xff
                                     }))
                                 }),
                         );
@@ -1796,11 +2141,11 @@ impl TerminalWorkspace {
             }
             body = body.child(grid_view);
         } else {
-            body = body.child(if pane.terminal.is_some() {
+            body = body.child(div().p_2().child(if pane.terminal.is_some() {
                 "Reading terminal…"
             } else {
                 "Creating terminal…"
-            });
+            }));
         }
         let mut footer = div().flex().flex_wrap().gap_1().items_center();
         let alternate = pane
@@ -1851,15 +2196,9 @@ impl TerminalWorkspace {
         );
         if let Some(frame) = &pane.frame {
             footer = footer.child(div().child(format!(
-                    "{}×{} · {} rows above live{}",
-                    frame["cols"],
-                    frame["rows"],
-                    frame["viewport"]["displayOffset"],
-                    frame["exitCode"]
-                        .as_i64()
-                        .map(|v| format!(" · exited {v}"))
-                        .unwrap_or_default()
-                )));
+                "{}×{} · {} rows above live",
+                frame["cols"], frame["rows"], frame["viewport"]["displayOffset"],
+            )));
         }
         let weak = cx.entity().downgrade();
         let ime = pane.ime.clone();
@@ -1878,7 +2217,7 @@ impl TerminalWorkspace {
                     .or_else(|| frame["cursor"]["col"].as_u64())
                     .unwrap_or(0)
                     .min(u64::from(pane.size.1.saturating_sub(1)));
-                point(px(col as f32 * CELL_W), px(row as f32 * CELL_H))
+                point(px(col as f32 * cell_w), px(row as f32 * cell_h))
             })
             .unwrap_or_else(|| point(px(0.), px(0.)));
         let mut composition_notice = String::new();
@@ -1895,13 +2234,88 @@ impl TerminalWorkspace {
                         .absolute()
                         .left(caret.x)
                         .top(caret.y)
-                        .bg(rgb(0x0c0c0c))
-                        .text_color(rgb(0xd4d4d4))
+                        .bg(rgb(appearance.background))
+                        .text_color(rgb(appearance.foreground))
                         .underline()
                         .child(input.composition.display()),
                 );
             }
         }
+        // Swift's glass bar after a failed start: why, with Restart and Close.
+        let banner = pane
+            .status
+            .as_ref()
+            .filter(|status| status.exited && status.keep_open && !pane.restarting)
+            .map(|status| {
+                let message = status
+                    .exit_message
+                    .clone()
+                    .unwrap_or_else(|| "Process terminated.".into());
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(14.))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("terminal-exit-{key}")))
+                            .role(Role::Group)
+                            .aria_label(message.clone())
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .pl(px(14.))
+                            .pr(px(8.))
+                            .py(px(6.))
+                            .rounded(px(16.))
+                            .bg(cx.theme().popover)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .shadow_md()
+                            .text_size(px(11.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(message)
+                            .child(
+                                Button::new(SharedString::from(format!("terminal-restart-{key}")))
+                                    .label("Restart")
+                                    .primary()
+                                    .small()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.focus(key, window, cx);
+                                        this.restart(key, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "terminal-exit-close-{key}"
+                                )))
+                                .label("Close")
+                                .small()
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.request_close(vec![key], window, cx)
+                                    },
+                                )),
+                            ),
+                    )
+            });
+        // Swift panes have no chrome; a split tab still needs to close one.
+        let close = (self.ids().len() > 1).then(|| {
+            div().absolute().top(px(2.)).right(px(2.)).child(
+                Button::new(SharedString::from(format!("close-{key}")))
+                    .icon(IconName::Close)
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label(format!("Close {name}"))
+                    .tooltip("Close Terminal")
+                    .disabled(pane.closing)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.request_close(vec![key], window, cx)
+                    })),
+            )
+        });
         div()
             .relative()
             .flex()
@@ -1909,13 +2323,6 @@ impl TerminalWorkspace {
             .flex_1()
             .min_h_0()
             .min_w_0()
-            .border_1()
-            .border_color(if pane.focus.is_focused(window) {
-                rgb(0x648ce6)
-            } else {
-                rgb(0x303540)
-            })
-            .child(header)
             .child(
                 div()
                     .relative()
@@ -1929,6 +2336,7 @@ impl TerminalWorkspace {
                                 let size = viewport_size(
                                     f32::from(bounds.size.width),
                                     f32::from(bounds.size.height),
+                                    metrics,
                                 );
                                 cx.defer(move |cx| {
                                     let _ = weak.update(cx, |this, cx| {
@@ -1944,6 +2352,7 @@ impl TerminalWorkspace {
                                 {
                                     let offset = local_scroll.offset();
                                     input.update(cx, |input, _| {
+                                        input.metrics = metrics;
                                         input.bounds = Some(bounds);
                                         input.anchor = point(
                                             (bounds.left() + caret.x + offset.x)
@@ -1952,7 +2361,7 @@ impl TerminalWorkspace {
                                             (bounds.top() + caret.y + offset.y)
                                                 .max(bounds.top())
                                                 .min(
-                                                    (bounds.bottom() - px(CELL_H))
+                                                    (bounds.bottom() - px(cell_h))
                                                         .max(bounds.top()),
                                                 ),
                                         );
@@ -1968,27 +2377,305 @@ impl TerminalWorkspace {
                         .absolute()
                         .size_full(),
                     )
-                    .child(body),
+                    .child(body)
+                    .children(banner)
+                    .children(close),
             )
             .child(footer)
             .child(div().text_sm().child(pane.notice.clone()))
             .child(div().text_sm().child(composition_notice))
             .into_any_element()
     }
+    /// Swift TerminalTabContentView: the tab's panes side by side or stacked
+    /// with thin dividers, sharing the space equally.
     fn layout_view(&self, layout: &Layout, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        match layout {
-            Layout::Pane(key) => self.pane_view(*key, window, cx),
-            Layout::Split(axis, a, b) => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .gap_1()
-                .when(*axis == SplitAxis::Vertical, |view| view.flex_col())
-                .child(self.layout_view(a, window, cx))
-                .child(self.layout_view(b, window, cx))
-                .into_any_element(),
+        let stacked = layout.axis == SplitAxis::Vertical;
+        let border = cx.theme().border;
+        let mut view = div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .when(stacked, |view| view.flex_col());
+        for (index, key) in layout.panes.iter().enumerate() {
+            if index > 0 {
+                view = view.child(
+                    div()
+                        .flex_shrink_0()
+                        .bg(border)
+                        .when(stacked, |divider| divider.h(px(1.)).w_full())
+                        .when(!stacked, |divider| divider.w(px(1.)).h_full()),
+                );
+            }
+            view = view.child(self.pane_view(*key, window, cx));
         }
+        view.into_any_element()
+    }
+    fn activate_tab(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        self.active = Some(key);
+        self.watch();
+        if let Some(tab) = self.tabs.iter().find(|t| t.key == key) {
+            let focus = tab.focus;
+            self.focus(focus, window, cx);
+        }
+        cx.notify();
+    }
+    /// The tab's ×, a middle click or its Close: every pane of the tab.
+    fn close_tab(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.iter().find(|t| t.key == key) {
+            let panes = tab.layout.panes.clone();
+            self.request_close(panes, window, cx);
+        }
+    }
+    /// Swift TerminalHeaderView: the tabs and New Terminal on the left; the
+    /// working directory, the splits and Hide on the right.
+    fn header(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut strip = div()
+            .id("terminal-tabs")
+            .role(Role::TabList)
+            .aria_label("Terminal tabs")
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .min_w_0()
+            .overflow_x_hidden();
+        for tab in &self.tabs {
+            strip = strip.child(self.tab_item(tab, cx));
+        }
+        let active = self.tabs.iter().find(|t| Some(t.key) == self.active);
+        let directory = active
+            .and_then(|tab| self.panes.get(&tab.focus))
+            .and_then(|pane| pane.status.as_ref())
+            .and_then(|status| status.directory.clone());
+        let mut row = div()
+            .id("terminal-header")
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .h(px(30.))
+            .px(px(6.))
+            .gap_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(strip)
+            .child(
+                Button::new("terminal-workspace-new")
+                    .icon(IconName::Plus)
+                    .ghost()
+                    .compact()
+                    .accessibility_label("New Terminal")
+                    .tooltip(format!("New Terminal ({})", tabs::new_terminal_shortcut()))
+                    .on_click(cx.listener(|this, _, window, cx| this.create(None, window, cx))),
+            )
+            .child(div().flex_1().min_w_0());
+        if let Some(directory) = directory {
+            row = row.child(self.directory_label(directory, cx));
+        }
+        if let Some(tab) = active {
+            let (focus, can_split) = (tab.focus, !tab.layout.full());
+            for (id, icon, label, axis) in [
+                (
+                    "terminal-split-right",
+                    IconName::PanelRight,
+                    "Split Right",
+                    SplitAxis::Horizontal,
+                ),
+                (
+                    "terminal-split-down",
+                    IconName::PanelBottom,
+                    "Split Down",
+                    SplitAxis::Vertical,
+                ),
+            ] {
+                row = row.child(
+                    Button::new(id)
+                        .icon(icon)
+                        .ghost()
+                        .compact()
+                        .accessibility_label(label)
+                        .tooltip(if can_split {
+                            format!("{label} ({})", tabs::split_shortcut(axis))
+                        } else {
+                            tabs::TAB_FULL.into()
+                        })
+                        .disabled(!can_split)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.create(Some((focus, axis)), window, cx)
+                        })),
+                );
+            }
+        }
+        row.child(
+            Button::new("terminal-hide")
+                .icon(IconName::ChevronDown)
+                .ghost()
+                .compact()
+                .accessibility_label("Hide Terminal")
+                .tooltip("Hide Terminal")
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(TerminalContextEvent::HideRequested))),
+        )
+        .into_any_element()
+    }
+    /// One tab: an icon (or its progress), the title and a close button that
+    /// shows on hover. The title dims once the shell exits.
+    fn tab_item(&self, tab: &Tab, cx: &mut Context<Self>) -> AnyElement {
+        let key = tab.key;
+        let selected = Some(key) == self.active;
+        let theme = cx.theme();
+        let (foreground, muted) = (theme.foreground, theme.muted_foreground);
+        let (danger, warning) = (theme.danger, theme.warning);
+        let status = self
+            .panes
+            .get(&tab.focus)
+            .and_then(|pane| pane.status.as_ref());
+        let title = status
+            .map(|status| status.name.clone())
+            .unwrap_or_else(|| "Terminal".into());
+        let exited = status.is_some_and(|status| status.exited);
+        let progress = status.and_then(|status| status.progress);
+        let tooltip = tabs::tab_tooltip(
+            tab.layout
+                .panes
+                .iter()
+                .filter_map(|id| self.panes.get(id)?.status.as_ref()),
+            progress,
+        );
+        let label = progress
+            .map(|progress| format!("{title}, {}", progress.description()))
+            .unwrap_or_else(|| title.clone());
+        let icon = match (tab.layout.panes.len(), tab.layout.axis) {
+            (1, _) => IconName::SquareTerminal,
+            (_, SplitAxis::Horizontal) => IconName::PanelRight,
+            (_, SplitAxis::Vertical) => IconName::PanelBottom,
+        };
+        let glyph = match progress {
+            Some(progress) if progress.ring() => {
+                ProgressCircle::new(SharedString::from(format!("terminal-tab-progress-{key}")))
+                    .loading(progress.state == ProgressState::Indeterminate)
+                    .value(f32::from(progress.percent.unwrap_or(0)))
+                    .xsmall()
+                    .into_any_element()
+            }
+            Some(progress) if progress.state == ProgressState::Error => {
+                Icon::new(IconName::TriangleAlert)
+                    .xsmall()
+                    .text_color(danger)
+                    .into_any_element()
+            }
+            Some(_) => Icon::new(IconName::Pause)
+                .xsmall()
+                .text_color(warning)
+                .into_any_element(),
+            None => Icon::new(icon)
+                .xsmall()
+                .text_color(if selected { foreground } else { muted })
+                .into_any_element(),
+        };
+        let group = SharedString::from(format!("terminal-tab-{key}"));
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .role(Role::Tab)
+            .aria_label(label)
+            .aria_selected(selected)
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .h(px(22.))
+            .min_w(px(72.))
+            .max_w(px(200.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(4.))
+            .cursor_pointer()
+            .when(selected, |item| item.bg(foreground.opacity(0.1)))
+            .when(!selected, |item| {
+                item.hover(|style| style.bg(foreground.opacity(0.05)))
+            })
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .on_click(cx.listener(move |this, _, window, cx| this.activate_tab(key, window, cx)))
+            // Middle-click closes, as in browsers and editors.
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| this.close_tab(key, window, cx)),
+            )
+            .child(glyph)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(11.))
+                    .text_color(if exited {
+                        muted.opacity(0.6)
+                    } else if selected {
+                        foreground
+                    } else {
+                        muted
+                    })
+                    .child(title.clone()),
+            )
+            .child(
+                Button::new(SharedString::from(format!("terminal-tab-close-{key}")))
+                    .icon(IconName::Close)
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label(format!("Close {title}"))
+                    .tooltip(format!("Close {title}"))
+                    .when(!selected, |button| {
+                        button
+                            .opacity(0.)
+                            .group_hover(group, |button| button.opacity(1.))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.close_tab(key, window, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+    /// The active terminal's folder, with Copy Path and Reveal in Finder.
+    fn directory_label(&self, directory: String, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let shown = tabs::abbreviate(&directory);
+        let tooltip = directory.clone();
+        let copy = directory.clone();
+        let reveal = std::path::PathBuf::from(&directory);
+        div()
+            .id("terminal-directory")
+            .role(Role::Label)
+            .aria_label(format!("Working directory {directory}"))
+            .flex()
+            .items_center()
+            .gap_1()
+            .min_w_0()
+            .mr(px(6.))
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .child(
+                Icon::new(IconName::Folder)
+                    .xsmall()
+                    .text_color(muted.opacity(0.7)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(shown),
+            )
+            .context_menu(move |menu, _, _| {
+                let copy = copy.clone();
+                let reveal = reveal.clone();
+                menu.item(PopupMenuItem::new("Copy Path").on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                }))
+                .item(
+                    PopupMenuItem::new(tabs::reveal_label())
+                        .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
+                )
+            })
+            .into_any_element()
     }
 }
 impl Drop for TerminalWorkspace {
@@ -2011,65 +2698,59 @@ impl Render for TerminalWorkspace {
         {
             self.focus(key, window, cx);
         }
-        let mut tabs = div().flex().gap_1().items_center().flex_wrap();
-        for tab in &self.tabs {
-            let key = tab.key;
-            let title = self
-                .panes
-                .get(&tab.focus)
-                .and_then(|p| p.frame.as_ref())
-                .map(|f| text(f, "title"))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "Terminal".into());
-            tabs = tabs.child(
-                Button::new(SharedString::from(format!("terminal-tab-{key}")))
-                    .label(format!(
-                        "{}{}",
-                        if Some(key) == self.active { "● " } else { "" },
-                        title.chars().take(20).collect::<String>()
-                    ))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.active = Some(key);
-                        this.watch();
-                        if let Some(tab) = this.tabs.iter().find(|t| t.key == key) {
-                            let focus = tab.focus;
-                            this.focus(focus, window, cx);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        tabs = tabs.child(
-            Button::new("terminal-workspace-new")
-                .label("New terminal")
-                .on_click(cx.listener(|this, _, window, cx| this.create(None, window, cx))),
-        );
         let mut root = div()
             .flex()
             .flex_col()
             .size_full()
             .min_h_0()
             .min_w_0()
-            .gap_1()
-            .child(tabs);
+            .bg(rgb(self.appearance.background))
+            .child(self.header(cx));
         if let Some(tab) = self.tabs.iter().find(|t| Some(t.key) == self.active) {
             root = root.child(self.layout_view(&tab.layout, window, cx));
         } else {
-            root = root.child(div().child(
-                "Open a terminal to start. Existing PTYs remain running when this view is hidden.",
-            ));
+            // Swift TerminalEmptyStateView.
+            let muted = cx.theme().muted_foreground;
+            root = root.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(10.))
+                    .child(
+                        Icon::new(IconName::SquareTerminal)
+                            .large()
+                            .text_color(muted.opacity(0.6)),
+                    )
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child("No terminal sessions for this thread yet."),
+                    )
+                    .child(
+                        Button::new("terminal-empty-new")
+                            .label("New Terminal")
+                            .primary()
+                            .tooltip(format!("New Terminal ({})", tabs::new_terminal_shortcut()))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.create(None, window, cx)),
+                            ),
+                    ),
+            );
         }
         root.child(div().text_sm().child(self.notice.clone()))
     }
 }
 
-// Bound to the shared coherent-frame reader's 40-row page. Resizing the PTY to
-// the actual pane (up to that bound) avoids cropping live output after splitting.
-fn viewport_size(width: f32, height: f32) -> (u16, u16) {
+// The PTY takes the whole pane (Swift sizes the terminal to it), within Core's
+// 300-row, 500-column bound; the coherent reader returns every visible row.
+fn viewport_size(width: f32, height: f32, metrics: Metrics) -> (u16, u16) {
     let width = if width.is_finite() { width } else { 0. };
     let height = if height.is_finite() { height } else { 0. };
-    let rows = (height / CELL_H).floor().clamp(2., 40.) as u16;
-    let cols = (width / CELL_W).floor().clamp(2., 500.) as u16;
+    let rows = (height / metrics.cell_h).floor().clamp(2., 300.) as u16;
+    let cols = (width / metrics.cell_w).floor().clamp(2., 500.) as u16;
     (rows, cols)
 }
 type Stamp = (u64, u64, u64, u64);
@@ -2149,7 +2830,7 @@ fn selection_bounds(
         .as_u64()
         .ok_or_else(|| anyhow::anyhow!("Invalid columns"))? as usize;
     ensure!(
-        count <= 40 && cols <= 500,
+        count <= 300 && cols <= 500,
         "Selection exceeds viewport bound"
     );
     let mut first = None;
@@ -2262,45 +2943,65 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), ["terminal.list"]);
     }
 
-    fn leaves(layout: &Layout) -> Vec<PaneId> {
-        let mut out = vec![];
-        layout.panes(&mut out);
-        out
-    }
-    #[::core::prelude::v1::test]
-    fn nested_splits_close_only_target_and_collapse_empty_branches() {
-        let mut layout = Layout::Pane(1);
-        assert!(layout.split(1, 2, SplitAxis::Horizontal));
-        assert!(layout.split(2, 3, SplitAxis::Vertical));
-        assert_eq!(leaves(&layout), vec![1, 2, 3]);
-        let layout = layout.without(2).unwrap();
-        assert_eq!(
-            layout,
-            Layout::Split(
-                SplitAxis::Horizontal,
-                Box::new(Layout::Pane(1)),
-                Box::new(Layout::Pane(3))
-            )
-        );
-        let layout = layout.without(1).unwrap();
-        assert_eq!(layout, Layout::Pane(3));
-        assert!(layout.without(3).is_none());
-    }
     #[::core::prelude::v1::test]
     fn splitting_missing_pane_does_not_change_other_tabs() {
-        let mut a = Layout::Pane(1);
-        let b = Layout::Pane(7);
+        let mut a = Layout::single(1);
+        let b = Layout::single(7);
         assert!(!a.split(7, 8, SplitAxis::Vertical));
-        assert_eq!(a, Layout::Pane(1));
-        assert_eq!(b, Layout::Pane(7));
+        assert_eq!(a, Layout::single(1));
+        assert_eq!(b, Layout::single(7));
     }
     #[::core::prelude::v1::test]
-    fn split_viewports_use_cell_metrics_and_stay_inside_parser_limits() {
-        assert_eq!(viewport_size(800., 432.), (24, 100));
-        assert_eq!(viewport_size(400., 216.), (12, 50));
-        assert_eq!(viewport_size(0., 0.), (2, 2));
-        assert_eq!(viewport_size(f32::NAN, f32::INFINITY), (2, 2));
-        assert_eq!(viewport_size(99999., 99999.), (40, 500));
+    fn viewports_fill_the_pane_follow_the_font_and_stay_inside_core_limits() {
+        let metrics = Metrics::default();
+        assert_eq!((metrics.cell_w, metrics.cell_h), (8., 18.));
+        assert_eq!(viewport_size(800., 432., metrics), (24, 100));
+        assert_eq!(viewport_size(400., 216., metrics), (12, 50));
+        // A tall panel shows every row it has room for, not 40.
+        assert_eq!(viewport_size(800., 1080., metrics), (60, 100));
+        assert_eq!(viewport_size(0., 0., metrics), (2, 2));
+        assert_eq!(viewport_size(f32::NAN, f32::INFINITY, metrics), (2, 2));
+        assert_eq!(viewport_size(99999., 99999., metrics), (300, 500));
+        let large = Metrics::for_font(18.);
+        assert_eq!((large.cell_w, large.cell_h), (12., 27.));
+        assert_eq!(viewport_size(1200., 540., large), (20, 100));
+        assert_eq!(Metrics::for_font(f32::NAN), metrics);
+        assert_eq!(Metrics::for_font(100.).font, 23.);
+    }
+    #[::core::prelude::v1::test]
+    fn only_return_restarts_an_exited_shell_and_framing_never_waits_for_one() {
+        let key = |key: &str| TerminalInput::Key {
+            key: key.into(),
+            modifiers: KeyModifiers::default(),
+        };
+        assert!(submits(&key("enter")));
+        assert!(submits(&TerminalInput::Paste {
+            text: "make\r".into()
+        }));
+        assert!(!submits(&key("tab")));
+        assert!(!submits(&TerminalInput::Text { text: "q".into() }));
+        assert!(valid_input(&TerminalInput::Text {
+            text: "ls\r".into()
+        }));
+        assert!(!valid_input(&TerminalInput::Text {
+            text: "\u{1b}[2J".into()
+        }));
+        let light = TerminalAppearance {
+            dark: false,
+            foreground: 0x010203,
+            background: 0xfafafa,
+            font_size: 13.,
+        };
+        assert_eq!(
+            light.palette(),
+            Palette {
+                dark: false,
+                foreground: [1, 2, 3],
+                background: [0xfa; 3],
+            }
+        );
+        assert_eq!(light.cursor(), 0x26384e);
+        assert_eq!(TerminalAppearance::default().palette(), Palette::default());
     }
     fn event(key: &str, modifiers: Modifiers, chars: Option<&str>) -> KeyDownEvent {
         KeyDownEvent {
@@ -2621,6 +3322,7 @@ mod tests {
                 rx,
                 tx,
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(Mutex::new(Palette::default())),
             );
         });
         ready.recv_timeout(Duration::from_secs(3)).unwrap();

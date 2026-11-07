@@ -35,6 +35,19 @@ impl Coincide {
                 }
             }
 
+            TerminalContextEvent::HideRequested => {
+                let id = workspace.read(cx).thread_id().to_owned();
+                if self.terminal_open
+                    && self.terminal_visible_thread.as_deref() == Some(id.as_str())
+                {
+                    self.terminal(window, cx);
+                    // Focus in the hidden terminal returns to the composer.
+                    if !self.terminal_open && window.is_window_active() {
+                        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                    }
+                }
+            }
+
             TerminalContextEvent::Requested(request) => {
                 if self.voice.preview.is_some() {
                     self.cancel_composer_dictation(cx);

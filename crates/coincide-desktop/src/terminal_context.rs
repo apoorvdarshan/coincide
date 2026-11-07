@@ -30,6 +30,8 @@ impl SelectionRequest {
 #[derive(Clone)]
 pub(crate) enum TerminalContextEvent {
     LastClosed,
+    /// The header's Hide Terminal button.
+    HideRequested,
     Requested(SelectionRequest),
     Completed {
         request: SelectionRequest,

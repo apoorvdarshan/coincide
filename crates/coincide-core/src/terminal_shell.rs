@@ -22,6 +22,47 @@ pub struct Boundary {
     pub kind: &'static str,
     pub exit_status: Option<i32>,
 }
+/// A progress report printed with OSC 9;4 (ConEmu's sequence, which brew,
+/// cargo, winget and others use), shown on the terminal's tab.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub state: ProgressState,
+    /// 0 to 100, or None while indeterminate.
+    pub percent: Option<u8>,
+}
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgressState {
+    Normal,
+    Error,
+    Indeterminate,
+    Paused,
+}
+impl Progress {
+    /// Swift TerminalProgress.parse for an OSC 9 payload ("4;state;progress"):
+    /// Some(None) removes the bar; None when the payload is not a report.
+    fn parse(payload: &str) -> Option<Option<Self>> {
+        let mut fields = payload.split(';');
+        if fields.next()? != "4" {
+            return None;
+        }
+        let code = fields.next()?.parse::<i32>().ok()?;
+        let percent = fields
+            .next()
+            .and_then(|value| value.parse::<i64>().ok())
+            .map(|value| value.clamp(0, 100) as u8);
+        let progress = |state, percent| Some(Some(Self { state, percent }));
+        match code {
+            0 => Some(None),
+            1 => progress(ProgressState::Normal, Some(percent.unwrap_or(0))),
+            2 => progress(ProgressState::Error, percent),
+            3 => progress(ProgressState::Indeterminate, None),
+            4 => progress(ProgressState::Paused, percent),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellState {
@@ -33,6 +74,8 @@ pub struct ShellState {
     pub cwd: Option<ReportedDirectory>,
     pub sequence: u64,
     pub last_boundary: Option<Boundary>,
+    /// The newest progress report; the terminal clears it after a timeout.
+    pub progress: Option<Progress>,
 }
 impl Default for ShellState {
     fn default() -> Self {
@@ -45,6 +88,7 @@ impl Default for ShellState {
             cwd: None,
             sequence: 0,
             last_boundary: None,
+            progress: None,
         }
     }
 }
@@ -62,6 +106,11 @@ impl ShellState {
             return None;
         }
         let (code, payload) = raw.split_once(';')?;
+        if code == "9" {
+            // Progress is not a shell boundary: it never advances `sequence`.
+            self.progress = Progress::parse(payload)?;
+            return Some(Mark::Progress);
+        }
         let event = match code {
             "133" => {
                 let mut fields = payload.split(';');
@@ -175,6 +224,8 @@ pub enum Mark {
     PromptLines(usize),
     Command(Option<String>),
     Directory,
+    /// An OSC 9;4 progress report (or its removal).
+    Progress,
     Invalidate,
 }
 #[derive(Clone, Copy, Default)]
@@ -611,6 +662,53 @@ mod tests {
         assert_eq!(shell.state.prompt_lines, 50);
         shell.advance(&osc("1337;CoincidePrompt=-3"));
         assert_eq!(shell.state.prompt_lines, 1);
+    }
+    #[test]
+    fn osc_9_4_progress_reports_set_and_remove_the_bar_without_shell_boundaries() {
+        let mut shell = ShellObserver::default();
+        let report = |shell: &mut ShellObserver, value: &str| {
+            let marks = shell.events(&osc(value));
+            (marks.len(), shell.state.progress)
+        };
+        let progress = |state, percent| Some(Progress { state, percent });
+        assert_eq!(
+            report(&mut shell, "9;4;1;42"),
+            (1, progress(ProgressState::Normal, Some(42)))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;1"),
+            (1, progress(ProgressState::Normal, Some(0)))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;1;250"),
+            (1, progress(ProgressState::Normal, Some(100)))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;2;-5"),
+            (1, progress(ProgressState::Error, Some(0)))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;2"),
+            (1, progress(ProgressState::Error, None))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;3;70"),
+            (1, progress(ProgressState::Indeterminate, None))
+        );
+        assert_eq!(
+            report(&mut shell, "9;4;4;30"),
+            (1, progress(ProgressState::Paused, Some(30)))
+        );
+        // Other OSC 9 payloads (notifications) and unknown states change nothing.
+        for value in ["9;Build finished", "9;4;9;10", "9;4;x", "9;4"] {
+            assert_eq!(
+                report(&mut shell, value),
+                (0, progress(ProgressState::Paused, Some(30))),
+                "{value}"
+            );
+        }
+        assert_eq!(report(&mut shell, "9;4;0"), (1, None));
+        assert_eq!(shell.state.sequence, 0);
     }
     #[test]
     fn split_utf8_bel_and_st_markers_preserve_order_and_bounded_commands() {

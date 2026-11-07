@@ -15,6 +15,7 @@ mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
 mod voice_speech;
+mod voice_system;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
@@ -189,8 +190,6 @@ struct ImagePreview {
     rows: Vec<(String, usize)>,
 }
 
-const TERMINAL_PAGE_ROWS: usize = 40;
-
 fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     let Some(parts) = value.as_array().filter(|v| v.len() == 3) else {
         return rgb(fallback);
@@ -203,64 +202,28 @@ fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     }
 }
 
-/// Publish pages only as one coherent bounded viewport. New output between API
-/// calls invalidates the candidate frame; the last complete frame stays visible.
-fn read_terminal_frame(engine: &SharedEngine, id: &str, offset: usize) -> Result<Option<Value>> {
-    let mut frame = call(
-        engine,
-        "terminal.read",
-        json!({"terminalId":id,"styled":true,"rowOffset":offset,"rowLimit":10}),
-    )?;
+/// One coherent viewport, every visible row read under one Engine lock, so a
+/// tall pane never mixes revisions. Busy means the last frame stays visible.
+fn read_terminal_frame(
+    engine: &SharedEngine,
+    id: &str,
+    palette: &coincide_core::terminal::Palette,
+) -> Result<Option<Value>> {
+    let mut frame = try_state(engine)?.read_terminal_viewport(id, palette)?;
     let rows = frame["rows"].as_u64().unwrap_or(0) as usize;
     let cols = frame["cols"].as_u64().unwrap_or(0) as usize;
+    anyhow::ensure!(rows <= 300 && cols <= 500, "Invalid terminal viewport");
+    let grid = frame["grid"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Terminal page has no cells"))?;
     anyhow::ensure!(
-        rows <= 300 && cols <= 500 && offset <= rows,
-        "Invalid terminal viewport"
+        grid.len() == rows
+            && grid
+                .iter()
+                .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
+        "Invalid terminal page dimensions"
     );
-    let end = (offset + TERMINAL_PAGE_ROWS).min(rows);
-    let revision = frame["revision"].clone();
-    let mut grid = Vec::new();
-    let mut truncated = false;
-    let mut next = offset;
-    loop {
-        anyhow::ensure!(
-            frame["rowOffset"].as_u64() == Some(next as u64),
-            "Invalid terminal page offset"
-        );
-        let page = frame["grid"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Terminal page has no cells"))?;
-        anyhow::ensure!(
-            page.len() == 10.min(end - next)
-                && page
-                    .iter()
-                    .all(|row| row.as_array().is_some_and(|cells| cells.len() == cols)),
-            "Invalid terminal page dimensions"
-        );
-        grid.extend(page.iter().cloned());
-        truncated |= frame["truncated"] == true;
-        next += page.len();
-        if next >= end {
-            break;
-        }
-        let page = call(
-            engine,
-            "terminal.read",
-            json!({"terminalId":id,"styled":true,"rowOffset":next,"rowLimit":10.min(end-next)}),
-        )?;
-        if page["revision"] != revision
-            || page["rows"].as_u64() != Some(rows as u64)
-            || page["cols"].as_u64() != Some(cols as u64)
-        {
-            return Ok(None);
-        }
-        frame = page;
-    }
     frame.as_object_mut().unwrap().remove("lines");
-    frame["grid"] = json!(grid);
-    frame["rowOffset"] = json!(offset);
-    frame["rowCount"] = json!(end - offset);
-    frame["truncated"] = json!(truncated);
     Ok(Some(frame))
 }
 
@@ -646,7 +609,7 @@ impl Coincide {
             && !self.microphone_settings_active
         {
             use coincide_core::{dictation::transcription::Provider, voice::Engine as VoiceEngine};
-            match voice.engine {
+            match voice_speech::effective_engine(voice.engine) {
                 VoiceEngine::OpenAi | VoiceEngine::Groq => {
                     let provider = if voice.engine == VoiceEngine::OpenAi {
                         Provider::OpenAi
@@ -674,12 +637,12 @@ impl Coincide {
                 VoiceEngine::Whisper => {
                     configuration.map(microphone_settings::RecordingConfig::Local)
                 }
-                VoiceEngine::Apple => voice_speech::compiled().then(|| {
-                    microphone_settings::RecordingConfig::Apple(voice_speech::Configuration {
+                VoiceEngine::Apple => Some(microphone_settings::RecordingConfig::Apple(
+                    voice_speech::Configuration {
                         locale: voice.language.clone(),
                         maximum_seconds: 60,
-                    })
-                }),
+                    },
+                )),
             }
         } else {
             configuration.map(microphone_settings::RecordingConfig::Local)
