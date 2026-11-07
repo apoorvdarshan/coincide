@@ -2,6 +2,7 @@
 use super::*;
 use coincide_core::voice::{Edit, Engine, Mode, Settings};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::switch::Switch;
 
 /// What macOS does when 🌐 is pressed ("Press 🌐 key to"), read from its
 /// `AppleFnUsageType` preference: None when it does nothing (or off macOS),
@@ -123,17 +124,16 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                Button::new("voice-enabled")
-                    .label(if enabled {
-                        "Dictation: On"
-                    } else {
-                        "Dictation: Off"
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.change_voice_setting(Edit::Enabled(!enabled), window, cx)
+            .child(self.labeled_row(
+                "Dictation",
+                Some("Shows a microphone in the composer. Coincide asks for microphone access the first time you dictate.".into()),
+                Switch::new("voice-enabled")
+                    .accessibility_label("Dictation")
+                    .checked(enabled)
+                    .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                        this.change_voice_setting(Edit::Enabled(*value), window, cx)
                     })),
-            )
+            ))
             .child("Engine")
             .child(
                 self.voice_picker(
@@ -318,28 +318,26 @@ impl Coincide {
             ),
         );
         pane = pane
-            .child(
-                Button::new("voice-send-on-stop")
-                    .label(if send {
-                        "Send when stopped: On"
-                    } else {
-                        "Send when stopped: Off"
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.change_voice_setting(Edit::SendsWhenStopped(!send), window, cx)
+            .child(self.labeled_row(
+                "Send when I stop",
+                Some("Sends the message as soon as dictation ends. Off, the text waits in the composer for you to check.".into()),
+                Switch::new("voice-send-on-stop")
+                    .accessibility_label("Send when I stop")
+                    .checked(send)
+                    .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                        this.change_voice_setting(Edit::SendsWhenStopped(*value), window, cx)
                     })),
-            )
-            .child(
-                Button::new("voice-shortcut-enabled")
-                    .label(if shortcut {
-                        "Shortcut: On"
-                    } else {
-                        "Shortcut: Off"
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.change_voice_setting(Edit::ShortcutEnabled(!shortcut), window, cx)
+            ))
+            .child(self.labeled_row(
+                "Keyboard shortcut",
+                Some("Off by default. When it’s on, it works while a Coincide window is in front; Coincide watches no keys for dictation while it’s off.".into()),
+                Switch::new("voice-shortcut-enabled")
+                    .accessibility_label("Keyboard shortcut")
+                    .checked(shortcut)
+                    .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                        this.change_voice_setting(Edit::ShortcutEnabled(*value), window, cx)
                     })),
-            );
+            ));
         let modes = [
             (Mode::Both, "Hold or tap"),
             (Mode::Hold, "Hold"),
