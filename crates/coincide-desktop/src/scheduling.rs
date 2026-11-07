@@ -1502,62 +1502,6 @@ impl Coincide {
                         "No schedules match."
                     }),
             );
-            if !approved {
-                let id = id.clone();
-                let expected = schedule_guard_snapshot(schedule);
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("schedule-approve-{id}")))
-                        .label("Approve in Rust")
-                        .disabled(editing)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, "approve", &expected, scope_epoch, cx)
-                        })),
-                );
-            }
-            for (action, label) in [
-                (
-                    if schedule["isPaused"] == true {
-                        "schedules.resume"
-                    } else {
-                        "schedules.pause"
-                    },
-                    if schedule["isPaused"] == true {
-                        "Resume"
-                    } else {
-                        "Pause"
-                    },
-                ),
-                ("schedules.run-now", "Run now"),
-                ("schedules.delete", "Delete…"),
-            ] {
-                if action == "schedules.run-now" && !approved {
-                    continue;
-                }
-                let id = id.clone();
-                let expected = schedule_guard_snapshot(schedule);
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("schedule-{action}-{id}")))
-                        .label(label)
-                        .disabled(
-                            action == "schedules.run-now"
-                                && (editing || schedule["isPaused"] == true),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if action == "schedules.delete" {
-                                this.confirm_schedule_delete(
-                                    id.clone(),
-                                    expected.clone(),
-                                    scope_epoch,
-                                    window,
-                                    cx,
-                                );
-                            } else {
-                                this.schedule_action(&id, action, &expected, scope_epoch, cx)
-                            }
-                        })),
-                );
-            }
-            content = content.child(card.child(actions));
         }
         let local_zone = coincide_core::scheduling::local_time_zone();
         let now = chrono::Utc::now();

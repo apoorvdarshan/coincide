@@ -34,38 +34,6 @@ impl Coincide {
         self.sync_workspace_context(cx);
         cx.notify();
     }
-    /// Swift's ComposerViewController.mentionPullRequest: the link replaces
-    /// the selection at the caret of the open conversation's composer.
-    pub(super) fn mention_pull_request(
-        &mut self,
-        mention: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.selected.is_none() {
-            return;
-        }
-        let inserted = self.composer.update(cx, |input, cx| {
-            use gpui_kit::EntityInputHandler;
-            if !input.is_editable() || input.marked_text_range(window, cx).is_some() {
-                return false;
-            }
-            let text = input.value().to_string();
-            let range = input.selected_range();
-            let (Some(before), Some(through)) = (text.get(..range.start), text.get(..range.end))
-            else {
-                return false;
-            };
-            let insertion = github_review::mention_insertion(&text, range.start, mention);
-            let utf16 = before.encode_utf16().count()..through.encode_utf16().count();
-            input.replace_text_in_range(Some(utf16), &insertion, window, cx);
-            true
-        });
-        if inserted {
-            self.composer.read(cx).focus_handle(cx).focus(window, cx);
-        }
-        cx.notify();
-    }
     pub(super) fn workspace_inspector_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         // The outer column has a finite window height. A zero flex basis
         // keeps the workspace entity bounded and lets its own body scroll.

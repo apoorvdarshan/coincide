@@ -538,6 +538,11 @@ pub(super) fn menu_shortcut(settings: &Value, command: Command) -> Option<Shortc
 pub(super) fn menu_shortcut_label(settings: &Value, command: Command) -> Option<String> {
     menu_shortcut(settings, command).map(|shortcut| shortcut.display())
 }
+
+/// The command's shortcut as this platform writes it, for tooltips.
+pub(super) fn shortcut_hint(settings: &Value, command: Command) -> Option<String> {
+    shortcut_label(settings, command)
+}
 /// GPUI keystroke text for the command's native menu key equivalent.
 pub(super) fn menu_keystroke(settings: &Value, command: Command) -> Option<String> {
     menu_shortcut(settings, command).map(|shortcut| shortcut.keystroke())

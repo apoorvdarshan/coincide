@@ -396,6 +396,7 @@ pub(super) fn file_launch(
     args.push(file);
     launches.push((editor.program.clone(), args));
     launches
+}
 /// The platform file manager, for the branch toolbar's Reveal / Show item. Finder
 /// selects the folder in its parent, as Swift's activateFileViewerSelecting does.
 pub(super) fn file_manager() -> Option<Target> {

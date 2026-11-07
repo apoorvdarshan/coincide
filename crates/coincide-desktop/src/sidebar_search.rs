@@ -3,14 +3,14 @@
 //! threads whose messages hold the text once typing pauses for 250 ms. CLI
 //! threads.list keeps its original literal query.
 use super::*;
-use coincide_core::palette_search::{self, Query};
+use coincide_core::palette_search::{self, Field, Query};
 use std::collections::HashMap;
 
 const MESSAGE_PAUSE: Duration = Duration::from_millis(250);
 
 /// A project or bot name matches every word of the query at a word start.
 pub(super) fn terms_match(value: &str, query: &str) -> bool {
-    palette_search::score_terms(&Query::new(query), value, &[], false).is_some()
+    palette_search::score_terms(&Query::new(query), &Field::new(value), &[], false).is_some()
 }
 
 /// The message search behind the sidebar's results: it runs once typing
@@ -111,7 +111,7 @@ fn filter(
                 .get(&thread.project_id.to_lowercase())
                 .map(String::as_str)
                 .unwrap_or("");
-            if palette_search::score_terms(query, project, &[], false).is_some()
+            if palette_search::score_terms(query, &Field::new(project), &[], false).is_some()
                 || messages.contains_key(&thread.id)
             {
                 return true;
@@ -119,13 +119,12 @@ fn filter(
             let navigation = thread.navigation.as_ref();
             palette_search::score_thread(
                 query,
-                &thread.title,
-                navigation.and_then(|meta| meta.branch.as_deref()),
-                Some(project),
+                &Field::new(&thread.title),
+                &Field::new(navigation.and_then(|meta| meta.branch.as_deref()).unwrap_or("")),
+                &Field::new(project),
                 navigation.and_then(|meta| meta.updated_at).unwrap_or(0.),
-                false,
-                branch_prefix,
                 now,
+                false,
             )
             .is_some()
         })

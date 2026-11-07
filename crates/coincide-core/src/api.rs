@@ -17,6 +17,8 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "terminal_api.rs"]
+mod terminal_api;
 #[path = "appshots_api.rs"]
 mod appshots_api;
 #[path = "git_actions_api.rs"]

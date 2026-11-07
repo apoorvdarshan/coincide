@@ -105,7 +105,6 @@ mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
-mod palette_actions;
 mod palette_catalog;
 mod palette_search_owner;
 mod presentation;
@@ -584,21 +583,13 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|selected| selected["id"] == *thread)
             });
-        // The pull request panel finds its repository from the conversation's
-        // own folder, as Swift does, not from the local Git workspace.
-        let selection = self
-            .selected
-            .as_ref()
-            .map(|selected| github_review::Selection {
-                thread: text(selected, "id"),
-                project: text(selected, "projectID"),
-                root_hint: self.selected_root_hint(),
-            });
         let visible = self.chat_inspector_panel() == Some(chat_inspector::Panel::Workspace)
             && self.github_open
             && !self.github_threads_open;
-        self.github_panel
-            .update(cx, |panel, cx| panel.set_context(selection, visible, cx));
+        self.github_panel.update(cx, |panel, cx| {
+            panel.set_context(context.clone(), cx);
+            panel.set_visible(visible, cx);
+        });
         let threads_context = if self.chat_inspector_panel()
             == Some(chat_inspector::Panel::Workspace)
             && self.github_threads_open
@@ -1182,11 +1173,6 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
-            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| match event {
-                github_review::ReviewPanelEvent::Mention(mention) => {
-                    this.mention_pull_request(mention, window, cx)
-                }
-            }),
             cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
                 this.open_github_checkout(event, window, cx);
             }),
@@ -1223,7 +1209,6 @@ impl Coincide {
             }),
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
-                    this.github_panel.update(cx, |panel, cx| panel.app_activated(cx));
                     this.appshots.app_activated();
                 }
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
@@ -1485,7 +1470,7 @@ impl Coincide {
             .map(|project| text(project, "id"))
             .collect();
         let sidebar_resize = navigation_resize::State::load(&engine);
-        let keyboard = keyboard_settings::State::new(window, cx);
+        let keyboard = keyboard_settings::State::new(cx);
         let terminal_layout = terminal_layout::State::load(&engine);
         let thread_list_open = window_chrome::sidebar_open(&engine);
         let window_chrome = window_chrome::State::new(
@@ -2159,7 +2144,7 @@ impl Coincide {
             .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
-        let page = self.browser_page(&thread, webview, cx);
+        let page = self.browser_page(&thread, webview.clone(), cx);
         let passkey_banner = self.browser_passkey_banner(cx);
         Some(
             div()
