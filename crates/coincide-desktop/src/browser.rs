@@ -7,10 +7,13 @@ mod cookie_actor;
 mod cookie_import;
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
+#[path = "browser_dialogs.rs"]
+mod dialogs;
 #[path = "browser_native_history.rs"]
 mod native_history;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
+pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
 pub use shutdown::BrowserShutdownStatus;
 use shutdown::TrackedEvaluation;
 
@@ -24,7 +27,7 @@ use coincide_core::browser_protocol::{
     upload_probe_script, validate_url,
 };
 use coincide_core::credentials::{Failure, PageBinding};
-use gpui_kit::{App, AppContext, Entity, Window};
+use gpui_kit::{App, AppContext, Entity, Window, component::input::InputState};
 use gpui_webview::WebView;
 #[cfg(target_os = "macos")]
 use objc2::{MainThreadMarker, rc::Retained};
@@ -49,6 +52,7 @@ use uuid::Uuid;
 use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
+    dialogs: dialogs::Dialogs,
     id: String,
     view: Entity<WebView>,
     title: String,
@@ -93,6 +97,7 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    DialogChanged,
     DownloadsChanged,
     UploadProbe {
         id: String,
@@ -125,6 +130,13 @@ enum NativeEvent {
     },
 }
 
+struct PendingScript {
+    tab: String,
+    thread: String,
+    epoch: u64,
+    completed: Arc<AtomicBool>,
+}
+
 pub struct BrowserController {
     tabs: HashMap<String, Vec<Tab>>,
     active: HashMap<String, String>,
@@ -139,6 +151,8 @@ pub struct BrowserController {
     #[cfg(target_os = "macos")]
     private_stores: HashMap<String, Retained<WKWebsiteDataStore>>,
     downloads: Rc<RefCell<DownloadRegistry>>,
+    dialog_inputs: HashMap<String, Entity<InputState>>,
+    scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
@@ -204,6 +218,8 @@ impl BrowserController {
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(
                 profile_dir.join("downloads"),
             )?)),
+            dialog_inputs: HashMap::new(),
+            scripts: HashMap::new(),
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
@@ -224,6 +240,7 @@ impl BrowserController {
         for tabs in self.tabs.values() {
             for tab in tabs {
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
+                tab.dialogs.cancel();
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
@@ -348,6 +365,29 @@ impl BrowserController {
                 || private_document_action_allowed(&request.action),
             "Page inspection is paused during a saved-login request. Navigate or reload before inspecting this document again."
         );
+        if let BrowserAction::Dialog {
+            dialog_id,
+            accept,
+            text,
+        } = &request.action
+        {
+            let kind = self.tabs[thread][index]
+                .dialogs
+                .answer(dialog_id, *accept, text.clone())?;
+            return Ok(Some(json!({"answered":kind,"tab":target})));
+        }
+        if let Some(dialog) = self.tabs[thread][index].dialogs.snapshot() {
+            if matches!(&request.action, BrowserAction::Read { .. }) {
+                return Ok(Some(json!({"dialog":dialog,"tab":target})));
+            }
+            ensure!(
+                matches!(
+                    &request.action,
+                    BrowserAction::CloseTab | BrowserAction::SelectTab
+                ),
+                "Answer the page dialog before using this action"
+            );
+        }
         match &request.action {
             BrowserAction::Back | BrowserAction::Forward | BrowserAction::Reload => {
                 let action = native_history::Action::from_request(&request.action)
@@ -496,6 +536,10 @@ impl BrowserController {
                 Ok(Some(json!({"tab":target,"url":url,"loading":true})))
             }
             _ => {
+                ensure!(
+                    self.scripts.len() < 64 && !self.scripts.contains_key(&request.id),
+                    "Browser script capacity reached or request already active"
+                );
                 self.tabs[thread][index].ensure_scripts_ready()?;
                 let source = script_for_request(&request)?.context("Unsupported browser action")?;
                 let sender = self.sender.clone();
@@ -507,11 +551,16 @@ impl BrowserController {
                 let navigation = self.tabs[thread][index].navigation.clone();
                 let epoch = navigation.load(Ordering::Acquire);
                 let click = matches!(&request.action, BrowserAction::Click { .. });
+                let completed = Arc::new(AtomicBool::new(false));
+                let callback_completed = completed.clone();
                 self.tabs[thread][index]
                     .view
                     .read(cx)
                     .raw()
                     .evaluate_script_tracked(&source, &self.shutdown.callbacks, move |payload| {
+                        if callback_completed.swap(true, Ordering::AcqRel) {
+                            return;
+                        }
                         let result = public_script_reply(
                             &payload,
                             navigation.load(Ordering::Acquire) == epoch,
@@ -524,6 +573,15 @@ impl BrowserController {
                             result,
                         }));
                     })?;
+                self.scripts.insert(
+                    request.id.clone(),
+                    PendingScript {
+                        tab: target,
+                        thread: request.thread_id,
+                        epoch,
+                        completed,
+                    },
+                );
                 Ok(None)
             }
         }
@@ -720,6 +778,15 @@ impl BrowserController {
             }
         };
         let view = WebView::build(builder, window, cx)?;
+        let dialog_sender = self.sender.clone();
+        let dialogs = dialogs::Dialogs::install(
+            view.raw(),
+            navigation.clone(),
+            self.shutdown.callbacks.closed.clone(),
+            move || {
+                let _ = dialog_sender.try_send(NativeEvent::DialogChanged);
+            },
+        );
         #[cfg(target_os = "linux")]
         {
             use webkit2gtk::{LoadEvent, WebViewExt};
@@ -735,6 +802,7 @@ impl BrowserController {
         }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
+            dialogs,
             id: id.clone(),
             view,
             title: "New tab".into(),
@@ -763,7 +831,7 @@ impl BrowserController {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
-                NativeEvent::DownloadsChanged => {}
+                NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
                     if let Some(upload) = self.uploads.get_mut(&id) {
                         if upload.ticket != ticket {
@@ -859,9 +927,126 @@ impl BrowserController {
                 }
             }
         }
+        changed |= self.poll_dialogs(window, cx);
         changed |= self.poll_uploads(cx);
         changed |= self.poll_waits(cx);
         changed
+    }
+
+    fn poll_dialogs(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        for (id, script) in &self.scripts {
+            let current = self
+                .tabs
+                .get(&script.thread)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == script.tab))
+                .is_some_and(|tab| tab.navigation.load(Ordering::Acquire) == script.epoch);
+            if !current && !script.completed.swap(true, Ordering::AcqRel) {
+                self.replies.push_back(BrowserReply {
+                    id: id.clone(),
+                    thread_id: script.thread.clone(),
+                    result: json!({"error":"Document changed before the browser action completed"}),
+                });
+            }
+        }
+        self.scripts
+            .retain(|_, script| !script.completed.load(Ordering::Acquire));
+        let open = self
+            .tabs
+            .values()
+            .flatten()
+            .filter_map(|tab| {
+                tab.dialogs.snapshot().map(|dialog| {
+                    (
+                        tab.id.clone(),
+                        tab.navigation.load(Ordering::Acquire),
+                        tab.credential_console_suppressed.load(Ordering::Acquire),
+                        dialog,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        self.dialog_inputs
+            .retain(|id, _| open.iter().any(|(_, _, _, dialog)| &dialog.id == id));
+        for (tab, epoch, protected, dialog) in &open {
+            if dialog.kind == DialogKind::Prompt && !self.dialog_inputs.contains_key(&dialog.id) {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                input.update(cx, |input, cx| {
+                    input.set_value(dialog.default_text.clone().unwrap_or_default(), window, cx)
+                });
+                self.dialog_inputs.insert(dialog.id.clone(), input);
+            }
+            let result = public_dialog_reply(dialog, tab, *protected);
+            for (id, script) in &self.scripts {
+                if script.tab == *tab
+                    && script.epoch == *epoch
+                    && !script.completed.swap(true, Ordering::AcqRel)
+                {
+                    self.replies.push_back(BrowserReply {
+                        id: id.clone(),
+                        thread_id: script.thread.clone(),
+                        result: result.clone(),
+                    });
+                }
+            }
+            let waits = self
+                .waits
+                .iter()
+                .filter(|(_, wait)| wait.tab == *tab)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            for id in waits {
+                if let Some(wait) = self.waits.remove(&id) {
+                    self.finish_wait(wait, result.clone());
+                }
+            }
+            let uploads = self
+                .uploads
+                .iter()
+                .filter(|(_, upload)| upload.tab == *tab)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            for id in uploads {
+                if let Some(upload) = self.uploads.remove(&id) {
+                    upload.work.cancel();
+                    self.replies.push_back(BrowserReply {
+                        id,
+                        thread_id: upload.request.thread_id.clone(),
+                        result: result.clone(),
+                    });
+                }
+            }
+        }
+        !open.is_empty()
+    }
+    pub fn active_dialog(&self, thread: &str) -> Option<DialogSnapshot> {
+        let active = self.active.get(thread)?;
+        self.tabs
+            .get(thread)?
+            .iter()
+            .find(|tab| &tab.id == active)?
+            .dialogs
+            .snapshot()
+    }
+    pub fn dialog_input(&self, id: &str) -> Option<Entity<InputState>> {
+        self.dialog_inputs.get(id).cloned()
+    }
+    /// Explicit native user response. It does not relax the agent's saved-login
+    /// inspection suppression or disclose the prompt input through tab metadata.
+    pub fn answer_native_dialog(
+        &self,
+        thread: &str,
+        id: &str,
+        accept: bool,
+        text: Option<String>,
+    ) -> Result<()> {
+        let active = self.active.get(thread).context("Browser tab closed")?;
+        let tab = self
+            .tabs
+            .get(thread)
+            .and_then(|tabs| tabs.iter().find(|tab| &tab.id == active))
+            .context("Browser tab closed")?;
+        tab.dialogs.answer(id, accept, text)?;
+        Ok(())
     }
 
     fn poll_uploads(&mut self, cx: &App) -> bool {
@@ -1243,11 +1428,17 @@ impl BrowserController {
             "download-resume",
             "blob-downloads",
             "cross-origin-frame-actions",
-            "dialogs",
             "native-key-events",
             "screenshots",
             "passkeys",
         ];
+        if self
+            .tabs
+            .get(thread)
+            .is_none_or(|tabs| tabs.is_empty() || tabs.iter().any(|tab| !tab.dialogs.supported()))
+        {
+            unsupported.push("dialogs");
+        }
         if cfg!(windows) {
             unsupported.push("upload");
         }
@@ -1300,6 +1491,14 @@ fn public_tab_title(title: &str, protected: bool) -> &str {
         "Saved-login inspection paused"
     } else {
         title
+    }
+}
+
+fn public_dialog_reply(dialog: &DialogSnapshot, tab: &str, protected: bool) -> Value {
+    if protected {
+        json!({"error":"Page dialog opened while saved-login inspection is paused","tab":tab})
+    } else {
+        json!({"dialog":dialog,"tab":tab})
     }
 }
 
@@ -1433,5 +1632,24 @@ mod credential_inspection_tests {
         assert!(private_document_action_allowed(&BrowserAction::Navigate {
             url: "https://example.test".into()
         }));
+    }
+}
+
+#[cfg(test)]
+mod dialog_privacy_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn blocked_script_dialog_does_not_disclose_credential_echo_or_prompt_default() {
+        let dialog = DialogSnapshot {
+            id: Uuid::new_v4().to_string(),
+            kind: DialogKind::Prompt,
+            message: "synthetic-credential-echo".into(),
+            default_text: Some("synthetic-default-secret".into()),
+        };
+        let reply = public_dialog_reply(&dialog, "owned-tab", true).to_string();
+        assert!(!reply.contains(&dialog.message));
+        assert!(!reply.contains(dialog.default_text.as_ref().unwrap()));
+        assert!(!reply.contains(&dialog.id));
+        assert!(public_dialog_reply(&dialog, "owned-tab", false)["dialog"]["id"] == dialog.id);
     }
 }
