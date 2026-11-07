@@ -17,8 +17,9 @@ approach. Its portable logic is `crates/coincide-core/src/passkeys.rs`; the brow
 `tabs` reports this as `"passkeys": "bitwarden-sign-in" | "webview2-native" | "unavailable"`, with
 `passkey-registration` (macOS) or `passkeys` (Linux) in `unsupported`.
 
-Windows doesn't get the Bitwarden bridge yet: `CliCommand` can't run `bw` on Windows until it has Job Object ownership
-and cancellable pipe I/O (`credentials.rs`), so a Windows bridge would have no vault to ask. The fixture checks that
+Windows does not yet install a Bitwarden browser bridge. The separate Windows vault CLI
+transport now has Job ownership, cancellable writer I/O and retained-handle drain tests
+([scope and validation boundary](WINDOWS_VAULT_CLI.md)); it does not implement a WebAuthn bridge. The fixture checks that
 WebView2 gives pages the API; it doesn't run a Windows Hello ceremony. Linux would need the WebAuthn API itself;
 polyfilling `PublicKeyCredential` would change how every site's feature detection behaves, so Coincide doesn't, and
 the fixture checks that WebKitGTK still lacks it.
