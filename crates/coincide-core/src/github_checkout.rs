@@ -18,6 +18,8 @@ use std::{
 };
 #[path = "github_checkout_fs.rs"]
 mod filesystem;
+#[path = "github_checkout_process.rs"]
+pub mod process;
 #[cfg(test)]
 #[path = "github_checkout_tests.rs"]
 mod tests;
@@ -227,6 +229,12 @@ impl Plan {
             branch,
         })
     }
+    pub fn start_local(self, tools: Tools) -> Result<process::LocalRunner> {
+        process::LocalRunner::open(self, tools)
+    }
+    fn execution_directory(&self) -> PathBuf {
+        self.storage.path.join(format!("pr-fetch-{}", self.nonce))
+    }
     pub fn source(&self) -> &Source {
         &self.source
     }
@@ -272,16 +280,38 @@ impl Plan {
             "-c".into(),
             "protocol.allow=never".into(),
         ];
-        let directory = self.review().destination;
+        arguments.extend(
+            [
+                "-c",
+                "gc.auto=0",
+                "-c",
+                "gc.autoDetach=false",
+                "-c",
+                "maintenance.auto=false",
+                "-c",
+                "fetch.writeCommitGraph=false",
+                "-c",
+                "index.threads=1",
+                "-c",
+                "pack.threads=1",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+        let directory = self.execution_directory();
         arguments.extend([
             "-c".into(),
-            format!(
-                "core.hooksPath={}",
-                directory
-                    .join("disabled-hooks")
-                    .to_str()
-                    .context("Private Git path is not UTF-8")?
-            ),
+            if cfg!(unix) {
+                "core.hooksPath=/dev/null".into()
+            } else {
+                format!(
+                    "core.hooksPath={}",
+                    directory
+                        .join("disabled-hooks")
+                        .to_str()
+                        .context("Private Git path is not UTF-8")?
+                )
+            },
         ]);
         let environment = vec![
             ("HOME".into(), tools.home().as_os_str().to_owned()),
@@ -291,27 +321,30 @@ impl Plan {
             ),
             ("GH_HOST".into(), "github.com".into()),
             ("GH_PROMPT_DISABLED".into(), "1".into()),
+            ("GH_NO_UPDATE_NOTIFIER".into(), "1".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
             (
                 "GIT_CONFIG_SYSTEM".into(),
-                directory.join("empty-config").into_os_string(),
+                if cfg!(unix) {
+                    "/dev/null".into()
+                } else {
+                    directory.join("empty-config").into_os_string()
+                },
             ),
             (
                 "GIT_CONFIG_GLOBAL".into(),
-                directory.join("empty-config").into_os_string(),
+                if cfg!(unix) {
+                    "/dev/null".into()
+                } else {
+                    directory.join("empty-config").into_os_string()
+                },
             ),
             ("GIT_TERMINAL_PROMPT".into(), "0".into()),
             ("GIT_NO_LAZY_FETCH".into(), "1".into()),
             ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
         ];
         if operation != Operation::Initialize {
-            arguments.push(format!(
-                "--git-dir={}",
-                directory
-                    .join("objects.git")
-                    .to_str()
-                    .context("Private Git path is not UTF-8")?
-            ));
+            arguments.push("--git-dir=objects.git".into());
         }
         let network = operation == Operation::FetchPull;
         let args: Vec<String> = match operation {

@@ -13,8 +13,29 @@ impl PinnedFile {
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(path.is_absolute(), "Native executable must be absolute");
         let path = path.canonicalize()?;
+        #[cfg(not(windows))]
         let file = native_file::open_regular(&path, false)?;
+        #[cfg(windows)]
+        let file = {
+            use std::os::windows::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+                .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+                .open(&path)?
+        };
         let metadata = file.metadata()?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(
+                metadata.is_file()
+                    && metadata.file_attributes()
+                        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+                        == 0,
+                "Native executable is not a regular file"
+            );
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -171,6 +192,37 @@ impl Directory {
             anyhow::bail!("Staging capacity inspection unavailable")
         }
     }
+    pub fn child_cwd(&self) -> Result<File> {
+        self.check()?;
+        Ok(self.file.try_clone()?)
+    }
+    pub fn hold_read_only(&self, name: &str) -> Result<File> {
+        self.check()?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let path = self.path.join(name);
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+                .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+                .open(&path)?;
+            use std::os::windows::fs::MetadataExt;
+            ensure!(
+                file.metadata()?.is_file()
+                    && file.metadata()?.file_attributes()
+                        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+                        == 0
+                    && native_file::file_identity(&file)? == native_file::path_identity(&path)?,
+                "Private Git configuration changed"
+            );
+            Ok(file)
+        }
+        #[cfg(not(windows))]
+        {
+            self.open_child(std::ffi::OsStr::new(name))
+        }
+    }
     pub fn create_directory(&self, name: &str) -> Result<Self> {
         ensure!(
             !name.is_empty() && !name.contains(['/', '\\', '\0']) && !matches!(name, "." | ".."),
@@ -252,4 +304,166 @@ pub(super) fn set_executable(file: &File, executable: bool) -> Result<()> {
         let _ = (file, executable);
     }
     Ok(())
+}
+
+impl Directory {
+    /// Count actual private files during the owned process. Aggregate disk cap
+    /// is sampled (soft between polls); individual Unix files also have RLIMIT.
+    /// Never follows symlinks, sockets, devices or a changed directory.
+    pub fn inventory(&self, limit: usize) -> Result<(u64, u64)> {
+        fn scan(
+            directory: &Directory,
+            count: &mut usize,
+            limit: usize,
+            total: &mut u64,
+            largest: &mut u64,
+            depth: usize,
+        ) -> Result<()> {
+            ensure!(depth <= 32, "Private Git directory nesting exceeds bound");
+            directory.check()?;
+            for name in directory.names(limit.saturating_sub(*count))? {
+                *count += 1;
+                ensure!(*count <= limit, "Private Git file count exceeds bound");
+                let file = match directory.open_child(&name) {
+                    Ok(file) => file,
+                    // Git atomically renames its own temporary pack/index files.
+                    // Disappeared entries are sampled again on the next poll;
+                    // aggregate size is a soft cap between polls, not a quota.
+                    Err(error)
+                        if error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+                    {
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let metadata = file.metadata()?;
+                if metadata.is_dir() {
+                    let child = Directory {
+                        path: directory.path.join(&name),
+                        identity: native_file::file_identity(&file)?,
+                        file,
+                    };
+                    scan(&child, count, limit, total, largest, depth + 1)?;
+                } else {
+                    ensure!(metadata.is_file(), "Private Git contains a special file");
+                    *total = total
+                        .checked_add(metadata.len())
+                        .context("Private Git byte count overflow")?;
+                    *largest = (*largest).max(metadata.len());
+                }
+            }
+            directory.check()?;
+            Ok(())
+        }
+        let (mut count, mut total, mut largest) = (0, 0, 0);
+        scan(self, &mut count, limit, &mut total, &mut largest, 0)?;
+        Ok((total, largest))
+    }
+    fn open_child(&self, name: &std::ffi::OsStr) -> Result<File> {
+        self.check()?;
+        #[cfg(unix)]
+        {
+            use std::os::{
+                fd::{AsRawFd, FromRawFd},
+                unix::ffi::OsStrExt,
+            };
+            let name = std::ffi::CString::new(name.as_bytes())?;
+            let fd = unsafe {
+                libc::openat(
+                    self.file.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            Ok(unsafe { File::from_raw_fd(fd) })
+        }
+        #[cfg(windows)]
+        {
+            let path = self.path.join(name);
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                Ok(Directory::pin(&path)?.file)
+            } else {
+                native_file::open_regular(&path, false)
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = name;
+            anyhow::bail!("Private Git monitoring unavailable")
+        }
+    }
+    fn names(&self, limit: usize) -> Result<Vec<std::ffi::OsString>> {
+        self.check()?;
+        let mut result = Vec::new();
+        #[cfg(unix)]
+        {
+            use std::os::{fd::AsRawFd, unix::ffi::OsStringExt};
+            let dot = c".";
+            let fd = unsafe {
+                libc::openat(
+                    self.file.as_raw_fd(),
+                    dot.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                )
+            };
+            ensure!(fd >= 0, "Private Git directory cannot be enumerated");
+            let stream = unsafe { libc::fdopendir(fd) };
+            if stream.is_null() {
+                unsafe { libc::close(fd) };
+                anyhow::bail!("Private Git directory cannot be enumerated");
+            }
+            struct Entries(*mut libc::DIR);
+            impl Drop for Entries {
+                fn drop(&mut self) {
+                    unsafe { libc::closedir(self.0) };
+                }
+            }
+            let entries = Entries(stream);
+            loop {
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    *libc::__error() = 0;
+                }
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    *libc::__errno_location() = 0;
+                }
+                let next = unsafe { libc::readdir(entries.0) };
+                if next.is_null() {
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    ensure!(
+                        std::io::Error::last_os_error().raw_os_error() == Some(0),
+                        "Private Git directory enumeration failed"
+                    );
+                    break;
+                }
+                let name = unsafe { std::ffi::CStr::from_ptr((*next).d_name.as_ptr()) }.to_bytes();
+                if matches!(name, b"." | b"..") {
+                    continue;
+                }
+                ensure!(result.len() < limit, "Private Git file count exceeds bound");
+                result.push(std::ffi::OsString::from_vec(name.to_vec()));
+            }
+        }
+        #[cfg(windows)]
+        {
+            for entry in fs::read_dir(&self.path)? {
+                ensure!(result.len() < limit, "Private Git file count exceeds bound");
+                result.push(entry?.file_name());
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = limit;
+            anyhow::bail!("Private Git monitoring unavailable");
+        }
+        self.check()?;
+        Ok(result)
+    }
 }

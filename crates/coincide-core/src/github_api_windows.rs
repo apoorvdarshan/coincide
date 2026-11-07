@@ -43,13 +43,13 @@ fn owned(raw: HANDLE) -> Result<OwnedHandle> {
     );
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
-struct Process {
-    child: Child,
+pub(crate) struct Process {
+    pub(crate) child: Child,
     job: OwnedHandle,
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
 }
 impl Process {
-    fn spawn(command: &mut Command) -> Result<Self> {
+    pub(crate) fn spawn(command: &mut Command) -> Result<Self> {
         let job = owned(unsafe { CreateJobObjectW(null(), null()) })?;
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -104,7 +104,7 @@ impl Process {
         }
         bail!("GitHub child primary thread unavailable")
     }
-    fn exited(&self) -> Result<Option<bool>> {
+    pub(crate) fn exited(&self) -> Result<Option<bool>> {
         if unsafe { WaitForSingleObject(self.child.as_raw_handle(), 0) } != WAIT_OBJECT_0 {
             return Ok(None);
         }
@@ -125,6 +125,29 @@ impl Process {
                 .context("GitHub request input failed")?;
         }
         Ok(())
+    }
+    pub(crate) fn request_stop(&self) -> Result<()> {
+        ensure!(
+            unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
+            "Owned GitHub Job stop unconfirmed"
+        );
+        Ok(())
+    }
+    pub(crate) fn stopped(&self) -> Result<bool> {
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        ensure!(
+            unsafe {
+                QueryInformationJobObject(
+                    self.job.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of_val(&accounting) as u32,
+                    std::ptr::null_mut(),
+                )
+            } != 0,
+            "Owned GitHub Job status unconfirmed"
+        );
+        Ok(accounting.ActiveProcesses == 0)
     }
     fn drain(&mut self) -> Result<()> {
         ensure!(

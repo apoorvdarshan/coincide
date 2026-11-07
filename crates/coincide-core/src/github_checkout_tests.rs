@@ -6,7 +6,7 @@ fn execute(engine: &mut Engine, method: &str, params: Value) -> Value {
     assert!(value.get("error").is_none(), "{}", value);
     value["result"].clone()
 }
-fn fixture() -> (tempfile::TempDir, Engine, PathBuf, String) {
+pub(super) fn fixture() -> (tempfile::TempDir, Engine, PathBuf, String) {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("source");
     fs::create_dir(&source).unwrap();
@@ -25,7 +25,7 @@ fn fixture() -> (tempfile::TempDir, Engine, PathBuf, String) {
         thread["id"].as_str().unwrap().into(),
     )
 }
-fn source(engine: &mut Engine, root: &Path, id: &str) -> Source {
+pub(super) fn source(engine: &mut Engine, root: &Path, id: &str) -> Source {
     engine
         .native_github_checkout_source(id, root, "fixture/repo", 7, &"a".repeat(40))
         .unwrap()
@@ -148,8 +148,19 @@ fn checkout_fixed_git_plan_never_accepts_remote_flags_or_shallow_import() {
         plan.invocation(&tools, Operation::Blob("HEAD:private".into()))
             .is_err()
     );
-    fs::write(&git, b"changed executable").unwrap();
-    assert!(tools.validate().is_err());
+    #[cfg(unix)]
+    {
+        fs::write(&git, b"changed executable").unwrap();
+        assert!(tools.validate().is_err());
+    }
+    #[cfg(windows)]
+    {
+        assert!(
+            fs::write(&git, b"changed executable").is_err(),
+            "Pinned executable must deny write/replace"
+        );
+        tools.validate().unwrap();
+    }
 }
 #[test]
 fn checkout_portable_tree_refuses_escape_alias_links_collisions_and_limits() {
@@ -277,9 +288,20 @@ fn checkout_cancel_stale_common_directory_and_no_follow_are_not_admitted() {
     );
     assert_eq!(reader.calls, 0);
     assert!(!plan.review().destination.exists());
-    fs::rename(root.join(".git"), root.join("old-git")).unwrap();
-    fs::create_dir(root.join(".git")).unwrap();
-    assert!(plan.check().is_err());
+    #[cfg(unix)]
+    {
+        fs::rename(root.join(".git"), root.join("old-git")).unwrap();
+        fs::create_dir(root.join(".git")).unwrap();
+        assert!(plan.check().is_err());
+    }
+    #[cfg(windows)]
+    {
+        assert!(
+            fs::rename(root.join(".git"), root.join("old-git")).is_err(),
+            "Pinned native directory must deny replacement"
+        );
+        plan.check().unwrap();
+    }
     #[cfg(unix)]
     {
         let private = filesystem::Directory::pin(directory.path()).unwrap();
