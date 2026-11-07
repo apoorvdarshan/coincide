@@ -60,6 +60,8 @@ mod bot_starters;
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
 mod browser_history_api;
+#[path = "browser_settings_api.rs"]
+mod browser_settings_api;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
 #[cfg(test)]
@@ -262,6 +264,8 @@ pub struct Engine {
     bookmark_owner: Uuid,
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
+    /// Operations that wait longer than the usual 30 seconds (ask-user).
+    browser_timeouts: HashMap<String, Duration>,
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
     git_actions: git_actions_api::State,
     workspace_pending: HashMap<String, (String, Instant)>,
@@ -353,6 +357,7 @@ impl Engine {
             bookmark_owner: Uuid::new_v4(),
             browser_requests: VecDeque::new(),
             browser_pending: HashMap::new(),
+            browser_timeouts: HashMap::new(),
             browser_results: HashMap::new(),
             git_actions: git_actions_api::State::default(),
             workspace_pending: HashMap::new(),
@@ -557,6 +562,7 @@ impl Engine {
                 Ok(json!({"ready":false}))
             }
             "browser.bookmarks.list" | "browser.bookmarks.import" | "browser.bookmarks.open" => self.browser_bookmarks_command(method,p),
+            "browser.settings.read" | "browser.settings.patch" => self.browser_settings_command(method,p),
             "browser.request"=>{
                 ensure!(p.is_object(), "Browser request parameters must be an object");
                 ensure!(self.ui_available,"Browser requires the desktop window");
@@ -564,9 +570,12 @@ impl Engine {
                 crate::browser_protocol::validate_screenshot_parameters(p)?;
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
-                let request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
+                let mut request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
                 request.validate()?;self.store.thread(&request.thread_id)?;
+                self.resolve_browser_search(&mut request)?;
                 let id=request.id.clone();
+                let timeout=request.action.result_timeout();
+                if timeout>Duration::from_secs(30){self.browser_timeouts.insert(id.clone(),timeout);}
                 self.browser_pending.insert(id.clone(),(request.thread_id.clone(),Instant::now()));
                 self.browser_requests.push_back(request);self.revision+=1;
                 Ok(json!({"operationId":id}))
@@ -578,7 +587,7 @@ impl Engine {
                 if let Some(reply)=self.browser_results.remove(id){
                     self.browser_pending.remove(id);return Ok(json!({"ready":true,"result":reply.result}));
                 }
-                if started.elapsed()>Duration::from_secs(30){
+                if started.elapsed()>self.browser_timeouts.get(id).copied().unwrap_or(Duration::from_secs(30)){
                     self.browser_pending.remove(id);
                     self.browser_requests.retain(|r|r.id!=id);
                     return Ok(json!({"ready":true,"result":{"error":"Browser operation timed out; read current page state before retrying"}}));
@@ -664,7 +673,7 @@ impl Engine {
             "app.capabilities" => {
                 let mut methods = vec![
                 "app.status", "app.quit", "app.activate", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
-                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "browser.settings.read", "browser.settings.patch", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",
                 "threads.list", "threads.resolve_id",
@@ -1934,8 +1943,13 @@ impl Engine {
         self.poll_turn_checkpoints();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
-        self.browser_pending
-            .retain(|_, (_, started)| started.elapsed() < Duration::from_secs(300));
+        let timeouts = &self.browser_timeouts;
+        self.browser_pending.retain(|id, (_, started)| {
+            started.elapsed()
+                < Duration::from_secs(300) + timeouts.get(id).copied().unwrap_or_default()
+        });
+        self.browser_timeouts
+            .retain(|id, _| self.browser_pending.contains_key(id));
         self.browser_requests
             .retain(|r| self.browser_pending.contains_key(&r.id));
         self.browser_results

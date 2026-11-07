@@ -32,8 +32,12 @@ mod assets;
 mod bot_avatar;
 mod bot_settings;
 mod browser;
+mod browser_address_bar;
 mod browser_dialog_ui;
 mod browser_settings;
+mod browser_user_turn_ui;
+#[cfg(any(target_os = "windows", test))]
+mod browser_viewport_geometry;
 mod chat_inspector;
 mod chat_layout;
 mod chat_rewind;
@@ -549,6 +553,9 @@ struct Coincide {
     browser: Option<BrowserController>,
     browser_address: Entity<InputState>,
     browser_address_page: Option<(String, String)>,
+    browser_completion: browser_address_bar::Completion,
+    /// The page area's bounds from the last layout, for fixed test viewports.
+    browser_page_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     browser_panels: std::collections::HashSet<String>,
     browser_ui_operations: std::collections::HashMap<String, String>,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
@@ -1112,7 +1119,7 @@ impl Coincide {
         let project_path =
             cx.new(|cx| InputState::new(window, cx).placeholder("Existing project folder path"));
         let browser_address =
-            cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(browser_address_bar::PLACEHOLDER));
         let (browser, browser_error) = match control::download_directory()
             .and_then(|downloads| BrowserController::new(profile_dir, downloads))
         {
@@ -1330,9 +1337,16 @@ impl Coincide {
                     this.send(window, cx);
                 }
             }),
-            cx.subscribe(&browser_address, |this, _, event, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.browser_go(cx);
+            cx.subscribe_in(&browser_address, window, |this, input, event, window, cx| {
+                match event {
+                    InputEvent::PressEnter { .. } => this.browser_go(window, cx),
+                    InputEvent::Focus => this.begin_browser_address(cx),
+                    InputEvent::Change => {
+                        let thread = this.selected.as_ref().map(|thread| text(thread, "id"));
+                        this.browser_completion
+                            .changed(input, thread.as_deref(), window, cx);
+                    }
+                    _ => {}
                 }
             }),
             cx.subscribe(&search, |this, search, event, cx| {
@@ -1623,6 +1637,8 @@ impl Coincide {
             browser,
             browser_address,
             browser_address_page: None,
+            browser_completion: Default::default(),
+            browser_page_bounds: Default::default(),
             browser_panels: Default::default(),
             browser_ui_operations: Default::default(),
             browser_replies: Vec::new(),
@@ -1806,9 +1822,52 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn browser_go(&mut self, cx: &mut Context<Self>) {
-        let url = self.browser_address.read(cx).value().to_string();
-        self.browser_action(BrowserAction::Navigate { url }, None, cx);
+    /// What the user typed: an address, a local file, or a search with their
+    /// engine, as Swift's `PreviewSession.navigate(_:)`.
+    fn browser_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.browser_address.read(cx).value().to_string();
+        let engine = self
+            .engine
+            .try_lock()
+            .map(|engine| engine.browser_search_engine())
+            .unwrap_or_default();
+        match browser_address_bar::destination(&typed, engine) {
+            Some(
+                coincide_core::browser_address::Destination::Web(url)
+                | coincide_core::browser_address::Destination::Search(url),
+            ) => self.browser_action(BrowserAction::Navigate { url: url.into() }, None, cx),
+            Some(coincide_core::browser_address::Destination::File(file)) => {
+                let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+                    return;
+                };
+                if let Some(browser) = &mut self.browser
+                    && let Err(error) = browser.open_local_file(&thread, &file, window, cx)
+                {
+                    self.status = format!("Browser: {error}");
+                }
+                cx.notify();
+            }
+            None => {
+                self.status = format!("Browser: {}", browser_address_bar::INVALID_ADDRESS);
+                cx.notify();
+            }
+        }
+    }
+    /// Loads completion for the selected thread's profile as editing begins.
+    fn begin_browser_address(&mut self, cx: &mut Context<Self>) {
+        let value = self.browser_address.read(cx).value().to_string();
+        self.browser_completion.begin_editing(&value);
+        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
+            return;
+        };
+        let profile = self.browser.as_ref().and_then(|browser| {
+            match browser.profile_snapshot(&thread).selected {
+                browser_settings::ProfileChoice::Persistent(id) => Some(id),
+                browser_settings::ProfileChoice::Private => None,
+            }
+        });
+        self.browser_completion
+            .load(&self.engine, &thread, profile, cx);
     }
     fn toggle_browser(&mut self, cx: &mut Context<Self>) {
         if self.global_schedules_route() {
@@ -1844,7 +1903,9 @@ impl Coincide {
         // for a background thread cannot replace the foreground chat route.
         for request in &requests {
             match &request.action {
-                BrowserAction::Show => {
+                // An agent handing the user a step opens the browser, as
+                // Swift's `reveal` does for ask-user.
+                BrowserAction::Show | BrowserAction::AskUser { .. } => {
                     if selected_id.as_deref() == Some(request.thread_id.as_str())
                         && self.chat_visible()
                     {
@@ -1871,8 +1932,10 @@ impl Coincide {
             }
         }
         if requests.iter().any(|request| {
-            matches!(&request.action, BrowserAction::Show)
-                && selected_id.as_deref() == Some(request.thread_id.as_str())
+            matches!(
+                &request.action,
+                BrowserAction::Show | BrowserAction::AskUser { .. }
+            ) && selected_id.as_deref() == Some(request.thread_id.as_str())
         }) && self.chat_visible()
         {
             self.ensure_inspector_space(window);
@@ -1886,6 +1949,7 @@ impl Coincide {
             browser.execute(request, window, cx);
         }
         changed |= browser.poll(window, cx);
+        self.browser_completion.poll();
         if close_visible_last_tab
             && selected_id
                 .as_deref()
@@ -2003,6 +2067,8 @@ impl Coincide {
             .collect::<Vec<_>>();
         let active_id = active.as_ref().map(|tab| text(tab, "id"));
         let dialog_banner = self.browser_dialog_banner(cx);
+        let user_turn_banner = self.browser_user_turn_banner(cx);
+        let page = self.browser_page(&thread, webview, cx);
         Some(
             div()
                 .flex()
@@ -2084,11 +2150,9 @@ impl Coincide {
                                 .min_w_0()
                                 .child(Input::new(&self.browser_address)),
                         )
-                        .child(
-                            Button::new("browser-go")
-                                .label("Go")
-                                .on_click(cx.listener(|this, _, _, cx| this.browser_go(cx))),
-                        ),
+                        .child(Button::new("browser-go").label("Go").on_click(
+                            cx.listener(|this, _, window, cx| this.browser_go(window, cx)),
+                        )),
                 )
                 .child(
                     div()
@@ -2100,12 +2164,8 @@ impl Coincide {
                         .child(url),
                 )
                 .children(dialog_banner)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .when_some(webview, |pane, view| pane.child(view)),
-                )
+                .children(user_turn_banner)
+                .child(page)
                 .into_any_element(),
         )
     }

@@ -34,6 +34,8 @@ const MAX_DOCUMENT: u64 = 1_048_576;
 pub(crate) mod cookie_flow;
 #[path = "browser_history_flow.rs"]
 pub(crate) mod history_flow;
+#[path = "browser_search_settings.rs"]
+mod search_settings;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CookieImportMarker {
     Incomplete,
@@ -697,6 +699,8 @@ pub struct BrowserSettings {
     imports: Receiver<LibraryCompletion>,
     import_sender: SyncSender<LibraryCompletion>,
     status: String,
+    /// The address bar's engine; None until read from the trusted engine.
+    search_engine: Option<coincide_core::browser_address::SearchEngine>,
 }
 impl BrowserSettings {
     pub fn request_shutdown(&mut self) {
@@ -771,6 +775,7 @@ impl BrowserSettings {
                 imports,
                 import_sender,
                 status: "Choose a thread to view its browser profile.".into(),
+                search_engine: None,
             },
             requests,
         )
@@ -789,6 +794,7 @@ impl BrowserSettings {
             return;
         }
         self.engine = Some(engine);
+        self.search_engine = None;
         self.history.set_binding(None);
         self.generation = self.generation.wrapping_add(1);
         self.epoch.store(self.generation, Ordering::Release);
@@ -1136,11 +1142,13 @@ impl Render for BrowserSettings {
             || self.profile_pending
             || self.history.busy()
             || self.workers.closed();
+        let search_engine = self.search_engine_row(cx);
         let mut panel = div()
             .flex()
             .flex_col()
             .gap_2()
             .p_4()
+            .child(search_engine)
             .child("Browser profiles");
         if let Some(snapshot) = &self.snapshot {
             panel=panel.child(SharedString::from(format!("{} tab(s) in selected thread. Profile switching requires closing only this thread's tabs.",snapshot.open_tabs)));
