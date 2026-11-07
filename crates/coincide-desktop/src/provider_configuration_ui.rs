@@ -716,7 +716,7 @@ impl Panel {
             })
             .collect()
     }
-    pub fn render_part(&self, part: Part, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_part(&mut self, part: Part, cx: &mut Context<Self>) -> AnyElement {
         if matches!(part, Part::Accounts) {
             return self.render_accounts(cx);
         }

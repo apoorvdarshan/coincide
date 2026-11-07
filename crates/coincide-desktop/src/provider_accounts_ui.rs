@@ -79,6 +79,12 @@ pub(super) struct Accounts {
 }
 pub(super) enum Request {
     Load,
+    CodexAuth {
+        id: String,
+        revision: String,
+        login: bool,
+        legacy: bool,
+    },
     CreateLegacy {
         name: String,
     },
@@ -248,6 +254,27 @@ pub(super) fn execute(
     anyhow::ensure!(allowed(), "Account settings are closing");
     match request {
         Request::Load => done(engine, provider, "", None),
+        Request::CodexAuth {
+            id,
+            revision,
+            login,
+            legacy,
+        } => {
+            anyhow::ensure!(
+                provider == "codex",
+                "Codex authentication choice belongs to another provider"
+            );
+            let plan = try_state(engine)?
+                .prepare_native_codex_auth_change(&id, &revision, login, legacy)?;
+            anyhow::ensure!(allowed(), "Account settings are closing");
+            try_state(engine)?.apply_native_codex_auth_change(plan)?;
+            done(
+                engine,
+                provider,
+                "Authentication method changed. Messages and drafts were kept. Check or sign in to this account before sending.",
+                None,
+            )
+        }
         Request::CreateLegacy { name } => {
             anyhow::ensure!(
                 provider == "codex",
@@ -820,9 +847,10 @@ impl Panel {
             cx,
         );
     }
-    pub(super) fn render_accounts(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_accounts(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let provider = self.active.clone();
-        let busy = self.pending.is_some();
+        let work_busy = self.pending.is_some() || !self.workers.can_start();
+        let busy = work_busy || self.accounts.has_review();
         let Some(editor) = self.accounts.editors.get(&provider) else {
             return div().child("Loading accounts…").into_any_element();
         };
@@ -849,8 +877,8 @@ impl Panel {
             pane=pane.child(div().p_3().border_1().border_color(rgb(0x914a4a)).rounded_md().flex().flex_col().gap_2()
                 .child(format!("Remove “{}”?",review.plan.name()))
                 .child(format!("Its saved key and private sign-in are removed. {} native conversations continue with this provider’s default account. Unsaved edits for this account are discarded.",review.plan.conversation_count()))
-                .child(div().flex().gap_2().child(Button::new("provider-account-remove-confirm").label("Remove Account").disabled(busy).on_click(cx.listener(move|this,_,_,cx| {if let Some(review)=this.accounts.review.take(){this.account_request(&confirm_provider,Request::Remove{plan:review.plan,custody:review._custody},cx);}})))
-                    .child(Button::new("provider-account-remove-cancel").label("Cancel").disabled(busy).on_click(cx.listener(|this,_,_,cx| {this.accounts.review=None;cx.notify();})))));
+                .child(div().flex().gap_2().child(Button::new("provider-account-remove-confirm").label("Remove Account").disabled(work_busy).on_click(cx.listener(move|this,_,_,cx| {if let Some(review)=this.accounts.review.take(){this.account_request(&confirm_provider,Request::Remove{plan:review.plan,custody:review._custody},cx);}})))
+                    .child(Button::new("provider-account-remove-cancel").label("Cancel").disabled(work_busy).on_click(cx.listener(|this,_,_,cx| {this.accounts.review=None;cx.notify();})))));
         }
         for row in &editor.rows {
             let Some(draft) = editor.drafts.get(&row.id) else {
@@ -910,6 +938,9 @@ impl Panel {
                                 })),
                         ),
                 );
+            if provider == "codex" {
+                card = card.child(self.codex_auth_controls(row, busy, cx));
+            }
             if matches!(provider.as_str(), "claude" | "grok" | "opencode") {
                 card =
                     card.child(
@@ -1229,6 +1260,9 @@ impl Panel {
 mod admin_ui;
 use admin_ui::admin_eligible;
 
+#[path = "provider_codex_auth_ui.rs"]
+mod codex_auth_ui;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1244,6 +1278,79 @@ mod tests {
             Outcome::Snapshot { snapshot, .. } => snapshot.rows,
             _ => panic!("Expected account snapshot"),
         }
+    }
+    #[::core::prelude::v1::test]
+    fn codex_method_picker_keeps_row_identity_and_does_not_save_or_enroll_a_key() {
+        let (_root, engine) = fixture();
+        let legacy = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::CreateLegacy {
+                    name: "Synthetic convertible".into(),
+                },
+                &|| true,
+            )
+            .unwrap(),
+        )
+        .remove(0);
+        let converted = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::CodexAuth {
+                    id: legacy.id.clone(),
+                    revision: legacy.revision.clone(),
+                    login: false,
+                    legacy: true,
+                },
+                &|| true,
+            )
+            .unwrap(),
+        )
+        .remove(0);
+        assert_eq!(converted.id, legacy.id);
+        assert!(
+            !converted.legacy && converted.authentication == Auth::ApiKey && !converted.has_key
+        );
+        assert!(
+            execute(
+                &engine,
+                "codex",
+                Request::CodexAuth {
+                    id: legacy.id.clone(),
+                    revision: legacy.revision.clone(),
+                    login: false,
+                    legacy: true
+                },
+                &|| true
+            )
+            .is_err()
+        );
+        let login = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::CodexAuth {
+                    id: converted.id.clone(),
+                    revision: converted.revision.clone(),
+                    login: true,
+                    legacy: false,
+                },
+                &|| true,
+            )
+            .unwrap(),
+        )
+        .remove(0);
+        assert_eq!(login.id, legacy.id);
+        assert!(!login.legacy && login.authentication == Auth::Login && !login.has_key);
+        assert!(
+            try_state(&engine)
+                .unwrap()
+                .native_legacy_codex_accounts()
+                .unwrap()
+                .is_empty()
+        );
     }
     #[::core::prelude::v1::test]
     fn legacy_rows_keep_existing_api_accounts_through_typed_rename_and_removal() {
