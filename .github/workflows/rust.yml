@@ -402,7 +402,7 @@ jobs:
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - name: Install isolated Linux native host fixture dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools
       - name: Compile production Linux native host and run pure guards before UI compilation
         run: |
           set -o pipefail
@@ -433,7 +433,7 @@ jobs:
           cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
           grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
       - name: Install native Linux smoke dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor fonts-dejavu-core
       - name: Test Linux Appshots pixels, keys and owned delivery without capture
         run: |
           set -o pipefail
