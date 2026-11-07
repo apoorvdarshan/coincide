@@ -64,6 +64,7 @@ mod native_quit;
 mod navigation;
 mod navigation_rail;
 mod navigation_resize;
+mod notification_activity;
 mod notification_runtime;
 #[cfg(any(test, all(target_os = "linux", feature = "native-notifications")))]
 mod notification_server;
@@ -2918,9 +2919,9 @@ impl Coincide {
                 })
             })
             .flatten();
-        // Only foreground window/visible conversation are observed here.
-        // No idle, lock or display-sleep monitors are connected. Do not assert
-        // recent desktop interaction; remote delivery remains disconnected.
+        // GPUI supplies only foreground window/visible conversation. The
+        // configured native notification worker fills available OS activity
+        // observations; the UI and fake backends never query the host here.
         let _ = self.notification_panel.read(cx).update_activity(
             coincide_core::platform_host::notifications::DesktopActivity {
                 app_active: window.is_window_active() && window.visibility().is_visible(),

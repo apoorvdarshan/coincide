@@ -301,6 +301,13 @@ jobs:
           set -o pipefail
           dbus-run-session -- cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications --locked notifications::linux::tests::actual_private_notification_bus_round_trip -- --ignored --exact --nocapture | tee "$RUNNER_TEMP/notification-bus-tests.log"
           python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"notification-bus-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact private notification bus test"'
+      - name: Verify activity on an isolated X11 display and private bus
+        env:
+          COINCIDE_PRIVATE_ACTIVITY_FIXTURE: '1'
+        run: |
+          set -o pipefail
+          dbus-run-session -- sh -c 'DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" xvfb-run -a -s "-screen 0 1440x1000x24" cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications --locked notification_activity::tests::actual_private_x11_activity -- --ignored --exact --nocapture' | tee "$RUNNER_TEMP/notification-activity-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"notification-activity-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact private activity test"'
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence

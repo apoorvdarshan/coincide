@@ -85,6 +85,14 @@ fn payload(alert: &Alert, previews: bool) -> Payload {
 /// Acceptance means OS API acknowledgement, not proof of banner presentation.
 /// Never classify a callback timeout as definitely unsent.
 pub trait Backend {
+    /// Only the configured, enabled native worker overrides this. Fake backends
+    /// preserve the supplied UI observation without consulting the host.
+    fn observe_desktop(
+        &mut self,
+        desktop: coincide_core::platform_host::notifications::DesktopActivity,
+    ) -> coincide_core::platform_host::notifications::DesktopActivity {
+        desktop
+    }
     fn permission(&mut self) -> Result<Permission>;
     /// Called solely by the explicit native UI permission button hook below.
     fn request_permission(&mut self) -> Result<Permission>;
@@ -109,6 +117,12 @@ impl<B: Backend> DesktopNotifications<B> {
     }
     pub fn set_settings(&mut self, settings: Settings) {
         self.settings = settings;
+    }
+    pub fn observe_desktop(
+        &mut self,
+        desktop: coincide_core::platform_host::notifications::DesktopActivity,
+    ) -> coincide_core::platform_host::notifications::DesktopActivity {
+        self.backend.observe_desktop(desktop)
     }
     pub fn permission_status(&self) -> Permission {
         self.permission

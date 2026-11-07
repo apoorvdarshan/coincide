@@ -147,14 +147,27 @@ impl NotificationRuntime {
     pub fn spawn_native() -> Result<Self> {
         #[cfg(all(target_os = "macos", feature = "native-notifications"))]
         {
-            Self::spawn(crate::notifications::macos::NativeBackend, 32)
+            Self::spawn(
+                crate::notification_activity::Native(crate::notifications::macos::NativeBackend),
+                32,
+            )
         }
         #[cfg(all(target_os = "linux", feature = "native-notifications"))]
         {
-            Self::spawn(crate::notifications::linux::backend(), 32)
+            Self::spawn(
+                crate::notification_activity::Native(crate::notifications::linux::backend()),
+                32,
+            )
+        }
+        #[cfg(all(windows, feature = "native-notifications"))]
+        {
+            Self::spawn(
+                crate::notification_activity::Native(crate::notifications::UnsupportedBackend),
+                32,
+            )
         }
         #[cfg(not(all(
-            any(target_os = "macos", target_os = "linux"),
+            any(target_os = "macos", target_os = "linux", windows),
             feature = "native-notifications"
         )))]
         {
@@ -334,6 +347,11 @@ fn process<B: Backend>(
             desktop,
             now,
         } => {
+            let desktop = if status.configured && status.enabled {
+                adapter.observe_desktop(desktop)
+            } else {
+                desktop
+            };
             let result = dispatcher.dispatch(
                 &alert,
                 &Environment {
@@ -473,6 +491,67 @@ mod tests {
             .unwrap(),
             state,
         )
+    }
+    #[test]
+    fn activity_sampling_requires_enabled_configuration_and_stays_on_owned_worker() {
+        struct ActivityFake {
+            inner: Fake,
+            observations: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl Backend for ActivityFake {
+            fn permission(&mut self) -> Result<Permission> {
+                self.inner.permission()
+            }
+            fn request_permission(&mut self) -> Result<Permission> {
+                self.inner.request_permission()
+            }
+            fn post(&mut self, payload: &Payload) -> Delivery {
+                self.inner.post(payload)
+            }
+            fn clear_thread(&mut self, thread: Uuid) -> Result<()> {
+                self.inner.clear_thread(thread)
+            }
+            fn observe_desktop(&mut self, desktop: DesktopActivity) -> DesktopActivity {
+                assert_eq!(
+                    std::thread::current().name(),
+                    Some("coincide-notifications")
+                );
+                self.observations.fetch_add(1, Ordering::AcqRel);
+                desktop
+            }
+        }
+        let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut runtime = NotificationRuntime::spawn(
+            ActivityFake {
+                inner: Fake {
+                    state: Arc::new(Mutex::new(State::default())),
+                    result: Delivery::Accepted,
+                },
+                observations: observations.clone(),
+            },
+            8,
+        )
+        .unwrap();
+        let handle = runtime.handle();
+        send(&handle, job(key()));
+        receipt(&runtime);
+        send(&handle, Command::Configure(Settings::default()));
+        receipt(&runtime);
+        send(&handle, job(key()));
+        receipt(&runtime);
+        assert_eq!(observations.load(Ordering::Acquire), 0);
+        send(
+            &handle,
+            Command::Configure(Settings {
+                enabled: true,
+                include_preview: false,
+            }),
+        );
+        receipt(&runtime);
+        send(&handle, job(key()));
+        receipt(&runtime);
+        assert_eq!(observations.load(Ordering::Acquire), 1);
+        runtime.shutdown().unwrap();
     }
     #[test]
     fn startup_and_preconfiguration_commands_have_no_native_effects() {
