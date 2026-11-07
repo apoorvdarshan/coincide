@@ -573,6 +573,12 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let context = match self.settings_section {
+            Section::Provider(provider) => Some(provider_key(provider)),
+            _ => None,
+        };
+        self.provider_configuration_panel
+            .update(cx, |panel, _| panel.set_account_context(context));
         if let Some(account) = self
             .provider_configuration_panel
             .update(cx, |panel, _| panel.take_legacy_codex_sign_in())

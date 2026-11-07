@@ -16,14 +16,21 @@ pub struct PreparedLegacyCodexRename {
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
 }
-fn revision(engine: &Engine, configuration: &Value) -> Result<String> {
-    let (path, identity) = source(&engine.store)?;
+fn revision_at(
+    source: &(PathBuf, crate::private_fs::Identity),
+    configuration: &Value,
+) -> Result<String> {
+    let (path, identity) = source;
     Ok(crate::digest_hex::lower_hex(Sha256::digest(
         serde_json::to_vec(
             &json!({"source":path,"identity":identity,"configuration":configuration}),
         )?,
     )))
 }
+fn revision(engine: &Engine, configuration: &Value) -> Result<String> {
+    revision_at(&source(&engine.store)?, configuration)
+}
+
 impl Engine {
     pub fn native_legacy_codex_accounts(&self) -> Result<Vec<NativeLegacyCodexAccount>> {
         let configuration = legacy::configuration(&self.store)?;
@@ -72,7 +79,7 @@ impl Engine {
     pub fn apply_native_legacy_codex_rename(
         &mut self,
         plan: PreparedLegacyCodexRename,
-    ) -> Result<()> {
+    ) -> Result<String> {
         self.require_admissions()?;
         ensure!(
             source(&self.store)? == plan.source
@@ -84,7 +91,9 @@ impl Engine {
         self.store
             .rename_legacy_codex_profile(&plan.configuration, &plan.id, &plan.name)?;
         self.revision += 1;
-        Ok(())
+        let mut renamed = plan.configuration;
+        renamed["accounts"][&plan.id]["name"] = json!(plan.name);
+        revision_at(&plan.source, &renamed)
     }
 }
 pub struct PreparedLegacyCodexRemoval {
@@ -356,7 +365,11 @@ mod tests {
         let current = engine
             .prepare_native_legacy_codex_rename(id, &account.revision, "Renamed")
             .unwrap();
-        engine.apply_native_legacy_codex_rename(current).unwrap();
+        let renamed_revision = engine.apply_native_legacy_codex_rename(current).unwrap();
+        assert_eq!(
+            engine.native_legacy_codex_accounts().unwrap()[0].revision,
+            renamed_revision
+        );
         assert!(engine.apply_native_legacy_codex_rename(stale).is_err());
         document["accounts"][id]["name"] = json!("Renamed");
         assert_eq!(legacy::configuration(&engine.store).unwrap(), document);

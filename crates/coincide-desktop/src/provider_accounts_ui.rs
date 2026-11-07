@@ -76,6 +76,9 @@ pub(super) struct Accounts {
     editors: HashMap<String, Editor>,
     review: Option<Review>,
     legacy_sign_in: Option<String>,
+    action_order: action_order::Order,
+    pending_names: std::collections::VecDeque<(String, String)>,
+    programmatic_names: HashMap<gpui::EntityId, String>,
 }
 pub(super) enum Request {
     Load,
@@ -153,6 +156,14 @@ pub(super) enum Request {
     Cleanup,
 }
 pub(super) enum Outcome {
+    Renamed {
+        snapshot: Snapshot,
+        id: String,
+        source_revision: String,
+        revision: String,
+        name: String,
+        provider_baseline: String,
+    },
     AdminSaved {
         snapshot: Snapshot,
         id: String,
@@ -179,6 +190,9 @@ pub(super) enum Outcome {
 }
 fn snapshot(engine: &SharedEngine, provider: &str) -> Result<Snapshot> {
     let owner = try_state(engine)?;
+    snapshot_from_owner(&owner, provider)
+}
+fn snapshot_from_owner(owner: &Engine, provider: &str) -> Result<Snapshot> {
     let mut rows = owner
         .native_provider_accounts(provider)?
         .into_iter()
@@ -351,20 +365,32 @@ pub(super) fn execute(
             login,
             legacy,
         } => {
-            if legacy {
+            let mut owner = try_state(engine)?;
+            let saved_revision = if legacy {
                 anyhow::ensure!(
                     provider == "codex",
                     "Legacy account belongs to another provider"
                 );
-                let plan =
-                    try_state(engine)?.prepare_native_legacy_codex_rename(&id, &revision, &name)?;
-                try_state(engine)?.apply_native_legacy_codex_rename(plan)?;
+                let plan = owner.prepare_native_legacy_codex_rename(&id, &revision, &name)?;
+                owner.apply_native_legacy_codex_rename(plan)?
             } else if login {
-                try_state(engine)?.rename_native_login_account(provider, &id, &revision, &name)?;
+                owner
+                    .rename_native_login_account(provider, &id, &revision, &name)?
+                    .revision
             } else {
-                try_state(engine)?.rename_native_key_account(provider, &id, &revision, &name)?;
-            }
-            done(engine, provider, "Account name saved.", None)
+                owner
+                    .rename_native_key_account(provider, &id, &revision, &name)?
+                    .revision
+            };
+            let provider_baseline = owner.native_provider_configuration(provider)?.baseline;
+            Ok(Outcome::Renamed {
+                snapshot: snapshot_from_owner(&owner, provider)?,
+                id,
+                source_revision: revision,
+                revision: saved_revision,
+                name: name.trim().into(),
+                provider_baseline,
+            })
         }
         Request::Auth {
             id,
@@ -506,6 +532,15 @@ pub(super) fn execute(
     }
 }
 impl Accounts {
+    pub(super) fn has_queued_action(&self) -> bool {
+        self.action_order.has_queued()
+    }
+    pub(super) fn has_pending_names(&self) -> bool {
+        !self.pending_names.is_empty()
+    }
+    pub(super) fn cancel_queued_for_edit(&mut self, provider: &str) {
+        self.action_order.edited(provider);
+    }
     pub(super) fn needs_load(&self, provider: &str) -> bool {
         self.editors
             .get(provider)
@@ -521,6 +556,8 @@ impl Accounts {
     }
     pub(super) fn cancel_review(&mut self) {
         self.review = None;
+        self.action_order.cancel();
+        self.pending_names.clear();
     }
     pub(super) fn has_review(&self) -> bool {
         self.review.is_some()
@@ -538,10 +575,55 @@ impl Accounts {
     }
 }
 impl Panel {
+    pub fn set_account_context(&mut self, provider: Option<&str>) {
+        self.accounts.action_order.context(provider);
+        self.accounts
+            .pending_names
+            .retain(|(key, _)| Some(key.as_str()) == provider);
+    }
+    pub(super) fn flush_account_actions(&mut self, cx: &mut Context<Self>) {
+        if self.pending.is_some() || !self.workers.can_start() {
+            return;
+        }
+        let provider = self.active.clone();
+        if let (Some(accounts), Some(editor)) = (
+            self.accounts.editors.get(&provider),
+            self.editors.get(&provider),
+        ) {
+            match self.accounts.action_order.take(
+                &provider,
+                &accounts.rows,
+                &editor.baseline,
+                editor.generation,
+            ) {
+                action_order::Dispatch::Ready(ready) => {
+                    let action_order::Ready {
+                        provider,
+                        request,
+                        custody,
+                    } = *ready;
+                    let _custody = custody;
+                    self.start(&provider, super::Request::Accounts(request), cx);
+                    return;
+                }
+                action_order::Dispatch::Stale => {
+                    if let Some(editor) = self.accounts.editors.get_mut(&provider) {
+                        editor.notice="The queued change was not applied because its account or edits changed. Your draft is retained.".into();
+                    }
+                    cx.notify();
+                }
+                action_order::Dispatch::Empty => {}
+            }
+        }
+        if let Some((provider, id)) = self.accounts.pending_names.pop_front() {
+            self.commit_account_name(&provider, &id, cx);
+        }
+    }
     pub fn take_legacy_codex_sign_in(&mut self) -> Option<String> {
         self.accounts.legacy_sign_in.take()
     }
     pub(super) fn account_edited(&mut self, provider: &str, cx: &mut Context<Self>) {
+        self.accounts.action_order.edited(provider);
         if let Some(editor) = self.editors.get_mut(provider) {
             editor.generation = editor.generation.wrapping_add(1);
         }
@@ -584,8 +666,14 @@ impl Panel {
         let mut subscriptions = Vec::new();
         for input in [&name, &key, &admin_key] {
             let provider = provider.to_owned();
-            subscriptions.push(cx.subscribe(input, move |this, _, event, cx| {
+            subscriptions.push(cx.subscribe(input, move |this, input, event, cx| {
                 if matches!(event, InputEvent::Change) {
+                    if let Some(expected) =
+                        this.accounts.programmatic_names.remove(&input.entity_id())
+                        && input.read(cx).value().as_ref() == expected
+                    {
+                        return;
+                    }
                     this.account_edited(&provider, cx);
                 }
             }));
@@ -628,7 +716,42 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut renamed = None;
         let (snapshot, notice, clear_key) = match outcome {
+            Outcome::Renamed {
+                snapshot,
+                id,
+                source_revision,
+                revision,
+                name,
+                provider_baseline,
+            } => {
+                let had_queue = self.accounts.action_order.has_queued();
+                let generation = self
+                    .editors
+                    .get(provider)
+                    .map(|editor| editor.generation)
+                    .unwrap_or(u64::MAX);
+                let accepted = self.accounts.action_order.finish(action_order::Receipt {
+                    provider,
+                    id: &id,
+                    source_revision: &source_revision,
+                    revision: &revision,
+                    name: &name,
+                    baseline: &provider_baseline,
+                    rows: &snapshot.rows,
+                    generation,
+                });
+                renamed = Some((id, name));
+                let notice = if had_queue && !accepted {
+                    "Account name saved. The queued change was not applied because its account or edits changed; your draft is retained."
+                } else if accepted {
+                    "Account name saved. Applying your queued change…"
+                } else {
+                    "Account name saved."
+                };
+                (snapshot, notice.into(), None)
+            }
             Outcome::AdminSaved { snapshot, id } => {
                 if unchanged
                     && let Some(draft) = self
@@ -703,10 +826,17 @@ impl Panel {
         editor.drafts.extend(new);
         for row in &snapshot.rows {
             let draft = editor.drafts.get_mut(&row.id).unwrap();
-            if unchanged
-                && (draft.name.read(cx).value().as_ref() == draft.saved_name
-                    || clear_key.as_deref() == Some(row.id.as_str()))
+            let own_name_ack = renamed.as_ref().is_some_and(|(id, name)| {
+                id == &row.id
+                    && name == &row.name
+                    && draft.name.read(cx).value().trim() == name.as_str()
+            });
+            if (unchanged && draft.name.read(cx).value().as_ref() == draft.saved_name)
+                || own_name_ack
             {
+                self.accounts
+                    .programmatic_names
+                    .insert(draft.name.entity_id(), row.name.clone());
                 draft.name.update(cx, |input, cx| {
                     input.set_value(row.name.clone(), window, cx)
                 });
@@ -720,9 +850,17 @@ impl Panel {
             let dirty = draft.dirty(cx);
             draft.lease.set_dirty(dirty);
         }
-        editor
-            .drafts
-            .retain(|id, _| snapshot.rows.iter().any(|row| row.id == *id));
+        let programmatic_names = &mut self.accounts.programmatic_names;
+        editor.drafts.retain(|id, draft| {
+            let retained = snapshot.rows.iter().any(|row| row.id == *id);
+            if !retained {
+                programmatic_names.remove(&draft.name.entity_id());
+            }
+            retained
+        });
+        self.accounts
+            .pending_names
+            .retain(|(key, id)| key != provider || snapshot.rows.iter().any(|row| &row.id == id));
         let changed = editor.rows != snapshot.rows || editor.cleanup != snapshot.cleanup;
         editor.rows = snapshot.rows;
         editor.cleanup = snapshot.cleanup;
@@ -735,6 +873,10 @@ impl Panel {
         cx.notify();
     }
     pub(super) fn account_error(&mut self, provider: &str, error: &anyhow::Error) {
+        self.accounts.action_order.cancel_provider(provider);
+        self.accounts
+            .pending_names
+            .retain(|(key, _)| key != provider);
         if let Some(editor) = self.accounts.editors.get_mut(provider) {
             editor.notice = error.to_string();
             editor.load_requested = engine_busy(error);
@@ -746,6 +888,10 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.accounts.action_order.cancel_provider(provider);
+        self.accounts
+            .pending_names
+            .retain(|(key, _)| key != provider);
         if self
             .accounts
             .review
@@ -779,6 +925,10 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.accounts.action_order.cancel_provider(provider);
+        self.accounts
+            .pending_names
+            .retain(|(key, target)| key != provider || target != id);
         if let Some(editor) = self.accounts.editors.get_mut(provider)
             && let Some(row) = editor.rows.iter().find(|row| row.id == id)
             && let Some(draft) = editor.drafts.get_mut(id)
@@ -798,18 +948,82 @@ impl Panel {
         cx.notify();
     }
     fn account_request(&mut self, provider: &str, request: Request, cx: &mut Context<Self>) {
-        if self.pending.is_none()
-            && let Request::Check { id, .. }
-            | Request::Setup { id, .. }
-            | Request::CodexAuth { id, .. } = &request
+        if self.pending.is_some() {
+            let source = request
+                .after_name_target()
+                .and_then(|(id, _)| {
+                    self.accounts
+                        .editors
+                        .get(provider)?
+                        .rows
+                        .iter()
+                        .find(|row| row.id == id)
+                })
+                .cloned();
+            let queued = if let (Some(source), Some(editor)) = (source, self.editors.get(provider))
+            {
+                self.accounts.action_order.enqueue(
+                    provider,
+                    request,
+                    &source,
+                    &editor.baseline,
+                    editor.generation,
+                    editor.lease.pending_native_action(),
+                )
+            } else {
+                false
+            };
+            if let Some(editor) = self.accounts.editors.get_mut(provider) {
+                editor.notice=if queued { "Saving the account name, then applying your change." } else { "A provider action is still finishing. This change was not applied; your edits are retained." }.into();
+            }
+            cx.notify();
+            return;
+        }
+        if self.accounts.action_order.has_queued() {
+            if let Some(editor) = self.accounts.editors.get_mut(provider) {
+                editor.notice = "Your earlier change is queued. Wait for it to finish.".into();
+            }
+            cx.notify();
+            return;
+        }
+        let rename = if let Request::Rename { id, name, .. } = &request {
+            self.accounts
+                .editors
+                .get(provider)
+                .and_then(|editor| editor.rows.iter().find(|row| row.id == *id))
+                .cloned()
+                .map(|source| (source, name.clone()))
+        } else {
+            None
+        };
+        if let Request::Check { id, .. } | Request::Setup { id, .. } | Request::CodexAuth { id, .. } =
+            &request
             && let Some(editor) = self.accounts.editors.get_mut(provider)
         {
             editor.reports.remove(id);
         }
         self.start(provider, super::Request::Accounts(request), cx);
+        if self.pending.as_deref() == Some(provider)
+            && let Some((source, name)) = rename
+            && let Some(editor) = self.editors.get(provider)
+        {
+            self.accounts
+                .action_order
+                .begin(provider, source, &name, &editor.baseline);
+        }
     }
     fn commit_account_name(&mut self, provider: &str, id: &str, cx: &mut Context<Self>) {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.accounts.action_order.has_queued() {
+            if !self
+                .accounts
+                .pending_names
+                .iter()
+                .any(|(key, target)| key == provider && target == id)
+            {
+                self.accounts
+                    .pending_names
+                    .push_back((provider.into(), id.into()));
+            }
             return;
         }
         let Some(editor) = self.accounts.editors.get(provider) else {
@@ -858,7 +1072,8 @@ impl Panel {
     pub(super) fn render_accounts(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let provider = self.active.clone();
         let work_busy = self.pending.is_some() || !self.workers.can_start();
-        let busy = work_busy || self.accounts.has_review();
+        let busy =
+            work_busy || self.accounts.has_review() || self.accounts.action_order.has_queued();
         let Some(editor) = self.accounts.editors.get(&provider) else {
             return div().child("Loading accounts…").into_any_element();
         };
@@ -1249,7 +1464,7 @@ impl Panel {
         actions = actions.child(
             Button::new("provider-account-reload")
                 .label("Reload accounts")
-                .disabled(busy || editor.drafts.values().any(|draft| draft.dirty(cx)))
+                .disabled(busy)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.account_request(&reload, Request::Load, cx)
                 })),
@@ -1278,19 +1493,22 @@ use admin_ui::admin_eligible;
 #[path = "provider_codex_auth_ui.rs"]
 mod codex_auth_ui;
 
+#[path = "provider_account_action_order.rs"]
+mod action_order;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn fixture() -> (tempfile::TempDir, SharedEngine) {
+    pub(super) fn fixture() -> (tempfile::TempDir, SharedEngine) {
         let root = tempfile::tempdir().unwrap();
         let engine = std::sync::Arc::new(std::sync::Mutex::new(Engine::new(
             Store::open(&root.path().join("private/state.sqlite")).unwrap(),
         )));
         (root, engine)
     }
-    fn rows(outcome: Outcome) -> Vec<Row> {
+    pub(super) fn rows(outcome: Outcome) -> Vec<Row> {
         match outcome {
-            Outcome::Snapshot { snapshot, .. } => snapshot.rows,
+            Outcome::Snapshot { snapshot, .. } | Outcome::Renamed { snapshot, .. } => snapshot.rows,
             _ => panic!("Expected account snapshot"),
         }
     }

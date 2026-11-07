@@ -314,6 +314,7 @@ impl Panel {
         }
     }
     fn edited(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.accounts.cancel_queued_for_edit(provider);
         if let Some(editor) = self.editors.get_mut(provider) {
             editor.generation = editor.generation.wrapping_add(1);
             for row in &editor.variables {
@@ -500,6 +501,7 @@ impl Panel {
     }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.workers.poll();
+        self.flush_account_actions(cx);
         if self.last_clock_refresh.elapsed() >= Duration::from_secs(30)
             && self.editors.values().any(|editor| editor.checked.is_some())
         {
@@ -711,6 +713,8 @@ impl Panel {
     }
     pub fn has_pending_write(&self) -> bool {
         self.accounts.has_review()
+            || self.accounts.has_queued_action()
+            || self.accounts.has_pending_names()
             || !self.check_queue.is_empty()
             || self.pending.is_some()
             || self.pickers.iter().any(|task| !task.is_ready())
