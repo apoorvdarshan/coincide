@@ -112,8 +112,17 @@ def exercise_browser(rpc, thread_id, capture_visible):
         request("close-tab", first)
         tabs.remove(first)
         assert request("tabs").get("tabs") == []
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("owned_native_dialog_fixture", Path(__file__).with_name("test-rust-native-browser-dialogs.py"))
+        dialogs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dialogs)
+        dialog_report = dialogs.exercise_dialogs(rpc, thread_id)
+        assert dialog_report["passed"]
+        assert request("tabs").get("tabs") == [], "Dialog fixture must close every created tab"
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
-                "operations": receipts, "externalNetwork": False, "tabsClosed": True}
+                "operations": receipts, "externalNetwork": False, "tabsClosed": True,
+                "nativeDialogs": dialog_report}
     finally:
         # Actual server thread return is required. No detached server or forced
         # child termination can substitute for a completed browser result.
