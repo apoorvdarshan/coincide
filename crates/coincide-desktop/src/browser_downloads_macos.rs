@@ -393,10 +393,13 @@ impl Shared {
         });
         unsafe { download.setDelegate(Some(ProtocolObject::from_ref(&*self.downloads))) };
         self.active.borrow_mut().push(transfer.clone());
-        if !self.admitting()
-            || !self.is_view(view)
-            || validate_native_download(&transfer.address, &transfer.source).is_err()
-        {
+        if !self.admitting() || !self.is_view(view) {
+            transfer.cancel();
+        } else if validate_native_download(&transfer.address, &transfer.source).is_err() {
+            self.registry.borrow_mut().refuse(
+                &self.thread,
+                "Download refused: only HTTP(S) addresses or blobs from this page can be saved",
+            );
             transfer.cancel();
         }
         (self.changed)();
