@@ -27,6 +27,8 @@ impl SendIntent {
 }
 pub(super) struct State {
     pub recording_shortcut: bool,
+    /// What macOS also does on 🌐, as of the last time Voice opened.
+    pub fn_usage: Option<&'static str>,
     settings: Option<Settings>,
     machine: Trigger,
     clock: Instant,
@@ -40,6 +42,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             recording_shortcut: false,
+            fn_usage: None,
             settings: None,
             machine: Trigger::new(coincide_core::voice::Mode::Both, true),
             clock: Instant::now(),

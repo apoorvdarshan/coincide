@@ -30,6 +30,21 @@ pub(crate) use windows::{
     verify_private_path,
 };
 const MAX_FRAME: u64 = 4 * 1024 * 1024;
+/// Settings › General › Command Line's "Command-line control". Off, every
+/// request on the socket is refused; the socket itself stays, as it also
+/// keeps a second instance from starting. Unset or unreadable means on.
+fn dispatch_command_line(engine: &mut crate::api::Engine, request: Value) -> Value {
+    let refused = engine
+        .store
+        .document("settings.json")
+        .ok()
+        .flatten()
+        .is_some_and(|settings| settings["commandLineControl"] == false);
+    if refused {
+        return serde_json::json!({"id":request["id"],"error":{"message":"Command-line control is off. Turn it on in Coincide's Settings › General › Command Line."}});
+    }
+    engine.dispatch(request)
+}
 /// Observation of the retained control worker, not application quiescence or
 /// proof that every operating-system resource has been released.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,10 +168,10 @@ pub fn serve(path: PathBuf, engine: SharedEngine) -> Result<Server> {
                     let response = (|| -> Result<Value> {
                         configure_client_stream(&stream)?;
                         let request = read_frame(&mut stream)?;
-                        Ok(engine
+                        let mut engine = engine
                             .lock()
-                            .map_err(|_| anyhow::anyhow!("Engine lock failed"))?
-                            .dispatch(request))
+                            .map_err(|_| anyhow::anyhow!("Engine lock failed"))?;
+                        Ok(dispatch_command_line(&mut engine, request))
                     })()
                     .unwrap_or_else(|e| serde_json::json!({"error":{"message":e.to_string()}}));
                     if serde_json::to_vec(&response)
@@ -276,6 +291,34 @@ mod tests {
     use crate::{api::Engine, store::Store};
     use serde_json::json;
     use std::sync::Mutex;
+    #[test]
+    fn command_line_control_off_refuses_socket_requests_until_turned_back_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&dir.path().join("instance/db")).unwrap(),
+        )));
+        let path = dir.path().join("instance/control.sock");
+        let server = serve(path.clone(), engine.clone()).unwrap();
+        let list = json!({"id":7,"method":"threads.list","params":{}});
+        assert!(request(&path, &list).unwrap()["result"].is_array());
+        engine.lock().unwrap().dispatch(
+            json!({"method":"settings.patch","params":{"patch":{"commandLineControl":false}}}),
+        );
+        let refused = request(&path, &list).unwrap();
+        assert_eq!(refused["id"], 7);
+        assert!(
+            refused["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Command-line control is off")
+        );
+        // Restore Defaults clears the key, which reads as on.
+        engine.lock().unwrap().dispatch(
+            json!({"method":"settings.patch","params":{"patch":{"commandLineControl":null}}}),
+        );
+        assert!(request(&path, &list).unwrap()["result"].is_array());
+        drop(server);
+    }
     #[test]
     fn socket_commands_reach_shared_state_and_do_not_replace_active_socket() {
         let dir = tempfile::tempdir().unwrap();

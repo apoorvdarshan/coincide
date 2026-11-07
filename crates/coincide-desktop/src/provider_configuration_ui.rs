@@ -41,6 +41,8 @@ struct Editor {
     report: Option<ProbeReport>,
     catalog: Option<Value>,
     checked: Option<Instant>,
+    /// The last check ended in an error rather than a report.
+    failed: bool,
     lease: NativeUiEditLease,
     _subscriptions: Vec<Subscription>,
 }
@@ -194,6 +196,7 @@ impl Panel {
                     report: None,
                     catalog: None,
                     checked: None,
+                    failed: false,
                     lease: self.native_editors.editor(),
                     _subscriptions: vec![subscription],
                 },
@@ -250,6 +253,23 @@ impl Panel {
             "Managed configuration checked; sign-in not verified".into()
         } else {
             "Not checked".into()
+        }
+    }
+    /// The sidebar dot's color and tooltip, as Swift's SettingsProviderStatus.
+    pub fn status_dot(&self, provider: &str, enabled: bool) -> (&'static str, u32) {
+        const TERTIARY: u32 = 0x696c71;
+        if !enabled {
+            return ("Off", TERTIARY);
+        }
+        let Some(editor) = self.editors.get(provider) else {
+            return ("Not checked", TERTIARY);
+        };
+        match editor.report.as_ref().map(|report| report.authenticated) {
+            Some(Some(true)) => ("Ready", 0x34c759),
+            Some(Some(false)) => ("Not signed in", 0xff9500),
+            _ if self.pending.as_deref() == Some(provider) => ("Checking…", TERTIARY),
+            None if editor.failed => ("Unavailable", 0xff3b30),
+            _ => ("Not checked", TERTIARY),
         }
     }
     pub fn last_checked(&self) -> String {
@@ -581,6 +601,7 @@ impl Panel {
                 }
                 Ok(Outcome::Checked(report, catalog)) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
+                        editor.failed = false;
                         editor.report = Some(report);
                         editor.catalog = catalog;
                         editor.checked = Some(Instant::now());
@@ -592,6 +613,7 @@ impl Panel {
                         self.account_error(&reply.provider, &error);
                     } else if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.load_requested = !editor.loaded && engine_busy(&error);
+                        editor.failed = !engine_busy(&error);
                         editor.notice = error.to_string();
                     }
                 }

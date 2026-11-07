@@ -1,14 +1,16 @@
-//! The same product/help destinations as Swift's CoincideLinks. Links are only
-//! opened by a native user click; rendering About performs no network requests.
+//! Settings › About from Swift's AboutSettingsView, with the links grouped as
+//! its Help & Community, Follow, and Contact & Legal. Links open only on a
+//! native user click; rendering About performs no network requests.
 use super::*;
+use community_links::{Group, LINKS, Link};
 
+/// "Coincide 0.1.0 (Rust desktop, macos aarch64), macOS 26.1 (25B78)", for bug
+/// reports.
 fn version_report() -> String {
-    format!(
-        "Coincide {} · Rust desktop · {} {}",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
+    match community_links::system_version() {
+        Some(system) => format!("Coincide {}, {system}", community_links::app_version()),
+        None => format!("Coincide {}", community_links::app_version()),
+    }
 }
 fn icon() -> Arc<Image> {
     static ICON: std::sync::OnceLock<Arc<Image>> = std::sync::OnceLock::new();
@@ -20,135 +22,185 @@ fn icon() -> Arc<Image> {
     })
     .clone()
 }
+const T3_CODE_LICENSE: &str = "MIT License
+
+Copyright (c) 2026 T3 Tools Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.";
+
 impl Coincide {
+    /// A row that opens a web page, or asks GitHub or Discord for a report.
+    fn about_link(
+        &self,
+        id: &'static str,
+        icon: gpui_kit::assets::IconName,
+        tint: u32,
+        title: &'static str,
+        detail: &'static str,
+        url: String,
+        report: Option<community_links::Report>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tooltip = url.clone();
+        Button::new(SharedString::from(format!("about-link-{id}")))
+            .ghost()
+            .w_full()
+            .h_auto()
+            .accessibility_label(title)
+            .tooltip(tooltip)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .py_1()
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(24.))
+                            .flex_shrink_0()
+                            .rounded(px(6.))
+                            .bg(rgb(tint))
+                            .text_color(rgb(0xffffff))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Icon::new(icon).xsmall()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(title)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(self.color(0x98a6ba).opacity(0.7))
+                                    .child(detail),
+                            ),
+                    )
+                    .child(Icon::new(gpui_kit::assets::IconName::ExternalLink).xsmall()),
+            )
+            .on_click(cx.listener(move |_, _, window, cx| match report {
+                Some(report) => open_report(title, report, url.clone(), window, cx),
+                None => cx.open_url(&url),
+            }))
+            .into_any_element()
+    }
+
+    fn about_section(&self, title: &'static str, rows: Vec<AnyElement>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().mt_2().text_lg().child(title))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+                    .p_1()
+                    .children(rows),
+            )
+    }
+
     pub(super) fn about_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let report = version_report();
         let mut content = div().flex().flex_col().gap_3()
             .child(div().flex().flex_col().items_center().gap_2().p_4()
                 .child(img(icon()).w(px(112.)).h(px(112.)))
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Coincide"))
-                .child(report.clone())
+                .child(div().text_color(self.color(0x98a6ba).opacity(0.8)).child(format!("Version {}", community_links::app_version())))
                 .child("One window for the coding agents you already use. Switch agents mid-thread while each keeps its own session.")
                 .child(Button::new("about-copy-version").label("Copy Version Info").on_click(cx.listener(move |_,_,_,cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
-                }))))
-            .child(div().text_lg().child("Help & Community"));
-        for (id, label, detail, url) in [
-            (
-                "website",
-                "Website and documentation",
-                "coincide.dev",
-                "https://coincide.dev",
-            ),
-            (
-                "help",
-                "Get Help",
-                "Ask in the Discord help channel",
-                "https://discord.com/channels/1566352780862427258/1566353949336797275",
-            ),
-            (
-                "bug",
-                "Report an Issue on GitHub",
-                "Public bug report",
-                "https://github.com/apoorvdarshan/coincide/issues/new?template=bug_report.yml",
-            ),
-            (
-                "feature",
-                "Request a Feature on GitHub",
-                "Public feature request",
-                "https://github.com/apoorvdarshan/coincide/issues/new?template=feature_request.yml",
-            ),
-            (
-                "discord",
-                "Join the Discord",
-                "Reports can be submitted without a GitHub account",
-                "https://discord.gg/DETrbhDVqw",
-            ),
-            (
-                "github",
-                "Star on GitHub",
-                "Open source under the MIT License",
-                "https://github.com/apoorvdarshan/coincide",
-            ),
-            (
-                "releases",
-                "Release notes and downloads",
-                "Published Coincide releases",
-                "https://github.com/apoorvdarshan/coincide/releases",
-            ),
-            (
-                "product-hunt",
-                "Upvote on Product Hunt",
-                "producthunt.com/products/coincide",
-                "https://www.producthunt.com/products/coincide",
-            ),
-            (
-                "support",
-                "Support on Ko-fi",
-                "Buy Apoorv a coffee",
-                "https://ko-fi.com/apoorvdarshan",
-            ),
-            ("x", "X", "@apoorvdarshan", "https://x.com/apoorvdarshan"),
-            (
-                "instagram",
-                "Instagram",
-                "@apoorvcodes",
-                "https://instagram.com/apoorvcodes",
-            ),
-            (
-                "linkedin",
-                "LinkedIn",
-                "Coincide",
-                "https://www.linkedin.com/showcase/coincide-dev",
-            ),
-            (
-                "contact",
-                "Contact",
-                "apoorv@fud-ai.app",
-                "mailto:apoorv@fud-ai.app",
-            ),
-            (
-                "privacy",
-                "Privacy Policy",
-                "coincide.dev/privacy",
-                "https://coincide.dev/privacy",
-            ),
-            (
-                "terms",
-                "Terms of Service",
-                "coincide.dev/terms",
-                "https://coincide.dev/terms",
-            ),
-        ] {
-            content = content.child(
+                }))));
+        for group in Group::ALL {
+            let rows = LINKS
+                .iter()
+                .filter(|link| link.group == group)
+                .map(|link: &Link| {
+                    self.about_link(
+                        link.id,
+                        link.icon,
+                        link.tint,
+                        link.title,
+                        link.detail,
+                        link.url(),
+                        link.report,
+                        cx,
+                    )
+                })
+                .collect();
+            content = content.child(self.about_section(group.title(), rows).when(group == Group::Community, |section| {
+                section.child(div().text_xs().text_color(self.color(0x98a6ba).opacity(0.7)).child("Discord channel links open once you’ve joined the server. Reports sent there with /bug or /feature become public GitHub issues and need no GitHub account. GitHub issues are public too; a bug report starts with only your versions of Coincide and your system filled in."))
+            }));
+        }
+        let license_open = self.general_settings.t3_license_open;
+        let acknowledgements = vec![
+            div().p_2().child("Coincide ports the design and behavior of T3 Code, the open-source agent app by T3 Tools Inc., used under the MIT License.").into_any_element(),
+            self.about_link("t3code", gpui_kit::assets::IconName::GitBranch, 0x5856d6, "T3 Code", "github.com/pingdotgg/t3code", "https://github.com/pingdotgg/t3code".into(), None, cx),
+            Button::new("about-t3-license")
+                .ghost()
+                .w_full()
+                .child(div().w_full().flex().items_center().gap_2()
+                    .child(Icon::new(if license_open { gpui_kit::assets::IconName::ChevronDown } else { gpui_kit::assets::IconName::ChevronRight }).xsmall())
+                    .child("T3 Code License"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.general_settings.t3_license_open = !this.general_settings.t3_license_open;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            div().when(license_open, |view| view.p_2().text_xs().font_family("monospace").text_color(self.color(0x98a6ba).opacity(0.8)).child(T3_CODE_LICENSE)).into_any_element(),
+            div().p_2().child("The Rust desktop interface uses GPUI Kit, GPUI and GPUI WebView under the Apache-2.0 License.").into_any_element(),
+            self.about_link("gpui-kit", gpui_kit::assets::IconName::Boxes, 0x8e8e93, "GPUI Kit", "crates.io/crates/gpui-kit", "https://crates.io/crates/gpui-kit".into(), None, cx),
+            self.about_link("notices", gpui_kit::assets::IconName::FileText, 0x8e8e93, "License and third-party notices", "THIRD_PARTY_NOTICES.md", "https://github.com/apoorvdarshan/coincide/blob/main/THIRD_PARTY_NOTICES.md".into(), None, cx),
+        ];
+        content
+            .child(self.about_section("Acknowledgements", acknowledgements))
+            .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(self.color(0x29303d))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(label)
-                            .child(div().text_xs().child(detail)),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("about-link-{id}")))
-                            .icon(gpui_kit::assets::IconName::ExternalLink)
-                            .accessibility_label(label)
-                            .ghost()
-                            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(url))),
-                    ),
-            );
-        }
-        content.child(div().mt_3().text_lg().child("Acknowledgements"))
-            .child("Coincide ports the design and behavior of T3 Code by T3 Tools Inc., used under the MIT License. The Rust desktop interface uses GPUI Kit, GPUI and GPUI WebView under Apache-2.0.")
-            .child(Button::new("about-license").label("License and third-party notices").on_click(cx.listener(|_,_,_,cx|cx.open_url("https://github.com/apoorvdarshan/coincide/blob/main/THIRD_PARTY_NOTICES.md"))))
-            .child(div().text_xs().child("Copyright © 2026 Apoorv Darshan"))
+                    .justify_center()
+                    .text_sm()
+                    .text_color(self.color(0x98a6ba).opacity(0.8))
+                    .child("Copyright © 2026 Apoorv Darshan"),
+            )
             .into_any_element()
     }
+}
+
+/// Swift's GitHub-or-Discord question before a report.
+fn open_report(
+    title: &'static str,
+    report: community_links::Report,
+    github: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let answer = window.prompt(
+        PromptLevel::Info,
+        title,
+        Some(report.message),
+        &["GitHub", "Discord", "Cancel"],
+        cx,
+    );
+    cx.spawn(async move |cx| {
+        let choice = answer.await.ok();
+        let _ = cx.update(|cx| match choice {
+            Some(0) => cx.open_url(&github),
+            Some(1) => cx.open_url(report.discord),
+            _ => {}
+        });
+    })
+    .detach();
 }

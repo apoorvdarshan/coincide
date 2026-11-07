@@ -32,6 +32,14 @@ icon_assets!(
         Paperclip,
         PencilRuler,
         Zap,
+        // Settings › About's Help & Community, Follow, and Contact & Legal.
+        ArrowBigUp,
+        Bug,
+        CircleQuestionMark,
+        Hand,
+        Lightbulb,
+        Mail,
+        Users,
         Ban,
         BatteryCharging,
         BatteryFull,
@@ -180,6 +188,9 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            "icons/bug.svg",
+            "icons/lightbulb.svg",
+            "icons/circle-question-mark.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

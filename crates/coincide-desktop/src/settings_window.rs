@@ -18,8 +18,77 @@ fn return_focus_to_main(main: AnyWindowHandle, focus: FocusHandle, cx: &mut App)
 #[path = "settings_window_focus_tests.rs"]
 mod focus_tests;
 
+/// The Settings window's frame, kept across launches as Swift's
+/// "CoincideSettings" autosave. Rust-owned and local to this computer.
+const FRAME_DOCUMENT: &str = "settings-window.json";
+const DEFAULT_SIZE: (f32, f32) = (860., 640.);
+const MIN_SIZE: (f32, f32) = (760., 500.);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Frame {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+impl Frame {
+    fn read(value: &Value) -> Option<Self> {
+        let number = |key: &str| {
+            value[key]
+                .as_f64()
+                .map(|n| n as f32)
+                .filter(|n| n.is_finite())
+        };
+        Some(Self {
+            x: number("x")?,
+            y: number("y")?,
+            width: number("width")?,
+            height: number("height")?,
+        })
+    }
+    fn value(self) -> Value {
+        json!({"version":1,"x":self.x,"y":self.y,"width":self.width,"height":self.height})
+    }
+    fn from_bounds(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+        }
+    }
+    /// A saved frame is reused only at a usable size with its title bar on a
+    /// connected display; otherwise Settings opens centered again.
+    fn restorable(self, displays: &[Bounds<Pixels>]) -> Option<Bounds<Pixels>> {
+        if self.width < MIN_SIZE.0 || self.height < MIN_SIZE.1 {
+            return None;
+        }
+        let bounds = Bounds::new(
+            point(px(self.x), px(self.y)),
+            size(px(self.width), px(self.height)),
+        );
+        let title = Bounds::new(bounds.origin, size(bounds.size.width, px(28.)));
+        displays
+            .iter()
+            .any(|display| display.intersects(&title))
+            .then_some(bounds)
+    }
+}
+
+fn saved_frame(engine: &SharedEngine) -> Option<Frame> {
+    Frame::read(
+        &try_state(engine)
+            .ok()?
+            .store
+            .local_document(FRAME_DOCUMENT)
+            .ok()??,
+    )
+}
+
 pub(super) struct SettingsWindow {
     owner: WeakEntity<Coincide>,
+    frame: Option<Frame>,
+    save_frame: Option<Task<()>>,
     _observation: Subscription,
     _window_observations: Vec<Subscription>,
 }
@@ -42,12 +111,41 @@ impl SettingsWindow {
             cx.observe_window_visibility(window, |this, _, window, cx| {
                 this.sync_microphone_activity(window, cx);
             }),
+            cx.observe_window_bounds(window, |this, window, cx| {
+                this.remember_frame(window, cx);
+            }),
         ];
         Self {
             owner: weak,
+            frame: None,
+            save_frame: None,
             _observation: observation,
             _window_observations: window_observations,
         }
+    }
+
+    /// Saves the windowed frame shortly after moving or resizing settles.
+    fn remember_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let WindowBounds::Windowed(bounds) = window.window_bounds() else {
+            return;
+        };
+        let frame = Frame::from_bounds(bounds);
+        if self.frame == Some(frame) {
+            return;
+        }
+        self.frame = Some(frame);
+        let owner = self.owner.clone();
+        self.save_frame = Some(cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            let _ = owner.update(cx, |owner, _| {
+                if let Ok(mut engine) = try_state(&owner.engine) {
+                    // A failed save keeps the previous frame; Settings still opens.
+                    let _ = engine.store.save_document(FRAME_DOCUMENT, &frame.value());
+                }
+            });
+        }));
     }
 
     fn sync_microphone_activity(&self, window: &Window, cx: &mut Context<Self>) {
@@ -253,14 +351,20 @@ impl Coincide {
             let Some(entity) = owner.upgrade() else {
                 return;
             };
+            let displays = cx
+                .displays()
+                .iter()
+                .map(|display| display.bounds())
+                .collect::<Vec<_>>();
+            let bounds = saved_frame(&entity.read(cx).engine)
+                .and_then(|frame| frame.restorable(&displays))
+                .unwrap_or_else(|| {
+                    Bounds::centered(None, size(px(DEFAULT_SIZE.0), px(DEFAULT_SIZE.1)), cx)
+                });
             let opened = gpui_kit::open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                        None,
-                        size(px(860.), px(640.)),
-                        cx,
-                    ))),
-                    window_min_size: Some(size(px(760.), px(500.))),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
                     ..Default::default()
                 },
                 cx,
@@ -344,5 +448,38 @@ impl Coincide {
                 cx.notify();
             }).ok();
         }));
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn saved_frames_restore_only_at_usable_sizes_on_a_connected_display() {
+        let display = Bounds::new(point(px(0.), px(0.)), size(px(1440.), px(900.)));
+        let frame =
+            Frame::read(&json!({"version":1,"x":100,"y":80,"width":900,"height":700})).unwrap();
+        assert_eq!(Frame::read(&frame.value()), Some(frame));
+        assert_eq!(
+            frame.restorable(&[display]),
+            Some(Bounds::new(
+                point(px(100.), px(80.)),
+                size(px(900.), px(700.))
+            ))
+        );
+        let detached = Frame { x: 3000., ..frame };
+        assert_eq!(detached.restorable(&[display]), None);
+        assert_eq!(
+            Frame {
+                width: 500.,
+                ..frame
+            }
+            .restorable(&[display]),
+            None
+        );
+        assert_eq!(frame.restorable(&[]), None);
+        assert!(Frame::read(&json!({"x":"1","y":0,"width":900,"height":700})).is_none());
+        assert!(Frame::read(&json!({})).is_none());
     }
 }

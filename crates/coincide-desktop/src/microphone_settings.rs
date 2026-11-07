@@ -13,7 +13,7 @@ use coincide_core::{
 };
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    component::{Disableable, button::Button},
+    component::{Disableable, Icon, Sizable, button::Button},
     div,
     prelude::FluentBuilder,
 };
@@ -1492,9 +1492,30 @@ impl Render for MicrophoneSettings {
             .child(Button::new("microphone-stop").label("Stop").disabled(gated || self.phase != Phase::Recording).on_click(cx.listener(|this, _, _, cx| this.action(Action::Stop, cx))))
             .child(Button::new("microphone-cancel").label("Cancel").disabled(gated && self.phase == Phase::Idle).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
             .child(Button::new("microphone-transcribe").label("Transcribe Recording").disabled(gated || self.phase != Phase::Captured).on_click(cx.listener(|this, _, _, cx| this.action(Action::Transcribe, cx))))
+            .when_some(microphone_denied_settings(self.permission), |pane, url| {
+                pane.child(div().flex().items_center().gap_2()
+                    .child(Icon::new(gpui_kit::assets::IconName::TriangleAlert).xsmall().text_color(gpui_kit::rgb(0xf0a030)))
+                    .child(div().flex_1().child("Coincide doesn’t have access to the microphone."))
+                    .when_some(url, |row, url| row.child(Button::new("microphone-open-settings").label(if cfg!(windows) { "Open Windows Settings" } else { "Open System Settings" }).on_click(move |_, _, cx| cx.open_url(url)))))
+            })
             .child(SharedString::from(self.status.clone()))
             .when_some(self.partial_preview(),|pane,text|pane.child(div().max_h(gpui_kit::px(64.0)).overflow_hidden().child("Dictation preview (final insertion after Stop)").child(text.to_owned())))
     }
+}
+
+/// Where to allow the microphone once the system denied it: Some(None) when
+/// access is denied but there is no settings page to open.
+fn microphone_denied_settings(permission: Permission) -> Option<Option<&'static str>> {
+    if !matches!(permission, Permission::Denied | Permission::Restricted) {
+        return None;
+    }
+    Some(if cfg!(target_os = "macos") {
+        Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    } else if cfg!(windows) {
+        Some("ms-settings:privacy-microphone")
+    } else {
+        None
+    })
 }
 
 #[cfg(test)]

@@ -160,32 +160,6 @@ fn enabled_value_patch(
     Ok(json!({"providers":entries}))
 }
 
-fn search_matches(section: Section, query: &str) -> bool {
-    let keywords = match section {
-        Section::General => {
-            "appearance dark light theme colors font text zoom messages terminal layout awake number locale open editor folder project application"
-        }
-        Section::Models => "favorite hidden custom model catalog",
-        Section::Usage => "account limits tokens cost credits history",
-        Section::Instructions => "global shared master agents rules git sync",
-        Section::Archive => "archived conversations restore delete undo",
-        Section::Keyboard => "shortcuts keys bindings",
-        Section::Voice => "dictation speech microphone transcription",
-        Section::Browser => "web passwords profile cookies",
-        Section::ComputerUse => "screen accessibility permissions control",
-        Section::Appshots => {
-            "screenshot app window image capture shortcut permissions sound accessibility text"
-        }
-        Section::Media => "historical images attachments media",
-        Section::Accounts => "providers overview agents accounts login",
-        Section::Provider(_) => "provider accounts login models executable",
-        Section::About => "version help community website support license privacy terms",
-        _ => "",
-    };
-    let text = format!("{} {keywords}", section.label()).to_lowercase();
-    query.split_whitespace().all(|term| text.contains(term))
-}
-
 impl Coincide {
     pub(super) fn navigate_settings_section(
         &mut self,
@@ -228,6 +202,12 @@ impl Coincide {
         if section == Section::Archive {
             self.refresh_archive_settings(cx);
         }
+        if section == Section::General {
+            self.general_settings.refresh_command_line_tool();
+        }
+        if section == Section::Voice {
+            self.refresh_voice_environment(cx);
+        }
         self.focus_settings_route(window, cx);
         self.sync_transcription_binding(cx);
         cx.notify();
@@ -244,11 +224,22 @@ impl Coincide {
             Section::Provider(provider) => provider_enabled(&self.settings, provider),
             _ => true,
         };
+        let status = match section {
+            Section::Provider(provider) => Some(
+                self.provider_configuration_panel
+                    .read(cx)
+                    .status_dot(provider_key(provider), enabled),
+            ),
+            _ => None,
+        };
         Button::new(SharedString::from(format!(
             "settings-section-{}",
             section.id()
         )))
-        .accessibility_label(label)
+        .accessibility_label(match status {
+            Some((headline, _)) => SharedString::from(format!("{label}, {headline}")),
+            None => label.into(),
+        })
         .w_full()
         .h(px(30.))
         .ghost()
@@ -267,13 +258,21 @@ impl Coincide {
                         .text_color(self.color(0xe4e9f2).opacity(if enabled { 1. } else { 0.5 }))
                         .child(label),
                 )
-                .when(matches!(section, Section::Provider(_)), |row| {
+                .when_some(status, |row, (headline, tint)| {
                     row.child(
                         div()
+                            .id(SharedString::from(format!(
+                                "settings-status-{}",
+                                section.id()
+                            )))
                             .w(px(7.))
                             .h(px(7.))
                             .rounded(px(4.))
-                            .bg(rgb(if enabled { 0x8b8f97 } else { 0x696c71 })),
+                            .bg(rgb(tint))
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(headline)
+                                    .build(window, cx)
+                            }),
                     )
                 }),
         )
@@ -323,47 +322,9 @@ impl Coincide {
             "About",
             cx,
         )));
-        let query = self.settings_search.read(cx).value().trim().to_lowercase();
-        if !query.is_empty() {
-            navigation = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().px_2().text_xs().child("Results"));
-            let mut count = 0;
-            for section in [
-                Section::General,
-                Section::Models,
-                Section::Usage,
-                Section::Instructions,
-                Section::Archive,
-                Section::Keyboard,
-                Section::Voice,
-                Section::Browser,
-                Section::ComputerUse,
-                Section::Appshots,
-                Section::Media,
-                Section::Accounts,
-                Section::About,
-            ]
-            .into_iter()
-            .chain(
-                coincide_core::provider_catalog::provider_catalog()
-                    .iter()
-                    .map(|p| Section::Provider(p.id)),
-            ) {
-                if search_matches(section, &query) {
-                    count += 1;
-                    navigation = navigation.child(self.settings_navigation_row(
-                        section,
-                        section.label(),
-                        cx,
-                    ));
-                }
-            }
-            if count == 0 {
-                navigation = navigation.child(div().p_2().child("No results"));
-            }
+        let query = self.settings_search.read(cx).value().to_string();
+        if !query.trim().is_empty() {
+            navigation = div().child(self.settings_search_results(&query, cx));
         }
         let parent = cx.entity().downgrade();
         let resize = gpui_kit::component::resizable::resize_handle(
@@ -869,7 +830,7 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{State, enabled_patch, provider_enabled, search_matches};
+    use super::{State, enabled_patch, provider_enabled};
     use coincide_core::provider_catalog::ProviderId as P;
     use serde_json::json;
 
@@ -897,7 +858,7 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn sidebar_resize_bounds_and_search_route_to_real_destinations() {
+    fn sidebar_resize_stays_within_bounds() {
         let mut state = State::default();
         state.drag = Some((100., state.width()));
         assert!(state.move_to(-500.));
@@ -907,12 +868,6 @@ mod tests {
         assert!(!state.move_to(f32::NAN));
         state.drag = None;
         assert!(!state.move_to(100.));
-        assert!(search_matches(
-            super::Section::Provider(P::Claude),
-            "claude models"
-        ));
-        assert!(search_matches(super::Section::General, "dark theme"));
-        assert!(!search_matches(super::Section::Browser, "claude"));
     }
 
     #[::core::prelude::v1::test]
