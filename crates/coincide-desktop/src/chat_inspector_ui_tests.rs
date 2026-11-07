@@ -76,6 +76,41 @@ fn headless_real_columns_keep_composer_focus_draft_geometry_and_retained_panel_e
 ) {
     assert_eq!(std::env::var(CHILD).as_deref(), Ok("1"));
     cx.update(gpui_kit::init);
+    // Exercise the production saved-state reader against a real private Store
+    // while another operation owns Engine. No Coincide constructor/native
+    // adapters are installed by this compositor fixture.
+    use crate::inspector_follow::{SavedChoice, SavedPanel, State, read_saved_choice};
+    use coincide_core::{api::Engine, store::Store};
+    use std::sync::{Arc, Mutex};
+    let id = "00000000-0000-4000-8000-000000000001";
+    let path = std::env::temp_dir().join("inspector-restore.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    store
+        .save_document(
+            "ui-state.json",
+            &serde_json::json!({"threadPanels":{(id):"diff"},"preserved":true}),
+        )
+        .unwrap();
+    let engine = Arc::new(Mutex::new(Engine::new(store)));
+    let held = engine.lock().unwrap();
+    assert_eq!(
+        read_saved_choice(&engine, id).unwrap(),
+        SavedChoice::Deferred
+    );
+    drop(held);
+    assert_eq!(
+        read_saved_choice(&engine, id).unwrap(),
+        SavedChoice::Ready(Some(SavedPanel::Diff))
+    );
+    let mut follow = State::default();
+    follow.error = Some("Inspector state was not restored: prior failure".into());
+    let mut status = follow.error.clone().unwrap();
+    follow.clear_loaded_error(id, &mut status);
+    assert!(status.is_empty() && follow.error.is_none());
+    follow.error = Some("prior inspector failure".into());
+    status = "Unrelated newer error".into();
+    follow.clear_loaded_error(id, &mut status);
+    assert_eq!(status, "Unrelated newer error");
     let measured = Rc::new(RefCell::new(Vec::new()));
     let (handle, view) = cx.update(|cx| {
         gpui_kit::open_window(
