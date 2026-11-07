@@ -1,5 +1,6 @@
 //! Serialized Computer Use adapter. Construction is inert. Native controls are
-//! deliberately distinct from the agent Request protocol. No listener is started.
+//! deliberately distinct from the agent Request protocol; agents reach it only
+//! through each thread's private bridge connection (computer_use_bridge).
 use coincide_core::agent::WorkerThreadStatus;
 use coincide_core::computer_use::*;
 use serde_json::Value;
@@ -49,6 +50,8 @@ pub struct Status {
     pub busy: bool,
     pub stopped: bool,
     pub error: Option<Failure>,
+    /// The thread whose actions hold the shared desktop.
+    pub desktop_owner: Option<Uuid>,
 }
 impl Default for Status {
     fn default() -> Self {
@@ -59,6 +62,7 @@ impl Default for Status {
             busy: false,
             stopped: false,
             error: None,
+            desktop_owner: None,
         }
     }
 }
@@ -90,8 +94,23 @@ pub struct Handle {
     compiled: bool,
     in_flight: Arc<Mutex<BTreeSet<Uuid>>>,
     joined: Arc<AtomicU8>,
+    /// A Settings switch change the mount still has to save.
+    unsaved: Arc<Mutex<Option<bool>>>,
 }
 impl Handle {
+    /// Native Settings switch: applies now and is saved by the mount, so the
+    /// next launch starts the same way (Swift `settings.computerUseEnabled`).
+    pub fn native_set_saved(&self, enabled: bool) -> Result<(), Failure> {
+        self.native_enable(enabled)?;
+        *self.unsaved.lock().unwrap_or_else(|e| e.into_inner()) = Some(enabled);
+        Ok(())
+    }
+    pub(crate) fn take_unsaved(&self) -> Option<bool> {
+        self.unsaved
+            .try_lock()
+            .ok()
+            .and_then(|mut unsaved| unsaved.take())
+    }
     /// Native UI only; revocation is immediate even when the mailbox is full.
     pub fn native_enable(&self, enabled: bool) -> Result<(), Failure> {
         if enabled && self.stop.load(Ordering::Acquire) {
@@ -310,6 +329,7 @@ impl Runtime {
             compiled,
             in_flight: Arc::new(Mutex::new(BTreeSet::new())),
             joined: Arc::new(AtomicU8::new(0)),
+            unsaved: Arc::new(Mutex::new(None)),
         };
         let h = handle.clone();
         let worker = thread::Builder::new()
@@ -334,6 +354,7 @@ impl Runtime {
                         let mut status = h.status.lock().unwrap_or_else(|e| e.into_inner());
                         status.enabled = h.authority.enabled();
                         status.permissions = broker.cached_permissions();
+                        status.desktop_owner = broker.desktop_owner();
                         drop(status);
                         let message = match requests.recv_timeout(Duration::from_millis(25)) {
                             Ok(m) => m,
@@ -645,7 +666,77 @@ mod macos {
             })
         }
     }
+    /// One native op per extended tool; the adapter rechecks every target.
+    fn extended_request(extended: Extended) -> Value {
+        let target = |target: Target| match target {
+            Target::Element(native) => json!({"native":native}),
+            Target::Point { pid, window, x, y } => {
+                json!({"pid":pid,"window":window,"x":x,"y":y})
+            }
+        };
+        match extended {
+            Extended::DoubleClick(t) => {
+                json!({"op":"pointer","action":"double_click","target":target(t)})
+            }
+            Extended::RightClick(t) => {
+                json!({"op":"pointer","action":"right_click","target":target(t)})
+            }
+            Extended::Scroll {
+                target: t,
+                direction,
+                amount,
+            } => {
+                json!({"op":"pointer","action":"scroll","target":target(t),"direction":direction,"amount":amount})
+            }
+            Extended::MoveCursor { pid, window, x, y } => {
+                json!({"op":"pointer","action":"move","target":{"pid":pid,"window":window,"x":x,"y":y}})
+            }
+            Extended::Drag {
+                pid,
+                window,
+                from,
+                to,
+            } => {
+                json!({"op":"drag","pid":pid,"window":window,"x":from[0],"y":from[1],"to_x":to[0],"to_y":to[1]})
+            }
+            Extended::TypeText { native, text } => {
+                json!({"op":"type_text","native":native,"text":text})
+            }
+            Extended::Hotkey { native, chord } => {
+                json!({"op":"hotkey","native":native,"modifiers":chord.modifiers,"key":chord.key})
+            }
+            Extended::InvokeMenu { pid, path } => json!({"op":"invoke_menu","pid":pid,"path":path}),
+            Extended::LaunchApp { bundle_id } => json!({"op":"launch_app","bundle_id":bundle_id}),
+            Extended::SetWindowFrame { pid, window, frame } => {
+                json!({"op":"set_window_frame","pid":pid,"window":window,"x":frame[0],"y":frame[1],"width":frame[2],"height":frame[3]})
+            }
+            Extended::DesktopScreenshot => json!({"op":"desktop_screenshot"}),
+            Extended::Zoom {
+                pid,
+                window,
+                region,
+            } => {
+                json!({"op":"zoom","pid":pid,"window":window,"x":region[0],"y":region[1],"width":region[2],"height":region[3]})
+            }
+        }
+    }
     impl Backend for NativeBackend {
+        fn extended_tools(&self) -> &'static [&'static str] {
+            &[
+                "double_click",
+                "right_click",
+                "type_text",
+                "hotkey",
+                "scroll",
+                "drag",
+                "move_cursor",
+                "invoke_menu",
+                "launch_app",
+                "set_window_frame",
+                "zoom",
+                "get_desktop_state",
+            ]
+        }
         fn permissions(&mut self) -> Result<Permissions, Failure> {
             self.auth("permissions")
         }
@@ -681,6 +772,7 @@ mod macos {
                 NativeCall::Point { pid, window, x, y } => {
                     json!({"op":"point","pid":pid,"window":window,"x":x,"y":y})
                 }
+                NativeCall::Extended(extended) => extended_request(extended),
             };
             let observe = request["op"] == "observe";
             permit.check()?;
@@ -809,8 +901,7 @@ mod tests {
         assert_eq!(h.try_request(t, Request::Status), Err(Failure::Off));
         assert_eq!(h.native_refresh(), Err(Failure::Off));
         h.native_enable(true).unwrap();
-        assert_eq!(h.try_request(t, Request::Status), Err(Failure::NotGranted));
-        h.native_grant(t).unwrap();
+        // While on, every thread has access without a separate grant.
         let id = h.try_request(t, Request::Status).unwrap();
         assert_eq!(h.try_request(t, Request::Status), Err(Failure::Busy));
         assert_eq!(reply(&runtime).id, id);
