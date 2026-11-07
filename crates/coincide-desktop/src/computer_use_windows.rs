@@ -12,13 +12,13 @@ use ::windows::{
             WindowsAndMessaging::*,
         },
     },
-    core::{Interface, PCWSTR, PWSTR},
+    core::{BSTR, Interface, PWSTR},
 };
 use base64::Engine as _;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    os::windows::thread::JoinHandleExt,
+    os::windows::io::AsRawHandle,
     rc::Rc,
 };
 use windows_capture::{
@@ -534,10 +534,10 @@ impl Backend for NativeBackend {
                 if native(unsafe { pattern.CurrentIsReadOnly() })?.as_bool() {
                     return Err(Failure::PermissionDenied);
                 }
-                let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+                let text = BSTR::from(text.as_str());
                 self.element(id, permit)?;
                 permit.check()?;
-                native(unsafe { pattern.SetValue(PCWSTR(text.as_ptr())) })?;
+                native(unsafe { pattern.SetValue(&text) })?;
                 Ok(NativeResult::Done)
             }
             NativeCall::Key { native: id, key } => {
