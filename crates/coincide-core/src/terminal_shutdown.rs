@@ -43,6 +43,21 @@ impl TerminalsShutdownStatus {
     }
 }
 impl Engine {
+    /// Restarting replaces a shell but retains its complete retired owner in
+    /// the same collector that whole-app shutdown checks.
+    pub(super) fn retain_restarted_terminal(
+        &mut self,
+        terminal_id: String,
+        thread_id: String,
+        pending: PendingTerminalShutdown,
+    ) {
+        self.terminal_shutdown.owners.push(Owner {
+            terminal_id,
+            thread_id,
+            pending,
+        });
+    }
+
     /// Irreversible owner transfer, available only after trusted admission freeze.
     /// Retain all pending owners and failure records; repeated calls never retry kills.
     pub fn request_terminals_shutdown(&mut self) -> Result<()> {

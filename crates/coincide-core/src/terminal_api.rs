@@ -110,18 +110,21 @@ impl Engine {
             .get(&request.terminal_id)
             .context("Terminal not found")?;
         ensure!(terminal.exited(), "Terminal is still running");
+        let thread = thread.clone();
         let last = terminal.directory().to_path_buf();
         let cwd = if last.is_dir() {
             last
         } else {
-            self.terminal_start_directory(&self.store.thread(thread)?)?
+            self.terminal_start_directory(&self.store.thread(&thread)?)?
                 .path
         };
-        self.terminals
+        let retired = self
+            .terminals
             .get_mut(&request.terminal_id)
             .context("Terminal not found")?
             .1
             .restart(&cwd, shell)?;
+        self.retain_restarted_terminal(request.terminal_id, thread, retired);
         self.revision += 1;
         Ok(json!({"restarted":true}))
     }
@@ -308,6 +311,12 @@ mod tests {
         let entry = wait(&mut engine, "failed", |entry| entry["exited"] == false);
         assert_eq!(entry["number"], 4);
         assert_eq!(entry["name"], "Terminal 4");
+        let retired = engine.poll_terminals_shutdown();
+        assert_eq!(retired.panes.len(), 1);
+        assert_eq!(retired.panes[0].terminal_id, "failed");
+        assert_eq!(retired.panes[0].thread_id, "thread");
+        assert!(!retired.requested);
+        assert_eq!(retired.live_count, 2);
         let frame = engine
             .read_terminal_viewport("failed", &Palette::default())
             .unwrap();
