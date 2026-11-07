@@ -2,10 +2,37 @@ use super::{Delivered, Phase};
 use anyhow::{Context, Result};
 use coincide_core::browser_protocol::keys::KeyPress;
 use objc2::{MainThreadMarker, rc::Retained};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSResponder};
 use objc2_foundation::{NSPoint, NSProcessInfo, NSString};
 use objc2_web_kit::WKWebView;
 use wry::WebViewExtMacOS;
+// A native page key must never fall through to the host composer's responder.
+// This changes only the exact retained WKWebView, never NSApp or window focus.
+struct ResponderBoundary {
+    view: Retained<WKWebView>,
+    original: Option<Retained<NSResponder>>,
+}
+impl ResponderBoundary {
+    unsafe fn new(view: &Retained<WKWebView>) -> Self {
+        let original = unsafe { view.nextResponder() };
+        unsafe {
+            view.setNextResponder(None);
+        }
+        Self {
+            view: view.clone(),
+            original,
+        }
+    }
+}
+impl Drop for ResponderBoundary {
+    fn drop(&mut self) {
+        unsafe {
+            if self.view.nextResponder().is_none() {
+                self.view.setNextResponder(self.original.as_deref());
+            }
+        }
+    }
+}
 pub(super) struct Adapter {
     view: Retained<WKWebView>,
 }
@@ -43,6 +70,7 @@ impl Adapter {
                 let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
                 event_type, NSPoint::new(0., 0.), flags, NSProcessInfo::processInfo().systemUptime(), window, None, &NSString::from_str(&key.characters), &NSString::from_str(&key.ignoring_modifiers), false, key.mac_code)
                 .context("Native page key event unavailable")?;
+                let _responder_boundary = ResponderBoundary::new(&self.view);
                 if phase == Phase::Down {
                     if key.meta && self.view.performKeyEquivalent(&event) {
                         return Ok(Delivered::Equivalent);

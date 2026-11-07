@@ -209,9 +209,6 @@ impl BrowserRequest {
                 validate_selector(selector)?;
                 ensure!(text.len() <= 65536, "Input exceeds 64 KiB");
             }
-            BrowserAction::Press { selector, .. } => {
-                serde_json::json!({"kind":"focus","selector":selector})
-            }
             BrowserAction::Scroll { selector, to, by } => {
                 ensure!(
                     usize::from(selector.is_some())
@@ -707,6 +704,10 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
         } => {
             serde_json::json!({"kind":"type","selector":selector,"text":text,"clear":clear})
         }
+        BrowserAction::Press { key, selector } => {
+            let key = keys::KeyPress::admitted(key)?;
+            serde_json::json!({"kind":"focus","selector":selector,"editingOnly":key.control || key.meta})
+        }
         BrowserAction::Scroll { selector, to, by } => {
             serde_json::json!({"kind":"scroll","selector":selector,"to":to,"by":by})
         }
@@ -834,6 +835,10 @@ try {
       throw new Error('Keyboard target is not available');
     if (target.matches('iframe,frame') || sensitive(target))
       throw new Error('Keyboard target requires supported frame selection or user handoff');
+    const editable=target.isContentEditable || target instanceof win.HTMLTextAreaElement ||
+      (target instanceof win.HTMLInputElement && ['text','search','url','tel','email','number'].includes(target.type));
+    if (request.editingOnly && (!editable || target.readOnly))
+      throw new Error('Modified edit keys require an editable, nonsensitive page control');
     if (request.selector) target.focus({preventScroll:true});
     return {focused:doc.activeElement===target};
   }
@@ -1199,5 +1204,32 @@ mod dialog_request_tests {
             *text = Some("x".repeat(64 * 1024 + 1));
         }
         assert!(request.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_press_request_tests {
+    use super::*;
+    #[test]
+    fn admitted_press_produces_only_focus_preflight_and_denied_chord_never_reaches_native_path() {
+        let mut request = BrowserRequest {
+            id: "owned-operation".into(),
+            thread_id: uuid::Uuid::new_v4().to_string(),
+            tab: None,
+            frame: None,
+            action: BrowserAction::Press {
+                key: "Meta+a".into(),
+                selector: Some("#owned-editor".into()),
+            },
+        };
+        let source = script_for_request(&request)
+            .unwrap()
+            .expect("native focus preflight");
+        assert!(source.contains(&serde_json::to_string(&serde_json::json!({"kind":"focus","selector":"#owned-editor","editingOnly":true})).unwrap()));
+        request.action = BrowserAction::Press {
+            key: "Meta+q".into(),
+            selector: Some("#owned-editor".into()),
+        };
+        assert!(script_for_request(&request).is_err());
     }
 }
