@@ -136,6 +136,9 @@ icon_assets!(
         Pencil,
         Trash,
         CircleArrowRight,
+        // The Pull Requests toolbar button and its row menu.
+        Hash,
+        Link,
         Github,
         Globe,
         HardDrive,
@@ -254,6 +257,11 @@ mod tests {
             "icons/pencil-line.svg",
             // Sidebar thread rows: pinned and waiting-for-approval marks.
             "icons/pin.svg",
+            "icons/git-pull-request.svg",
+            "icons/hash.svg",
+            "icons/link.svg",
+            // The Diff inspector's empty states.
+            "icons/diff.svg",
             // Empty states shared by sidebar chrome and Diff inspector.
             "icons/diff.svg",
             // Project script icons and the scripts menu.

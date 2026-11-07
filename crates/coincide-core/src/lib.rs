@@ -6,6 +6,7 @@ pub mod api;
 pub mod attachments;
 pub mod browser_protocol;
 pub mod control;
+pub mod project_script_runs;
 pub mod provider_catalog;
 pub mod provider_preferences;
 pub use api::project_defaults;
@@ -70,6 +71,7 @@ pub mod updater_helper;
 
 pub mod computer_use;
 pub mod computer_use_bridge;
+pub mod computer_use_screenshots;
 
 pub mod legacy_media_recovery;
 

@@ -554,7 +554,7 @@ pub fn catalog(extended: &[&str]) -> Value {
     let tools = [
         json!({"name":"list_apps","inputSchema":schema(json!({}),json!([]))}),
         json!({"name":"list_windows","inputSchema":schema(json!({"pid":{"type":["integer","null"],"minimum":1}}),json!([]))}),
-        json!({"name":"get_window_state","description":"Refresh invalidates earlier tokens. Screenshot is inline PNG; coordinates are window points, not image pixels.","inputSchema":schema(json!({"pid":{"type":"integer","minimum":1},"window_id":{"type":"integer","minimum":1},"max_elements":{"type":"integer","minimum":1,"maximum":128,"default":64},"include_screenshot":{"type":"boolean","default":false}}),json!(["pid","window_id"]))}),
+        json!({"name":"get_window_state","description":"Refresh invalidates earlier tokens. A screenshot is saved as a private PNG file at screenshot.path; coordinates are window points, not image pixels.","inputSchema":schema(json!({"pid":{"type":"integer","minimum":1},"window_id":{"type":"integer","minimum":1},"max_elements":{"type":"integer","minimum":1,"maximum":128,"default":64},"include_screenshot":{"type":"boolean","default":false}}),json!(["pid","window_id"]))}),
         json!({"name":"get_desktop_state","description":"Running apps and on-screen windows. The screenshot, where supported, covers the main display without web browsers; its coordinates are screen points.","inputSchema":schema(json!({"include_screenshot":{"type":"boolean","default":false}}),json!([]))}),
         json!({"name":"verify_state","description":"Fresh read of a window: elements whose title or value contains text. Invalidates earlier tokens; issues none.","inputSchema":schema(json!({"pid":{"type":"integer","minimum":1},"window_id":{"type":"integer","minimum":1},"text":{"type":"string","minLength":1,"maxLength":256}}),json!(["pid","window_id","text"]))}),
         json!({"name":"zoom","description":"Sharper image of a region of the observed window, in window points.","inputSchema":schema(json!({"observation":uuid.clone(),"x":coordinate.clone(),"y":coordinate.clone(),"width":{"type":"number","minimum":1},"height":{"type":"number","minimum":1}}),json!(["observation","x","y","width","height"]))}),
@@ -644,6 +644,19 @@ impl Authority {
     }
     pub fn enabled(&self) -> bool {
         self.0.lock().map(|g| g.enabled).unwrap_or(false)
+    }
+    /// The threads allowed this session, for Settings' activity list.
+    pub fn granted(&self) -> Vec<Uuid> {
+        self.0
+            .lock()
+            .map(|g| {
+                if g.enabled {
+                    g.threads.keys().copied().collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default()
     }
 }
 /// Broker-internal records; raw native handles never enter agent-visible JSON.

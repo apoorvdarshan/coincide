@@ -1133,6 +1133,11 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| match event {
+                github_review::ReviewPanelEvent::Mention(mention) => {
+                    this.mention_pull_request(mention, window, cx)
+                }
+            }),
             cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
                 this.open_github_checkout(event, window, cx);
             }),
@@ -1170,6 +1175,7 @@ impl Coincide {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.github_panel.update(cx, |panel, cx| panel.app_activated(cx));
+                    this.appshots.app_activated();
                 }
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
                 // Git may have changed outside Coincide while the window was inactive.
@@ -1703,6 +1709,23 @@ impl Coincide {
         } else {
             false
         }; // guard released before Mount/panel/runtime submission
+        if self.computer_use_settings_visible()
+            && let Some(mount) = &self.computer_use_mount
+        {
+            let titles = self
+                .threads
+                .iter()
+                .filter_map(|thread| {
+                    Some((
+                        uuid::Uuid::parse_str(&thread.id).ok()?,
+                        thread.title.clone(),
+                    ))
+                })
+                .collect();
+            mount
+                .panel()
+                .update(cx, |panel, cx| panel.set_titles(titles, cx));
+        }
         if ready && let Some(mount) = &mut self.computer_use_mount {
             mount.poll(&self.engine, cx);
             if let Some(error) = mount.last_error() {
