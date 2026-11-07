@@ -38,7 +38,10 @@ def wait_for(description, action, timeout=20):
     raise AssertionError(f'Timed out: {description}')
 
 
-def run_fixture(rpc, thread):
+def exercise_dialogs(rpc, thread_id):
+    assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Fresh GitHub runner only'
+    assert os.environ.get('RUNNER_TEMP'), 'Owned fresh runner scratch required'
+    thread = thread_id
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path != '/owned-dialog-fixture':
@@ -66,8 +69,15 @@ def run_fixture(rpc, thread):
         return wait_for('exact native JavaScript continuation result',
                         lambda: browser('read', tab=tab, selector='#result').get('text') == expected)
 
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    class BoundedServer(http.server.HTTPServer):
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(2)
+            return connection, address
+
+    # One owned request/serve thread, no daemon request workers to outlive it.
+    server = BoundedServer(('127.0.0.1', 0), Handler)
+    worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.1))
     worker.start()
     tab = None
     spare = None
@@ -155,7 +165,7 @@ def main():
     assert rpc('app.status').get('preview'), 'Owned application control required'
     # browser.request additionally requires the actual desktop UI owner; a
     # standalone client/Core fallback cannot pass any of the tests below.
-    report = run_fixture(rpc, args.thread)
+    report = exercise_dialogs(rpc, args.thread)
     Path(args.report).write_text(json.dumps(report, indent=2)+'\n')
 
 
