@@ -721,7 +721,7 @@ impl Panel {
             })
             .collect()
     }
-    pub fn render_part(&self, part: Part, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_part(&mut self, part: Part, cx: &mut Context<Self>) -> AnyElement {
         if matches!(part, Part::Accounts) {
             return self.render_accounts(cx);
         }
@@ -798,6 +798,9 @@ impl Panel {
                                 .label("Show in File Manager")
                                 .on_click(move |_, _, cx| cx.reveal_path(&location)),
                         )
+                        .when_some(report.status_note.as_ref(), |pane, note| {
+                            pane.child(div().text_sm().child(note.clone()))
+                        })
                         .when_some(report.account.as_ref(), |pane, account| {
                             pane.child(format!("Account: {account}"))
                         })

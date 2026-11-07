@@ -176,22 +176,7 @@ impl LaunchContext {
             .map(str::to_owned)
             .collect();
         }
-        [
-            "-c",
-            "cli_auth_credentials_store=\"file\"",
-            "-c",
-            "forced_login_method=\"chatgpt\"",
-            "-c",
-            "model_provider=\"openai\"",
-            "-c",
-            "openai_base_url=\"https://chatgpt.com/backend-api/codex\"",
-            "-c",
-            "chatgpt_base_url=\"https://chatgpt.com/backend-api/\"",
-            "app-server",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
+        subscription_arguments()
     }
     pub(crate) fn configure(&self, command: &mut Command) -> Result<()> {
         self.validate()?;
@@ -241,6 +226,26 @@ impl LaunchContext {
         );
         Ok(())
     }
+}
+
+/// Fixed subscription contract shared by app-server and native login handoff.
+pub(crate) fn subscription_arguments() -> Vec<String> {
+    [
+        "-c",
+        "cli_auth_credentials_store=\"file\"",
+        "-c",
+        "forced_login_method=\"chatgpt\"",
+        "-c",
+        "model_provider=\"openai\"",
+        "-c",
+        "openai_base_url=\"https://chatgpt.com/backend-api/codex\"",
+        "-c",
+        "chatgpt_base_url=\"https://chatgpt.com/backend-api/\"",
+        "app-server",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 pub(crate) fn canonical_id(id: &str) -> Result<()> {

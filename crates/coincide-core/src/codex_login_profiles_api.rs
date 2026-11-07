@@ -141,7 +141,9 @@ impl Engine {
             )
             .map(Some);
         }
-        profiles::account(&profiles::configuration(&self.store)?, account)?;
+        if !provider_configuration::native_account_matches(&thread["selection"]) {
+            profiles::account(&profiles::configuration(&self.store)?, account)?;
+        }
         ensure!(
             self.codex_profile_login
                 .as_ref()

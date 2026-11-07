@@ -1,5 +1,13 @@
 //! CAS for the Rust-only legacy subscription profile document. Originals stay immutable.
 use super::*;
+pub(crate) struct CodexAuthChange<'a> {
+    pub before: Option<&'a str>,
+    pub after: &'a str,
+    pub legacy: Option<&'a Value>,
+    pub id: &'a str,
+    pub threads: &'a [Value],
+    pub grants: Option<&'a [(String, String)]>,
+}
 impl Store {
     pub(crate) fn rename_legacy_codex_profile(
         &mut self,
@@ -109,9 +117,147 @@ impl Store {
     }
 }
 
+impl Store {
+    pub(crate) fn change_native_codex_auth(
+        &mut self,
+        plan: CodexAuthChange<'_>,
+        change_owner: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let CodexAuthChange {
+            before,
+            after,
+            legacy,
+            id,
+            threads,
+            grants,
+        } = plan;
+        ensure!(
+            after.len() <= 1024 * 1024,
+            "Native account registry exceeds its bound"
+        );
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT value FROM metadata WHERE key='native-login-accounts-v1/codex'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure!(
+            current.as_deref() == before,
+            "Native accounts changed; review authentication again"
+        );
+        ensure!(
+            provider_account_removal::affected(&tx, "codex", id)? == threads,
+            "Account conversations changed; review authentication again"
+        );
+        if let Some(legacy) = legacy {
+            let raw: String = tx.query_row(
+                "SELECT document FROM documents WHERE name=?1",
+                [crate::codex_login_profiles::DOCUMENT],
+                |row| row.get(0),
+            )?;
+            let mut current: Value = serde_json::from_str(&raw)?;
+            ensure!(
+                &current == legacy,
+                "Subscription profiles changed; review authentication again"
+            );
+            crate::codex_login_profiles::account(&current, id)?;
+            current["accounts"].as_object_mut().unwrap().remove(id);
+            if let Some(order) = current["order"].as_array_mut() {
+                order.retain(|row| row.as_str() != Some(id));
+            }
+            tx.execute(
+                "UPDATE documents SET document=?2 WHERE name=?1",
+                params![crate::codex_login_profiles::DOCUMENT, current.to_string()],
+            )?;
+            let grants =
+                grants.context("Legacy conversion requires exact native selection grants")?;
+            ensure!(
+                grants.len() == threads.len(),
+                "Converted selection set changed"
+            );
+            for (thread, (thread_id, grant)) in threads.iter().zip(grants) {
+                ensure!(
+                    thread["id"].as_str() == Some(thread_id.as_str()) && grant.len() <= 16_384,
+                    "Converted selection identity or size is invalid"
+                );
+                ensure_not_deleted(&tx, thread_id)?;
+                tx.execute("INSERT INTO metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("native-account-selection-v1/{thread_id}"), grant])?;
+            }
+        } else {
+            ensure!(
+                grants.is_none(),
+                "Native method changes cannot mint selection grants"
+            );
+        }
+        // Every document/thread/registry CAS succeeded while IMMEDIATE holds.
+        // A stale review never touches its private owner-file generation.
+        change_owner()?;
+        tx.execute("INSERT INTO metadata(key,value) VALUES('native-login-accounts-v1/codex',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [after])?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owner_failure_rolls_back_legacy_row_and_selection_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&root.path().join("private/state.sqlite")).unwrap();
+        let account = uuid::Uuid::new_v4().to_string();
+        let thread = json!({"id":uuid::Uuid::new_v4().to_string(),"title":"Keep","items":[],"selection":{"provider":"codex","modelID":"default","accountID":account}});
+        store.save(&thread).unwrap();
+        let configuration = json!({"version":1,"accounts":{&account:{"name":"Synthetic","auth":"login"}},"future":true});
+        store
+            .save_document(crate::codex_login_profiles::DOCUMENT, &configuration)
+            .unwrap();
+        let grants = vec![(
+            thread["id"].as_str().unwrap().to_owned(),
+            "synthetic-grant".into(),
+        )];
+        let called = std::cell::Cell::new(false);
+        assert!(
+            store
+                .change_native_codex_auth(
+                    CodexAuthChange {
+                        before: None,
+                        after: "synthetic-registry",
+                        legacy: Some(&configuration),
+                        id: &account,
+                        threads: std::slice::from_ref(&thread),
+                        grants: Some(&grants)
+                    },
+                    || {
+                        called.set(true);
+                        anyhow::bail!("Synthetic owner write failure")
+                    }
+                )
+                .is_err()
+        );
+        assert!(called.get());
+        assert_eq!(
+            store
+                .local_document(crate::codex_login_profiles::DOCUMENT)
+                .unwrap(),
+            Some(configuration)
+        );
+        assert!(store.native_accounts_payload("codex").unwrap().is_none());
+        assert!(
+            store
+                .native_account_selection(thread["id"].as_str().unwrap())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store.thread(thread["id"].as_str().unwrap()).unwrap(),
+            thread
+        );
+    }
     #[test]
     fn legacy_removal_changes_only_native_account_choice_and_preserves_imported_originals() {
         let root = tempfile::tempdir().unwrap();

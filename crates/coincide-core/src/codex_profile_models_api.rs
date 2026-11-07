@@ -120,6 +120,9 @@ impl Engine {
             "accountIdentityVerified":false,"effortSupported":base_reason.is_none() && effort["supported"] == true,"speedSupported":base_reason.is_none() && speed["supported"] == true,"nativeResumeSupported":true,"nativeResumeScope":"successful_saved_turn_owned_worker_join_and_private_journal","crossRestartResumeSupported":cfg!(any(unix,windows)),"nativeResume":self.named_resume.durable_status(),"fullAccessSupported":explicit_model_ready,"planSupported":explicit_model_ready});
         result["nativeAccountSelectionAllowed"] =
             json!(self.native_account_choice_available(thread));
+        result["namedModels"]["nativeAccount"] = json!(
+            provider_configuration::native_account_matches(&thread["selection"])
+        );
         result["namedModels"]["nativeApiKey"] =
             json!(provider_configuration::native_key_profile("codex"));
         if let Some(codex) = result["providers"]

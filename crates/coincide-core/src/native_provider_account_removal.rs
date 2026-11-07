@@ -68,6 +68,19 @@ pub(super) fn ready(engine: &mut Engine, threads: &[Value]) -> Result<()> {
     Ok(())
 }
 pub(super) fn tombstone(payload: &mut Value, account: &Account) -> Result<()> {
+    let fields: &[&str] = if account.provider == "codex" {
+        &["order", "codex_order"]
+    } else {
+        &["order"]
+    };
+    for field in fields {
+        if let Some(order) = payload.get_mut(*field) {
+            order
+                .as_array_mut()
+                .context("Account order is invalid")?
+                .retain(|id| id.as_str() != Some(account.id.as_str()));
+        }
+    }
     if payload.get("removed_accounts").is_none() {
         payload["removed_accounts"] = json!({});
     }
