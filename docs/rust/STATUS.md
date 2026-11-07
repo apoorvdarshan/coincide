@@ -1467,8 +1467,9 @@ Still open in section A:
 
 - Browser fixed viewport on Linux/Windows: the controller holds the requested
   size and the panel lays out the fixed box, but WebKitGTK/WebView2 still
-  report the panel size to the page. The Linux and Windows native UI scripts
-  fail at this step; macOS does not run that fixture.
+  report the panel size to the page. Running the same fixture locally on
+  macOS passes the 400x300 step, so the panel code is correct and the gap is
+  in gpui_webview's native sizing on Linux/Windows.
 - Real passkey/password-manager sign-in outside the synthetic fixture, OS
   notification delivery, and any workflow that mutates live schedules or
   GitHub state.
