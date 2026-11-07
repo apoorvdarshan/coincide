@@ -385,6 +385,12 @@ def main():
     except BaseException as error:
         report["passed"] = False
         report["error"] = str(error)
+        if hasattr(error, "native_browser_diagnostics"):
+            report["nativeBrowserFailure"] = error.native_browser_diagnostics
+            try:
+                capture(window, "native-browser-failure")
+            except Exception as diagnostic:
+                report["nativeBrowserFailureFrameError"] = str(diagnostic)
         raise
     finally:
         drained = process is None or process.poll() is not None

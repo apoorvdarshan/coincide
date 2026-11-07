@@ -19,6 +19,12 @@ use uuid::Uuid;
 #[cfg(any(test, target_os = "windows"))]
 #[path = "native_capture_owner.rs"]
 pub(crate) mod capture_owner;
+#[cfg(all(target_os = "linux", feature = "native-computer-use"))]
+#[path = "computer_use_linux.rs"]
+mod linux;
+#[cfg(any(test, all(target_os = "linux", feature = "native-computer-use")))]
+#[path = "computer_use_linux_policy.rs"]
+mod linux_policy;
 #[cfg(all(target_os = "windows", feature = "native-computer-use"))]
 #[path = "computer_use_windows.rs"]
 mod windows;
@@ -27,7 +33,11 @@ mod windows;
 mod windows_policy;
 pub fn native_compiled() -> bool {
     cfg!(all(
-        any(target_os = "macos", target_os = "windows"),
+        any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        ),
         feature = "native-computer-use"
     ))
 }
@@ -252,8 +262,12 @@ impl Runtime {
         {
             Self::spawn(windows::NativeBackend::default(), true)
         }
+        #[cfg(all(target_os = "linux", feature = "native-computer-use"))]
+        {
+            Self::spawn(linux::NativeBackend::default(), true)
+        }
         #[cfg(not(all(
-            any(target_os = "macos", target_os = "windows"),
+            any(target_os = "macos", target_os = "windows", target_os = "linux"),
             feature = "native-computer-use"
         )))]
         {

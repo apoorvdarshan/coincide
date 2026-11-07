@@ -85,6 +85,10 @@ fn payload(alert: &Alert, previews: bool) -> Payload {
 /// Acceptance means OS API acknowledgement, not proof of banner presentation.
 /// Never classify a callback timeout as definitely unsent.
 pub trait Backend {
+    /// Conservative default for callback-based/native adapters. Only an adapter
+    /// whose methods synchronously return all app-owned native work may opt out.
+    /// This does not assert that an OS notification was displayed or unsent.
+    const MAY_RETAIN_NATIVE_CALLBACKS: bool = true;
     /// Only the configured, enabled native worker overrides this. Fake backends
     /// preserve the supplied UI observation without consulting the host.
     fn observe_desktop(
@@ -573,3 +577,10 @@ mod tests {
 #[cfg(all(target_os = "linux", feature = "native-notifications"))]
 #[path = "notifications_linux.rs"]
 pub(crate) mod linux;
+
+#[cfg(all(windows, feature = "native-notifications"))]
+#[path = "notifications_windows.rs"]
+pub(crate) mod windows;
+#[cfg(any(all(windows, feature = "native-notifications"), test))]
+#[path = "notifications_windows_policy.rs"]
+mod windows_policy;

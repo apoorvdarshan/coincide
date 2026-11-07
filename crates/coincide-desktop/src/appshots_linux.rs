@@ -39,19 +39,19 @@ struct InputOwner {
     worker: JoinHandle<()>,
 }
 
-fn x11_session() -> bool {
+pub(crate) fn x11_session() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_none()
         && !std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "wayland")
 }
 
 /// All X requests, including setup, have a shared deadline and cancellation
 /// check. A stopped display must not leave a capture/input worker in reply().
-struct BoundedStream<'a> {
+pub(crate) struct BoundedStream<P> {
     inner: DefaultStream,
-    allowed: &'a dyn Fn() -> bool,
+    allowed: P,
     deadline: Cell<Instant>,
 }
-impl Stream for BoundedStream<'_> {
+impl<P: Fn() -> bool> Stream for BoundedStream<P> {
     fn poll(&self, mode: PollMode) -> io::Result<()> {
         loop {
             self.check()?;
@@ -84,7 +84,10 @@ impl Stream for BoundedStream<'_> {
         self.inner.write(buf, fds)
     }
 }
-impl BoundedStream<'_> {
+impl<P: Fn() -> bool> BoundedStream<P> {
+    pub(crate) fn deadline(&self, deadline: Instant) {
+        self.deadline.set(deadline);
+    }
     fn check(&self) -> io::Result<()> {
         if !(self.allowed)() || Instant::now() >= self.deadline.get() {
             return Err(io::Error::new(
@@ -95,9 +98,14 @@ impl BoundedStream<'_> {
         Ok(())
     }
 }
-type XConnection<'a> = RustConnection<BoundedStream<'a>>;
+pub(crate) type XConnection<'a> = RustConnection<BoundedStream<&'a dyn Fn() -> bool>>;
 
-fn connect(allowed: &dyn Fn() -> bool) -> Result<(XConnection<'_>, usize)> {
+pub(crate) fn connect(allowed: &dyn Fn() -> bool) -> Result<(XConnection<'_>, usize)> {
+    connect_guarded(allowed)
+}
+pub(crate) fn connect_guarded<P: Fn() -> bool>(
+    allowed: P,
+) -> Result<(RustConnection<BoundedStream<P>>, usize)> {
     ensure!(x11_session(), "{WAYLAND}");
     ensure!(allowed(), "Appshot cancelled");
     let parsed = parse_display::parse_display(None).context("No X11 display is available")?;
@@ -432,10 +440,10 @@ pub(super) fn permissions(_action: u8) -> Permissions {
     Permissions { screen, accessibility, detail: "X11 captures only a composited app window. Window text and password detection use the app’s AT-SPI accessibility tree when available. Enable accessibility in your desktop settings if text is unavailable.".into() }
 }
 
-fn atom(connection: &XConnection<'_>, name: &[u8]) -> Result<Atom> {
+pub(crate) fn atom(connection: &XConnection<'_>, name: &[u8]) -> Result<Atom> {
     Ok(connection.intern_atom(false, name)?.reply()?.atom)
 }
-fn property(
+pub(crate) fn property(
     connection: &XConnection<'_>,
     window: Window,
     name: &[u8],
@@ -445,7 +453,7 @@ fn property(
         .get_property(false, window, atom(connection, name)?, kind, 0, 2048)?
         .reply()?)
 }
-fn active_window(connection: &XConnection<'_>, root: Window) -> Result<Window> {
+pub(crate) fn active_window(connection: &XConnection<'_>, root: Window) -> Result<Window> {
     let property = property(connection, root, b"_NET_ACTIVE_WINDOW", AtomEnum::WINDOW)?;
     let window = property
         .value32()
@@ -457,7 +465,7 @@ fn active_window(connection: &XConnection<'_>, root: Window) -> Result<Window> {
     );
     Ok(window)
 }
-fn owner_pid(connection: &XConnection<'_>, window: Window) -> Result<u32> {
+pub(crate) fn owner_pid(connection: &XConnection<'_>, window: Window) -> Result<u32> {
     let property = property(connection, window, b"_NET_WM_PID", AtomEnum::CARDINAL)?;
     let pid = property
         .value32()
@@ -489,7 +497,7 @@ fn target_window(connection: &XConnection<'_>, root: Window) -> Result<(Window, 
     }
     bail!("No other eligible app window is available")
 }
-fn eligible_window(connection: &XConnection<'_>, window: Window) -> Result<bool> {
+pub(crate) fn eligible_window(connection: &XConnection<'_>, window: Window) -> Result<bool> {
     let Ok(pid) = owner_pid(connection, window) else {
         return Ok(false);
     };
@@ -508,7 +516,7 @@ fn eligible_window(connection: &XConnection<'_>, window: Window) -> Result<bool>
         && geometry.height >= 40
         && eligible_type(connection, window)?)
 }
-fn eligible_type(connection: &XConnection<'_>, window: Window) -> Result<bool> {
+pub(crate) fn eligible_type(connection: &XConnection<'_>, window: Window) -> Result<bool> {
     let types = property(connection, window, b"_NET_WM_WINDOW_TYPE", AtomEnum::ATOM)?;
     let Some(types) = types.value32() else {
         return Ok(true);
@@ -571,13 +579,71 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
             && owner_pid(&connection, window)? == pid,
         "The front window changed before capture"
     );
+    let result = (|| -> Result<_> {
+        let png = window_png(&connection, screen, window, allowed)?;
+        let title_property = property(&connection, window, b"_NET_WM_NAME", AtomEnum::ANY)?;
+        let title = String::from_utf8_lossy(&title_property.value)
+            .trim_matches('\0')
+            .trim()
+            .to_owned();
+        let class = property(&connection, window, b"WM_CLASS", AtomEnum::STRING)?;
+        let app = class
+            .value
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .next_back()
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .filter(|part| !part.is_empty())
+            .unwrap_or_else(|| "the app".into());
+        inspect_accessibility(pid, frame, false, allowed)?;
+        ensure!(
+            allowed()
+                && target_window(&connection, root)? == (front, window)
+                && owner_pid(&connection, window)? == pid,
+            "The front window changed during capture"
+        );
+        Ok(Capture {
+            png,
+            app,
+            title: (!title.is_empty()).then_some(title),
+            text,
+        })
+    })();
+    result
+}
+
+/// Exact window backing pixmap only. Never names or reads the root drawable.
+pub(crate) fn window_png(
+    connection: &XConnection<'_>,
+    screen: usize,
+    window: Window,
+    allowed: &dyn Fn() -> bool,
+) -> Result<Vec<u8>> {
+    ensure!(allowed(), "Window capture cancelled");
+    let root = connection
+        .setup()
+        .roots
+        .get(screen)
+        .context("Missing X11 screen")?
+        .root;
+    ensure!(
+        window != 0 && window != root && eligible_window(connection, window)?,
+        "Not an eligible app window"
+    );
+    let attributes = connection.get_window_attributes(window)?.reply()?;
+    let geometry = connection.get_geometry(window)?.reply()?;
+    ensure!(
+        geometry.root == root
+            && u64::from(geometry.width) * u64::from(geometry.height) <= 16_000_000,
+        "Invalid capture dimensions/root"
+    );
     let pixmap = connection.generate_id()?;
     connection.composite_query_version(0, 2)?.reply()?;
     connection
         .composite_name_window_pixmap(window, pixmap)?
         .check()
         .context("This window has no composited backing image; enable your X11 compositor")?;
-    let result = (|| -> Result<_> {
+    let result = (|| -> Result<Vec<u8>> {
         let image = connection
             .get_image(
                 ImageFormat::Z_PIXMAP,
@@ -610,46 +676,19 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
             connection.setup().image_byte_order,
         )?;
         ensure!(allowed(), "Appshot cancelled");
-        let png = coincide_core::appshots::encode_rgba(
+        coincide_core::appshots::encode_rgba(
             u32::from(geometry.width),
             u32::from(geometry.height),
             rgba,
-        )?;
-        let title_property = property(&connection, window, b"_NET_WM_NAME", AtomEnum::ANY)?;
-        let title = String::from_utf8_lossy(&title_property.value)
-            .trim_matches('\0')
-            .trim()
-            .to_owned();
-        let class = property(&connection, window, b"WM_CLASS", AtomEnum::STRING)?;
-        let app = class
-            .value
-            .split(|byte| *byte == 0)
-            .filter(|part| !part.is_empty())
-            .next_back()
-            .map(|part| String::from_utf8_lossy(part).into_owned())
-            .filter(|part| !part.is_empty())
-            .unwrap_or_else(|| "the app".into());
-        inspect_accessibility(pid, frame, false, allowed)?;
-        ensure!(
-            allowed()
-                && target_window(&connection, root)? == (front, window)
-                && owner_pid(&connection, window)? == pid,
-            "The front window changed during capture"
-        );
-        Ok(Capture {
-            png,
-            app,
-            title: (!title.is_empty()).then_some(title),
-            text,
-        })
+        )
     })();
-    // The X connection owns this named pixmap and also frees it on disconnect.
     let _ = connection.free_pixmap(pixmap);
     let _ = connection.flush();
+    ensure!(allowed(), "Window capture cancelled");
     result
 }
 
-fn rgba_pixels(
+pub(crate) fn rgba_pixels(
     data: &[u8],
     width: u16,
     height: u16,
@@ -706,7 +745,7 @@ fn rgba_pixels(
     Ok(rgba)
 }
 
-fn bounded_text(text: &str, limit: usize) -> String {
+pub(crate) fn bounded_text(text: &str, limit: usize) -> String {
     let end = text
         .char_indices()
         .find(|(index, ch)| index + ch.len_utf8() > limit)
@@ -715,7 +754,7 @@ fn bounded_text(text: &str, limit: usize) -> String {
     text[..end].to_owned()
 }
 
-fn accessibility_bus() -> Result<zbus::blocking::Connection> {
+pub(crate) fn accessibility_bus() -> Result<zbus::blocking::Connection> {
     let session = zbus::blocking::connection::Builder::session()?
         .method_timeout(Duration::from_millis(150))
         .build()?;
@@ -729,8 +768,8 @@ fn accessibility_bus() -> Result<zbus::blocking::Connection> {
     Ok(connection)
 }
 
-type Object = (String, zbus::zvariant::OwnedObjectPath);
-fn accessible<'a>(
+pub(crate) type Object = (String, zbus::zvariant::OwnedObjectPath);
+pub(crate) fn accessible<'a>(
     bus: &'a zbus::blocking::Connection,
     object: &'a Object,
 ) -> Result<AccessibleProxyBlocking<'a>> {
@@ -740,13 +779,13 @@ fn accessible<'a>(
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()?)
 }
-fn object(reference: atspi::ObjectRefOwned) -> Option<Object> {
+pub(crate) fn object(reference: atspi::ObjectRefOwned) -> Option<Object> {
     Some((
         reference.name_as_str()?.into(),
         reference.path().to_owned().into(),
     ))
 }
-fn children(
+pub(crate) fn children(
     proxy: &AccessibleProxyBlocking<'_>,
     deadline: Instant,
     allowed: &dyn Fn() -> bool,

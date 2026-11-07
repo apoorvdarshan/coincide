@@ -40,7 +40,6 @@ impl NativeLifetimes {
     pub fn block(&self) -> NativeLease {
         NativeLease::new(self.blocks.clone())
     }
-    #[cfg(any(target_os = "macos", test))]
     pub fn target(&self) -> NativeLease {
         NativeLease::new(self.targets.clone())
     }
@@ -134,7 +133,7 @@ pub struct BrowserShutdownStatus {
     /// Captured callback closures/blocks not yet finally dropped, including
     /// private-fill probe and final-mutation blocks independently.
     pub callback_blocks_pending: usize,
-    /// Retained NativeCredentialTarget instances/clones not yet dropped.
+    /// Retained native credential/key target instances or clones not yet dropped.
     /// This is not a count or deallocation receipt for WKWebView objects.
     pub native_targets_pending: usize,
     pub downloads_pending: usize,

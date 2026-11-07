@@ -1,7 +1,7 @@
 //! Actual TestPlatform rendering and native worker entry points, exclusively
 //! fake microphone/inference adapters and a private child environment.
 use super::{
-    CaptureBinding, CaptureError, CaptureEvent, CapturedAudio, Controller, Inference,
+    CaptureBinding, CaptureChunk, CaptureError, CaptureEvent, CapturedAudio, Controller, Inference,
     InferenceFailure, LocalRecordingConfig, MicrophoneSettings, Permission,
 };
 use crate::transcription_composer::{ComposerTarget, insert};
@@ -25,6 +25,26 @@ struct FakeCapture {
     started: Sender<()>,
 }
 impl Controller for FakeCapture {
+    fn read_chunk(
+        &mut self,
+        session: Uuid,
+        offset: usize,
+        _: usize,
+    ) -> Result<Option<CaptureChunk>, CaptureError> {
+        if self.session != Some(session) {
+            return Err(CaptureError::InvalidBinding);
+        }
+        if offset >= 2 {
+            return Ok(None);
+        }
+        Ok(Some(CaptureChunk {
+            session,
+            generation: 2,
+            binding: self.binding.clone().unwrap(),
+            offset,
+            samples: vec![0.0, 0.5],
+        }))
+    }
     fn set_binding(&mut self, binding: Option<CaptureBinding>) {
         self.binding = binding;
     }
@@ -68,8 +88,46 @@ impl Controller for FakeCapture {
             && audio.binding == *binding
     }
 }
-struct FakeInference;
+#[derive(Default)]
+struct FakeInference {
+    streamed: usize,
+}
 impl Inference for FakeInference {
+    fn prepare_apple(
+        &mut self,
+        config: &crate::voice_speech::Configuration,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        assert_eq!(config.locale, "ja-JP");
+        Ok(())
+    }
+    fn stream_apple(
+        &mut self,
+        offset: usize,
+        samples: &[f32],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        assert!(!cancelled());
+        assert_eq!(self.streamed, offset);
+        self.streamed += samples.len();
+        Ok(())
+    }
+    fn apple_partial(&mut self) -> Option<String> {
+        (self.streamed > 0).then(|| "途中の synthetic café".into())
+    }
+    fn apple(
+        &mut self,
+        wav: &[u8],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        assert!(!cancelled());
+        assert!(wav.starts_with(b"RIFF"));
+        assert_eq!(self.streamed, 2);
+        Ok("合成の最終文".into())
+    }
+    fn cancel_apple(&mut self) {
+        self.streamed = 0;
+    }
     fn transcribe(
         &mut self,
         _: &LocalRecordingConfig,
@@ -113,7 +171,7 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
                 events: VecDeque::new(),
                 started: started_tx,
             }),
-            Box::new(FakeInference),
+            Box::new(FakeInference::default()),
         )
     }));
     let (view, vcx) = cx.add_window_view(|window, cx| Harness {
@@ -191,6 +249,95 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
             input.read(cx).value().as_ref(),
             "before synthetic café 👩🏽‍💻 after"
         );
+    });
+    let apple_binding = vcx.update(|window, cx| {
+        let input = view.read(cx).input.clone();
+        let panel = view.read(cx).panel.clone();
+        let mut target = ComposerTarget::default();
+        target.changed();
+        target.changed();
+        let binding = target
+            .bind(
+                Some("synthetic-thread"),
+                input.read(cx).value().as_ref(),
+                input.read(cx).selected_range(),
+                false,
+            )
+            .unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_configuration_target(
+                Some(binding.clone()),
+                2,
+                Some(super::RecordingConfig::Apple(
+                    crate::voice_speech::Configuration {
+                        locale: "ja-JP".into(),
+                        maximum_seconds: 1,
+                    },
+                )),
+                None,
+                true,
+                cx,
+            );
+            panel.begin_dictation(cx);
+        });
+        draw(window, cx);
+        binding
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("actual fake streaming capture started");
+    let preview_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let ready = vcx.update(|_, cx| {
+            view.read(cx).panel.clone().update(cx, |panel, cx| {
+                panel.poll(cx);
+                panel.partial_preview() == Some("途中の synthetic café")
+            })
+        });
+        if ready {
+            break;
+        }
+        assert!(
+            Instant::now() < preview_deadline,
+            "actual fake worker must publish the matching partial receipt"
+        );
+        std::thread::yield_now();
+    }
+    vcx.update(|window, cx| {
+        let panel = view.read(cx).panel.clone();
+        let input = view.read(cx).input.clone();
+        draw(window, cx);
+        assert_eq!(
+            input.read(cx).value().as_ref(),
+            "before synthetic café 👩🏽‍💻 after",
+            "preview never replaces the original draft or changes its undo history"
+        );
+        assert!(
+            input.read(cx).focus_handle(cx).is_focused(window),
+            "native partial preview cannot take composer focus"
+        );
+        assert!(
+            events.try_recv().is_err(),
+            "interim text must not be admitted as final text or automatic send"
+        );
+        panel.update(cx, |panel, cx| panel.stop_dictation(cx));
+    });
+    let event = events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("actual fake streaming final transcript");
+    vcx.update(|window, cx| {
+        let panel = view.read(cx).panel.clone();
+        let input = view.read(cx).input.clone();
+        assert!(panel.read(cx).accepts_text(&event, &apple_binding));
+        let (text, caret) =
+            insert(&apple_binding, &event, input.read(cx).value().as_ref()).unwrap();
+        assert_eq!(text, "before synthetic café 👩🏽‍💻 合成の最終文 after");
+        input.update(cx, |input, cx| {
+            input.replace_all(text, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        draw(window, cx);
+        assert!(input.read(cx).focus_handle(cx).is_focused(window));
         panel.update(cx, |panel, _| panel.request_shutdown());
     });
     let deadline = Instant::now() + Duration::from_secs(5);

@@ -49,6 +49,8 @@ impl Coincide {
         cx.quit();
     }
     pub(super) fn poll_global_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Only committed source may enter the normal draft-flush custody.
+        self.close_dictation_preview(cx);
         // Admission closure is one in-memory flag, even if the off-UI drain
         // worker cannot start. Busy Engine is retried without blocking GPUI.
         if let Ok(mut engine) = self.engine.try_lock() {

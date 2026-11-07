@@ -9,6 +9,17 @@ mod cookie_import;
 mod credential_bridge;
 #[path = "browser_dialogs.rs"]
 mod dialogs;
+#[cfg(target_os = "linux")]
+#[path = "browser_downloads_linux.rs"]
+mod native_downloads;
+#[path = "browser_native_history.rs"]
+mod native_history;
+#[path = "browser_native_keys.rs"]
+mod native_keys;
+#[path = "browser_press.rs"]
+mod press;
+#[path = "browser_private_profiles.rs"]
+mod private_profiles;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
 pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
@@ -18,9 +29,11 @@ use shutdown::TrackedEvaluation;
 use crate::browser_settings::{ProfileCatalog, ProfileChoice, ProfileRequest, ProfileSnapshot};
 use crate::credentials::{FillJob, deliver_fill};
 use anyhow::{Context, Result, ensure};
+#[cfg(not(target_os = "linux"))]
+use coincide_core::browser_protocol::allow_native_navigation;
 use coincide_core::browser_protocol::{
     BrowserAction, BrowserConsole, BrowserReply, BrowserRequest, CONSOLE_SCRIPT, DownloadRegistry,
-    allow_native_navigation, prepare_upload_script, script_for_request,
+    prepare_upload_script, script_for_request,
     upload::{UploadPermit, UploadSlots, UploadWork},
     upload_probe_script, validate_url,
 };
@@ -50,6 +63,8 @@ use uuid::Uuid;
 use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
+    credential: Option<credential_bridge::NativeCredentialTarget>,
+    keys: native_keys::Target,
     dialogs: dialogs::Dialogs,
     id: String,
     view: Entity<WebView>,
@@ -59,6 +74,13 @@ struct Tab {
     console: Rc<RefCell<BrowserConsole>>,
     credential_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
+}
+impl Drop for Tab {
+    fn drop(&mut self) {
+        if let Some(target) = self.credential.take() {
+            target.close();
+        }
+    }
 }
 struct PendingWait {
     request: BrowserRequest,
@@ -83,6 +105,7 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    Press(press::Event),
     DialogChanged,
     DownloadsChanged,
     UploadProbe {
@@ -115,6 +138,7 @@ enum NativeEvent {
 }
 
 struct PendingScript {
+    mutating: bool,
     tab: String,
     thread: String,
     epoch: u64,
@@ -130,12 +154,17 @@ pub struct BrowserController {
     sender: SyncSender<NativeEvent>,
     contexts: HashMap<String, wry::WebContext>,
     profiles: ProfileCatalog,
+    private_profiles: private_profiles::PrivateProfiles,
     #[cfg(target_os = "macos")]
     cookie_actor: Option<cookie_actor::Actor>,
     #[cfg(target_os = "macos")]
     private_stores: HashMap<String, Retained<WKWebsiteDataStore>>,
     downloads: Rc<RefCell<DownloadRegistry>>,
+    #[cfg(target_os = "linux")]
+    linux_downloads: Vec<Rc<native_downloads::Owner>>,
     dialog_inputs: HashMap<String, Entity<InputState>>,
+    credential_targets: Vec<credential_bridge::NativeCredentialTarget>,
+    presses: HashMap<String, press::Pending>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
@@ -195,14 +224,19 @@ impl BrowserController {
             sender,
             contexts: HashMap::new(),
             profiles,
+            private_profiles: private_profiles::PrivateProfiles::default(),
             #[cfg(target_os = "macos")]
             cookie_actor: None,
             #[cfg(target_os = "macos")]
             private_stores: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            linux_downloads: Vec::new(),
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(
                 profile_dir.join("downloads"),
             )?)),
             dialog_inputs: HashMap::new(),
+            credential_targets: Vec::new(),
+            presses: HashMap::new(),
             scripts: HashMap::new(),
             waits: HashMap::new(),
             uploads: HashMap::new(),
@@ -217,14 +251,22 @@ impl BrowserController {
             return;
         }
         self.shutdown.close();
+        #[cfg(target_os = "linux")]
+        for owner in &self.linux_downloads {
+            owner.close();
+        }
         #[cfg(target_os = "macos")]
         if let Some(actor) = self.cookie_actor.as_mut() {
             actor.stop();
         }
-        for tabs in self.tabs.values() {
+        for tabs in self.tabs.values_mut() {
             for tab in tabs {
+                tab.keys.close();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
+                if let Some(target) = &tab.credential {
+                    target.close();
+                }
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
@@ -236,13 +278,18 @@ impl BrowserController {
         }
         self.uploads.clear();
         self.waits.clear();
+        self.presses.clear();
         self.replies.clear();
         for _ in self.events.try_iter() {}
     }
     /// Native release is deliberately unconfirmed; no file/profile deletion or
     /// semantic cancellation is used as completion evidence.
     pub fn poll_shutdown(&mut self) -> BrowserShutdownStatus {
+        self.poll_credential_targets();
         self.poll_cookie_import();
+        #[cfg(target_os = "linux")]
+        self.linux_downloads.retain(|owner| !owner.drained());
+        #[cfg(not(target_os = "linux"))]
         let downloads_pending = self
             .tabs
             .keys()
@@ -257,9 +304,26 @@ impl BrowserController {
                 })
             })
             .sum();
-        let views = self.tabs.values().map(Vec::len).sum();
-        self.shutdown
-            .status(downloads_pending, views, self.contexts.len())
+        #[cfg(target_os = "linux")]
+        let downloads_pending = self
+            .linux_downloads
+            .iter()
+            .map(|owner| owner.pending())
+            .sum();
+        let views =
+            self.tabs.values().map(Vec::len).sum::<usize>() + self.private_profiles.owned_views();
+        #[cfg(target_os = "linux")]
+        let views = views
+            + self
+                .linux_downloads
+                .iter()
+                .map(|owner| owner.retained_closed_view())
+                .sum::<usize>();
+        self.shutdown.status(
+            downloads_pending,
+            views,
+            self.contexts.len() + self.private_profiles.owned_contexts(),
+        )
     }
     pub fn execute(&mut self, request: BrowserRequest, window: &mut Window, cx: &mut App) {
         if self.shutdown.callbacks.closed() {
@@ -299,13 +363,7 @@ impl BrowserController {
             BrowserAction::Downloads => {
                 // No tab means all of this thread's retained downloads, including
                 // closed tabs. Explicit tab filtering never crosses thread ownership.
-                let mut result = self.downloads.borrow().list(thread, request.tab.as_deref());
-                if cfg!(target_os = "linux") {
-                    result["acceptingDownloads"] = json!(false);
-                    result["platformLimitation"] = json!(
-                        "Native downloads are disabled on Linux: this Wry version cannot safely attribute downloads to tabs sharing a browser profile."
-                    );
-                }
+                let result = self.downloads.borrow().list(thread, request.tab.as_deref());
                 return Ok(Some(result));
             }
             BrowserAction::NewTab { url } => {
@@ -373,6 +431,35 @@ impl BrowserController {
             );
         }
         match &request.action {
+            BrowserAction::Press { .. } => {
+                self.begin_press(request, target, cx)?;
+                Ok(None)
+            }
+            BrowserAction::Back | BrowserAction::Forward | BrowserAction::Reload => {
+                let action = native_history::Action::from_request(&request.action)
+                    .context("Unsupported native history action")?;
+                let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
+                let navigation = tab.navigation.clone();
+                let epoch = navigation.load(Ordering::Acquire);
+                let callbacks = &self.shutdown.callbacks;
+                let mut result =
+                    native_history::dispatch(tab.view.read(cx).raw(), action, callbacks, || {
+                        ensure!(!callbacks.closed(), "Browser is shutting down");
+                        ensure!(
+                            navigation.load(Ordering::Acquire) == epoch,
+                            "Document changed before native history dispatch"
+                        );
+                        // Invalidate old document grants immediately before the one
+                        // native SDK dispatch, including an uncertain SDK error.
+                        navigation.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    })?;
+                if result["dispatched"] == true {
+                    tab.loading = true;
+                }
+                result["tab"] = json!(target);
+                Ok(Some(result))
+            }
             BrowserAction::Upload { .. } => {
                 ensure!(
                     !cfg!(windows),
@@ -468,6 +555,12 @@ impl BrowserController {
                 Ok(Some(self.tab_list(thread)))
             }
             BrowserAction::CloseTab => {
+                #[cfg(target_os = "linux")]
+                for owner in &self.linux_downloads {
+                    if owner.is_tab(thread, &target) {
+                        owner.close();
+                    }
+                }
                 self.downloads.borrow_mut().tab_closed(thread, &target);
                 let tabs = self.tabs.get_mut(thread).context("No such thread")?;
                 let removed = tabs.remove(index);
@@ -508,6 +601,10 @@ impl BrowserController {
                 let navigation = self.tabs[thread][index].navigation.clone();
                 let epoch = navigation.load(Ordering::Acquire);
                 let click = matches!(&request.action, BrowserAction::Click { .. });
+                let mutating = !matches!(
+                    &request.action,
+                    BrowserAction::Read { .. } | BrowserAction::Frames
+                );
                 let completed = Arc::new(AtomicBool::new(false));
                 let callback_completed = completed.clone();
                 self.tabs[thread][index]
@@ -533,6 +630,7 @@ impl BrowserController {
                 self.scripts.insert(
                     request.id.clone(),
                     PendingScript {
+                        mutating,
                         tab: target,
                         thread: request.thread_id,
                         epoch,
@@ -563,6 +661,14 @@ impl BrowserController {
             self.tabs.get(thread).map_or(0, Vec::len) < 20,
             "This thread already has 20 tabs"
         );
+        #[cfg(target_os = "linux")]
+        {
+            self.linux_downloads.retain(|owner| !owner.drained());
+            ensure!(
+                self.linux_downloads.len() < 256,
+                "Native download owner capacity is awaiting actual view release"
+            );
+        }
         let id = Uuid::new_v4().to_string();
         let title_sender = self.sender.clone();
         let title_thread = thread.to_owned();
@@ -572,13 +678,21 @@ impl BrowserController {
         let load_id = id.clone();
         let popup_sender = self.sender.clone();
         let popup_thread = thread.to_owned();
+        #[cfg(not(target_os = "linux"))]
         let start_downloads = self.downloads.clone();
+        #[cfg(not(target_os = "linux"))]
         let start_thread = thread.to_owned();
+        #[cfg(not(target_os = "linux"))]
         let start_tab = id.clone();
+        #[cfg(not(target_os = "linux"))]
         let start_sender = self.sender.clone();
+        #[cfg(not(target_os = "linux"))]
         let completed_downloads = self.downloads.clone();
+        #[cfg(not(target_os = "linux"))]
         let completed_thread = thread.to_owned();
+        #[cfg(not(target_os = "linux"))]
         let completed_tab = id.clone();
+        #[cfg(not(target_os = "linux"))]
         let completed_sender = self.sender.clone();
         let console = Rc::new(RefCell::new(BrowserConsole::default()));
         let console_handler = console.clone();
@@ -586,12 +700,16 @@ impl BrowserController {
         let console_suppressed = credential_console_suppressed.clone();
         let title_suppressed = credential_console_suppressed.clone();
         let popup_suppressed = credential_console_suppressed.clone();
+        #[cfg(not(target_os = "linux"))]
         let download_suppressed = credential_console_suppressed.clone();
         let load_console_suppressed = credential_console_suppressed.clone();
         let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
+        #[cfg(not(target_os = "linux"))]
         let navigation_handler = navigation.clone();
+        #[cfg(not(target_os = "linux"))]
         let navigation_closed = self.shutdown.callbacks.closed.clone();
+        #[cfg(not(target_os = "linux"))]
         let download_closed = self.shutdown.callbacks.closed.clone();
         let load_navigation = navigation.clone();
         let load_closed = self.shutdown.callbacks.closed.clone();
@@ -608,18 +726,52 @@ impl BrowserController {
                 "Multiple persistent profiles require a native named-store backend (macOS 14 or later)"
             );
         }
-        if !self.contexts.contains_key(&profile_key) {
+        #[cfg(target_os = "linux")]
+        let related = if matches!(profile, ProfileChoice::Private) {
+            self.shutdown.ever_native = true;
+            Some(self.private_profiles.related(thread)?)
+        } else {
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let uses_related = related.is_some();
+        #[cfg(not(target_os = "linux"))]
+        let uses_related = false;
+        if !uses_related && !self.contexts.contains_key(&profile_key) {
+            #[cfg(target_os = "windows")]
+            let directory = if matches!(profile, ProfileChoice::Private) {
+                Some(
+                    self.private_profiles
+                        .runtime_directory(thread, &self.profiles)?,
+                )
+            } else {
+                self.profiles.storage_directory(&profile)?
+            };
+            #[cfg(not(target_os = "windows"))]
             let directory = self.profiles.storage_directory(&profile)?;
             self.contexts
                 .insert(profile_key.clone(), wry::WebContext::new(directory));
         }
-        let context = self
-            .contexts
-            .get_mut(&profile_key)
-            .context("Browser profile context unavailable")?;
-        let builder = wry::WebViewBuilder::new_with_web_context(context)
+        let builder = if uses_related {
+            wry::WebViewBuilder::new()
+        } else {
+            wry::WebViewBuilder::new_with_web_context(
+                self.contexts
+                    .get_mut(&profile_key)
+                    .context("Browser profile context unavailable")?,
+            )
+        };
+        let builder = builder
             .with_incognito(matches!(profile, ProfileChoice::Private))
-            .with_url(url)
+            // Private native identity is verified on blank before any caller
+            // URL is admitted, including old Windows runtimes' flag fallback.
+            .with_url(
+                if cfg!(target_os = "linux") || matches!(profile, ProfileChoice::Private) {
+                    "about:blank"
+                } else {
+                    url
+                },
+            )
             .with_devtools(false)
             .with_autoplay(false)
             .with_clipboard(false)
@@ -631,51 +783,6 @@ impl BrowserController {
                 console_handler
                     .borrow_mut()
                     .receive(message.body(), &message.uri().to_string());
-            })
-            .with_navigation_handler(move |url| {
-                let allowed =
-                    !navigation_closed.load(Ordering::Acquire) && allow_native_navigation(&url);
-                if allowed {
-                    navigation_handler.fetch_add(1, Ordering::AcqRel);
-                }
-                allowed
-            })
-            .with_download_started_handler(move |url, destination| {
-                // Wry 0.53 registers GTK callbacks on the shared context without
-                // matching the source webview. Fail closed until that is fixed.
-                if cfg!(target_os = "linux")
-                    || download_closed.load(Ordering::Acquire)
-                    || download_suppressed.load(Ordering::Acquire)
-                {
-                    return false;
-                }
-                let result = start_downloads.borrow_mut().start(
-                    &start_thread,
-                    &start_tab,
-                    &url,
-                    destination,
-                );
-                let _ = start_sender.try_send(NativeEvent::DownloadsChanged);
-                match result {
-                    Ok(path) => {
-                        *destination = path;
-                        true
-                    }
-                    Err(_) => false,
-                }
-            })
-            .with_download_completed_handler(move |url, path, success| {
-                if cfg!(target_os = "linux") {
-                    return;
-                }
-                completed_downloads.borrow_mut().complete(
-                    &completed_thread,
-                    &completed_tab,
-                    &url,
-                    path.as_deref(),
-                    success,
-                );
-                let _ = completed_sender.try_send(NativeEvent::DownloadsChanged);
             })
             .with_document_title_changed_handler(move |title| {
                 if title_suppressed.load(Ordering::Acquire) {
@@ -714,6 +821,57 @@ impl BrowserController {
                 }
                 wry::NewWindowResponse::Deny
             });
+        #[cfg(not(target_os = "linux"))]
+        let builder = builder
+            .with_navigation_handler(move |url| {
+                let allowed =
+                    !navigation_closed.load(Ordering::Acquire) && allow_native_navigation(&url);
+                if allowed {
+                    navigation_handler.fetch_add(1, Ordering::AcqRel);
+                }
+                allowed
+            })
+            .with_download_started_handler(move |url, destination| {
+                // Linux uses the separate exact-object GTK adapter instead.
+                if download_closed.load(Ordering::Acquire)
+                    || download_suppressed.load(Ordering::Acquire)
+                {
+                    return false;
+                }
+                let result = start_downloads.borrow_mut().start(
+                    &start_thread,
+                    &start_tab,
+                    &url,
+                    destination,
+                );
+                let _ = start_sender.try_send(NativeEvent::DownloadsChanged);
+                match result {
+                    Ok(path) => {
+                        *destination = path;
+                        true
+                    }
+                    Err(_) => false,
+                }
+            })
+            .with_download_completed_handler(move |url, path, success| {
+                completed_downloads.borrow_mut().complete(
+                    &completed_thread,
+                    &completed_tab,
+                    &url,
+                    path.as_deref(),
+                    success,
+                );
+                let _ = completed_sender.try_send(NativeEvent::DownloadsChanged);
+            });
+        #[cfg(target_os = "linux")]
+        let builder = {
+            use wry::WebViewBuilderExtUnix;
+            if let Some(related) = related.as_ref() {
+                builder.with_related_view(related.native())
+            } else {
+                builder
+            }
+        };
         #[cfg(target_os = "macos")]
         let builder = match &profile {
             ProfileChoice::Persistent(id) => builder.with_data_store_identifier(*id.as_bytes()),
@@ -733,7 +891,45 @@ impl BrowserController {
                 builder.with_webview_configuration(configuration)
             }
         };
+        // Failed native construction may have created SDK resources. Keep
+        // release Unknown; neither an error nor private verification is teardown.
+        self.shutdown.ever_native = true;
         let view = WebView::build(builder, window, cx)?;
+        if matches!(profile, ProfileChoice::Private) {
+            self.private_profiles.verify(thread, view.raw())?;
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let actual = view.raw().webview().configuration().websiteDataStore();
+                let expected = self
+                    .private_stores
+                    .get(&profile_key)
+                    .context("Private native browser store missing")?;
+                ensure!(
+                    Retained::as_ptr(&actual) == Retained::as_ptr(expected),
+                    "Native private browser changed this thread's store"
+                );
+            }
+        }
+        let credential =
+            credential_bridge::NativeCredentialTarget::new(view.raw(), navigation.clone())
+                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()));
+        #[cfg(target_os = "linux")]
+        {
+            let sender = self.sender.clone();
+            self.linux_downloads.push(native_downloads::Owner::install(
+                view.raw(),
+                thread,
+                &id,
+                self.downloads.clone(),
+                self.shutdown.callbacks.clone(),
+                credential_console_suppressed.clone(),
+                navigation.clone(),
+                move || {
+                    let _ = sender.try_send(NativeEvent::DownloadsChanged);
+                },
+            )?);
+        }
+        let keys = native_keys::Target::install(view.raw(), &self.shutdown.callbacks);
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
             view.raw(),
@@ -743,8 +939,15 @@ impl BrowserController {
                 let _ = dialog_sender.try_send(NativeEvent::DialogChanged);
             },
         );
+        if (cfg!(target_os = "linux") || matches!(profile, ProfileChoice::Private))
+            && url != "about:blank"
+        {
+            view.raw().load_url(url)?;
+        }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
+            credential,
+            keys,
             dialogs,
             id: id.clone(),
             view,
@@ -764,15 +967,19 @@ impl BrowserController {
     }
 
     pub fn poll(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.poll_credential_targets();
         if self.shutdown.callbacks.closed() {
             let discarded = self.events.try_iter().take(512).count();
             self.replies.clear();
             return discarded > 0;
         }
+        #[cfg(target_os = "linux")]
+        self.linux_downloads.retain(|owner| !owner.drained());
         let events = self.events.try_iter().take(512).collect::<Vec<_>>();
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::Press(event) => self.press_event(event),
                 NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
                     if let Some(upload) = self.uploads.get_mut(&id) {
@@ -865,6 +1072,7 @@ impl BrowserController {
             }
         }
         changed |= self.poll_dialogs(window, cx);
+        changed |= self.poll_presses(cx);
         changed |= self.poll_uploads(cx);
         changed |= self.poll_waits(cx);
         changed
@@ -1221,7 +1429,11 @@ impl BrowserController {
             request,
             self.tabs.get(current_thread).map_or(0, Vec::len),
         )?;
-        if switching && old == ProfileChoice::Private {
+        if switching
+            && old == ProfileChoice::Private
+            && self.profiles.selected(current_thread) != old
+        {
+            self.private_profiles.forget(current_thread);
             self.contexts.remove(&old.key(current_thread));
             #[cfg(target_os = "macos")]
             self.private_stores.remove(&old.key(current_thread));
@@ -1281,6 +1493,24 @@ impl BrowserController {
                     }
                 }
             }
+            let pending_mutation = self.active.get(thread).is_some_and(|tab| {
+                self.has_pending_press(thread, tab)
+                    || self
+                        .tabs
+                        .get(thread)
+                        .and_then(|tabs| tabs.iter().find(|item| item.id == *tab))
+                        .is_some_and(|item| item.dialogs.snapshot().is_some())
+                    || self.scripts.values().any(|script| {
+                        script.mutating
+                            && script.thread == thread
+                            && script.tab == *tab
+                            && !script.completed.load(Ordering::Acquire)
+                    })
+                    || self
+                        .uploads
+                        .values()
+                        .any(|upload| upload.request.thread_id == thread && upload.tab == *tab)
+            });
             let target = self.active.get(thread).and_then(|id| {
                 let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
                 if tab.loading {
@@ -1292,13 +1522,21 @@ impl BrowserController {
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
-                credential_bridge::NativeCredentialTarget::new(
-                    tab.view.read(cx).raw(),
-                    tab.navigation.clone(),
-                )
-                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()))
+                if pending_mutation {
+                    // Already dispatched page input cannot be retracted. Never
+                    // deliver credentials while an earlier owned mutation can
+                    // still target these fields; the user must review again.
+                    return None;
+                }
+                tab.credential.clone()
             });
+            if let Some(target) = &target {
+                self.credential_targets.push(target.clone());
+            }
             let mut sink = credential_bridge::BrowserCredentialSink::new(|tab: &str| {
+                if pending_mutation {
+                    return Err(Failure::StalePage);
+                }
                 self.credential_page(thread, cx)
                     .filter(|page| page.tab == tab)
                     .ok_or(Failure::StalePage)
@@ -1315,6 +1553,13 @@ impl BrowserController {
             changed = true;
         }
         changed
+    }
+
+    fn poll_credential_targets(&mut self) {
+        // This erases expired, undelivered Rust memory only. Native callbacks
+        // and their completion counters remain owned until actual SDK return.
+        self.credential_targets
+            .retain(|target| !target.poll_ownership());
     }
 
     pub fn drain_replies(&mut self) -> Vec<BrowserReply> {
@@ -1358,18 +1603,26 @@ impl BrowserController {
             "download-progress",
             "download-cancel",
             "download-resume",
-            "blob-downloads",
             "cross-origin-frame-actions",
-            "native-key-events",
             "screenshots",
             "passkeys",
         ];
+        if !cfg!(target_os = "linux") {
+            unsupported.push("blob-downloads");
+        }
         if self
             .tabs
             .get(thread)
             .is_none_or(|tabs| tabs.is_empty() || tabs.iter().any(|tab| !tab.dialogs.supported()))
         {
             unsupported.push("dialogs");
+        }
+        if self
+            .tabs
+            .get(thread)
+            .is_none_or(|tabs| tabs.is_empty() || tabs.iter().any(|tab| !tab.keys.available()))
+        {
+            unsupported.push("native-key-events");
         }
         if cfg!(windows) {
             unsupported.push("upload");
@@ -1379,6 +1632,7 @@ impl BrowserController {
         }
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":public_tab_title(&tab.title,tab.credential_console_suppressed.load(Ordering::Acquire)),"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
+            "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
             "passwordManagerRequiresNativeApproval":true})
     }
@@ -1572,6 +1826,10 @@ mod dialog_privacy_tests {
     use super::*;
     #[::core::prelude::v1::test]
     fn blocked_script_dialog_does_not_disclose_credential_echo_or_prompt_default() {
+        assert!(!private_document_action_allowed(&BrowserAction::Press {
+            key: "Enter".into(),
+            selector: None
+        }));
         let dialog = DialogSnapshot {
             id: Uuid::new_v4().to_string(),
             kind: DialogKind::Prompt,

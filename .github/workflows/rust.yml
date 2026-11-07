@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -133,6 +133,23 @@ jobs:
         run: cargo test -p coincide-desktop --locked --features native-notifications,native-microphone,native-computer-use
       - name: Test isolated desktop helper transport without native launch
         run: cargo test -p coincide-desktop --locked --features preview-updater-helper updater_helper_transport
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh macOS runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
+          grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      - name: Retain native macOS credential SDK evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-native-fill-sdk
+          path: ${{ runner.temp }}/native-fill-sdk.log
+          if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
     runs-on: windows-latest
@@ -158,6 +175,34 @@ jobs:
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
+      - name: Test production native host before UI compilation
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-fake-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero production native host fake tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -SimpleMatch 'constructor_is_inert_and_has_no_native_handles ... ok')) { throw 'Expected inert production Windows constructor' }
+      - name: Test exact owned Windows fixture before UI compilation
+        shell: pwsh
+        run: |
+          $env:COINCIDE_CU_NATIVE_CI = 'owned-window-v1'
+          try {
+            cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::windows::native_tests::actual_owned_window_actions_and_capture_drain -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-owned-window.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one unchanged owned-window native host test' }
+          } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
+      - name: Test native Windows notification payload policy without OS calls
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use,native-notifications --locked notifications::windows_policy::tests -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-toast-policy.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-policy.log" -SimpleMatch 'test result: ok. 3 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly three production toast policy tests' }
+      - name: Verify actual isolated Windows toast registration delivery and clearing
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use,native-notifications --locked notifications::windows::tests::actual_owned_notification_registration_post_clear_and_absence -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-toast-owned.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-toast-owned.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one actual owned Windows notification test' }
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
@@ -184,7 +229,18 @@ jobs:
             if (-not (Select-String -Path "$env:RUNNER_TEMP/computer-use-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one owned-window native Computer Use test' }
           } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
       - name: Build actual Windows native application and owner-aware control CLI
-        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone,coincide-desktop/native-computer-use --locked
+        run: cargo build -p coincide-desktop -p coincide-core --bin coincide-rust --bin coincide-rs --features coincide-desktop/native-microphone,coincide-desktop/native-computer-use,coincide-desktop/native-notifications --locked
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh Windows runner
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+        run: |
+          & target/debug/examples/native_credential_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-fill-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-fill-sdk.log" -SimpleMatch 'synthetic native fill: PASS')) { throw 'Expected actual native private fill and callback-owner return' }
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
@@ -193,7 +249,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-ui
-          path: ${{ runner.temp }}/windows-native-ui
+          path: |
+            ${{ runner.temp }}/windows-native-ui
+            ${{ runner.temp }}/native-host-toast-*.log
+            ${{ runner.temp }}/native-fill-sdk.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -251,6 +310,27 @@ jobs:
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install isolated Linux native host fixture dependencies
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor
+      - name: Compile production Linux native host and run pure guards before UI compilation
+        run: |
+          set -o pipefail
+          cargo test -p coincide-native-host-tests --features native-computer-use --locked linux_cu_ -- --nocapture | tee "$RUNNER_TEMP/linux-native-host-pure-tests.log"
+          grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-pure-tests.log"
+      - name: Test exact owned X11 fixture before UI compilation
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::linux::native_tests::actual_owned_x11_window_actions_capture_and_drain -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-native-host-owned-tests.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-owned-tests.log"
+      - name: Test exact XWayland refusal before UI compilation
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' env WAYLAND_DISPLAY=coincide-private-wayland cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::linux::native_tests::actual_wayland_refuses_existing_x11_display -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-native-host-wayland-tests.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-wayland-tests.log"
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
@@ -262,7 +342,7 @@ jobs:
           cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
           grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
       - name: Install native Linux smoke dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
       - name: Test Linux Appshots pixels, keys and owned delivery without capture
         run: |
           set -o pipefail
@@ -276,7 +356,21 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
       - name: Build actual Linux native application
-        run: cargo build -p coincide-desktop --features native-microphone,native-notifications --locked
+        run: cargo build -p coincide-desktop --features native-microphone,native-notifications,native-computer-use --locked
+      - name: Test actual owned X11 Computer Use on a private desktop
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications,native-computer-use --locked computer_use::linux::native_tests::actual_owned_x11_window_actions_capture_and_drain -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-cu-owned-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"linux-cu-owned-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact owned X11 Computer Use test"'
+      - name: Reject XWayland as authority over a Wayland desktop
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' env WAYLAND_DISPLAY=coincide-private-wayland cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications,native-computer-use --locked computer_use::linux::native_tests::actual_wayland_refuses_existing_x11_display -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-cu-wayland-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"linux-cu-wayland-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact Wayland refusal test"'
       - name: Test notifications through a private synthetic desktop bus
         shell: bash
         env:
@@ -292,6 +386,21 @@ jobs:
           set -o pipefail
           dbus-run-session -- sh -c 'DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" xvfb-run -a -s "-screen 0 1440x1000x24" cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications --locked notification_activity::tests::actual_private_x11_activity -- --ignored --exact --nocapture' | tee "$RUNNER_TEMP/notification-activity-tests.log"
           python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"notification-activity-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact private activity test"'
+      - name: Build synthetic private credential SDK executable
+        run: cargo build -p coincide-desktop --example native_credential_sdk --locked
+      - name: Verify native private credential channel on a fresh Linux runner
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_FILL_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
+          grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence
@@ -299,5 +408,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-native-ui
-          path: ${{ runner.temp }}/linux-native-ui
+          path: |
+            ${{ runner.temp }}/linux-native-ui
+            ${{ runner.temp }}/native-fill-sdk.log
           if-no-files-found: warn
