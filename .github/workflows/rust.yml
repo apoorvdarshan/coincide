@@ -361,14 +361,23 @@ jobs:
           & target/debug/examples/native_download_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-download-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-download-sdk.log" -SimpleMatch 'synthetic native downloads: PASS')) { throw 'Expected actual native downloads and callback-owner return' }
-      - name: Build synthetic native passkey executable
-        if: ${{ !cancelled() }}
-        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
-      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
       - name: Build synthetic owned upload SDK executable
         if: ${{ !cancelled() }}
         run: cargo build -p coincide-desktop --example native_upload_sdk --locked
       - name: Verify native file attachment through the no-reparse reader on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+        run: |
+          & target/debug/examples/native_upload_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-upload-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-upload-sdk.log" -SimpleMatch 'synthetic native upload: PASS')) { throw 'Expected actual native WebView2 attachment of owned files' }
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
         if: ${{ !cancelled() }}
         timeout-minutes: 3
         shell: pwsh
@@ -378,11 +387,6 @@ jobs:
           & target/debug/examples/native_passkey_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-passkey-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-passkey-sdk.log" -SimpleMatch 'synthetic native passkeys: PASS (webview2-native)')) { throw 'Expected WebView2 to give the owned https page its WebAuthn API' }
-          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
-        run: |
-          & target/debug/examples/native_upload_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-upload-sdk.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-upload-sdk.log" -SimpleMatch 'synthetic native upload: PASS')) { throw 'Expected actual native WebView2 attachment of owned files' }
       - name: Retain actual Windows native UI attempt evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -599,14 +603,6 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
           grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
-      - name: Build synthetic native passkey executable
-        if: ${{ !cancelled() }}
-        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
-      - name: Verify WebKitGTK's missing WebAuthn API on a fresh Linux runner
-        if: ${{ !cancelled() }}
-        timeout-minutes: 3
-        env:
-          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
       - name: Build synthetic owned upload SDK executable
         if: ${{ !cancelled() }}
         run: cargo build -p coincide-desktop --example native_upload_sdk --locked
@@ -622,10 +618,25 @@ jobs:
           set -o pipefail
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
           test -n "$VK_ICD_FILENAMES"
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
-          grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebKitGTK's missing WebAuthn API on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native Linux UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

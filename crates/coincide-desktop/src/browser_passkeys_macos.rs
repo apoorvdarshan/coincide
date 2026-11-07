@@ -388,6 +388,7 @@ const DEVICE_OWNER_AUTHENTICATION: isize = 2;
 pub(super) fn verify_user(
     reason: &str,
     done: Box<dyn FnOnce(UserVerification) + Send>,
+    native_block: super::NativeLease,
 ) -> Option<Box<dyn FnOnce()>> {
     let Some(class) = AnyClass::get(c"LAContext") else {
         done(UserVerification::Unavailable);
@@ -408,6 +409,9 @@ pub(super) fn verify_user(
         }
         let done = Mutex::new(Some(done));
         let block = RcBlock::new(move |success: Bool, _error: *mut NSError| {
+            // Borrow independently of `done`: invoking the result or invalidating
+            // LAContext does not prove its native reply block has returned/released.
+            let _held_native_block = &native_block;
             if let Some(done) = done.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 done(if success.as_bool() {
                     UserVerification::Verified
