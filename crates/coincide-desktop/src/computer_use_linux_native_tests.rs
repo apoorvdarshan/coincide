@@ -263,11 +263,12 @@ fn publish_command(root: &std::path::Path, command: &str) -> std::io::Result<()>
 
 #[test]
 fn private_command_publication_never_exposes_partial_frames() {
-    let root = tempfile::tempdir().unwrap();
-    publish_command(root.path(), "focus-password").unwrap();
+    let root = std::env::temp_dir().join(format!("coincide-linux-cu-command-{}", Uuid::new_v4()));
+    native_file::private_directory(&root).unwrap();
+    publish_command(&root, "focus-password").unwrap();
     let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let shared = reading.clone();
-    let folder = root.path().to_owned();
+    let folder = root.clone();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let ready = barrier.clone();
     let reader = std::thread::spawn(move || {
@@ -282,11 +283,12 @@ fn private_command_publication_never_exposes_partial_frames() {
     });
     barrier.wait();
     for _ in 0..1000 {
-        publish_command(root.path(), "close").unwrap();
-        publish_command(root.path(), "focus-password").unwrap();
+        publish_command(&root, "close").unwrap();
+        publish_command(&root, "focus-password").unwrap();
     }
     reading.store(false, std::sync::atomic::Ordering::Release);
     assert!(reader.join().unwrap() > 0);
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 struct Fixture {
