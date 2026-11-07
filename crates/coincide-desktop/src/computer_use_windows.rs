@@ -85,11 +85,14 @@ impl Context {
             .ok()
             .map_err(|_| Failure::Native)?;
         let guard = Com;
-        let automation: IUIAutomation =
-            native(unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) })?;
-        let timed: IUIAutomation2 = native(automation.cast())?;
+        // The legacy CUIAutomation coclass does not expose IUIAutomation2.
+        // Require the Windows 8+ timeout-capable coclass instead of falling
+        // back to an automation object whose provider calls are unbounded.
+        let timed: IUIAutomation2 =
+            native(unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) })?;
         native(unsafe { timed.SetConnectionTimeout(150) })?;
         native(unsafe { timed.SetTransactionTimeout(150) })?;
+        let automation: IUIAutomation = native(timed.cast())?;
         Ok(Self {
             automation,
             _com: guard,
