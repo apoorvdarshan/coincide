@@ -2,7 +2,7 @@
 #[path = "workspace_path.rs"]
 mod path;
 use anyhow::{Context, Result, bail, ensure};
-pub(crate) use path::external_git_path;
+pub(crate) use path::{external_git_directory, external_git_path};
 use serde_json::{Value, json};
 use std::{
     io::Read,

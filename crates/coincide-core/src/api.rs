@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 #[path = "appshots_api.rs"]
 mod appshots_api;
+#[path = "git_actions_api.rs"]
+mod git_actions_api;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -228,6 +230,7 @@ pub struct Engine {
     pub browser_requests: VecDeque<crate::browser_protocol::BrowserRequest>,
     browser_pending: HashMap<String, (String, Instant)>,
     browser_results: HashMap<String, crate::browser_protocol::BrowserReply>,
+    git_actions: git_actions_api::State,
     workspace_pending: HashMap<String, (String, Instant)>,
     workspace_results: HashMap<String, Value>,
     workspace_git_operations: HashSet<String>,
@@ -312,6 +315,7 @@ impl Engine {
             browser_requests: VecDeque::new(),
             browser_pending: HashMap::new(),
             browser_results: HashMap::new(),
+            git_actions: git_actions_api::State::default(),
             workspace_pending: HashMap::new(),
             workspace_results: HashMap::new(),
             workspace_git_operations: HashSet::new(),
@@ -381,6 +385,9 @@ impl Engine {
         }
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
+        }
+        if git_actions_api::METHODS.contains(&method) {
+            return self.git_actions_command(method, p);
         }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
@@ -628,6 +635,7 @@ impl Engine {
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(git_actions_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
                 methods.push("composer.context.attachTerminalSelection");
@@ -1796,6 +1804,7 @@ impl Engine {
             self.revision += 1;
         }
         self.poll_workspace_completions();
+        self.poll_git_actions();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
