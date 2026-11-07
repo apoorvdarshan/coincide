@@ -108,9 +108,18 @@ textarea{left:10%;top:35%}[contenteditable]{left:35%;top:35%}secret-card{left:60
 <input id=otp autocomplete=one-time-code value=123456>
 <textarea>synthetic-notes</textarea><div contenteditable>synthetic-editable</div>
 <iframe src="FRAME_URL"></iframe><secret-card></secret-card>
-<output id=ready>snapshot-ready</output><button id=arm>Arm</button>
-<script>document.querySelector('secret-card').attachShadow({mode:'closed'}).innerHTML='<input value="synthetic-private-shadow">';
-document.querySelector('#arm').onclick=()=>{new MutationObserver((records,observer)=>{
+<output id=ready>snapshot-ready</output><button id=arm>Arm</button><button id=verify style="position:fixed;bottom:40px">Verify</button>
+<script>let armed=false;document.querySelector('secret-card').attachShadow({mode:'closed'}).innerHTML='<input value="synthetic-private-shadow">';
+customElements.define('secret-card',class extends HTMLElement{
+ static get observedAttributes(){return ['style'];}
+ attributeChangedCallback(){if(MODE==='reentrant' && armed){armed=false;
+  document.querySelector('#otp').style.opacity='0.25';
+  const extra=document.createElement('input');extra.value='only-synthetic-reentrant-secret';document.body.append(extra);
+  document.querySelector('#ready').textContent='reentrant-detected';
+ }}
+});
+document.querySelector('#verify').onclick=()=>{document.querySelector('#ready').textContent=document.querySelector('#otp').style.opacity==='0.25'?'style-preserved':'style-overwritten';};
+document.querySelector('#arm').onclick=()=>{armed=true;new MutationObserver((records,observer)=>{
  if(!records.some(r=>r.target===document.querySelector('#otp') && r.attributeName==='style'))return;
  observer.disconnect();
  if(MODE==='stale'){location.href='/replacement';}
@@ -209,6 +218,14 @@ document.querySelector('#arm').onclick=()=>{new MutationObserver((records,observ
         assert 'error' in refused and 'path' not in refused, refused
         wait_for('replacement document after real source invalidation', lambda: browser('read', tab=stale, selector='#ready').get('text') == 'replacement-ready')
         checks.append('real mask-time navigation rejects stale native output')
+        reentrant = open_page('reentrant')
+        assert 'error' not in browser('click', tab=reentrant, selector='#arm')
+        refused = browser('screenshot', tab=reentrant)
+        assert 'error' in refused and 'path' not in refused, refused
+        wait_for('actual synchronous custom-element callback', lambda: browser('read', tab=reentrant, selector='#ready').get('text') == 'reentrant-detected')
+        assert 'error' not in browser('click', tab=reentrant, selector='#verify')
+        wait_for('newer page styles survive failed snapshot cleanup', lambda: browser('read', tab=reentrant, selector='#ready').get('text') == 'style-preserved')
+        checks.append('synchronous custom-element new-input mutation rejects capture and preserves newer field style')
         cancel = open_page('cancel')
         assert 'error' not in browser('click', tab=cancel, selector='#arm')
         operation = begin('screenshot', tab=cancel)
