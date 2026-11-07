@@ -626,6 +626,16 @@ impl Engine {
                 result
             }
             "terminal.write"=>{self.terminals.get_mut(required(p,"terminalId")?).context("Terminal not found")?.1.write(required(p,"text")?)?;Ok(json!({"accepted":true}))}
+            "terminal.clear"=>{
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all="camelCase",deny_unknown_fields)]
+                struct Request {terminal_id:String}
+                let request:Request=serde_json::from_value(p.clone())?;
+                let terminal=&mut self.terminals.get_mut(&request.terminal_id).context("Terminal not found")?.1;
+                terminal.clear()?;
+                self.revision+=1;
+                Ok(json!({"cleared":true}))
+            }
             "terminal.resize"=>{
                 let rows=u16::try_from(p["rows"].as_u64().context("Missing rows")?)?;
                 let cols=u16::try_from(p["cols"].as_u64().context("Missing cols")?)?;
@@ -637,7 +647,7 @@ impl Engine {
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",

@@ -305,9 +305,12 @@ fn raw_row_cas_rejects_a_concurrent_unknown_field_edit_without_clobber() {
     changed["future"] = json!({"newer":"retain exactly"});
     f.engine.store.save(&changed).unwrap();
     let before = f.snapshot();
-    let context =
-        crate::composer_context::append_terminal_selection(&changed["draftContext"], "selected")
-            .unwrap();
+    let context = crate::composer_context::append_terminal_excerpt(
+        &changed["draftContext"],
+        "Terminal selection",
+        "selected",
+    )
+    .unwrap();
     assert!(
         f.engine
             .store
@@ -315,4 +318,55 @@ fn raw_row_cas_rejects_a_concurrent_unknown_field_edit_without_clobber() {
             .is_err()
     );
     assert_eq!(f.snapshot(), before);
+}
+#[test]
+fn last_command_output_attaches_the_marked_command_without_a_selection() {
+    let command = "printf done";
+    let bytes = format!(
+        "\x1b]133;A\x07\x1b]1337;CoincidePrompt=1\x07$ {command}\r\n\x1b]1337;CoincideCommand={command}\x07\x1b]133;C\x07done\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ "
+    );
+    let mut f = Fixture::new(bytes.as_bytes(), 6, 32);
+    let mut request = f.params(point(0, 0), point(0, 0));
+    let object = request.as_object_mut().unwrap();
+    object.remove("start");
+    object.remove("end");
+    object.insert("lastOutput".into(), json!(true));
+    let saved = f
+        .engine
+        .execute("composer.context.attachTerminalSelection", &request)
+        .unwrap();
+    assert_eq!(saved["draftContext"][1]["terminal"], "Last command output");
+    assert_eq!(saved["draftContext"][1]["text"], "$ printf done\ndone");
+    // A range and the last output are exclusive; neither is guessed.
+    let mut both = f.params(point(0, 0), point(0, 3));
+    both["lastOutput"] = json!(true);
+    let mut neither = f.params(point(0, 0), point(0, 3));
+    let object = neither.as_object_mut().unwrap();
+    object.remove("start");
+    object.remove("end");
+    for invalid in [both, neither] {
+        assert!(
+            f.engine
+                .execute("composer.context.attachTerminalSelection", &invalid)
+                .is_err()
+        );
+    }
+    let thread = f.engine.store.thread(&f.id).unwrap();
+    assert_eq!(thread["draftContext"].as_array().unwrap().len(), 2);
+}
+#[test]
+fn unmarked_terminal_has_no_last_command_output_to_attach() {
+    let mut f = Fixture::new(b"$ plain shell\r\noutput", 4, 32);
+    let mut request = f.params(point(0, 0), point(0, 0));
+    let object = request.as_object_mut().unwrap();
+    object.remove("start");
+    object.remove("end");
+    object.insert("lastOutput".into(), json!(true));
+    let before = f.engine.store.thread(&f.id).unwrap();
+    assert!(
+        f.engine
+            .execute("composer.context.attachTerminalSelection", &request)
+            .is_err()
+    );
+    assert_eq!(f.engine.store.thread(&f.id).unwrap(), before);
 }

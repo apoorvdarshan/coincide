@@ -20,12 +20,14 @@ preview-updater-helper = ["coincide-core/preview-updater-helper"]
 zeroize = "1"
 base64 = "0.23"
 coincide-core = { path = "../coincide-core" }
+# Schedule rows' next-run times, in each schedule's own zone (as Core's recurrence).
+chrono = "0.4"
+chrono-tz = "0.10"
 gpui-kit = "=0.9.0"
 gpui-base = "=0.9.0"
 gpui-webview = "=0.9.0"
 wry = { package = "lb-wry", version = "0.53.3" }
 anyhow.workspace = true
-chrono = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"

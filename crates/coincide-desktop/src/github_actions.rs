@@ -1,6 +1,9 @@
 //! Native explicit GitHub write confirmation, mounted separately from read UI.
 //! Transport MUST validate authoritative stored roots, and run prepare outside
 //! any Engine lock. This entity never owns/locks Engine or executes gh itself.
+//! The panel's Swift-style Merge… and Review… run `perform`: the user has
+//! already confirmed in the panel, so a fresh baseline that still passes every
+//! check here is submitted once without a second confirmation screen.
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::github_write::{WriteShutdownStatus, WriteWorkers};
 use gpui_kit::{
@@ -93,12 +96,25 @@ impl ActionScope {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReviewEvent {
+pub(crate) enum ReviewEvent {
     Comment,
     Approve,
     RequestChanges,
 }
 impl ReviewEvent {
+    pub(crate) const ALL: [Self; 3] = [Self::Comment, Self::Approve, Self::RequestChanges];
+    /// Swift PullRequestReviewSheet's outcome titles.
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Comment => "Comment",
+            Self::Approve => "Approve",
+            Self::RequestChanges => "Request Changes",
+        }
+    }
+    /// Swift PullRequestReviewEvent.accepts: only an approval may be empty.
+    pub(crate) fn accepts(self, body: &str) -> bool {
+        self == Self::Approve || !body.trim().is_empty()
+    }
     fn key(self) -> &'static str {
         match self {
             Self::Comment => "COMMENT",
@@ -108,7 +124,7 @@ impl ReviewEvent {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Action {
+pub(crate) enum Action {
     Review(ReviewEvent, String),
     Merge(String),
 }
@@ -428,8 +444,15 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
     }
 }
 
+/// What a `perform` came to: the success to report, or why it didn't happen.
+pub enum ActionsEvent {
+    Finished(std::result::Result<String, String>),
+}
+impl EventEmitter<ActionsEvent> for GitHubActions {}
 pub struct GitHubActions {
     transport: WriteTransport,
+    /// A `perform` in flight: its prepared baseline is submitted at once.
+    direct: Option<Action>,
     workers: WriteWorkers,
     scope: Option<ActionScope>,
     generation: u64,
@@ -469,6 +492,7 @@ impl GitHubActions {
         });
         Self {
             transport,
+            direct: None,
             workers: WriteWorkers::default(),
             scope: None,
             generation: 0,
@@ -492,6 +516,7 @@ impl GitHubActions {
     }
     pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
         self.workers.request_shutdown();
+        self.direct = None;
         self.confirmation = None;
         self.locked = true;
         self.notice =
@@ -507,6 +532,13 @@ impl GitHubActions {
         }
         self.generation = self.generation.wrapping_add(1);
         self.scope = scope;
+        // A request in flight reports its own outcome when it returns.
+        if !self.busy {
+            self.finish_direct(
+                Err("The pull request changed; nothing was sent.".into()),
+                cx,
+            );
+        }
         self.confirmation = None;
         self.history_known = false;
         self.locked = true;
@@ -554,6 +586,45 @@ impl GitHubActions {
         self.workers.track(worker);
         cx.notify();
     }
+    /// History is known, nothing blocks this pull request and no write runs:
+    /// the panel's Merge… and Review… may start.
+    pub fn ready(&self) -> bool {
+        !self.workers.status().closed
+            && !self.busy
+            && self.history_known
+            && !self.locked
+            && self.scope.is_some()
+            && self.direct.is_none()
+    }
+    /// A `perform` hasn't come back yet.
+    pub fn performing(&self) -> bool {
+        self.direct.is_some()
+    }
+    /// Swift's merge and review: a fresh preflight of the displayed head, then
+    /// one submission if it is still eligible. Finishes with ActionsEvent.
+    pub(crate) fn perform(&mut self, action: Action, cx: &mut Context<Self>) -> Result<()> {
+        ensure!(
+            self.ready(),
+            "GitHub actions aren't ready for this pull request yet"
+        );
+        action.value()?;
+        self.direct = Some(action.clone());
+        self.prepare(action, cx);
+        if !self.busy {
+            self.direct = None;
+            anyhow::bail!("{}", self.notice);
+        }
+        Ok(())
+    }
+    fn finish_direct(
+        &mut self,
+        result: std::result::Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.direct.take().is_some() {
+            cx.emit(ActionsEvent::Finished(result));
+        }
+    }
     fn prepare(&mut self, action: Action, cx: &mut Context<Self>) {
         if self.busy || !self.history_known || self.locked {
             return;
@@ -600,6 +671,14 @@ impl GitHubActions {
         };
         self.busy = false;
         if generation != self.generation || self.scope.as_ref() != Some(&scope) {
+            self.finish_direct(
+                Err(if submitting {
+                    "GitHub hasn’t confirmed the outcome yet. Check Action History before trying again.".into()
+                } else {
+                    "The pull request changed; nothing was sent.".into()
+                }),
+                cx,
+            );
             if let Some(scope) = self.scope.clone() {
                 self.start(Work::History(scope), cx);
             }
@@ -619,6 +698,14 @@ impl GitHubActions {
                 self.notice =
                     "Review the fresh summary and exact action below. Confirm within 60 seconds."
                         .into();
+                if self.direct.is_some() {
+                    self.confirm(cx);
+                    if !self.busy {
+                        self.confirmation = None;
+                        let notice = self.notice.clone();
+                        self.finish_direct(Err(notice), cx);
+                    }
+                }
             }
             Ok(Reply::Mutation {
                 id,
@@ -629,6 +716,7 @@ impl GitHubActions {
                 let state = value["status"].as_str().unwrap_or("uncertain").to_owned();
                 let mut record = value;
                 record["expectedHead"] = json!(head);
+                let rejection = record["error"]["message"].as_str().map(str::to_owned);
                 let rows = self.records["mutations"].as_array_mut();
                 if let Some(rows) = rows {
                     if let Some(old) = rows.iter_mut().find(|r| r["mutationId"] == id) {
@@ -651,11 +739,31 @@ impl GitHubActions {
                     self.body
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }
+                let outcome = match (state.as_str(), &self.direct) {
+                    ("succeeded", Some(Action::Merge(_))) => Ok(format!(
+                        "Merged pull request #{}.",
+                        self.scope.as_ref().map_or(0, |scope| scope.number)
+                    )),
+                    ("succeeded", _) => Ok("Review submitted.".into()),
+                    ("rejected", _) => {
+                        Err(rejection.unwrap_or_else(|| "GitHub rejected the request.".into()))
+                    }
+                    _ => Err("GitHub hasn’t confirmed the outcome yet. Check Action History before trying again.".into()),
+                };
+                self.finish_direct(outcome, cx);
             }
             Err(error) => {
                 self.confirmation = None;
                 self.locked = true;
                 self.history_known = false;
+                self.finish_direct(
+                    Err(if submitting {
+                        format!("{error}. The outcome may be unknown; check Action History before trying again.")
+                    } else {
+                        error.to_string()
+                    }),
+                    cx,
+                );
                 self.notice = if submitting {
                     format!(
                         "{error}. Outcome may be unknown. Refresh history/query the existing ID; never retry submission automatically."
@@ -1101,6 +1209,18 @@ mod tests {
                 .value()
                 .is_ok()
         );
+    }
+    #[::core::prelude::v1::test]
+    fn review_outcomes_use_swift_titles_and_only_approval_may_be_empty() {
+        assert_eq!(
+            ReviewEvent::ALL.map(ReviewEvent::title),
+            ["Comment", "Approve", "Request Changes"]
+        );
+        assert!(ReviewEvent::Approve.accepts(""));
+        for event in [ReviewEvent::Comment, ReviewEvent::RequestChanges] {
+            assert!(!event.accepts(" \n\t"));
+            assert!(event.accepts("Looks good"));
+        }
     }
     #[::core::prelude::v1::test]
     fn comment_utf8_byte_limit_and_merge_method_allowlist() {

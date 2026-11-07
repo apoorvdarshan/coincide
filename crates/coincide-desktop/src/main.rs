@@ -3129,6 +3129,7 @@ impl Coincide {
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.poll_project_defaults(window, cx);
+        self.tick_schedule_times(cx);
         self.open_target_children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
         if self.sidebar_preferences.retry(&self.engine) {
@@ -4723,6 +4724,13 @@ impl Render for Coincide {
             transcript.into_any_element()
         };
         self.sync_inspector_browser_visibility(cx);
+        // Swift reloads the pull requests as their panel appears.
+        let pull_requests_visible = self.chat_inspector_panel()
+            == Some(chat_inspector::Panel::Workspace)
+            && self.github_open
+            && !self.github_threads_open;
+        self.github_panel
+            .update(cx, |panel, cx| panel.set_visible(pull_requests_visible, cx));
         let inspector_pane = self.chat_inspector_surface(window, cx);
         let pending_pane = if self.chat_visible() {
             self.pending_pane(window, cx)
