@@ -5,7 +5,7 @@ use anyhow::{Result, ensure};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
-use webkit2gtk::prelude::*;
+use webkit2gtk::{SettingsExt, WebContextExt, WebViewExt};
 #[cfg(target_os = "linux")]
 use wry::WebViewExtUnix;
 

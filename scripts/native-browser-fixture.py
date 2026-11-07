@@ -16,6 +16,7 @@ def exercise_browser(rpc, thread_id, capture_visible):
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh native CI runner only"
     marker = "NativeBrowserReady" + uuid.uuid4().hex
     text = "Native browser input café Ω"
+    http_requests = []
     class Page(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -23,6 +24,8 @@ def exercise_browser(rpc, thread_id, capture_visible):
         def log_message(self, *_args):
             pass
         def do_GET(self):
+            if len(http_requests) < 64:
+                http_requests.append(self.path[:200])
             if self.path == "/frame":
                 html = '<title>Owned frame</title><p>NativeBrowserFrameReady</p>'
             elif self.path in ("/", "/second"):
@@ -129,6 +132,17 @@ def exercise_browser(rpc, thread_id, capture_visible):
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
                 "operations": receipts, "externalNetwork": False, "tabsClosed": True,
                 "nativeDialogs": dialog_report, "nativeKeys": key_report}
+    except BaseException as error:
+        # Diagnose the same failed operation without navigation, repeated input
+        # or a changed deadline. These are only this fixture's private pages.
+        diagnostics = {"httpRequests": list(http_requests)}
+        for action in ("tabs", "read", "console"):
+            try:
+                diagnostics[action] = request(action, tabs[0] if tabs else None)
+            except Exception as diagnostic:
+                diagnostics[action + "Error"] = str(diagnostic)[:2000]
+        error.native_browser_diagnostics = diagnostics
+        raise
     finally:
         # Actual server thread return is required. No detached server or forced
         # child termination can substitute for a completed browser result.
@@ -187,7 +201,8 @@ def main():
         report = exercise_browser(rpc, args.thread, capture_visible)
         args.report.write_text(json.dumps(report, indent=2))
     except BaseException as error:
-        args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000]}, indent=2))
+        args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000],
+            "nativeBrowserFailure": getattr(error, "native_browser_diagnostics", None)}, indent=2))
         raise
 
 

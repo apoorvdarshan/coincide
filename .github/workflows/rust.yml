@@ -267,6 +267,27 @@ jobs:
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install isolated Linux native host fixture dependencies
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor
+      - name: Compile production Linux native host and run pure guards before UI compilation
+        run: |
+          set -o pipefail
+          cargo test -p coincide-native-host-tests --features native-computer-use --locked linux_cu_ -- --nocapture | tee "$RUNNER_TEMP/linux-native-host-pure-tests.log"
+          grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-pure-tests.log"
+      - name: Test exact owned X11 fixture before UI compilation
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::linux::native_tests::actual_owned_x11_window_actions_capture_and_drain -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-native-host-owned-tests.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-owned-tests.log"
+      - name: Test exact XWayland refusal before UI compilation
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' env WAYLAND_DISPLAY=coincide-private-wayland cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::linux::native_tests::actual_wayland_refuses_existing_x11_display -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-native-host-wayland-tests.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/linux-native-host-wayland-tests.log"
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper

@@ -1,4 +1,11 @@
 //! Pure bounds shared by the Windows adapter and synthetic cross-platform tests.
+/// Provider binding is distinct from element-information transactions. Microsoft's
+/// documented connection default is 2000ms; never exceed the existing observation
+/// deadline or round a sub-millisecond budget to SDK zero (an unbounded wait).
+pub(super) fn root_binding_budget(remaining: std::time::Duration) -> Option<u32> {
+    let milliseconds = remaining.as_millis().min(2000);
+    (milliseconds > 0).then_some(milliseconds as u32)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Identity {
     pub hwnd: usize,
@@ -144,5 +151,27 @@ mod tests {
         assert!(restricted_executable("C:\\Apps\\CHROME.EXE"));
         assert!(restricted_executable("C:\\Windows\\Consent.exe"));
         assert!(!restricted_executable("C:\\Tests\\fixture.exe"));
+    }
+
+    #[test]
+    fn provider_binding_budget_respects_existing_deadline_and_never_uses_zero() {
+        use std::time::Duration;
+        assert_eq!(
+            super::root_binding_budget(Duration::from_secs(3)),
+            Some(2000)
+        );
+        assert_eq!(
+            super::root_binding_budget(Duration::from_millis(177)),
+            Some(177)
+        );
+        assert_eq!(
+            super::root_binding_budget(Duration::from_millis(1)),
+            Some(1)
+        );
+        assert_eq!(
+            super::root_binding_budget(Duration::from_nanos(999_999)),
+            None
+        );
+        assert_eq!(super::root_binding_budget(Duration::ZERO), None);
     }
 }
