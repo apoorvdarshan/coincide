@@ -95,6 +95,7 @@ impl InstructionsPanel {
             .as_ref()
             .and_then(|s| s.master_path().parent())
             .map(Path::to_owned);
+        let picker_window = window.window_handle();
         if new_file {
             let Some(directory) = directory else {
                 self.setup.picker_pending = false;
@@ -107,26 +108,32 @@ impl InstructionsPanel {
                 let _picker_lease = picker_lease;
                 let _picker_owner = picker_owner;
                 let result: Result<_> = async { picker.await? }.await;
-                let _ = this.update_in(cx, |this, window, cx| {
-                    this.setup.picker_pending = false;
-                    if this.setup.generation != generation || this.dirty(cx) {
-                        this.setup.status =
-                            "Copy choice expired because the editor changed.".into();
-                        cx.notify();
-                        return;
-                    }
-                    match result {
-                        Ok(Some(path)) => this.copy_picker_result(path, window, cx),
-                        Ok(None) => {
-                            this.setup.status = "Copy choice cancelled".into();
+                let _ = crate::main_window_poll::complete_native_picker(
+                    picker_window,
+                    &this,
+                    cx,
+                    |this, window, cx| {
+                        this.setup.picker_pending = false;
+                        if this.setup.generation != generation || this.dirty(cx) {
+                            this.setup.status =
+                                "Copy choice expired because the editor changed.".into();
                             cx.notify();
+                            return;
                         }
-                        Err(error) => {
-                            this.setup.status = format!("Copy picker failed: {error}");
-                            cx.notify();
+                        match result {
+                            Ok(Some(path)) => this.copy_picker_result(path, window, cx),
+                            Ok(None) => {
+                                this.setup.status = "Copy choice cancelled".into();
+                                cx.notify();
+                            }
+                            Err(error) => {
+                                this.setup.status = format!("Copy picker failed: {error}");
+                                cx.notify();
+                            }
                         }
-                    }
-                });
+                    },
+                    move |this, cx| this.abandon_instruction_picker(generation, cx),
+                );
             }));
         } else {
             let picker_lease = self.edit_lease.pending_native_action();
@@ -141,32 +148,38 @@ impl InstructionsPanel {
                 let _picker_lease = picker_lease;
                 let _picker_owner = picker_owner;
                 let result: Result<_> = async { picker.await? }.await;
-                let _ = this.update_in(cx, |this, window, cx| {
-                    this.setup.picker_pending = false;
-                    if this.setup.generation != generation || this.dirty(cx) {
-                        this.setup.status =
-                            "Copy choice expired because the editor changed.".into();
-                        cx.notify();
-                        return;
-                    }
-                    match result {
-                        Ok(Some(paths)) if paths.len() == 1 => {
-                            this.copy_picker_result(paths[0].clone(), window, cx)
-                        }
-                        Ok(None) => {
-                            this.setup.status = "Copy choice cancelled".into();
+                let _ = crate::main_window_poll::complete_native_picker(
+                    picker_window,
+                    &this,
+                    cx,
+                    |this, window, cx| {
+                        this.setup.picker_pending = false;
+                        if this.setup.generation != generation || this.dirty(cx) {
+                            this.setup.status =
+                                "Copy choice expired because the editor changed.".into();
                             cx.notify();
+                            return;
                         }
-                        Ok(_) => {
-                            this.setup.status = "Choose one copy file".into();
-                            cx.notify();
+                        match result {
+                            Ok(Some(paths)) if paths.len() == 1 => {
+                                this.copy_picker_result(paths[0].clone(), window, cx)
+                            }
+                            Ok(None) => {
+                                this.setup.status = "Copy choice cancelled".into();
+                                cx.notify();
+                            }
+                            Ok(_) => {
+                                this.setup.status = "Choose one copy file".into();
+                                cx.notify();
+                            }
+                            Err(error) => {
+                                this.setup.status = format!("Copy picker failed: {error}");
+                                cx.notify();
+                            }
                         }
-                        Err(error) => {
-                            this.setup.status = format!("Copy picker failed: {error}");
-                            cx.notify();
-                        }
-                    }
-                });
+                    },
+                    move |this, cx| this.abandon_instruction_picker(generation, cx),
+                );
             }));
         }
         cx.notify();
