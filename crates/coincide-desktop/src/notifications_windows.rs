@@ -128,6 +128,18 @@ fn shortcut_matches(path: &Path, exe: &Path, app_id: &str) -> Result<bool> {
     let same_target = target.as_path() == exe
         && native_file::file_identity(&target_file)?
             == native_file::file_identity(&executable_file)?;
+    #[cfg(test)]
+    {
+        if args[0] != 0 {
+            eprintln!("Owned Windows notification shortcut mismatch: arguments");
+        }
+        if !same_target {
+            eprintln!("Owned Windows notification shortcut mismatch: executable-identity");
+        }
+        if stored != app_id {
+            eprintln!("Owned Windows notification shortcut mismatch: application-id");
+        }
+    }
     Ok(args[0] == 0 && same_target && stored == app_id)
 }
 fn status(exe: &Path, shortcut: &Path, app_id: &str) -> Result<Permission> {
@@ -173,11 +185,22 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
     let placeholder = native_file::create_private_file(&temporary)?;
     let identity = native_file::file_identity(&placeholder)?;
     drop(placeholder);
+    #[cfg(test)]
+    let setup_stage = std::cell::Cell::new("begin");
+    macro_rules! setup_stage {
+        ($stage:literal) => {
+            #[cfg(test)]
+            setup_stage.set($stage);
+        };
+    }
     let result = (|| -> Result<()> {
+        setup_stage!("create-shell-link");
         let link: IShellLinkW =
             unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }?;
+        setup_stage!("set-executable-path");
         let target = wide(exe)?;
         unsafe { link.SetPath(PCWSTR(target.as_ptr())) }?;
+        setup_stage!("set-app-id");
         let store: IPropertyStore = link.cast()?;
         let app_id_wide: Vec<_> = app_id.encode_utf16().chain(Some(0)).collect();
         let allocated = unsafe { SHStrDupW(PCWSTR(app_id_wide.as_ptr())) }?;
@@ -195,18 +218,22 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
             store.SetValue(&APP_ID_KEY, &value)?;
             store.Commit()?;
         }
+        setup_stage!("save-owned-shortcut");
         let persist: IPersistFile = link.cast()?;
         let temporary_wide = wide(&temporary)?;
         unsafe { persist.Save(PCWSTR(temporary_wide.as_ptr()), true) }?;
+        setup_stage!("verify-owned-source-identity");
         ensure!(
             native_file::path_identity(&temporary)? == identity
                 && native_file::path_identity(parent)? == parent_identity,
             "Notification shortcut source changed"
         );
+        setup_stage!("verify-saved-shortcut");
         ensure!(
             shortcut_matches(&temporary, exe, app_id)?,
             "Notification shortcut verification failed"
         );
+        setup_stage!("install-owned-shortcut");
         let destination = wide(shortcut)?;
         // MoveFileW fails if a destination appeared; never replaces an existing
         // shortcut, including one created after the original absence check.
@@ -216,6 +243,7 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
                 PCWSTR(destination.as_ptr()),
             )
         }?;
+        setup_stage!("verify-installed-shortcut");
         ensure!(
             native_file::path_identity(shortcut)? == identity
                 && shortcut_matches(shortcut, exe, app_id)?,
@@ -225,6 +253,13 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
     })();
     if native_file::path_identity(&temporary).ok() == Some(identity) {
         let _ = fs::remove_file(&temporary);
+    }
+    #[cfg(test)]
+    if result.is_err() {
+        eprintln!(
+            "Owned Windows notification setup failed at {}",
+            setup_stage.get()
+        );
     }
     result.map_err(|_| anyhow::anyhow!("Windows notification setup could not be verified"))
 }
