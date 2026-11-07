@@ -22,6 +22,10 @@ mod native_downloads;
 mod native_history;
 #[path = "browser_native_keys.rs"]
 mod native_keys;
+// WebView2 and WebKitGTK get no Coincide passkey script; see the module.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[path = "browser_passkeys.rs"]
+pub(crate) mod passkeys;
 #[path = "browser_press.rs"]
 mod press;
 #[path = "browser_private_profiles.rs"]
@@ -66,10 +70,15 @@ use std::{
 };
 use uuid::Uuid;
 #[cfg(target_os = "macos")]
-use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
+use wry::{WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
     credential: Option<credential_bridge::NativeCredentialTarget>,
+    /// The navigation epoch plus one of the document that last asked for a
+    /// passkey Coincide couldn't provide, for the agent's `read`.
+    passkey_requested: Arc<AtomicU64>,
+    #[cfg(target_os = "macos")]
+    _passkeys: Option<passkeys::Bridge>,
     keys: native_keys::Target,
     dialogs: dialogs::Dialogs,
     id: String,
@@ -125,6 +134,7 @@ impl Drop for PendingUpload {
 enum NativeEvent {
     Press(press::Event),
     DialogChanged,
+    PasskeysChanged,
     DownloadsChanged,
     UploadProbe {
         id: String,
@@ -184,6 +194,7 @@ pub struct BrowserController {
     native_downloads: Vec<Rc<native_downloads::Owner>>,
     dialog_inputs: HashMap<String, Entity<InputState>>,
     credential_targets: Vec<credential_bridge::NativeCredentialTarget>,
+    passkeys: passkeys::Passkeys,
     presses: HashMap<String, press::Pending>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
@@ -235,6 +246,10 @@ impl BrowserController {
         let default_id = None;
         let profiles = ProfileCatalog::open(profile_dir.clone(), default_id)?;
         let (sender, events) = mpsc::sync_channel(512);
+        let passkey_sender = sender.clone();
+        let passkeys = passkeys::Passkeys::new(move || {
+            let _ = passkey_sender.try_send(NativeEvent::PasskeysChanged);
+        });
         Ok(Self {
             tabs: HashMap::new(),
             active: HashMap::new(),
@@ -253,6 +268,7 @@ impl BrowserController {
             downloads: Rc::new(RefCell::new(DownloadRegistry::new(download_dir)?)),
             dialog_inputs: HashMap::new(),
             credential_targets: Vec::new(),
+            passkeys,
             presses: HashMap::new(),
             scripts: HashMap::new(),
             waits: HashMap::new(),
@@ -268,6 +284,8 @@ impl BrowserController {
             return;
         }
         self.shutdown.close();
+        // Waiting pages are refused now; `bw` workers stay tracked until joined.
+        self.passkeys.shutdown();
         for owner in &self.native_downloads {
             owner.close();
         }
@@ -562,6 +580,7 @@ impl BrowserController {
                 let tabs = self.tabs.get_mut(thread).context("No such thread")?;
                 let removed = tabs.remove(index);
                 removed.navigation.fetch_add(1, Ordering::AcqRel);
+                self.passkeys.closed(thread, &target);
                 removed.view.update(cx, |view, _| view.hide());
                 if self.active.get(thread) == Some(&target) {
                     if let Some(tab) = tabs.last() {
@@ -599,6 +618,8 @@ impl BrowserController {
                 let navigation = self.tabs[thread][index].navigation.clone();
                 let epoch = navigation.load(Ordering::Acquire);
                 let click = matches!(&request.action, BrowserAction::Click { .. });
+                let read = matches!(&request.action, BrowserAction::Read { .. });
+                let passkey_requested = self.tabs[thread][index].passkey_requested.clone();
                 let mutating = !matches!(
                     &request.action,
                     BrowserAction::Read { .. } | BrowserAction::Frames
@@ -613,12 +634,18 @@ impl BrowserController {
                         if callback_completed.swap(true, Ordering::AcqRel) {
                             return;
                         }
-                        let result = public_script_reply(
+                        let mut result = public_script_reply(
                             &payload,
                             navigation.load(Ordering::Acquire) == epoch,
                             protected.load(Ordering::Acquire),
                             click,
                         );
+                        if read
+                            && result.get("error").is_none()
+                            && passkey_requested.load(Ordering::Acquire) == epoch + 1
+                        {
+                            result["passkey"] = json!(coincide_core::passkeys::AGENT_NOTE);
+                        }
                         let _ = sender.try_send(NativeEvent::Reply(BrowserReply {
                             id: id.clone(),
                             thread_id: thread_id.clone(),
@@ -689,6 +716,7 @@ impl BrowserController {
         let navigation_closed = self.shutdown.callbacks.closed.clone();
         let load_navigation = navigation.clone();
         let load_closed = self.shutdown.callbacks.closed.clone();
+        let passkey_requested = Arc::new(AtomicU64::new(0));
         let profile = self.profiles.selected(thread);
         let profile_key = profile.key(thread);
         if let ProfileChoice::Persistent(id) = &profile {
@@ -816,43 +844,70 @@ impl BrowserController {
                 builder
             }
         };
+        // A configuration of Coincide's own for every profile, so the passkey
+        // scripts and handlers exist before WebKit creates the first document.
+        // Wry then takes this configuration's store instead of choosing one, so
+        // the store is chosen here as Wry chooses it.
         #[cfg(target_os = "macos")]
-        let builder = match &profile {
-            ProfileChoice::Persistent(id) => builder.with_data_store_identifier(*id.as_bytes()),
-            ProfileChoice::Private => {
-                let mtm = MainThreadMarker::new()
-                    .context("Private browser store requires the native UI thread")?;
+        let (builder, passkey_bridge, expected_store) = {
+            let mtm = MainThreadMarker::new()
+                .context("Native browser views require the native UI thread")?;
+            let store = match &profile {
+                ProfileChoice::Persistent(id) if persistent_profiles_available() => unsafe {
+                    WKWebsiteDataStore::dataStoreForIdentifier(
+                        &objc2_foundation::NSUUID::from_bytes(*id.as_bytes()),
+                        mtm,
+                    )
+                },
+                ProfileChoice::Persistent(_) => unsafe {
+                    WKWebsiteDataStore::defaultDataStore(mtm)
+                },
                 // Wry's ordinary incognito option creates a separate store per
                 // view. Retain one native ephemeral store for this thread.
-                let store = self
+                ProfileChoice::Private => self
                     .private_stores
                     .entry(profile_key.clone())
-                    .or_insert_with(|| unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) });
-                let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
-                unsafe {
-                    configuration.setWebsiteDataStore(store);
-                }
-                builder.with_webview_configuration(configuration)
+                    .or_insert_with(|| unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) })
+                    .clone(),
+            };
+            let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
+            unsafe {
+                configuration.setWebsiteDataStore(&store);
             }
+            // Apps signed with Apple's browser passkey entitlement reach the
+            // system's passkey sheet instead, as in the Swift app.
+            let bridge = if passkeys::platform_passkeys_available() {
+                None
+            } else {
+                passkeys::install(
+                    &configuration,
+                    &id,
+                    self.passkeys.channel(),
+                    navigation.clone(),
+                    passkey_requested.clone(),
+                )
+            };
+            (
+                builder.with_webview_configuration(configuration),
+                bridge,
+                store,
+            )
         };
         // Failed native construction may have created SDK resources. Keep
         // release Unknown; neither an error nor private verification is teardown.
         self.shutdown.ever_native = true;
         let view = WebView::build(builder, window, cx)?;
+        // Every profile's view must use exactly the store chosen above.
+        #[cfg(target_os = "macos")]
+        unsafe {
+            let actual = view.raw().webview().configuration().websiteDataStore();
+            ensure!(
+                Retained::as_ptr(&actual) == Retained::as_ptr(&expected_store),
+                "Native browser changed this thread's store"
+            );
+        }
         if matches!(profile, ProfileChoice::Private) {
             self.private_profiles.verify(thread, view.raw())?;
-            #[cfg(target_os = "macos")]
-            unsafe {
-                let actual = view.raw().webview().configuration().websiteDataStore();
-                let expected = self
-                    .private_stores
-                    .get(&profile_key)
-                    .context("Private native browser store missing")?;
-                ensure!(
-                    Retained::as_ptr(&actual) == Retained::as_ptr(expected),
-                    "Native private browser changed this thread's store"
-                );
-            }
         }
         let credential =
             credential_bridge::NativeCredentialTarget::new(view.raw(), navigation.clone())
@@ -903,6 +958,9 @@ impl BrowserController {
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
             credential,
+            passkey_requested,
+            #[cfg(target_os = "macos")]
+            _passkeys: passkey_bridge,
             keys,
             dialogs,
             id: id.clone(),
@@ -936,7 +994,9 @@ impl BrowserController {
         for event in events {
             match event {
                 NativeEvent::Press(event) => self.press_event(event),
-                NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
+                NativeEvent::DialogChanged
+                | NativeEvent::DownloadsChanged
+                | NativeEvent::PasskeysChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
                     if let Some(upload) = self.uploads.get_mut(&id) {
                         if upload.ticket != ticket {
@@ -1018,13 +1078,16 @@ impl BrowserController {
                     url,
                     loading,
                 } => {
-                    if let Some(tab) = self
+                    if let Some(entry) = self
                         .tabs
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
-                        tab.url = url;
-                        tab.loading = loading;
+                        if !loading {
+                            self.passkeys.navigated(&thread, &tab, &url);
+                        }
+                        entry.url = url;
+                        entry.loading = loading;
                     }
                 }
                 NativeEvent::Popup { thread, url } => {
@@ -1032,6 +1095,7 @@ impl BrowserController {
                 }
             }
         }
+        changed |= self.poll_passkeys();
         changed |= self.poll_dialogs(window, cx);
         changed |= self.poll_presses(cx);
         changed |= self.poll_uploads(cx);
@@ -1407,6 +1471,75 @@ impl BrowserController {
         Ok(())
     }
 
+    /// The page scripts' reports and the `bw` workers' results, for every tab.
+    fn poll_passkeys(&mut self) -> bool {
+        let Self {
+            tabs,
+            active,
+            visible,
+            passkeys,
+            shutdown,
+            ..
+        } = self;
+        let (active, visible) = (&*active, &*visible);
+        let states: Vec<passkeys::TabState> = tabs
+            .iter()
+            .flat_map(|(thread, list)| {
+                list.iter().map(move |tab| passkeys::TabState {
+                    thread,
+                    tab: &tab.id,
+                    url: &tab.url,
+                    shown: visible.as_deref() == Some(thread.as_str())
+                        && active.get(thread) == Some(&tab.id),
+                })
+            })
+            .collect();
+        passkeys.poll(&states, &mut |worker| shutdown.track(worker))
+    }
+
+    /// Settings › Browser › Passwords and the notice's ×. True when the pane
+    /// should redraw.
+    pub fn set_passkey_preferences(&mut self, preferences: passkeys::Preferences) -> bool {
+        self.passkeys.set_preferences(preferences)
+    }
+    pub fn set_passkey_vault(
+        &mut self,
+        vault: Option<Arc<dyn coincide_core::passkeys::PasskeyVault + Send + Sync>>,
+    ) {
+        self.passkeys.set_vault(vault);
+    }
+    /// The Bitwarden sign-in prompt for the thread's shown tab.
+    pub fn passkey_prompt(&self, thread: &str) -> Option<passkeys::PromptView> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
+        self.passkeys.prompt(thread, self.active.get(thread)?)
+    }
+    pub fn select_passkey_account(&mut self, id: u64, index: usize) -> bool {
+        self.passkeys.select(id, index)
+    }
+    pub fn answer_passkey_prompt(&mut self, id: u64, accept: bool) -> bool {
+        let Self {
+            passkeys, shutdown, ..
+        } = self;
+        passkeys.answer(id, accept, &mut |worker| shutdown.track(worker))
+    }
+    pub fn passkey_notice(&self, thread: &str) -> Option<(String, Option<&'static str>)> {
+        if self.shutdown.callbacks.closed() {
+            return None;
+        }
+        self.passkeys.notice(thread, self.active.get(thread)?)
+    }
+    /// "Open in Default Browser": the page to open, an http(s) address only.
+    pub fn open_passkey_notice(&mut self, thread: &str) -> Option<String> {
+        let tab = self.passkeys.open_notice(thread)?;
+        let url = &self.tabs.get(thread)?.iter().find(|t| t.id == tab)?.url;
+        coincide_core::passkeys::page_host(url).map(|_| url.clone())
+    }
+    pub fn dismiss_passkey_notice(&mut self, thread: &str) {
+        self.passkeys.dismiss_notice(thread);
+    }
+
     /// Native parent hook only. Do not register this capability as an agent action.
     pub fn credential_fill_available(&self) -> bool {
         !self.shutdown.callbacks.closed() && credential_bridge::credential_fill_available()
@@ -1571,8 +1704,13 @@ impl BrowserController {
             "download-resume",
             "cross-origin-frame-actions",
             "screenshots",
-            "passkeys",
         ];
+        match passkeys::support() {
+            // Bitwarden answers sign-in only, as in the Swift app.
+            "bitwarden-sign-in" => unsupported.push("passkey-registration"),
+            "unavailable" => unsupported.push("passkeys"),
+            _ => {}
+        }
         if self
             .tabs
             .get(thread)
@@ -1597,6 +1735,7 @@ impl BrowserController {
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
             "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
+            "passkeys":passkeys::support(),
             "passwordManagerRequiresNativeApproval":true})
     }
 }

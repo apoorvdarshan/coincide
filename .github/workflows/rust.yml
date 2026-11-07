@@ -176,6 +176,18 @@ jobs:
           set -o pipefail
           target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify Bitwarden passkey sign-in in a real WKWebView on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (bitwarden-sign-in)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native macOS credential SDK evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -185,6 +197,7 @@ jobs:
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn
   desktop-windows:
     name: Windows GPUI check
@@ -306,6 +319,19 @@ jobs:
           & target/debug/examples/native_upload_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-upload-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-upload-sdk.log" -SimpleMatch 'synthetic native upload: PASS')) { throw 'Expected actual native WebView2 attachment of owned files' }
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebView2's own WebAuthn API on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+        run: |
+          & target/debug/examples/native_passkey_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-passkey-sdk.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-passkey-sdk.log" -SimpleMatch 'synthetic native passkeys: PASS (webview2-native)')) { throw 'Expected WebView2 to give the owned https page its WebAuthn API' }
       - name: Retain actual Windows native UI attempt evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -317,6 +343,7 @@ jobs:
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn
   desktop-linux:
     name: Linux GPUI check
@@ -375,7 +402,7 @@ jobs:
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
       - name: Install isolated Linux native host fixture dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools
       - name: Compile production Linux native host and run pure guards before UI compilation
         run: |
           set -o pipefail
@@ -406,7 +433,7 @@ jobs:
           cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
           grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
       - name: Install native Linux smoke dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor fonts-dejavu-core
       - name: Test Linux Appshots pixels, keys and owned delivery without capture
         run: |
           set -o pipefail
@@ -501,6 +528,23 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_upload_sdk 2>&1 | tee "$RUNNER_TEMP/native-upload-sdk.log"
           grep -F 'synthetic native upload: PASS' "$RUNNER_TEMP/native-upload-sdk.log"
+      - name: Build synthetic native passkey executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_passkey_sdk --locked
+      - name: Verify WebKitGTK's missing WebAuthn API on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          COINCIDE_SYNTHETIC_PASSKEY_SDK: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_passkey_sdk | tee "$RUNNER_TEMP/native-passkey-sdk.log"
+          grep -F 'synthetic native passkeys: PASS (unavailable)' "$RUNNER_TEMP/native-passkey-sdk.log"
       - name: Retain native Linux UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -511,4 +555,5 @@ jobs:
             ${{ runner.temp }}/native-fill-sdk.log
             ${{ runner.temp }}/native-download-sdk.log
             ${{ runner.temp }}/native-upload-sdk.log
+            ${{ runner.temp }}/native-passkey-sdk.log
           if-no-files-found: warn
