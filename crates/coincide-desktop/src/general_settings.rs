@@ -850,3 +850,13 @@ mod tests {
         assert_eq!(slider_size(14.4), 14.);
     }
 }
+
+/// Swift's branch prefix default for new worktrees.
+pub(super) const BRANCH_PREFIX_DEFAULT: &str = "coincide/";
+
+pub(super) fn branch_prefix(settings: &Value) -> String {
+    settings["worktreeBranchPrefix"]
+        .as_str()
+        .unwrap_or(BRANCH_PREFIX_DEFAULT)
+        .to_owned()
+}

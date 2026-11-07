@@ -271,6 +271,13 @@ impl Panel {
             None if editor.failed => ("Unavailable", 0xff3b30),
             _ => ("Not checked", TERTIARY),
         }
+    /// The last check found the provider installed but signed out, which
+    /// Swift's General pane reports as not ready yet.
+    pub fn needs_setup(&self, provider: &str) -> bool {
+        self.editors
+            .get(provider)
+            .and_then(|editor| editor.report.as_ref())
+            .is_some_and(|report| report.authenticated == Some(false))
     }
     pub fn last_checked(&self) -> String {
         self.editors

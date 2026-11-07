@@ -518,12 +518,7 @@ impl Coincide {
             }
             ThreadAction::Settle(settled) => self.settle_threads(&[id.to_owned()], settled, cx),
             ThreadAction::Archive(false) => {
-                self.patch_navigation(
-                    id,
-                    json!({"isArchived":false}),
-                    "Conversation restored.",
-                    cx,
-                );
+                self.set_archived(id, false, cx);
             }
             ThreadAction::Archive(true) => {
                 if self.running.iter().any(|running| running == id) {
@@ -543,12 +538,7 @@ impl Coincide {
                         self.request_archive(cx);
                     }
                 } else {
-                    self.patch_navigation(
-                        id,
-                        json!({"isArchived":true}),
-                        "Conversation archived.",
-                        cx,
-                    );
+                    self.set_archived(id, true, cx);
                 }
             }
             ThreadAction::Delete => self.sidebar_delete_review(id.to_owned(), cx),
