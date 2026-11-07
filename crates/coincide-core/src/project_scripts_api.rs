@@ -45,12 +45,25 @@ impl Engine {
             .map_or(&[][..], |launch| &launch.environment);
         let mut terminal =
             crate::terminal::Terminal::spawn_with_environment(&cwd, shell, 24, 100, environment)?;
+        let id = Uuid::new_v4().to_string();
         if let Some(launch) = &launch {
             // Swift TerminalSession.run: the command and Return, queued until
-            // the shell reads its terminal.
-            terminal.write(&format!("{}\r", launch.command))?;
+            // the shell reads its terminal. A failed first write must retire
+            // the complete live owner, never detach its I/O workers via Drop.
+            if let Err(error) = terminal.write(&format!("{}\r", launch.command)) {
+                match terminal.request_shutdown() {
+                    Ok(pending) => self.retain_terminal_owner(id, thread.into(), pending),
+                    Err(retire_error) => {
+                        self.terminals.insert(id, (thread.into(), terminal));
+                        self.revision += 1;
+                        return Err(error.context(format!(
+                            "Initial script input failed; terminal owner retained after cleanup transfer failed: {retire_error}"
+                        )));
+                    }
+                }
+                return Err(error);
+            }
         }
-        let id = Uuid::new_v4().to_string();
         self.terminals.insert(id.clone(), (thread.into(), terminal));
         self.revision += 1;
         if let Some(launch) = &launch {
@@ -158,6 +171,55 @@ mod tests {
                 .project_script_launch(&thread, &json!(script.id))
                 .is_err()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_initial_script_write_retires_live_terminal_without_remembering_a_run() {
+        let (_root, mut engine, project, thread) = fixture();
+        let script = project_scripts::scripts(&project)[0].id.clone();
+        // Imported project documents are read leniently. This oversized legacy
+        // command deterministically fails Terminal::write before any input is
+        // delivered, after a private shell has actually been created.
+        let mut projects = engine.store.projects().unwrap();
+        let project = projects
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|candidate| candidate["id"] == project["id"])
+            .unwrap();
+        project["scripts"][0]["command"] = json!("x".repeat(32 * 1024 + 1));
+        engine
+            .store
+            .save_document("projects.json", &projects)
+            .unwrap();
+        let before = engine.store.document("ui-state.json").unwrap();
+        let error = engine
+            .create_terminal(&json!({"threadId":thread,"scriptId":script}), "/bin/sh")
+            .unwrap_err();
+        assert!(error.to_string().contains("Terminal input exceeds 32 KiB"));
+        assert!(engine.terminals.is_empty());
+        assert_eq!(engine.store.document("ui-state.json").unwrap(), before);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let retired = engine.poll_terminals_shutdown();
+            assert_eq!(retired.panes.len(), 1);
+            assert_eq!(retired.panes[0].thread_id, thread);
+            assert!(!retired.panes[0].terminal_id.is_empty());
+            assert!(!retired.requested);
+            assert!(!retired.ready());
+            if retired.panes[0].status.ready() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "failed-write terminal owners did not join"
+            );
+            std::thread::yield_now();
+        }
+        engine.freeze_admissions();
+        engine.request_terminals_shutdown().unwrap();
+        assert!(engine.poll_terminals_shutdown().ready());
     }
 
     #[cfg(unix)]
