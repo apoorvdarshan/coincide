@@ -8,7 +8,8 @@ use coincide_core::{
 };
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Window,
+    PathPromptOptions, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window,
     component::{
         Disableable,
         button::Button,
@@ -686,6 +687,8 @@ pub struct BrowserSettings {
     route: Option<String>,
     chosen: Option<ChosenBookmarks>,
     library: Option<Library>,
+    pub(super) pane_mode: bool,
+    pane_library_attempt: Option<u64>,
     library_page: usize,
     preview_page: usize,
     bookmark_open: Option<BookmarkOpen>,
@@ -762,6 +765,8 @@ impl BrowserSettings {
                 route: None,
                 chosen: None,
                 library: None,
+                pane_mode: false,
+                pane_library_attempt: None,
                 library_page: 0,
                 preview_page: 0,
                 bookmark_open: None,
@@ -857,6 +862,107 @@ impl BrowserSettings {
             self.status = "Browser settings worker could not start.".into();
         }
         cx.notify();
+    }
+    pub(super) fn open_pane_library(&mut self, cx: &mut Context<Self>) {
+        self.pane_mode = true;
+        self.ensure_pane_library(cx);
+    }
+    pub(super) fn bookmark_busy(&self) -> bool {
+        self.import_busy || self.workers.closed()
+    }
+    pub(super) fn ensure_pane_library(&mut self, cx: &mut Context<Self>) {
+        if self.pane_library_attempt != Some(self.generation)
+            && self.snapshot.is_some()
+            && !self.import_busy
+            && self.workers.can_start()
+        {
+            self.pane_library_attempt = Some(self.generation);
+            self.reload_bookmarks(cx);
+        }
+    }
+    pub(super) fn page_is_bookmarked(&self, url: &str) -> bool {
+        self.library
+            .as_ref()
+            .is_some_and(|library| library.bookmarks.iter().any(|row| row.url == url))
+    }
+    pub(super) fn toggle_page_bookmark(
+        &mut self,
+        url: String,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let revision = self.library.as_ref().map(|library| library.revision);
+        self.library_work(
+            "Updating the current page bookmark…",
+            cx,
+            move |engine, admission, epoch, generation, snapshot| {
+                library_context_allowed(&admission, &epoch, generation)?;
+                ensure!(
+                    snapshot.selected != ProfileChoice::Private,
+                    "Private pages cannot be bookmarked"
+                );
+                let mut engine = engine
+                    .try_lock()
+                    .map_err(|_| anyhow::anyhow!("The app is busy; bookmark was not changed"))?;
+                library_context_allowed(&admission, &epoch, generation)?;
+                ensure!(
+                    engine.active_thread() == Some(snapshot.thread.as_str()),
+                    "Selected conversation changed; bookmark was not changed"
+                );
+                let revision = match revision {
+                    Some(revision) => revision,
+                    None => engine.saved_browser_bookmarks()?.revision,
+                };
+                let library = engine.toggle_browser_bookmark(
+                    revision,
+                    browser_bookmarks::Candidate {
+                        url,
+                        title,
+                        folder: None,
+                    },
+                )?;
+                Ok(LibraryReply::Reloaded(library))
+            },
+        );
+    }
+    fn pane_library(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let busy = self.import_busy || self.workers.closed();
+        let mut panel = div()
+            .id("browser-pane-library")
+            .max_h(gpui_kit::px(240.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_2()
+            .child("Saved bookmarks")
+            .child(
+                Button::new("browser-pane-library-reload")
+                    .label("Reload bookmarks")
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
+            );
+        if let Some(library) = &self.library {
+            if library.bookmarks.is_empty() {
+                panel = panel.child("No saved bookmarks.");
+            }
+            for bookmark in library.bookmarks.iter().rev().take(30) {
+                let id = bookmark.id;
+                let revision = library.revision;
+                panel = panel.child(
+                    Button::new(SharedString::from(format!("browser-pane-bookmark-{id}")))
+                        .label(bookmark.title.chars().take(60).collect::<String>())
+                        .tooltip(bookmark.url.clone())
+                        .disabled(busy)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.open_bookmark(id, revision, cx)),
+                        ),
+                );
+            }
+        }
+        panel
+            .child(SharedString::from(self.status.clone()))
+            .into_any_element()
     }
     fn reload_bookmarks(&mut self, cx: &mut Context<Self>) {
         self.library_work(
@@ -1138,6 +1244,9 @@ impl Drop for BrowserSettings {
 }
 impl Render for BrowserSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.pane_mode {
+            return self.pane_library(cx);
+        }
         let busy = self.import_busy
             || self.profile_pending
             || self.history.busy()
@@ -1308,7 +1417,7 @@ impl Render for BrowserSettings {
                     ),
             );
         }
-        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.")
+        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and native passkey ceremonies are unavailable. Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.").into_any_element()
     }
 }
 

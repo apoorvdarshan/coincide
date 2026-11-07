@@ -32,3 +32,33 @@ files and inert unit fixtures. They do not establish native renderer, pixels,
 keyboard completion, chooser permissions, or three-platform UI acceptance.
 Those checks belong on disposable GitHub runners; no personal browser, vault,
 profile, installed app, or running Swift instance was used.
+
+## Native browser pane controls
+
+Agent Control toggles the selected thread's saved `browser.json` choice, preserving
+its default and other thread overrides, including imported Swift UUID casing. A
+missing default remains enabled, matching Swift. Malformed saved choices fail
+closed. Only native toolbar operation IDs bypass this gate; that provenance grants
+no saved-login approval. Turning control off removes queued agent work, invalidates
+staged tab work, cancels its user-turn banner and pending credential approval, and
+retains refusal results against late renderer callbacks. Already-dispatched native
+or renderer side effects cannot be undone by revocation.
+
+Bookmark page / Remove bookmark saves through the existing bounded bookmark
+worker, with a library revision and current selected-thread/profile checks. Private
+pages and credential-bearing URLs cannot be bookmarked. The library popup shows
+the latest 30 bookmarks and opens a selected row through the existing prepared,
+one-use bookmark owner. Closing the popup or changing routes invalidates prepared
+work. Full history remains in Browser Settings; this popup does not yet reproduce
+Swift's recent-history section or Browser Settings shortcut.
+
+Fill Saved Login opens the retained native password-manager workflow. It neither
+queries a vault nor approves a fill. Choosing a manager/login and approving its
+exact settled HTTPS document remain separate native steps; unavailable backends
+and ineligible pages disable the toolbar button.
+
+New core regressions cover bookmark persistence/stale revisions and agent-result
+revocation across re-enable. The disposable Linux UI fixture exercises actual
+Agent Control clicks, agent refusal with native Reload still usable, bookmark
+persistence/removal, and library reopening. Native UI and real saved-login/vault
+acceptance are not established by local compilation or inert tests.

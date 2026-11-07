@@ -1720,7 +1720,9 @@ impl Engine {
             .get(&reply.id)
             .is_some_and(|(thread, _)| thread == &reply.thread_id)
         {
-            self.browser_results.insert(reply.id.clone(), reply);
+            self.browser_results
+                .entry(reply.id.clone())
+                .or_insert(reply);
             self.revision += 1;
         }
     }

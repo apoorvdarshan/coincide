@@ -287,6 +287,36 @@ impl Library {
             duplicates: plan.bookmarks.len() - added,
         })
     }
+    /// Native current-page toggle. A stale library cannot remove or add a row.
+    pub fn toggle(&self, expected_revision: u64, candidate: Candidate) -> Result<Self> {
+        self.validate()?;
+        ensure!(
+            validate_url(&candidate.url)? == candidate.url,
+            "Bookmark URL must be canonical"
+        );
+        ensure!(
+            self.revision == expected_revision,
+            "Bookmarks changed; reload before toggling"
+        );
+        if !self.bookmarks.iter().any(|row| row.url == candidate.url) {
+            return Ok(self
+                .merge(
+                    expected_revision,
+                    &Plan {
+                        bookmarks: vec![candidate],
+                    },
+                )?
+                .library);
+        }
+        let mut library = self.clone();
+        library.bookmarks.retain(|row| row.url != candidate.url);
+        library.revision = library
+            .revision
+            .checked_add(1)
+            .context("Bookmark revision exhausted")?;
+        library.validate()?;
+        Ok(library)
+    }
     pub fn selected(&self, id: Uuid, expected_revision: u64) -> Result<&Bookmark> {
         self.validate()?;
         ensure!(
@@ -413,5 +443,39 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod toggle_tests {
+    use super::*;
+    #[test]
+    fn toggle_preserves_unrelated_rows_and_rejects_stale_or_sensitive_urls() {
+        let candidate = |url: &str| Candidate {
+            url: url.into(),
+            title: "Page".into(),
+            folder: None,
+        };
+        let first = Library::default()
+            .toggle(0, candidate("https://example.com/one"))
+            .unwrap();
+        let second = first
+            .toggle(1, candidate("https://example.com/two"))
+            .unwrap();
+        assert!(
+            second
+                .toggle(1, candidate("https://example.com/one"))
+                .is_err()
+        );
+        assert!(
+            second
+                .toggle(2, candidate("https://example.com/?token=secret"))
+                .is_err()
+        );
+        let removed = second
+            .toggle(2, candidate("https://example.com/one"))
+            .unwrap();
+        assert_eq!(removed.revision, 3);
+        assert_eq!(removed.bookmarks, vec![second.bookmarks[1].clone()]);
     }
 }

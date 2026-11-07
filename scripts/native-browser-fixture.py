@@ -13,7 +13,7 @@ import time
 import uuid
 
 
-def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
+def exercise_browser(rpc, thread_id, capture_visible, downloads_root, pane_controls=None):
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh native CI runner only"
     marker = "NativeBrowserReady" + uuid.uuid4().hex
     text = "Native browser input café Ω"
@@ -146,6 +146,9 @@ def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
                 break
             assert time.monotonic() < deadline, "Native user-turn timeout receipt missing"
             time.sleep(.05)
+        if pane_controls is not None:
+            pane_controls(first, origin + "/second", http_requests)
+            receipts.append("native-pane-control-and-bookmark-toggle")
         request("hide", first)
         request("close-tab", second)
         tabs.remove(second)

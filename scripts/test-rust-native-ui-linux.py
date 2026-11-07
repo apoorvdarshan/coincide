@@ -129,6 +129,42 @@ def main():
             return image
         return wait_for(f"presented native content for {stage}", presented_frame)
 
+    def click_rendered_phrase(window, stage, phrase):
+        """One exact observed chrome line in the owned disposable window."""
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        attempt = 0
+        def observed_target():
+            nonlocal attempt
+            name = f"{stage}-target-{attempt:03}"
+            attempt += 1
+            frame = capture(window, name)
+            path = artifacts / f"{name}-locator.png"
+            frame.resize((frame.width * 2, frame.height * 2), Image.Resampling.LANCZOS).save(path)
+            tsv = command("tesseract", str(path), "stdout", "--psm", "11", "tsv", env=env)
+            (artifacts / f"{name}-locator.tsv").write_text(tsv)
+            lines = {}
+            for row in csv.DictReader(io.StringIO(tsv), delimiter="\t"):
+                if row["text"].strip():
+                    key = tuple(row[field] for field in ("block_num", "par_num", "line_num"))
+                    lines.setdefault(key, []).append(row)
+            words = phrase.casefold().split()
+            matches = []
+            for rows in lines.values():
+                for offset in range(len(rows) - len(words) + 1):
+                    candidate = rows[offset:offset + len(words)]
+                    if [row["text"].strip().casefold() for row in candidate] == words:
+                        matches.append(candidate)
+            if len(matches) != 1:
+                return None
+            rows = matches[0]
+            left = min(int(row["left"]) for row in rows)
+            right = max(int(row["left"]) + int(row["width"]) for row in rows)
+            top = min(int(row["top"]) for row in rows)
+            bottom = max(int(row["top"]) + int(row["height"]) for row in rows)
+            return ((left + right) / 4, (top + bottom) / 4)
+        x, y = wait_for(f"one exact native pane target {phrase!r}", observed_target)
+        command("xdotool", "mousemove", "--window", window, str(round(x)), str(round(y)), "click", "1", env=env)
+
     def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
         """Target one observed sidebar word; never infer coordinates from layout."""
         # Xvfb has no desktop window manager to focus a newly mapped window
@@ -381,10 +417,34 @@ def main():
         module_spec = importlib.util.spec_from_file_location("owned_browser_fixture", Path(__file__).with_name("native-browser-fixture.py"))
         browser_fixture = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(browser_fixture)
+        def pane_controls(tab, url, http_requests):
+            click_rendered_phrase(window, "browser-control-off", "Agent Control: On")
+            wait_for("persisted per-thread Agent Control off", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is False)
+            operation = rpc("browser.request", threadId=thread_id, tab=tab, action="read")["operationId"]
+            refusal = wait_for("agent request refused by native control", lambda: (result if (result := rpc("browser.result", threadId=thread_id, operationId=operation)).get("ready") else None))
+            assert refusal["result"] == {"error": "Agent Control is off for this conversation"}, refusal
+            before = http_requests.count("/second")
+            click_rendered_phrase(window, "browser-native-reload-off", "Reload")
+            wait_for("native Reload still works with agent control off", lambda: http_requests.count("/second") > before)
+            capture(window, "browser-native-reload-off-ready", "NativeBrowserSecondReady")
+            click_rendered_phrase(window, "browser-control-on", "Agent Control: Off")
+            wait_for("persisted per-thread Agent Control on", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is True)
+            click_rendered_phrase(window, "browser-bookmark-add", "Bookmark page")
+            wait_for("current page bookmark persisted", lambda: any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
+            click_rendered_phrase(window, "browser-library-open", "Bookmark library")
+            capture(window, "browser-library-saved", "Saved bookmarks")
+            click_rendered_phrase(window, "browser-bookmark-remove", "Remove bookmark")
+            wait_for("current page bookmark removed", lambda: not any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
+            capture(window, "browser-library-empty", "No saved bookmarks")
+            click_rendered_phrase(window, "browser-library-close", "Bookmark library")
+            click_rendered_phrase(window, "browser-library-reopen", "Bookmark library")
+            capture(window, "browser-library-reopened", "No saved bookmarks")
+            click_rendered_phrase(window, "browser-library-close-final", "Bookmark library")
+
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,
             lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"),
-            home / "Downloads" / "Coincide")
+            home / "Downloads" / "Coincide", pane_controls)
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("actual native browser loopback navigation/input/click/same-origin frame/history/reload/tab selection and cleanup; native pixels reviewed separately")
         newer = rpc("threads.create", projectId=created_project["id"])
