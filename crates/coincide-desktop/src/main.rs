@@ -5168,7 +5168,6 @@ impl Render for Coincide {
                                                 .gap(px(6.))
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
-                                                .child(self.composer_file_button(cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
