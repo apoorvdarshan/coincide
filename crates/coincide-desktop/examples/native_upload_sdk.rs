@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread::JoinHandle,
@@ -91,6 +91,7 @@ enum Step {
 struct Fixture {
     view: Entity<gpui_webview::WebView>,
     _context: wry::WebContext,
+    loaded: Arc<AtomicBool>,
     dialogs: Option<dialogs::Dialogs>,
     shutdown: shutdown::Shutdown,
     files: Arc<Files>,
@@ -116,7 +117,18 @@ impl Fixture {
         #[cfg(target_os = "linux")]
         gtk::init().expect("owned GTK initialization failed");
         let mut context = wry::WebContext::new(Some(files.root.join("runtime")));
+        // WebKitGTK's wry queues scripts issued before the first commit and drops
+        // their callbacks, so nothing is evaluated before the owned page loads.
+        let loaded = Arc::new(AtomicBool::new(false));
+        let finished = loaded.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
+            .with_on_page_load_handler(move |event, url| {
+                if matches!(event, wry::PageLoadEvent::Finished)
+                    && url.starts_with("https://upload-fixture.invalid/")
+                {
+                    finished.store(true, Ordering::Release);
+                }
+            })
             .with_incognito(true)
             .with_devtools(false)
             .with_clipboard(false)
@@ -153,6 +165,7 @@ impl Fixture {
         Self {
             view,
             _context: context,
+            loaded,
             dialogs: Some(dialogs),
             shutdown,
             files,
@@ -198,7 +211,15 @@ impl Fixture {
     /// One returned evaluation, parsed like production replies. Paths never
     /// appear in page-visible results.
     fn returned(&mut self) -> Option<Value> {
-        let payload = self.read.as_ref()?.try_recv().ok()?;
+        let payload = match self.read.as_ref()?.try_recv() {
+            Ok(payload) => payload,
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.read = None;
+                self.fail("native evaluation dropped its callback without a result".into());
+                return None;
+            }
+        };
         self.read = None;
         let root = self.files.root.to_string_lossy().into_owned();
         let escaped = serde_json::to_string(&root).unwrap_or_default();
@@ -246,7 +267,9 @@ impl Fixture {
         match self.step {
             Step::Ready => {
                 if self.read.is_none() {
-                    self.evaluate("window.fixtureReady===true", cx);
+                    if self.loaded.load(Ordering::Acquire) {
+                        self.evaluate("window.fixtureReady===true", cx);
+                    }
                 } else if let Some(value) = self.returned()
                     && value == json!(true)
                 {
