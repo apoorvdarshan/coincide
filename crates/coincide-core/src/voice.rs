@@ -51,6 +51,8 @@ pub struct Settings {
     pub shortcut: String,
     pub mode: Mode,
     pub sends_when_stopped: bool,
+    pub openai_model: String,
+    pub groq_model: String,
 }
 impl Settings {
     pub fn decode(settings: &Value) -> Self {
@@ -76,6 +78,11 @@ impl Settings {
                 _ => Mode::Both,
             },
             sends_when_stopped: v["sendsWhenStopped"].as_bool().unwrap_or(false),
+            openai_model: v["openAIModel"].as_str().unwrap_or("gpt-transcribe").into(),
+            groq_model: v["groqModel"]
+                .as_str()
+                .unwrap_or("whisper-large-v3-turbo")
+                .into(),
         }
     }
 }
@@ -122,6 +129,7 @@ pub enum Edit {
     Shortcut(String),
     Mode(Mode),
     SendsWhenStopped(bool),
+    Model(Engine, String),
 }
 impl Edit {
     pub fn apply(self, document: &mut Value) -> anyhow::Result<()> {
@@ -135,6 +143,24 @@ impl Edit {
             .as_object_mut()
             .context("Voice settings are not an object")?;
         let (key, value) = match self {
+            Self::Model(engine, model) => {
+                ensure!(
+                    !model.is_empty()
+                        && model.len() <= 128
+                        && model
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+                    "Invalid transcription model"
+                );
+                (
+                    match engine {
+                        Engine::OpenAi => "openAIModel",
+                        Engine::Groq => "groqModel",
+                        _ => anyhow::bail!("This engine has no hosted transcription model"),
+                    },
+                    json!(model),
+                )
+            }
             Self::Enabled(v) => ("isEnabled", json!(v)),
             Self::Engine(v) => ("engine", json!(v.id())),
             Self::Language(v) => {

@@ -74,7 +74,7 @@ impl Inference for FakeInference {
         &mut self,
         _: &LocalRecordingConfig,
         wav: &[u8],
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<String, InferenceFailure> {
         assert!(!cancelled());
         assert!(wav.starts_with(b"RIFF"));

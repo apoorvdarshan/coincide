@@ -134,3 +134,7 @@ mod tests {
 pub mod transcription;
 
 pub mod local;
+
+pub mod voice_api;
+
+pub mod voice_secret;
