@@ -1,35 +1,13 @@
 //! Offline whisper-cli.exe: private owner-only files, fixed arguments and an
 //! owned suspended child admitted to a kill-on-close Job before execution.
 use super::{LocalError, LocalWhisper, MAX_OUTPUT, parse_output, validate_input};
+use crate::github_api::windows::Process;
 use std::{
     fs,
     io::{Read, Write},
-    mem::{size_of, size_of_val},
-    os::windows::{
-        io::{AsRawHandle, FromRawHandle, OwnedHandle},
-        process::CommandExt,
-    },
     path::PathBuf,
-    process::{Child, Command, Stdio},
-    ptr::null,
+    process::{Command, Stdio},
     time::{Duration, Instant},
-};
-use windows_sys::Win32::{
-    Foundation::{HANDLE, INVALID_HANDLE_VALUE},
-    System::{
-        Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
-        },
-        JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
-        },
-        Threading::{
-            CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
-        },
-    },
 };
 
 pub(super) fn configuration(backend: &LocalWhisper) -> Result<(), LocalError> {
@@ -95,117 +73,6 @@ impl Drop for Directory {
         let _ = self.cleanup();
     }
 }
-fn owned(handle: HANDLE) -> Result<OwnedHandle, LocalError> {
-    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-        return Err(LocalError::Unavailable);
-    }
-    Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
-}
-struct Process {
-    child: Child,
-    job: OwnedHandle,
-}
-impl Process {
-    fn spawn(command: &mut Command, directory: &mut Directory) -> Result<Self, LocalError> {
-        let job = owned(unsafe { CreateJobObjectW(null(), null()) })?;
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if unsafe {
-            SetInformationJobObject(
-                job.as_raw_handle(),
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of_val(&limits) as u32,
-            )
-        } == 0
-        {
-            return Err(LocalError::Unavailable);
-        }
-        let mut child = command
-            .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|_| LocalError::Unavailable)?;
-        directory.cleanup_allowed = false;
-        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0 {
-            let _ = child.kill();
-            directory.cleanup_allowed = child.wait().is_ok();
-            return Err(if directory.cleanup_allowed {
-                LocalError::Unavailable
-            } else {
-                LocalError::CleanupPending
-            });
-        }
-        let mut process = Self { child, job };
-        if let Err(error) = process.resume() {
-            if process.finish().is_ok() {
-                directory.cleanup_allowed = true;
-            } else {
-                return Err(LocalError::CleanupPending);
-            }
-            return Err(error);
-        }
-        Ok(process)
-    }
-    fn resume(&mut self) -> Result<(), LocalError> {
-        let snapshot = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) })?;
-        let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
-        entry.dwSize = size_of::<THREADENTRY32>() as u32;
-        let mut present = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
-        while present != 0 {
-            if entry.th32OwnerProcessID == self.child.id() {
-                let thread =
-                    owned(unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) })?;
-                if unsafe { ResumeThread(thread.as_raw_handle()) } != 1 {
-                    return Err(LocalError::Unavailable);
-                }
-                return Ok(());
-            }
-            entry.dwSize = size_of::<THREADENTRY32>() as u32;
-            present = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
-        }
-        Err(LocalError::Unavailable)
-    }
-    fn finish(&mut self) -> Result<(), LocalError> {
-        if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
-            return Err(LocalError::CleanupPending);
-        }
-        self.child.wait().map_err(|_| LocalError::CleanupPending)?;
-        let started = Instant::now();
-        loop {
-            let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
-                unsafe { std::mem::zeroed() };
-            if unsafe {
-                QueryInformationJobObject(
-                    self.job.as_raw_handle(),
-                    JobObjectBasicAccountingInformation,
-                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                    size_of_val(&accounting) as u32,
-                    std::ptr::null_mut(),
-                )
-            } == 0
-            {
-                return Err(LocalError::CleanupPending);
-            }
-            if accounting.ActiveProcesses == 0 {
-                return Ok(());
-            }
-            if started.elapsed() >= Duration::from_secs(5) {
-                return Err(LocalError::CleanupPending);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
-impl Drop for Process {
-    fn drop(&mut self) {
-        // Closing this exact Job remains kill-on-close, including unwinds.
-        unsafe {
-            TerminateJobObject(self.job.as_raw_handle(), 1);
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 pub(super) fn transcribe(
     backend: &LocalWhisper,
     wav: &[u8],
@@ -263,7 +130,19 @@ pub(super) fn transcribe(
     if cancelled() {
         return Err(LocalError::Cancelled);
     }
-    let mut process = Process::spawn(&mut command, &mut directory)?;
+    // The shared owner retains exact descendant handles through native signal
+    // waits. A Job count of zero alone can precede release of a descendant's
+    // current-directory handle and is not permission to remove these files.
+    directory.cleanup_allowed = false;
+    let mut process = match Process::spawn(&mut command) {
+        Ok(process) => process,
+        Err(_) => {
+            // Spawn errors return only before launch or after verified teardown.
+            // Unknown custody remains inside the owner and cannot reach here.
+            directory.cleanup_allowed = true;
+            return Err(LocalError::Unavailable);
+        }
+    };
     let started = Instant::now();
     let result = loop {
         if cancelled() {
@@ -275,14 +154,14 @@ pub(super) fn transcribe(
         if fs::metadata(&output).is_ok_and(|metadata| metadata.len() > MAX_OUTPUT as u64) {
             break Err(LocalError::TooLarge);
         }
-        match process.child.try_wait() {
-            Ok(Some(status)) if status.success() => break Ok(()),
-            Ok(Some(_)) => break Err(LocalError::ProcessFailed),
+        match process.exited() {
+            Ok(Some(true)) => break Ok(()),
+            Ok(Some(false)) => break Err(LocalError::ProcessFailed),
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => break Err(LocalError::Unavailable),
         }
     };
-    process.finish()?;
+    process.finish().map_err(|_| LocalError::CleanupPending)?;
     directory.cleanup_allowed = true;
     drop(process);
     let result = result.and_then(|()| {

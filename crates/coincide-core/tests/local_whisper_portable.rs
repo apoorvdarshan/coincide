@@ -85,6 +85,34 @@ fn removed(root: &Path) {
     );
 }
 #[cfg(windows)]
+fn retain_descendant(pid: u32) -> std::os::windows::io::OwnedHandle {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Foundation::GetLastError,
+        System::Threading::{OpenProcess, SYNCHRONIZATION_SYNCHRONIZE},
+    };
+    let raw = unsafe { OpenProcess(SYNCHRONIZATION_SYNCHRONIZE, 0, pid) };
+    assert!(
+        !raw.is_null(),
+        "owned synthetic descendant handle unavailable: {}",
+        unsafe { GetLastError() }
+    );
+    unsafe { OwnedHandle::from_raw_handle(raw) }
+}
+#[cfg(windows)]
+fn signalled(handle: &std::os::windows::io::OwnedHandle) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::{
+        Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::WaitForSingleObject,
+    };
+    match unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) } {
+        WAIT_OBJECT_0 => true,
+        WAIT_TIMEOUT => false,
+        _ => panic!("owned synthetic descendant handle wait failed"),
+    }
+}
+#[cfg(windows)]
 fn active(pid: u32) -> bool {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::{
@@ -160,11 +188,35 @@ fn fixture() {
     );
     assert!(!root.path().join("job-path").exists());
     let pid_path = root.path().join("descendant-pid");
+    #[cfg(windows)]
+    let held_descendant = std::cell::RefCell::new(None);
     assert_eq!(
         backend.transcribe_local_cancellable(&wav, || {
-            fs::read_to_string(&pid_path).is_ok_and(|value| value.parse::<u32>().is_ok())
+            let Some(pid) = fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+            else {
+                return false;
+            };
+            // Acquire the exact live descendant before requesting cancellation.
+            // A later disappearing/reused PID is not a process release receipt.
+            #[cfg(windows)]
+            {
+                let mut held = held_descendant.borrow_mut();
+                if held.is_none() {
+                    *held = Some(retain_descendant(pid));
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = pid;
+            true
         }),
         Err(LocalError::Cancelled)
+    );
+    #[cfg(windows)]
+    assert!(
+        signalled(held_descendant.borrow().as_ref().unwrap()),
+        "cancellation cannot return before the retained descendant signals"
     );
     let pid = fs::read_to_string(pid_path)
         .unwrap()
