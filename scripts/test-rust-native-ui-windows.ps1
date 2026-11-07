@@ -291,7 +291,7 @@ try {
         if(-not $browserCaptured -and (Test-Path $browserReady)){
             $nonce=[IO.File]::ReadAllText($browserReady)
             if($nonce -match '^[0-9a-f]{32}$'){
-                Capture-Owned $window 'native-browser-visible'
+                Capture-Owned $main 'native-browser-visible'
                 [IO.File]::WriteAllText($browserAck,$nonce)
                 $browserCaptured=$true
             }
