@@ -1,4 +1,7 @@
 //! Explicit selected terminal display data, never client text or execution authority.
+//! The selection is either a range of the visible grid or, as Swift's "Send Last
+//! Command's Output to Agent", the newest command and what it printed, found by
+//! the shell integration's prompt marks on the real screen.
 use super::*;
 use crate::{
     composer_context::{self, ExpectedContext},
@@ -12,8 +15,12 @@ struct Request {
     expected_context: ExpectedContext,
     terminal_id: String,
     revision: u64,
-    start: Point,
-    end: Point,
+    #[serde(default)]
+    start: Option<Point>,
+    #[serde(default)]
+    end: Option<Point>,
+    #[serde(default)]
+    last_output: bool,
 }
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,10 +84,22 @@ impl Engine {
             "Terminal belongs to another conversation"
         );
         // The real screen owns hidden/wide/combining filtering and exact viewport revision.
-        let selected =
-            terminal.copy_selection(request.revision, request.start.into(), request.end.into())?;
-        let next = composer_context::append_terminal_selection(
+        let (label, selected) = match (request.start, request.end, request.last_output) {
+            (Some(start), Some(end), false) => (
+                "Terminal selection",
+                terminal.copy_selection(request.revision, start.into(), end.into())?,
+            ),
+            (None, None, true) => (
+                "Last command output",
+                terminal
+                    .last_command_output(request.revision)?
+                    .context("The last command's output is no longer in the terminal")?,
+            ),
+            _ => anyhow::bail!("Choose a terminal selection or the last command's output"),
+        };
+        let next = composer_context::append_terminal_excerpt(
             thread.get("draftContext").unwrap_or(&Value::Null),
+            label,
             &selected,
         )?;
         self.store.commit_terminal_context(&id, &source, &next)?;

@@ -479,6 +479,22 @@ impl Terminal {
             .try_send(bytes)?;
         Ok(json!({"accepted":true,"observedRevision":self.revision,"encodedBytes":len}))
     }
+    /// Swift ShellTerminalView.clear: drop the scrollback, then ask the shell
+    /// to redraw its prompt (form feed). Prompt anchors pointed into the old
+    /// history, so they go with it.
+    pub fn clear(&mut self) -> Result<()> {
+        self.poll()?;
+        if !self.term.mode().contains(TermMode::ALT_SCREEN) {
+            self.term.grid_mut().clear_history();
+            self.shell_anchors.invalidate();
+            self.revision += 1;
+        }
+        self.writer
+            .as_ref()
+            .context("Terminal is stopping")?
+            .try_send(vec![0x0c])?;
+        Ok(())
+    }
     fn input_modes(&self) -> InputModes {
         InputModes {
             application_cursor: self.term.mode().contains(TermMode::APP_CURSOR),
@@ -1287,6 +1303,40 @@ mod tests {
         assert_eq!(v["rows"], 30);
         assert_eq!(v["cols"], 100);
         assert!(terminal.resize(0, 0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod clear_tests {
+    use super::*;
+    #[test]
+    fn clear_drops_scrollback_and_prompt_marks_then_asks_for_a_new_prompt() {
+        let mut output = String::from("\x1b]133;A\x07$ seq\r\n");
+        for line in 0..20 {
+            output.push_str(&format!("line {line}\r\n"));
+        }
+        output.push_str("\x1b]133;A\x07$ ");
+        let mut terminal = Terminal::fixture_output(4, 20, output.as_bytes());
+        let (writer, written) = mpsc::sync_channel(1);
+        terminal.writer = Some(writer);
+        terminal.poll().unwrap();
+        assert!(terminal.term.grid().history_size() > 0);
+        let revision = terminal.revision;
+        assert_eq!(
+            terminal.prompt_marks(revision).unwrap()["marks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        terminal.clear().unwrap();
+        assert_eq!(terminal.term.grid().history_size(), 0);
+        assert!(terminal.revision > revision);
+        assert_eq!(
+            terminal.prompt_marks(terminal.revision).unwrap()["marks"],
+            json!([])
+        );
+        assert_eq!(written.try_recv().unwrap(), vec![0x0c]);
     }
 }
 

@@ -115,6 +115,25 @@ impl TerminalSelection {
         Ok(len)
     }
 
+    /// Everything visible, as Select All in the context menu and ⌘A.
+    pub fn select_all(&mut self, terminal: &str, frame: &Value) {
+        self.sync(terminal, frame);
+        self.select_all_synced();
+    }
+    fn select_all_synced(&mut self) {
+        if let Some(frame) = &self.frame {
+            self.anchor = Some(TerminalPoint {
+                row: frame.offset,
+                col: 0,
+            });
+            self.caret = Some(TerminalPoint {
+                row: frame.offset + frame.count - 1,
+                col: frame.cols - 1,
+            });
+            self.dragging = false;
+            self.keyboard = Some((0, frame.count * frame.cols));
+        }
+    }
     /// Return true when consumed. Parent must stop propagation on both true and
     /// errors, so a copy shortcut never accidentally becomes a PTY interrupt.
     /// Plain Ctrl+C is intentionally untouched.
@@ -133,18 +152,7 @@ impl TerminalSelection {
             return Ok(true);
         }
         if command && !key.modifiers.alt && key.key.eq_ignore_ascii_case("a") {
-            if let Some(frame) = &self.frame {
-                self.anchor = Some(TerminalPoint {
-                    row: frame.offset,
-                    col: 0,
-                });
-                self.caret = Some(TerminalPoint {
-                    row: frame.offset + frame.count - 1,
-                    col: frame.cols - 1,
-                });
-                self.dragging = false;
-                self.keyboard = Some((0, frame.count * frame.cols));
-            }
+            self.select_all_synced();
             return Ok(true);
         }
         if key.key == "escape" && self.anchor.is_some() {

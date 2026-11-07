@@ -26,6 +26,8 @@ url = "2"
 libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+# The host's IANA zone, which new schedules default to (Swift's TimeZone.current).
+iana-time-zone = "0.1.65"
 base64 = "0.23"
 sha2 = "0.11"
 ring = "0.17.14"

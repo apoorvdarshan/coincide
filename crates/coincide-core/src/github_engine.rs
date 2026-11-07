@@ -1,12 +1,18 @@
 //! Read-only GitHub routes. COINCIDE_RUST_GH, when set, must name an absolute
 //! executable. Otherwise discover gh through absolute PATH entries using only
 //! metadata. Construction never launches gh or contacts GitHub; only explicit
-//! github.pr.list/read commands do so, with the user's existing gh credentials.
+//! github.pr.list/read and github.repo.merge-methods commands do so, with the
+//! user's existing gh credentials.
 use super::*;
 use crate::github_api::{GhRunner, GithubService};
 use std::{ffi::OsStr, path::Path};
 
-pub(super) const METHODS: &[&str] = &["github.pr.list", "github.pr.read", "github.result"];
+pub(super) const METHODS: &[&str] = &[
+    "github.pr.list",
+    "github.pr.read",
+    "github.repo.merge-methods",
+    "github.result",
+];
 
 pub(super) struct GithubState {
     service: Option<GithubService>,
@@ -178,6 +184,7 @@ impl Engine {
                 "number",
                 "expectedHead",
             ],
+            "github.repo.merge-methods" => &["threadId", "expectedRoot", "repository"],
             "github.result" => &["threadId", "expectedRoot", "operationId"],
             _ => bail!("Unsupported read-only GitHub method"),
         };

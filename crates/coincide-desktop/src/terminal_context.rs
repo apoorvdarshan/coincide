@@ -16,6 +16,9 @@ pub(crate) struct SelectionRequest {
     pub(super) revision: u64,
     pub(super) start: TerminalPoint,
     pub(super) end: TerminalPoint,
+    /// Swift's "Send Last Command's Output to Agent": Core finds the newest
+    /// command and its output by the shell's prompt marks, not by this range.
+    pub(super) last_output: bool,
     epoch: Arc<AtomicU64>,
     generation: u64,
 }
@@ -24,7 +27,22 @@ impl SelectionRequest {
         self.epoch.load(Ordering::Acquire) == self.generation
     }
     pub(super) fn params(&self, baseline: &ComposerBaseline) -> Value {
-        json!({"threadId":baseline.thread,"expectedDraft":baseline.draft,"expectedContext":baseline.context,"terminalId":self.terminal,"revision":self.revision,"start":self.start,"end":self.end})
+        let mut params = json!({"threadId":baseline.thread,"expectedDraft":baseline.draft,"expectedContext":baseline.context,"terminalId":self.terminal,"revision":self.revision});
+        if self.last_output {
+            params["lastOutput"] = json!(true);
+        } else {
+            params["start"] = json!(self.start);
+            params["end"] = json!(self.end);
+        }
+        params
+    }
+    /// What the composer was given, for the window's status line.
+    pub(crate) fn subject(&self) -> &'static str {
+        if self.last_output {
+            "The last command’s output"
+        } else {
+            "Terminal selection"
+        }
     }
 }
 #[derive(Clone)]
@@ -74,6 +92,7 @@ impl TerminalWorkspace {
         baseline: ComposerBaseline,
         cx: &mut Context<Self>,
     ) {
+        let last_output = request.last_output;
         if self.context_pending
             || !self.selection_request_current(&request)
             || baseline.thread != self.thread
@@ -85,7 +104,12 @@ impl TerminalWorkspace {
             .is_ok()
         {
             self.context_pending = true;
-            self.notice = "Attaching selected terminal output…".into();
+            self.notice = if last_output {
+                "Attaching the last command’s output…"
+            } else {
+                "Attaching selected terminal output…"
+            }
+            .into();
         } else {
             self.notice = "Terminal selection not queued; worker busy.".into();
         }
@@ -130,6 +154,59 @@ impl TerminalWorkspace {
                     .ok_or_else(|| anyhow::anyhow!("Invalid terminal revision"))?,
                 start,
                 end,
+                last_output: false,
+                epoch: self.context_epoch.clone(),
+                generation: self.context_epoch.load(Ordering::Acquire),
+            })
+        })();
+        match result {
+            Ok(request) => cx.emit(TerminalContextEvent::Requested(request)),
+            Err(error) => {
+                self.notice = error.to_string();
+                cx.notify();
+            }
+        }
+    }
+    /// Swift's "Send Last Command's Output to Agent" (⇧⌘L): the same bounded
+    /// request and receipt path as a selection, for the frame on screen.
+    pub(super) fn request_last_output(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        let result = (|| -> Result<SelectionRequest> {
+            ensure!(
+                self.visible
+                    && !self.context_pending
+                    && !self.stopping.load(Ordering::Acquire)
+                    && self.ids().contains(&key),
+                "Terminal pane is not available"
+            );
+            let pane = self
+                .panes
+                .get(&key)
+                .ok_or_else(|| anyhow::anyhow!("Terminal pane is unavailable"))?;
+            ensure!(!pane.closing, "Terminal is closing");
+            let terminal = pane
+                .terminal
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Wait for terminal"))?;
+            let frame = pane
+                .frame
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Wait for terminal output"))?;
+            ensure!(
+                frame["shell"]["command"].is_string(),
+                "Run a command in this terminal first"
+            );
+            let origin = TerminalPoint { row: 0, col: 0 };
+            Ok(SelectionRequest {
+                thread: self.thread.clone(),
+                pane: key,
+                terminal: terminal.clone(),
+                ticket: pane.ticket,
+                revision: frame["revision"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid terminal revision"))?,
+                start: origin,
+                end: origin,
+                last_output: true,
                 epoch: self.context_epoch.clone(),
                 generation: self.context_epoch.load(Ordering::Acquire),
             })
@@ -215,6 +292,7 @@ mod tests {
                 revision: 7,
                 start: TerminalPoint { row: 0, col: 1 },
                 end: TerminalPoint { row: 1, col: 3 },
+                last_output: false,
                 epoch: self.epoch.clone(),
                 generation: 0,
             }
@@ -310,6 +388,23 @@ mod tests {
                 .count(),
             0
         );
+        w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn last_output_request_names_no_range_and_takes_the_same_admission_path() {
+        let w = Worker::new(false);
+        let mut request = w.request();
+        request.last_output = true;
+        let baseline = w.baseline();
+        let params = request.params(&baseline);
+        assert_eq!(params["lastOutput"], true);
+        assert!(params.get("start").is_none() && params.get("end").is_none());
+        assert_eq!(request.subject(), "The last command’s output");
+        w.tx.send(Command::AttachSelection(request, baseline))
+            .unwrap();
+        assert!(matches!(w.next(), Update::ContextAttached(_, _, Ok(_))));
+        let log = w.calls.lock().unwrap().clone();
+        assert_eq!(log[1], ("attach-controller".into(), params));
         w.finish();
     }
     #[::core::prelude::v1::test]

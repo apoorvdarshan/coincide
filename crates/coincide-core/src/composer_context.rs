@@ -199,11 +199,17 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     Ok(result)
 }
 /// Selected visible terminal output is bounded data; never truncate or accept blank/hidden-only text.
-pub(crate) fn append_terminal_selection(raw: &Value, text: &str) -> Result<Value> {
+/// A terminal reference under `label`: "Terminal selection" for a selection,
+/// or "Last command output".
+pub(crate) fn append_terminal_excerpt(raw: &Value, label: &str, text: &str) -> Result<Value> {
     validate(raw)?;
     ensure!(
         !text.is_empty() && text.len() <= 32 * 1024 && text.chars().any(|ch| !ch.is_whitespace()),
-        "Select nonblank terminal output of at most 32 KiB"
+        if label == "Terminal selection" {
+            "Select nonblank terminal output of at most 32 KiB"
+        } else {
+            "The last command's output is over 32 KiB; select the part to attach instead"
+        }
     );
     ensure!(
         !text
@@ -212,9 +218,7 @@ pub(crate) fn append_terminal_selection(raw: &Value, text: &str) -> Result<Value
         "Terminal reference contains non-display controls"
     );
     let mut rows = raw.as_array().cloned().unwrap_or_default();
-    rows.push(
-        json!({"id":Uuid::new_v4(),"kind":"terminal","terminal":"Terminal selection","text":text}),
-    );
+    rows.push(json!({"id":Uuid::new_v4(),"kind":"terminal","terminal":label,"text":text}));
     let next = Value::Array(rows);
     validate(&next)?;
     Ok(next)

@@ -8,6 +8,9 @@
 //! All engine calls run on one serialized worker. No shell commands are generated.
 //! Mode-sensitive input is encoded by terminal.input in core; native IME preedit
 //! is local to a revocable per-pane focus session and never edits shell output.
+//! Swift's shell integration: ⌘↑/⌘↓ (Ctrl+↑/↓ elsewhere) jump between the
+//! prompts the shell marked, and ⇧⌘L (Ctrl+Shift+L) or the context menu sends
+//! the last command's output to the composer.
 use crate::terminal_selection::TerminalSelection;
 #[path = "terminal_context.rs"]
 mod context;
@@ -18,7 +21,15 @@ use coincide_core::{
     terminal::{KeyModifiers, TerminalInput, TerminalPoint, TerminalScroll},
 };
 pub(crate) use context::{ComposerBaseline, SelectionRequest, TerminalContextEvent};
-use gpui_kit::{base::Disableable, component::button::*, prelude::FluentBuilder, *};
+use gpui_kit::{
+    base::Disableable,
+    component::{
+        button::*,
+        menu::{ContextMenuExt, PopupMenuItem},
+    },
+    prelude::FluentBuilder,
+    *,
+};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -566,7 +577,64 @@ enum Action {
     Input(TerminalInput),
     Resize(u16, u16),
     Scroll(u64, TerminalScroll),
+    /// To the previous (-1) or next (+1) marked prompt, from the frame of this
+    /// revision and display offset.
+    JumpPrompt {
+        revision: u64,
+        offset: u64,
+        direction: i32,
+    },
+    /// Swift's Clear: the scrollback goes and the shell redraws its prompt.
+    Clear,
     Close,
+}
+/// Swift jumpToCommand: the nearest marked prompt above the top of the view
+/// (-1) or below it (+1), and past the last one the live bottom. A mark's
+/// displayOffset is the one that puts its prompt at the top of the view.
+fn prompt_jump(marks: &Value, current: u64, direction: i32) -> Option<TerminalScroll> {
+    let offsets = marks
+        .as_array()?
+        .iter()
+        .filter_map(|mark| mark["displayOffset"].as_u64());
+    let target = if direction < 0 {
+        offsets.filter(|offset| *offset > current).min()
+    } else {
+        offsets.filter(|offset| *offset < current).max()
+    };
+    match target {
+        Some(target) => Some(TerminalScroll::Lines(
+            i32::try_from(i64::try_from(target).ok()? - i64::try_from(current).ok()?).ok()?,
+        )),
+        None if direction > 0 && current > 0 => Some(TerminalScroll::Bottom),
+        None => None,
+    }
+}
+/// ⌘↑ and ⌘↓ on macOS, Ctrl+↑ and Ctrl+↓ elsewhere (as VS Code's terminal).
+fn prompt_jump_key(keystroke: &Keystroke) -> Option<i32> {
+    let m = &keystroke.modifiers;
+    let held = if cfg!(target_os = "macos") {
+        m.platform && !m.control
+    } else {
+        m.control && !m.platform
+    };
+    if !held || m.shift || m.alt {
+        return None;
+    }
+    match keystroke.key.as_str() {
+        "up" => Some(-1),
+        "down" => Some(1),
+        _ => None,
+    }
+}
+/// ⇧⌘L on macOS, Ctrl+Shift+L elsewhere.
+fn send_output_key(keystroke: &Keystroke) -> bool {
+    let m = &keystroke.modifiers;
+    let held = if cfg!(target_os = "macos") {
+        m.platform && !m.control
+    } else {
+        m.control && !m.platform
+    };
+    held && m.shift && !m.alt && keystroke.key.eq_ignore_ascii_case("l")
 }
 enum Command {
     Adopt(PaneId, String),
@@ -749,7 +817,8 @@ fn run_worker(
                 let failure = match &action {
                     Action::Input(_) => "Terminal input was not sent",
                     Action::Resize(_, _) => "Terminal resize failed",
-                    Action::Scroll(_, _) => "Terminal scroll failed",
+                    Action::Scroll(_, _) | Action::JumpPrompt { .. } => "Terminal scroll failed",
+                    Action::Clear => "Terminal clear failed",
                     Action::Close => "Terminal close failed",
                 };
                 let result = (|| -> Result<()> {
@@ -773,6 +842,25 @@ fn run_worker(
                                 "terminal.scroll",
                                 json!({"terminalId":id,"revision":revision,"scroll":scroll}),
                             )?;
+                        }
+                        Action::JumpPrompt {
+                            revision,
+                            offset,
+                            direction,
+                        } => {
+                            let marks = call(
+                                "terminal.prompt_marks",
+                                json!({"terminalId":id,"revision":revision}),
+                            )?;
+                            if let Some(scroll) = prompt_jump(&marks["marks"], offset, direction) {
+                                call(
+                                    "terminal.scroll",
+                                    json!({"terminalId":id,"revision":revision,"scroll":scroll}),
+                                )?;
+                            }
+                        }
+                        Action::Clear => {
+                            call("terminal.clear", json!({"terminalId":id}))?;
                         }
                         Action::Close => {
                             call("terminal.close", json!({"terminalId":id}))?;
@@ -1460,20 +1548,8 @@ impl TerminalWorkspace {
         let k = &event.keystroke;
         let command = k.modifiers.platform || (k.modifiers.control && k.modifiers.shift);
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("v") {
-            if let Some(input) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                if valid_payload(&input, true).is_ok() {
-                    if self.act(key, Action::Input(TerminalInput::Paste { text: input }), cx)
-                        && let Some(p) = self.panes.get_mut(&key)
-                        && let Some(ime) = &p.ime
-                    {
-                        ime.update(cx, |i, cx| i.cancel(window, cx));
-                    }
-                } else if let Some(p) = self.panes.get_mut(&key) {
-                    p.notice="Paste contains control framing or exceeds encoded 32 KiB limit; nothing sent".into();
-                }
-            }
+            self.paste(key, window, cx);
             cx.stop_propagation();
-            cx.notify();
             return;
         }
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("c") {
@@ -1498,6 +1574,24 @@ impl TerminalWorkspace {
             .frame
             .as_ref()
             .is_some_and(|f| f["viewport"]["alternateScreen"] == true);
+        // Only a shell that marks its prompts has prompts to jump to.
+        let marked = pane
+            .frame
+            .as_ref()
+            .is_some_and(|f| f["shell"]["hasMarks"] == true);
+        if marked
+            && !alternate
+            && let Some(direction) = prompt_jump_key(k)
+        {
+            self.jump_prompt(key, direction, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if marked && send_output_key(k) {
+            self.request_last_output(key, cx);
+            cx.stop_propagation();
+            return;
+        }
         if k.modifiers.control
             && k.modifiers.shift
             && !k.modifiers.alt
@@ -1548,6 +1642,149 @@ impl TerminalWorkspace {
             self.act(key, Action::Input(input), cx);
             cx.stop_propagation();
         }
+    }
+    fn paste(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = cx.read_from_clipboard().and_then(|c| c.text()) {
+            if valid_payload(&input, true).is_ok() {
+                if self.act(key, Action::Input(TerminalInput::Paste { text: input }), cx)
+                    && let Some(p) = self.panes.get_mut(&key)
+                    && let Some(ime) = &p.ime
+                {
+                    ime.update(cx, |i, cx| i.cancel(window, cx));
+                }
+            } else if let Some(p) = self.panes.get_mut(&key) {
+                p.notice =
+                    "Paste contains control framing or exceeds encoded 32 KiB limit; nothing sent"
+                        .into();
+            }
+        }
+        cx.notify();
+    }
+    fn jump_prompt(&mut self, key: PaneId, direction: i32, cx: &mut Context<Self>) {
+        let Some(frame) = self.panes.get(&key).and_then(|pane| pane.frame.as_ref()) else {
+            return;
+        };
+        let (Some(revision), Some(offset)) = (
+            frame["revision"].as_u64(),
+            frame["viewport"]["displayOffset"].as_u64(),
+        ) else {
+            return;
+        };
+        self.act(
+            key,
+            Action::JumpPrompt {
+                revision,
+                offset,
+                direction,
+            },
+            cx,
+        );
+    }
+    fn select_all(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        if let Some(pane) = self.panes.get_mut(&key)
+            && let (Some(id), Some(frame)) = (&pane.terminal, &pane.frame)
+        {
+            pane.selection.select_all(id, frame);
+            self.context_epoch.fetch_add(1, Ordering::AcqRel);
+            cx.notify();
+        }
+    }
+    fn clear(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        if let Some(pane) = self.panes.get_mut(&key) {
+            pane.selection.clear();
+        }
+        self.act(key, Action::Clear, cx);
+    }
+    /// Swift's terminal context menu, for the pane that was right-clicked.
+    fn context_menu(
+        weak: WeakEntity<Self>,
+        key: PaneId,
+        menu: gpui_kit::component::menu::PopupMenu,
+        cx: &App,
+    ) -> gpui_kit::component::menu::PopupMenu {
+        let Some(this) = weak.upgrade() else {
+            return menu;
+        };
+        let this = this.read(cx);
+        let Some(pane) = this.panes.get(&key) else {
+            return menu;
+        };
+        let id = pane.terminal.clone().unwrap_or_default();
+        let frame = pane.frame.as_ref();
+        let selected = frame.is_some_and(|f| pane.selection.has_selection(&id, f));
+        let running = !pane.closing
+            && pane.terminal.is_some()
+            && frame.is_some_and(|f| f["exitCode"].is_null());
+        let attachable = this.visible && !this.context_pending && !pane.closing;
+        let marked = frame.is_some_and(|f| f["shell"]["hasMarks"] == true);
+        let has_command = frame.is_some_and(|f| f["shell"]["command"].is_string());
+        let scrolled_up = frame.is_some_and(|f| {
+            f["viewport"]["displayOffset"].as_u64().unwrap_or(0) > 0
+                && f["viewport"]["alternateScreen"] != true
+        });
+        let can_split = this.panes.len() < MAX_PANES;
+        let item =
+            |label: &'static str,
+             enabled: bool,
+             run: fn(&mut Self, PaneId, &mut Window, &mut Context<Self>)| {
+                let weak = weak.clone();
+                PopupMenuItem::new(label)
+                    .disabled(!enabled)
+                    .on_click(move |_, window, cx| {
+                        let _ = weak.update(cx, |this, cx| run(this, key, window, cx));
+                    })
+            };
+        let mut menu = menu
+            .item(item("Copy", selected, |this, key, _, cx| {
+                this.copy(key, cx)
+            }))
+            .item(item("Paste", running, |this, key, window, cx| {
+                this.paste(key, window, cx)
+            }))
+            .item(item("Select All", frame.is_some(), |this, key, _, cx| {
+                this.select_all(key, cx)
+            }))
+            .separator()
+            .item(item(
+                "Add Selection to Composer",
+                attachable && selected,
+                |this, key, _, cx| this.request_context_selection(key, cx),
+            ));
+        if marked {
+            menu = menu.item(item(
+                "Send Last Command’s Output to Agent",
+                attachable && has_command,
+                |this, key, _, cx| this.request_last_output(key, cx),
+            ));
+        }
+        menu = menu
+            .separator()
+            .item(item("Clear", running, |this, key, _, cx| {
+                this.clear(key, cx)
+            }));
+        if scrolled_up {
+            menu = menu.item(item("Jump to Bottom", true, |this, key, _, cx| {
+                this.scroll(key, TerminalScroll::Bottom, cx)
+            }));
+        }
+        menu.separator()
+            .item(item("New Terminal", can_split, |this, _, window, cx| {
+                this.create(None, window, cx)
+            }))
+            .item(item("Split Right", can_split, |this, key, window, cx| {
+                this.create(Some((key, SplitAxis::Horizontal)), window, cx)
+            }))
+            .item(item("Split Down", can_split, |this, key, window, cx| {
+                this.create(Some((key, SplitAxis::Vertical)), window, cx)
+            }))
+            .separator()
+            .item(item(
+                "Close Terminal",
+                !pane.closing && pane.terminal.is_some(),
+                |this, key, _, cx| {
+                    this.act(key, Action::Close, cx);
+                },
+            ))
     }
     fn copy(&mut self, key: PaneId, cx: &mut Context<Self>) {
         if self.stopping.load(Ordering::Acquire) {
@@ -1649,6 +1886,11 @@ impl TerminalWorkspace {
             .line_height(px(CELL_H))
             .on_mouse_down(
                 MouseButton::Left,
+                cx.listener(move |this, _, window, cx| this.focus(key, window, cx)),
+            )
+            // The context menu acts on the pane that was clicked, so it takes focus.
+            .on_mouse_down(
+                MouseButton::Right,
                 cx.listener(move |this, _, window, cx| this.focus(key, window, cx)),
             )
             .on_key_down(
@@ -1987,7 +2229,12 @@ impl TerminalWorkspace {
                         .absolute()
                         .size_full(),
                     )
-                    .child(body),
+                    .child({
+                        let weak = cx.entity().downgrade();
+                        body.context_menu(move |menu, _, cx| {
+                            Self::context_menu(weak.clone(), key, menu, cx)
+                        })
+                    }),
             )
             .child(footer)
             .child(div().text_sm().child(pane.notice.clone()))
@@ -2312,6 +2559,71 @@ mod tests {
         assert!(!a.split(7, 8, SplitAxis::Vertical));
         assert_eq!(a, Layout::Pane(1));
         assert_eq!(b, Layout::Pane(7));
+    }
+    #[::core::prelude::v1::test]
+    fn prompt_jumps_go_to_the_nearest_marked_prompt_then_the_live_bottom() {
+        let marks = json!([
+            {"line":-40,"col":0,"displayOffset":40},
+            {"line":-12,"col":0,"displayOffset":12},
+            {"line":3,"col":0,"displayOffset":0}
+        ]);
+        let lines = |scroll: Option<TerminalScroll>| match scroll {
+            Some(TerminalScroll::Lines(lines)) => Some(lines),
+            Some(TerminalScroll::Bottom) => Some(i32::MIN),
+            _ => None,
+        };
+        // From the live bottom, up to the newest earlier prompt, then the next.
+        assert_eq!(lines(prompt_jump(&marks, 0, -1)), Some(12));
+        assert_eq!(lines(prompt_jump(&marks, 12, -1)), Some(28));
+        assert_eq!(lines(prompt_jump(&marks, 40, -1)), None);
+        // Down from a prompt to the next one, which is live.
+        assert_eq!(lines(prompt_jump(&marks, 40, 1)), Some(-28));
+        assert_eq!(lines(prompt_jump(&marks, 12, 1)), Some(-12));
+        assert_eq!(lines(prompt_jump(&marks, 0, 1)), None);
+        // Past the last mark, down goes to the bottom.
+        assert_eq!(lines(prompt_jump(&json!([]), 7, 1)), Some(i32::MIN));
+        assert_eq!(lines(prompt_jump(&json!([]), 7, -1)), None);
+    }
+    #[::core::prelude::v1::test]
+    fn shell_integration_shortcuts_follow_each_platform() {
+        let key = |key: &str, modifiers: Modifiers| Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: None,
+        };
+        let command = if cfg!(target_os = "macos") {
+            Modifiers::command()
+        } else {
+            Modifiers::control()
+        };
+        assert_eq!(prompt_jump_key(&key("up", command)), Some(-1));
+        assert_eq!(prompt_jump_key(&key("down", command)), Some(1));
+        assert_eq!(prompt_jump_key(&key("up", Modifiers::none())), None);
+        assert_eq!(
+            prompt_jump_key(&key(
+                "up",
+                Modifiers {
+                    shift: true,
+                    ..command
+                }
+            )),
+            None
+        );
+        assert!(send_output_key(&key(
+            "l",
+            Modifiers {
+                shift: true,
+                ..command
+            }
+        )));
+        assert!(!send_output_key(&key("l", command)));
+        assert!(!send_output_key(&key(
+            "k",
+            Modifiers {
+                shift: true,
+                ..command
+            }
+        )));
     }
     #[::core::prelude::v1::test]
     fn split_viewports_use_cell_metrics_and_stay_inside_parser_limits() {

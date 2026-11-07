@@ -100,6 +100,19 @@ icon_assets!(
         GitPullRequestDraft,
         GalleryVerticalEnd,
         GitBranch,
+        // Pull request states, checks and reviews (Swift PullRequestGlyph),
+        // and schedule rows' marks.
+        GitMerge,
+        CircleDot,
+        CircleSlash,
+        CircleDashed,
+        UserCheck,
+        UserX,
+        ArrowUpRight,
+        Sparkles,
+        Pencil,
+        Trash,
+        CircleArrowRight,
         Github,
         Globe,
         HardDrive,
@@ -215,6 +228,17 @@ mod tests {
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
             "icons/git-pull-request-draft.svg",
+            "icons/git-merge.svg",
+            "icons/circle-dot.svg",
+            "icons/circle-slash.svg",
+            "icons/circle-dashed.svg",
+            "icons/user-check.svg",
+            "icons/user-x.svg",
+            "icons/sparkles.svg",
+            "icons/pencil.svg",
+            "icons/trash.svg",
+            "icons/circle-arrow-right.svg",
+            // Composer `/` and `#` suggestion rows.
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
