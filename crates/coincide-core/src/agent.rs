@@ -495,9 +495,9 @@ fn validate_instructions(provider: &Provider, instructions: Option<&str>) -> Res
     Ok(())
 }
 
-struct OwnedChild(Child, #[cfg(windows)] Option<windows_job::Job>);
+pub(crate) struct OwnedChild(Child, #[cfg(windows)] Option<windows_job::Job>);
 impl OwnedChild {
-    fn spawn(command: &mut Command) -> Result<Self> {
+    pub(crate) fn spawn(command: &mut Command) -> Result<Self> {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -520,6 +520,64 @@ impl OwnedChild {
         }
         #[cfg(not(windows))]
         Ok(Self(command.spawn()?))
+    }
+    pub(crate) fn pipes(
+        &mut self,
+    ) -> (
+        Option<std::process::ChildStdout>,
+        Option<std::process::ChildStderr>,
+    ) {
+        (self.0.stdout.take(), self.0.stderr.take())
+    }
+    /// Exit code without reaping, so the group stays owned until Drop kills it.
+    pub(crate) fn exit_code(&self) -> Result<Option<i32>> {
+        #[cfg(unix)]
+        {
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.0.id(),
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result != 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    return Ok(None);
+                }
+                bail!("Child process status unavailable");
+            }
+            if unsafe { info.si_pid() } == 0 {
+                return Ok(None);
+            }
+            Ok(Some(if info.si_code == libc::CLD_EXITED {
+                unsafe { info.si_status() }
+            } else {
+                128 + unsafe { info.si_status() }
+            }))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::{
+                Foundation::WAIT_OBJECT_0,
+                System::Threading::{GetExitCodeProcess, WaitForSingleObject},
+            };
+            if unsafe { WaitForSingleObject(self.0.as_raw_handle(), 0) } != WAIT_OBJECT_0 {
+                return Ok(None);
+            }
+            let mut code = 1;
+            ensure!(
+                unsafe { GetExitCodeProcess(self.0.as_raw_handle(), &mut code) } != 0,
+                "Child process status unavailable"
+            );
+            Ok(Some(code as i32))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            bail!("Child process status unavailable on this platform")
+        }
     }
 }
 impl Drop for OwnedChild {

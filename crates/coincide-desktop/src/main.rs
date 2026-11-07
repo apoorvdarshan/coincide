@@ -93,6 +93,7 @@ mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
 mod quit_shortcut;
+mod remote_settings;
 mod reply_selection_mount;
 mod scheduling;
 mod session_import;
@@ -443,6 +444,7 @@ struct Coincide {
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
     notifications_open: bool,
     notification_panel: Entity<notification_settings::NotificationSettingsPanel>,
+    remote_panel: Entity<remote_settings::RemoteSettingsPanel>,
     created_bot_thread_to_focus: Option<String>,
     transcription_open: bool,
     transcription_panel: Entity<transcription_settings::TranscriptionSettings>,
@@ -996,6 +998,8 @@ impl Coincide {
         let notification_panel = cx.new(|cx| {
             notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
         });
+        // Listens only when "Allow Coincide Remote" was left on.
+        let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
@@ -1090,6 +1094,9 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
+                this.open_github_checkout(event, window, cx);
+            }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -1419,6 +1426,7 @@ impl Coincide {
             bot_panel,
             notifications_open: false,
             notification_panel,
+            remote_panel,
             created_bot_thread_to_focus: None,
             transcription_open: false,
             transcription_panel,
@@ -2685,6 +2693,29 @@ impl Coincide {
             Err(e) => self.status = e.to_string(),
         }
     }
+    /// Swift ThreadActions.newThread(in:worktreePath:branch:) after a PR
+    /// checkout: the Engine already admitted the conversation, so only
+    /// navigation runs here. Selection is retried by ID until it reads.
+    fn open_github_checkout(
+        &mut self,
+        event: &github_review::CheckoutOpened,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.shutdown_requested {
+            return;
+        }
+        self.startup_selection_pending = false;
+        self.created_bot_thread_to_focus = Some(event.thread.clone());
+        self.schedules_open = false;
+        self.session_import_open = false;
+        self.refresh(cx);
+        self.select(&event.thread, window, cx);
+        if let Some(notice) = &event.notice {
+            self.status = notice.clone();
+        }
+        cx.notify();
+    }
     fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project_ui_admitted() {
             return;
@@ -3081,12 +3112,15 @@ impl Coincide {
         self.poll_sidebar_lifecycle(window, cx);
         self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
+        self.remote_panel.update(cx, |panel, cx| panel.poll(cx));
         self.poll_composer_suggestions(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
         if self.media.shutdown_requested {
             quit_shortcut::cancel(cx);
+            // Phones are disconnected before the engine is saved and stopped.
+            self.remote_panel.update(cx, |panel, _| panel.shut_down());
             if self.poll_global_quit(window, cx) {
                 self.finish_normal_quit(cx);
             }

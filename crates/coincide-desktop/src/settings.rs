@@ -1061,6 +1061,13 @@ impl Coincide {
             count += 1;
             content = content.child(self.awake_settings(cx));
         }
+        if matches(
+            S::Automation,
+            "remote coincide remote iphone ipad phone pair pairing qr code tailscale devices certificate",
+        ) {
+            count += 1;
+            content = content.child(self.remote_panel.clone());
+        }
         for (section, id, label, terms) in [
             (
                 S::Automation,
