@@ -271,6 +271,44 @@ try {
     if($script:OwnedProcess.HasExited){throw 'Closing Settings unexpectedly closed the app'}
     if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Settings lost native draft'}
     $Report.checks+='Owned Settings window opened/rendered/closed; main native draft preserved'
+    # The browser fixture runs through this same app's owned local control
+    # client, serves synthetic loopback pages only, and waits for this parent to
+    # capture its actual visible WebView before closing every created tab.
+    if($env:GITHUB_ACTIONS -ne 'true'){throw 'Actual browser fixture requires a fresh CI runner'}
+    $browserReport=Join-Path $Artifacts 'native-browser-report.json'
+    $browserReady=Join-Path $Fixture 'native-browser-visible.ready'
+    $browserAck=Join-Path $Fixture 'native-browser-visible.ack'
+    $python=(Get-Command python -ErrorAction Stop).Source
+    $browserInfo=[Diagnostics.ProcessStartInfo]::new($python)
+    foreach($arg in @((Join-Path $PSScriptRoot 'native-browser-fixture.py'),'--client',$Client,'--data-dir',$Data,'--thread',$threadId,'--report',$browserReport,'--capture-ready',$browserReady,'--capture-ack',$browserAck)){$browserInfo.ArgumentList.Add($arg)}
+    $browserInfo.UseShellExecute=$false;$browserInfo.RedirectStandardOutput=$true;$browserInfo.RedirectStandardError=$true
+    $browserInfo.Environment.Clear();foreach($key in $Environment.Keys){$browserInfo.Environment[$key]=$Environment[$key]}
+    $browserInfo.Environment['GITHUB_ACTIONS']='true';$browserInfo.Environment['PYTHONUTF8']='1';$browserInfo.Environment['PYTHONDONTWRITEBYTECODE']='1'
+    $browserProcess=[Diagnostics.Process]::Start($browserInfo)
+    $script:PendingClients.Add($browserProcess)
+    $browserDeadline=[DateTime]::UtcNow.AddSeconds(90);$browserCaptured=$false
+    while(-not $browserProcess.HasExited -and [DateTime]::UtcNow -lt $browserDeadline){
+        if(-not $browserCaptured -and (Test-Path $browserReady)){
+            $nonce=[IO.File]::ReadAllText($browserReady)
+            if($nonce -match '^[0-9a-f]{32}$'){
+                Capture-Owned $main 'native-browser-visible'
+                [IO.File]::WriteAllText($browserAck,$nonce)
+                $browserCaptured=$true
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if(-not $browserProcess.HasExited){throw 'Actual browser fixture still running; retain its owner and private fixture'}
+    $script:PendingClients.Remove($browserProcess)|Out-Null
+    $browserOutput=$browserProcess.StandardOutput.ReadToEnd();$browserErrors=$browserProcess.StandardError.ReadToEnd()
+    [IO.File]::WriteAllText((Join-Path $Artifacts 'native-browser-stdout.log'),$browserOutput)
+    [IO.File]::WriteAllText((Join-Path $Artifacts 'native-browser-stderr.log'),$browserErrors)
+    if($browserProcess.ExitCode -ne 0){throw 'Actual native browser workflow failed; see its retained synthetic report'}
+    $browserResult=Get-Content -Raw $browserReport|ConvertFrom-Json -AsHashtable
+    if(-not $browserCaptured -or -not $browserResult.passed -or -not $browserResult.tabsClosed){throw 'Actual browser evidence or cleanup is incomplete'}
+    $Report.nativeBrowser=$browserResult
+    if((Invoke-Rpc 'threads.read' @{threadId=$threadId}).draft -ne $draft){throw 'Browser workflow changed the native chat draft'}
+    $Report.checks+='Actual native WebView loopback navigation/input/click/frame/history/reload/tabs, visible capture and cleanup before Quit'
     $newer=Invoke-Rpc 'threads.create' @{projectId=$project.id}
     Invoke-Rpc 'threads.patch' @{threadId=$newer.id;patch=@{title='Newer unselected Windows conversation'}} | Out-Null
     Invoke-Rpc 'threads.open' @{threadId=$threadId} | Out-Null

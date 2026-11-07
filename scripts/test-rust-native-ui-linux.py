@@ -354,6 +354,18 @@ def main():
         command("xdotool", "windowfocus", "--sync", window, env=env)
         capture(window, "conversation-after-settings", "keyboard draft")
         report["checks"].append("real keyboard palette opened separate Settings; reuse and close preserved main draft")
+        # Exercise the real native WebView before testing ordinary Quit. The
+        # owned loopback server and every tab must finish without a provider,
+        # personal browser profile, external network or saved login.
+        import importlib.util
+        module_spec = importlib.util.spec_from_file_location("owned_browser_fixture", Path(__file__).with_name("native-browser-fixture.py"))
+        browser_fixture = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(browser_fixture)
+        report["nativeBrowser"] = browser_fixture.exercise_browser(
+            rpc, thread_id,
+            lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"))
+        assert rpc("threads.read", threadId=thread_id)["draft"] == draft
+        report["checks"].append("actual native browser loopback navigation/input/click/same-origin frame/history/reload/tab selection and cleanup; native pixels reviewed separately")
         newer = rpc("threads.create", projectId=created_project["id"])
         rpc("threads.patch", threadId=newer["id"], patch={"title": "Newer unselected Linux conversation"})
         rpc("threads.open", threadId=thread_id)
@@ -373,6 +385,12 @@ def main():
     except BaseException as error:
         report["passed"] = False
         report["error"] = str(error)
+        if hasattr(error, "native_browser_diagnostics"):
+            report["nativeBrowserFailure"] = error.native_browser_diagnostics
+            try:
+                capture(window, "native-browser-failure")
+            except Exception as diagnostic:
+                report["nativeBrowserFailureFrameError"] = str(diagnostic)
         raise
     finally:
         drained = process is None or process.poll() is not None
