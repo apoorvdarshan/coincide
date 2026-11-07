@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-browser-screenshot-mask.js', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-browser-screenshot-mask.js', 'scripts/test-rust-native-browser-dialogs.py', 'scripts/test-rust-native-browser-keys.py', 'scripts/test-rust-native-browser-downloads.py', 'scripts/test-rust-native-browser-uploads.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -51,6 +51,8 @@ jobs:
             rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-${{ runner.os }}-${{ runner.arch }}-
       - run: cargo fmt --all --check
+      - name: Test private screenshot classification with an inert DOM
+        run: node scripts/test-rust-browser-screenshot-mask.js
       - run: cargo test -p coincide-core --locked
         id: core_tests
       - name: Diagnose Windows PTY and control tests after core failure
@@ -164,6 +166,29 @@ jobs:
           set -o pipefail
           target/debug/examples/native_download_sdk | tee "$RUNNER_TEMP/native-download-sdk.log"
           grep -F 'synthetic native downloads: PASS' "$RUNNER_TEMP/native-download-sdk.log"
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_browser_screenshot | tee "$RUNNER_TEMP/native-screenshot.log"
+          grep -F 'synthetic native screenshot: PASS' "$RUNNER_TEMP/native-screenshot.log"
+      - name: Retain native macOS browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Build synthetic owned upload SDK executable
         if: ${{ !cancelled() }}
         run: cargo build -p coincide-desktop --example native_upload_sdk --locked
@@ -248,6 +273,12 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/microphone-pcm-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/microphone-pcm-tests.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly two native PCM conversion tests' }
+      - name: Test transcript link routing, plan card, changed files and rewind logic
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- transcript_links:: composer_plan_card:: turn_changes:: chat_rewind:: --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/chat-actions-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/chat-actions-tests.log" -SimpleMatch 'test result: ok. 15 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly fifteen chat action logic tests' }
       - name: Test opted-in Computer Use with inert constructors and fake backends only
         shell: pwsh
         run: |
@@ -277,6 +308,30 @@ jobs:
           & target/debug/examples/native_credential_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-fill-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-fill-sdk.log" -SimpleMatch 'synthetic native fill: PASS')) { throw 'Expected actual native private fill and callback-owner return' }
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+        run: |
+          & target/debug/examples/native_browser_screenshot.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-screenshot.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-screenshot.log" -SimpleMatch 'synthetic native screenshot: PASS')) { throw 'Expected actual native screenshots, redaction and callback-owner return' }
+      - name: Retain native Windows browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
@@ -419,6 +474,11 @@ jobs:
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
+      - name: Test transcript link routing, plan card, changed files and rewind logic
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- transcript_links:: composer_plan_card:: turn_changes:: chat_rewind:: --nocapture | tee "$RUNNER_TEMP/chat-actions-tests.log"
+          grep -F 'test result: ok. 15 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/chat-actions-tests.log"
       - name: Build actual Linux native application
         run: cargo build -p coincide-desktop --features native-microphone,native-notifications,native-computer-use --locked
       - name: Test actual owned X11 Computer Use on a private desktop
@@ -465,6 +525,38 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
           grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Install native browser screenshot fixture dependencies
+        if: ${{ !cancelled() }}
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 mesa-vulkan-drivers
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          export VK_ICD_FILENAMES
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_browser_screenshot | tee "$RUNNER_TEMP/native-screenshot.log"
+          grep -F 'synthetic native screenshot: PASS' "$RUNNER_TEMP/native-screenshot.log"
+      - name: Retain native Linux browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Build synthetic native download executable
