@@ -57,12 +57,14 @@ fn octocat() -> BitwardenPasskey {
 fn never_verifies(
     _: &str,
     _: Box<dyn FnOnce(UserVerification) + Send>,
+    _: NativeLease,
 ) -> Option<Box<dyn FnOnce()>> {
     panic!("no verification was asked for");
 }
 fn verify_unavailable(
     _: &str,
     done: Box<dyn FnOnce(UserVerification) + Send>,
+    _held: NativeLease,
 ) -> Option<Box<dyn FnOnce()>> {
     done(UserVerification::Unavailable);
     None
@@ -70,6 +72,7 @@ fn verify_unavailable(
 fn verify_failed(
     _: &str,
     done: Box<dyn FnOnce(UserVerification) + Send>,
+    _held: NativeLease,
 ) -> Option<Box<dyn FnOnce()>> {
     done(UserVerification::Failed);
     None
@@ -77,6 +80,7 @@ fn verify_failed(
 
 struct Fixture {
     passkeys: Passkeys,
+    shutdown: super::super::shutdown::Shutdown,
     vault: Arc<FakeVault>,
     workers: Vec<std::thread::JoinHandle<()>>,
     replies: Rc<RefCell<Vec<Map<String, Value>>>>,
@@ -91,11 +95,13 @@ impl Fixture {
             signed: Mutex::default(),
             locked: false,
         });
-        let mut passkeys = Passkeys::new(|| {});
+        let shutdown = super::super::shutdown::Shutdown::default();
+        let mut passkeys = Passkeys::new(|| {}, shutdown.callbacks.clone());
         passkeys.set_verify(verify);
         passkeys.set_vault(Some(vault.clone()));
         Self {
             passkeys,
+            shutdown,
             vault,
             workers: vec![],
             replies: Rc::default(),
@@ -396,4 +402,53 @@ fn a_full_queue_refuses_more_requests_at_once() {
         Preferences::from_settings(&json!({})),
         Preferences::default()
     );
+}
+
+// Simulates an SDK that retains its reply block after cancellation and even
+// after delivering its result. No LocalAuthentication API or UI is invoked.
+type HeldVerification = (Box<dyn FnOnce(UserVerification) + Send>, NativeLease);
+static HELD_VERIFICATION: Mutex<Option<HeldVerification>> = Mutex::new(None);
+static VERIFICATION_CANCELLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+fn verify_held(
+    _: &str,
+    done: Box<dyn FnOnce(UserVerification) + Send>,
+    block: NativeLease,
+) -> Option<Box<dyn FnOnce()>> {
+    assert!(
+        HELD_VERIFICATION
+            .lock()
+            .unwrap()
+            .replace((done, block))
+            .is_none()
+    );
+    Some(Box::new(|| {
+        VERIFICATION_CANCELLED.store(true, std::sync::atomic::Ordering::Release)
+    }))
+}
+#[test]
+fn shutdown_waits_for_actual_verification_block_release_after_cancel_and_result() {
+    use std::sync::atomic::Ordering;
+    VERIFICATION_CANCELLED.store(false, Ordering::Release);
+    let mut fixture = Fixture::new(verify_held);
+    fixture.passkeys.set_preferences(Preferences {
+        always_verifies: true,
+        ..Preferences::default()
+    });
+    fixture.get(body(None));
+    fixture.poll();
+    fixture.answer(true);
+    assert_eq!(fixture.shutdown.status(0, 0, 0).callback_blocks_pending, 1);
+    fixture.shutdown.close();
+    fixture.passkeys.shutdown();
+    assert!(VERIFICATION_CANCELLED.load(Ordering::Acquire));
+    assert_eq!(fixture.statuses(), ["error:NotAllowedError"]);
+    assert!(!fixture.shutdown.status(0, 0, 0).ready());
+    let (done, held_native_block) = HELD_VERIFICATION.lock().unwrap().take().unwrap();
+    done(UserVerification::Failed);
+    // A result ACK does not prove the native block has returned or released.
+    assert!(!fixture.shutdown.status(0, 0, 0).ready());
+    assert!(fixture.vault.signed.lock().unwrap().is_empty());
+    drop(held_native_block);
+    assert!(fixture.shutdown.status(0, 0, 0).ready());
 }

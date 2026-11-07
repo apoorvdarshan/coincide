@@ -247,9 +247,13 @@ impl BrowserController {
         let profiles = ProfileCatalog::open(profile_dir.clone(), default_id)?;
         let (sender, events) = mpsc::sync_channel(512);
         let passkey_sender = sender.clone();
-        let passkeys = passkeys::Passkeys::new(move || {
-            let _ = passkey_sender.try_send(NativeEvent::PasskeysChanged);
-        });
+        let shutdown = shutdown::Shutdown::default();
+        let passkeys = passkeys::Passkeys::new(
+            move || {
+                let _ = passkey_sender.try_send(NativeEvent::PasskeysChanged);
+            },
+            shutdown.callbacks.clone(),
+        );
         Ok(Self {
             tabs: HashMap::new(),
             active: HashMap::new(),
@@ -274,7 +278,7 @@ impl BrowserController {
             waits: HashMap::new(),
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
-            shutdown: shutdown::Shutdown::default(),
+            shutdown,
         })
     }
 
