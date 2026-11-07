@@ -157,28 +157,28 @@ def exercise_downloads(rpc, thread_id, downloads_root):
         first, second = tabs
         unsupported = browser('tabs').get('unsupported', [])
         assert 'blob-downloads' not in unsupported, unsupported
-        # An API navigation to an attachment exercises the response-policy path.
-        browser('navigate', tab=first, url=f'http://127.0.0.1:{server.server_port}/attachment')
-        attachment = wait_for('response-policy attachment download', lambda: next((row for row in records(first) if row['state'] == 'finished'), None))
-        assert attachment['name'] == 'owned-attachment.txt', attachment
-        verified_file(attachment, ATTACHMENT_BODY)
-        assert records(second) == [], 'Response download reached the sibling tab'
-        report['checks'].append('response-policy attachment saved once under its exact tab')
         browser('click', tab=first, selector='#http')
-        a = wait_for('first exact-tab HTTP download', lambda: next((row for row in records(first) if row['state'] == 'finished' and row['id'] != attachment['id']), None))
+        a = wait_for('first exact-tab HTTP download', lambda: next((row for row in records(first) if row['state'] == 'finished'), None))
         assert records(second) == [], 'Shared context attributed first download to second tab'
         verified_file(a, HTTP_BODY)
         browser('click', tab=second, selector='#http')
         b = wait_for('second exact-tab same-URL HTTP download', lambda: next((row for row in records(second) if row['state'] == 'finished'), None))
         verified_file(b, HTTP_BODY)
         assert a['id'] != b['id'] and a['path'] != b['path']
-        assert len(records(first)) == 2 and len(records(second)) == 1
+        assert len(records(first)) == 1 and len(records(second)) == 1
         report['checks'].append('same context/same URL downloads attributed once to each exact native tab')
         browser('click', tab=first, selector='#blob')
-        blob = wait_for('native document-origin blob download', lambda: next((row for row in records(first) if row['state'] == 'finished' and row['id'] not in (a['id'], attachment['id'])), None))
+        blob = wait_for('native document-origin blob download', lambda: next((row for row in records(first) if row['state'] == 'finished' and row['id'] != a['id']), None))
         verified_file(blob, BLOB_BODY)
         assert len(records(second)) == 1
         report['checks'].append('native blob download saved only under originating tab and owned private directory')
+        # An API navigation to an attachment exercises the response-policy path.
+        browser('navigate', tab=first, url=f'http://127.0.0.1:{server.server_port}/attachment')
+        attachment = wait_for('response-policy attachment download', lambda: next((row for row in records(first) if row['state'] == 'finished' and row['id'] not in (a['id'], blob['id'])), None))
+        assert attachment['name'] == 'owned-attachment.txt', attachment
+        verified_file(attachment, ATTACHMENT_BODY)
+        assert len(records(second)) == 1, 'Response download reached the sibling tab'
+        report['checks'].append('response-policy attachment saved once under its exact tab')
         browser('click', tab=first, selector='#slow')
         slow = wait_for('actual native transfer started', lambda: next((row for row in records(first) if row['state'] == 'downloading'), None))
         assert slow_started.wait(2), 'Owned server never started slow response'
