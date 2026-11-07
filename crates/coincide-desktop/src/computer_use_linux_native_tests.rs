@@ -496,6 +496,8 @@ fn actual_owned_x11_window_actions_capture_and_drain() {
         Some(Failure::StaleObservation)
     );
     let observed = owner.observe(thread, false).unwrap();
+    // Revocation ends the epoch: the thread's next request runs under a new
+    // one, and the old observation's tokens never act again.
     handle.native_revoke(thread);
     assert_eq!(
         owner
@@ -505,7 +507,7 @@ fn actual_owned_x11_window_actions_capture_and_drain() {
                 json!({"element_token":token(&observed,"Button",Some("Owned action"))})
             )
             .err(),
-        Some(Failure::NotGranted)
+        Some(Failure::StaleObservation)
     );
     assert_eq!(owner.state().unwrap()["clicks"], 2);
     owner.drain();

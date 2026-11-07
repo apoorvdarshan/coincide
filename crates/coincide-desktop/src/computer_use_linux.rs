@@ -691,6 +691,8 @@ impl NativeBackend {
                     height,
                 }))
             }
+            // Not listed in extended_tools; the broker never sends these here.
+            NativeCall::Extended(_) => Err(Failure::Unsupported),
             action => {
                 let observed = self.observed.as_ref().ok_or(stale())?;
                 observed.window.verify(&connection)?;
