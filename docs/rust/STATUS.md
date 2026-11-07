@@ -1452,3 +1452,27 @@ workflow that mutates live schedules or GitHub state.
 
 Remaining parity work is the sidebar grouping and the inspector panels, then
 the ten partial feature areas and the cutover.
+
+## Acceptance status after the native-CI repair (2026-11-08)
+
+Green and verified by the Rust workflow on `main`:
+
+- Core suites on macOS, Ubuntu and Windows (desktop 811/811, all core suites).
+- macOS native fixtures: passkeys (Bitwarden sign-in), screenshots, uploads,
+  tab shortcuts.
+- Linux and Windows: tab-shortcut and passkey fixtures.
+- Linux native UI script: composer, settings routes, palette, drafts, restart.
+
+Still open in section A:
+
+- Browser fixed viewport on Linux/Windows: the controller holds the requested
+  size and the panel lays out the fixed box, but WebKitGTK/WebView2 still
+  report the panel size to the page. The Linux and Windows native UI scripts
+  fail at this step; macOS does not run that fixture.
+- Real passkey/password-manager sign-in outside the synthetic fixture, OS
+  notification delivery, and any workflow that mutates live schedules or
+  GitHub state.
+
+Section B areas are code-complete and unit-tested (notifications, remote,
+dictation, updater: 15 tests pass); what remains there is real-service
+acceptance, not implementation.
