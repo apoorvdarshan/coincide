@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,7 @@ jobs:
             crates
             vendor
             .cargo
+            scripts
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: toolchain
         with:
@@ -62,6 +63,17 @@ jobs:
       - name: Lint preview updater helper feature
         if: runner.os != 'Windows'
         run: cargo clippy -p coincide-core --all-targets --locked --features preview-updater-helper -- -D warnings
+      - name: Install private Secret Service fixture dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gnome-keyring dbus libglib2.0-bin
+      - name: Test one owned synthetic native credential entry
+        if: runner.os != 'Windows'
+        run: python3 scripts/test-rust-native-secret-store.py
+      - name: Test one owned synthetic Windows credential entry
+        if: runner.os == 'Windows'
+        run: python scripts/test-rust-native-secret-store.py
   desktop:
     name: macOS GPUI build
     runs-on: macos-latest
