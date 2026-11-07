@@ -108,7 +108,7 @@ impl Engine {
         Ok(thread)
     }
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 impl Engine {
     /// The read service's executable, as COINCIDE_RUST_GH would configure it.
     pub(crate) fn use_github_cli_for_checkout_tests(&mut self, path: &std::path::Path) {
