@@ -80,7 +80,6 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_2()
-            .child("Voice")
             .child(
                 Button::new("voice-enabled")
                     .label(if enabled {
