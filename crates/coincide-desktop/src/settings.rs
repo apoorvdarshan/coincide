@@ -351,6 +351,25 @@ pub(super) const PALETTES: &[Palette] = &[
     },
 ];
 
+/// Swift's caption under "Open links in your default browser", naming this
+/// platform's modifier for the other destination.
+fn link_routing_caption(default_browser: bool) -> &'static str {
+    match (default_browser, cfg!(target_os = "macos")) {
+        (true, true) => {
+            "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview."
+        }
+        (true, false) => {
+            "Clicking a web link opens your default browser. Ctrl-click opens it in Coincide’s browser preview."
+        }
+        (false, true) => {
+            "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."
+        }
+        (false, false) => {
+            "Clicking a web link opens it in Coincide’s browser preview. Ctrl-click opens your default browser."
+        }
+    }
+}
+
 pub(super) fn reply_font() -> &'static str {
     #[cfg(target_os = "macos")]
     {
@@ -990,6 +1009,28 @@ impl Coincide {
             &mut count,
             cx,
         );
+        if matches(
+            S::Conversation,
+            "open links default browser web click command control preview",
+        ) {
+            count += 1;
+            let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
+            content = content
+                .child(self.setting_choices(
+                    "Open links in your default browser",
+                    "opensLinksInDefaultBrowser",
+                    json!(default_browser),
+                    vec![("On", json!(true)), ("Off", json!(false))],
+                    cx,
+                ))
+                .child(
+                    div()
+                        .px_3()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child(link_routing_caption(default_browser)),
+                );
+        }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
             content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Find uses Command / Control + F; Settings uses Command / Control + comma. Customize app commands in Keyboard."));
