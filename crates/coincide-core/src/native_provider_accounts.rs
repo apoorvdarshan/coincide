@@ -118,6 +118,7 @@ pub(super) struct LoginHome {
     base_environment: BTreeMap<String, String>,
     captured_auth: Value,
     metadata_only: bool,
+    guard_generation: Option<[u8; 32]>,
 }
 fn supported(provider: &str) -> Result<&'static str> {
     match provider {
@@ -326,6 +327,11 @@ impl LoginHome {
                 );
             }
         }
+        let guard_generation = if account.provider == "codex" {
+            Some(CodexHomeLease::generation(&account.home)?)
+        } else {
+            None
+        };
         let mut captured = Self {
             account,
             root: root.into(),
@@ -333,6 +339,7 @@ impl LoginHome {
             base_environment,
             captured_auth: Value::Null,
             metadata_only: metadata,
+            guard_generation,
         };
         if !metadata {
             captured.captured_auth = captured.auth_stamp()?;
@@ -341,6 +348,10 @@ impl LoginHome {
     }
     pub(super) fn validate(&self) -> Result<()> {
         if self.account.provider == "codex" {
+            ensure!(
+                self.guard_generation == Some(CodexHomeLease::generation(&self.account.home)?),
+                "Codex account method changed; capture its configuration again"
+            );
             ensure!(
                 fs::symlink_metadata(self.account.home.join("config.toml"))
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
@@ -917,9 +928,11 @@ fn build_configuration(
             profile.account.home.to_string_lossy().into_owned(),
         );
     }
-    let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
-        &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
-    )?));
+    let mut fingerprint = json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth});
+    if let Some(generation) = profile.guard_generation {
+        fingerprint["codexHomeGeneration"] = json!(generation);
+    }
+    let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(&fingerprint)?));
     let source: PathBuf = owner.source["path"]
         .as_str()
         .context("Native account source missing")?
