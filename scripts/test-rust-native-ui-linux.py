@@ -120,6 +120,8 @@ def main():
             observed.with_suffix(".txt").write_text(text)
             if expected:
                 assert expected.lower() in text.lower(), f"Expected rendered text {expected!r} in {stage}"
+            if stage == "reopened-draft":
+                assert "inspector state was not restored" not in text.casefold(), "Restart must recover inspector presentation without a stale restore error"
             observed.replace(path)
             (artifacts / f"{stage}.txt").write_text(text)
             if ocr_path != observed:
