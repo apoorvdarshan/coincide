@@ -2,11 +2,41 @@
 //! worker owner, shutdown custody and generation-aware result application.
 use super::*;
 use coincide_core::provider_configuration::{
-    NativeAccountAuthentication as Auth, NativeProviderAccount, PreparedNativeAccountRemoval,
+    NativeAccountAuthentication as Auth, NativeProviderAccount, PreparedLegacyCodexRemoval,
+    PreparedNativeAccountRemoval,
 };
+#[derive(Clone, PartialEq, Eq)]
+struct Row {
+    native: NativeProviderAccount,
+    legacy: bool,
+}
+impl std::ops::Deref for Row {
+    type Target = NativeProviderAccount;
+    fn deref(&self) -> &Self::Target {
+        &self.native
+    }
+}
+pub(super) enum RemovalPlan {
+    Native(PreparedNativeAccountRemoval),
+    Legacy(PreparedLegacyCodexRemoval),
+}
+impl RemovalPlan {
+    fn name(&self) -> &str {
+        match self {
+            Self::Native(plan) => plan.name(),
+            Self::Legacy(plan) => plan.name(),
+        }
+    }
+    fn conversation_count(&self) -> usize {
+        match self {
+            Self::Native(plan) => plan.conversation_count(),
+            Self::Legacy(plan) => plan.conversation_count(),
+        }
+    }
+}
 #[derive(Clone)]
 pub(super) struct Snapshot {
-    rows: Vec<NativeProviderAccount>,
+    rows: Vec<Row>,
     cleanup: usize,
 }
 struct Draft {
@@ -26,7 +56,7 @@ impl Draft {
 }
 #[derive(Default)]
 struct Editor {
-    rows: Vec<NativeProviderAccount>,
+    rows: Vec<Row>,
     drafts: HashMap<String, Draft>,
     loaded: bool,
     load_requested: bool,
@@ -37,7 +67,7 @@ struct Editor {
 }
 struct Review {
     provider: String,
-    plan: PreparedNativeAccountRemoval,
+    plan: RemovalPlan,
     _custody: NativeUiEditLease,
 }
 #[derive(Default)]
@@ -45,9 +75,13 @@ pub(super) struct Accounts {
     pub(super) revision: u64,
     editors: HashMap<String, Editor>,
     review: Option<Review>,
+    legacy_sign_in: Option<String>,
 }
 pub(super) enum Request {
     Load,
+    CreateLegacy {
+        name: String,
+    },
     Create {
         login: bool,
         name: String,
@@ -58,6 +92,7 @@ pub(super) enum Request {
         revision: String,
         name: String,
         login: bool,
+        legacy: bool,
     },
     Auth {
         id: String,
@@ -102,10 +137,11 @@ pub(super) enum Request {
     Review {
         id: String,
         revision: String,
+        legacy: bool,
         custody: NativeUiEditLease,
     },
     Remove {
-        plan: PreparedNativeAccountRemoval,
+        plan: RemovalPlan,
         custody: NativeUiEditLease,
     },
     Cleanup,
@@ -126,7 +162,7 @@ pub(super) enum Outcome {
         clear_key: Option<String>,
     },
     Review {
-        plan: PreparedNativeAccountRemoval,
+        plan: RemovalPlan,
         custody: NativeUiEditLease,
     },
     Checked {
@@ -137,8 +173,38 @@ pub(super) enum Outcome {
 }
 fn snapshot(engine: &SharedEngine, provider: &str) -> Result<Snapshot> {
     let owner = try_state(engine)?;
+    let mut rows = owner
+        .native_provider_accounts(provider)?
+        .into_iter()
+        .map(|native| Row {
+            native,
+            legacy: false,
+        })
+        .collect::<Vec<_>>();
+    if provider == "codex" {
+        let legacy = owner.native_legacy_codex_accounts()?;
+        let mut combined = legacy
+            .into_iter()
+            .filter(|row| !rows.iter().any(|existing| existing.id == row.id))
+            .map(|row| Row {
+                native: NativeProviderAccount {
+                    id: row.id,
+                    provider: "codex".into(),
+                    name: row.name,
+                    revision: row.revision,
+                    authentication: Auth::Login,
+                    key_variable: None,
+                    has_key: false,
+                    has_admin_key: false,
+                },
+                legacy: true,
+            })
+            .collect::<Vec<_>>();
+        combined.append(&mut rows);
+        rows = combined;
+    }
     Ok(Snapshot {
-        rows: owner.native_provider_accounts(provider)?,
+        rows,
         cleanup: owner.native_provider_account_cleanup_pending(provider)?,
     })
 }
@@ -175,6 +241,19 @@ pub(super) fn execute(
     anyhow::ensure!(allowed(), "Account settings are closing");
     match request {
         Request::Load => done(engine, provider, "", None),
+        Request::CreateLegacy { name } => {
+            anyhow::ensure!(
+                provider == "codex",
+                "Legacy account belongs to another provider"
+            );
+            try_state(engine)?.execute("providers.codex.profiles.create", &json!({"name":name}))?;
+            done(
+                engine,
+                provider,
+                "ChatGPT account added. Sign in explicitly before using it.",
+                None,
+            )
+        }
         Request::SaveAdmin {
             id,
             revision,
@@ -232,8 +311,17 @@ pub(super) fn execute(
             revision,
             name,
             login,
+            legacy,
         } => {
-            if login {
+            if legacy {
+                anyhow::ensure!(
+                    provider == "codex",
+                    "Legacy account belongs to another provider"
+                );
+                let plan =
+                    try_state(engine)?.prepare_native_legacy_codex_rename(&id, &revision, &name)?;
+                try_state(engine)?.apply_native_legacy_codex_rename(plan)?;
+            } else if login {
                 try_state(engine)?.rename_native_login_account(provider, &id, &revision, &name)?;
             } else {
                 try_state(engine)?.rename_native_key_account(provider, &id, &revision, &name)?;
@@ -328,15 +416,35 @@ pub(super) fn execute(
         Request::Review {
             id,
             revision,
+            legacy,
             custody,
         } => {
-            let plan = try_state(engine)?
-                .prepare_native_provider_account_removal(provider, &id, &revision)?;
+            let plan = if legacy {
+                anyhow::ensure!(
+                    provider == "codex",
+                    "Legacy account belongs to another provider"
+                );
+                RemovalPlan::Legacy(
+                    try_state(engine)?.prepare_native_legacy_codex_removal(&id, &revision)?,
+                )
+            } else {
+                RemovalPlan::Native(
+                    try_state(engine)?
+                        .prepare_native_provider_account_removal(provider, &id, &revision)?,
+                )
+            };
             Ok(Outcome::Review { plan, custody })
         }
         Request::Remove { plan, custody } => {
             let _custody = custody;
-            let removed = try_state(engine)?.apply_native_provider_account_removal(plan)?;
+            let removed = match plan {
+                RemovalPlan::Native(plan) => {
+                    try_state(engine)?.apply_native_provider_account_removal(plan)?
+                }
+                RemovalPlan::Legacy(plan) => {
+                    try_state(engine)?.apply_native_legacy_codex_removal(plan)?
+                }
+            };
             done(
                 engine,
                 provider,
@@ -392,6 +500,9 @@ impl Accounts {
     }
 }
 impl Panel {
+    pub fn take_legacy_codex_sign_in(&mut self) -> Option<String> {
+        self.accounts.legacy_sign_in.take()
+    }
     pub(super) fn account_edited(&mut self, provider: &str, cx: &mut Context<Self>) {
         if let Some(editor) = self.editors.get_mut(provider) {
             editor.generation = editor.generation.wrapping_add(1);
@@ -672,6 +783,7 @@ impl Panel {
                 revision: row.revision.clone(),
                 name,
                 login: row.authentication == Auth::Login,
+                legacy: row.legacy,
             },
             cx,
         );
@@ -737,6 +849,7 @@ impl Panel {
             let revision = row.revision.clone();
             let p = provider.clone();
             let key = row.authentication == Auth::ApiKey;
+            let legacy = row.legacy;
             let mut card = div()
                 .flex()
                 .flex_col()
@@ -776,6 +889,7 @@ impl Panel {
                                                 Request::Review {
                                                     id: id.clone(),
                                                     revision: revision.clone(),
+                                                    legacy,
                                                     custody,
                                                 },
                                                 cx,
@@ -927,6 +1041,17 @@ impl Panel {
                             })),
                     );
                 }
+            } else if row.legacy {
+                let id = id.clone();
+                card = card.child(
+                    Button::new(SharedString::from(format!("legacy-account-sign-in-{id}")))
+                        .label("Sign in with ChatGPT…")
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.accounts.legacy_sign_in = Some(id.clone());
+                            cx.notify();
+                        })),
+                );
             } else {
                 card = card
                     .child(
@@ -1030,6 +1155,21 @@ impl Panel {
                     })),
             );
         }
+        if provider == "codex" {
+            let name = next_name.clone();
+            actions = actions.child(
+                Button::new("provider-account-add-chatgpt")
+                    .label("Add ChatGPT Account")
+                    .disabled(busy || !editor.loaded)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.account_request(
+                            "codex",
+                            Request::CreateLegacy { name: name.clone() },
+                            cx,
+                        )
+                    })),
+            );
+        }
         if let Some(variable) = first_variable {
             actions = actions.child(
                 Button::new("provider-account-add-key")
@@ -1088,11 +1228,87 @@ mod tests {
         )));
         (root, engine)
     }
-    fn rows(outcome: Outcome) -> Vec<NativeProviderAccount> {
+    fn rows(outcome: Outcome) -> Vec<Row> {
         match outcome {
             Outcome::Snapshot { snapshot, .. } => snapshot.rows,
             _ => panic!("Expected account snapshot"),
         }
+    }
+    #[::core::prelude::v1::test]
+    fn legacy_rows_keep_existing_api_accounts_through_typed_rename_and_removal() {
+        let (_root, engine) = fixture();
+        let legacy = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::CreateLegacy {
+                    name: "Synthetic subscription".into(),
+                },
+                &|| true,
+            )
+            .unwrap(),
+        )
+        .remove(0);
+        let combined = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::Create {
+                    login: false,
+                    name: "Synthetic API".into(),
+                    variable: "OPENAI_API_KEY".into(),
+                },
+                &|| true,
+            )
+            .unwrap(),
+        );
+        assert_eq!(combined.len(), 2);
+        assert_eq!(combined[0].id, legacy.id);
+        assert!(combined[0].legacy && !combined[1].legacy);
+        let native_id = combined[1].id.clone();
+        let renamed = rows(
+            execute(
+                &engine,
+                "codex",
+                Request::Rename {
+                    id: legacy.id.clone(),
+                    revision: legacy.revision.clone(),
+                    name: "Renamed subscription".into(),
+                    login: true,
+                    legacy: true,
+                },
+                &|| true,
+            )
+            .unwrap(),
+        );
+        assert_eq!(renamed[0].id, legacy.id);
+        assert_eq!(renamed[0].name, "Renamed subscription");
+        let editors = try_state(&engine).unwrap().native_ui_editors();
+        let custody = editors.editor().pending_native_action();
+        let review = execute(
+            &engine,
+            "codex",
+            Request::Review {
+                id: legacy.id.clone(),
+                revision: renamed[0].revision.clone(),
+                legacy: true,
+                custody,
+            },
+            &|| true,
+        )
+        .unwrap();
+        let Outcome::Review { plan, custody } = review else {
+            panic!("Expected reviewed removal")
+        };
+        let remaining = rows(
+            execute(&engine, "codex", Request::Remove { plan, custody }, &|| {
+                true
+            })
+            .unwrap(),
+        );
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, native_id);
+        assert!(!remaining[0].legacy);
     }
     #[::core::prelude::v1::test]
     fn native_account_ui_actions_reach_typed_core_and_preserve_identity_across_auth_change() {
@@ -1122,6 +1338,7 @@ mod tests {
                     revision: account.revision.clone(),
                     name: "Renamed UI account".into(),
                     login: false,
+                    legacy: false,
                 },
                 &|| true,
             )
@@ -1153,7 +1370,8 @@ mod tests {
                     id: account.id.clone(),
                     revision: account.revision.clone(),
                     name: "Stale".into(),
-                    login: false
+                    login: false,
+                    legacy: false
                 },
                 &|| true
             )
@@ -1186,6 +1404,7 @@ mod tests {
                 id: account.id.clone(),
                 revision: account.revision.clone(),
                 custody,
+                legacy: false,
             },
             &|| true,
         )

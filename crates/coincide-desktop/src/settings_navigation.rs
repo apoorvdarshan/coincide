@@ -573,6 +573,12 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(account) = self
+            .provider_configuration_panel
+            .update(cx, |panel, _| panel.take_legacy_codex_sign_in())
+        {
+            self.open_codex_profile_settings_for(account, window, cx);
+        }
         if self.settings_section == Section::Usage {
             for provider in [ProviderId::Claude, ProviderId::Opencode] {
                 let enabled = provider_enabled(&self.settings, provider);
