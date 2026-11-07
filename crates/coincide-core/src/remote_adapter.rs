@@ -8,7 +8,7 @@ use super::protocol::{
     QuestionOption, QuestionSet, QueuedMessage, RemoteError, Script, Selection, SendRequest,
     ServerInfo, ThemeInfo, ThreadAction, ThreadSummary, Transcript, TurnState, Workspace,
 };
-use crate::api::{SharedEngine, call};
+use crate::api::SharedEngine;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -71,10 +71,6 @@ pub struct Adapter {
     cache: Mutex<HashMap<String, (Value, ThreadFields)>>,
 }
 
-fn failed(error: anyhow::Error) -> RemoteError {
-    RemoteError::failed(error.to_string())
-}
-
 fn upper(id: &str) -> String {
     id.to_uppercase()
 }
@@ -93,7 +89,20 @@ impl Adapter {
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, RemoteError> {
-        call(&self.engine, method, params).map_err(failed)
+        // The desktop may hold Engine during a save. Never strand a Remote
+        // worker (and shutdown) waiting for that mutex; let the phone retry its
+        // read explicitly rather than replaying an action.
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        let response = engine.dispatch(json!({"method":method,"params":params}));
+        if let Some(error) = response.get("error") {
+            return Err(RemoteError::failed(
+                error["message"].as_str().unwrap_or("Command failed"),
+            ));
+        }
+        Ok(response["result"].clone())
     }
 
     /// The engine's revision, polling it first so runs progress even while no
@@ -194,7 +203,7 @@ impl Adapter {
     fn cached_fields(&self, summary: &Value, runs: &Runs) -> Option<ThreadFields> {
         let id = summary["id"].as_str()?;
         let key = upper(id);
-        let mut cache = self.cache.lock().ok()?;
+        let mut cache = self.cache.try_lock().ok()?;
         if !runs.running.contains(&key)
             && let Some((seen, fields)) = cache.get(&key)
             && seen == summary
@@ -353,7 +362,7 @@ impl Adapter {
                 threads.push(Self::summary(summary, &fields, &project, runs));
             }
         }
-        if let Ok(mut cache) = self.cache.lock() {
+        if let Ok(mut cache) = self.cache.try_lock() {
             cache.retain(|id, _| seen.contains(id));
         }
         // Grouped by the projects' order, most recent activity first in each.
@@ -1002,5 +1011,19 @@ mod tests {
         );
         assert_eq!(user.attachments.unwrap(), vec!["b.png".to_owned()]);
         assert!(user.steered);
+    }
+    #[test]
+    fn busy_engine_never_blocks_a_remote_adapter_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        )));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        let guard = engine.lock().unwrap();
+        let started = std::time::Instant::now();
+        assert!(adapter.call("settings.read", json!({})).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        drop(guard);
+        assert!(adapter.call("settings.read", json!({})).is_ok());
     }
 }
