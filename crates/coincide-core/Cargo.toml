@@ -62,3 +62,8 @@ harness = false
 name = "local_whisper_portable"
 path = "tests/local_whisper_portable.rs"
 harness = false
+
+[[test]]
+name = "github_write_portable"
+path = "tests/github_write_portable.rs"
+harness = false

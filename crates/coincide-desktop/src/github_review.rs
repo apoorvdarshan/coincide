@@ -801,8 +801,8 @@ impl Render for GitHubReviewPanel {
                 ));
             }
             body = body.child(div().text_sm().child(text(pr, "url")))
-                .child(div().flex().flex_wrap().gap_2().children(["Approve","Request changes","Check out"].into_iter().enumerate().map(|(index,label)|Button::new(SharedString::from(format!("github-unavailable-{index}"))).label(label).disabled(true))))
-                .child("Approve and Request changes are unavailable because review submission cannot atomically require the current PR head. Checkout and involvement filters are not connected.")
+                .child(Button::new("github-checkout-unavailable").label("Check out").disabled(true))
+                .child("Use the review actions below for the displayed commit. Checkout and involvement filters are not connected.")
                 .child("Checks");
             let checks = pr["statusCheckRollup"].as_array();
             if checks.is_none_or(|checks| checks.is_empty()) {
