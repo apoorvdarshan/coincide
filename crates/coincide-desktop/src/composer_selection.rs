@@ -1068,7 +1068,7 @@ fn reported_picker_model_label(thread: &Value, catalog: &Value) -> Option<String
         .filter(|name| !name.is_empty())
         .map(|_| footer_value(&row["displayName"], ""))
 }
-fn effort_picker_title(value: &Value) -> String {
+pub(super) fn effort_picker_title(value: &Value) -> String {
     let raw = footer_value(value, "Auto");
     match raw.as_str() {
         "none" | "off" => "Off".into(),
