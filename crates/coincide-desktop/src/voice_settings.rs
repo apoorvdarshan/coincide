@@ -445,7 +445,11 @@ impl Coincide {
                     } else {
                         "Start dictation"
                     })
-                    .tooltip(if active { "Stop dictation" } else { "Start dictation" })
+                    .tooltip(if active {
+                        "Stop dictation"
+                    } else {
+                        "Start dictation"
+                    })
                     .compact()
                     .ghost()
                     .xsmall()
