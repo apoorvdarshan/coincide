@@ -162,7 +162,7 @@ impl NotificationRuntime {
         #[cfg(all(windows, feature = "native-notifications"))]
         {
             Self::spawn(
-                crate::notification_activity::Native(crate::notifications::UnsupportedBackend),
+                crate::notification_activity::Native(crate::notifications::windows::NativeBackend),
                 32,
             )
         }

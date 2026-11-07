@@ -573,3 +573,10 @@ mod tests {
 #[cfg(all(target_os = "linux", feature = "native-notifications"))]
 #[path = "notifications_linux.rs"]
 pub(crate) mod linux;
+
+#[cfg(all(windows, feature = "native-notifications"))]
+#[path = "notifications_windows.rs"]
+pub(crate) mod windows;
+#[cfg(any(all(windows, feature = "native-notifications"), test))]
+#[path = "notifications_windows_policy.rs"]
+mod windows_policy;
