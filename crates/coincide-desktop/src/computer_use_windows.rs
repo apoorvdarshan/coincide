@@ -87,6 +87,7 @@ impl Drop for Com {
 }
 struct Context {
     automation: IUIAutomation,
+    timed: IUIAutomation2,
     // The COM references above are destroyed before this apartment guard.
     _com: Com,
 }
@@ -106,8 +107,59 @@ impl Context {
         let automation: IUIAutomation = native(timed.cast())?;
         Ok(Self {
             automation,
+            timed,
             _com: guard,
         })
+    }
+    fn bind_root(
+        &self,
+        hwnd: HWND,
+        permit: &Permit,
+        deadline: Instant,
+    ) -> (R<IUIAutomationElement>, bool) {
+        if let Err(error) = checked(permit, deadline) {
+            return (Err(error), false);
+        }
+        let Some(budget) =
+            policy::root_binding_budget(deadline.saturating_duration_since(Instant::now()))
+        else {
+            return (Err(Failure::TimedOut), false);
+        };
+        // ConnectionTimeout bounds obtaining a provider element, whereas
+        // TransactionTimeout bounds queries about that element. Only this
+        // one-shot root bind uses the documented 2s connection allowance,
+        // capped by the original 3s observation deadline. No retry occurs.
+        // https://learn.microsoft.com/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation2-put_connectiontimeout
+        if let Err(error) = native(unsafe { self.timed.SetConnectionTimeout(budget) }) {
+            return (Err(error), true);
+        }
+        struct Reset<'a> {
+            timed: &'a IUIAutomation2,
+            restored: bool,
+        }
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                if !self.restored {
+                    unsafe { self.timed.SetConnectionTimeout(150) }.ok();
+                }
+            }
+        }
+        let mut reset = Reset {
+            timed: &self.timed,
+            restored: false,
+        };
+        let root = native(unsafe { self.automation.ElementFromHandle(hwnd) });
+        // A failed restoration makes this entire Context unusable. The caller
+        // drops it before returning; no tree/token/input is published from it.
+        let restored = native(unsafe { self.timed.SetConnectionTimeout(150) });
+        reset.restored = true;
+        if let Err(error) = restored {
+            return (Err(error), true);
+        }
+        if let Err(error) = checked(permit, deadline) {
+            return (Err(error), false);
+        }
+        (root, false)
     }
 }
 struct Process {
@@ -327,10 +379,14 @@ impl NativeBackend {
     ) -> R<NativeResult> {
         self.invalidate();
         let deadline = Instant::now() + Duration::from_secs(3);
-        let automation = self.context()?.automation.clone();
         let (bounds, dpi) = window.geometry()?;
         checked(permit, deadline)?;
-        let root = native(unsafe { automation.ElementFromHandle(window.hwnd) })?;
+        let (root, discard_context) = self.context()?.bind_root(window.hwnd, permit, deadline);
+        if discard_context {
+            self.context = None;
+        }
+        let root = root?;
+        let automation = self.context()?.automation.clone();
         let walker = native(unsafe { automation.ControlViewWalker() })?;
         let mut pending = vec![(root.clone(), 0usize)];
         let mut nodes = vec![];
