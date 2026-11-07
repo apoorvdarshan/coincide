@@ -129,7 +129,7 @@ impl Engine {
         self.model_catalog
             .invalidate_deleted_threads(std::slice::from_ref(&prepared.row.id));
         self.store.apply_sidebar_row(&prepared.row)?;
-        self.computer_use_selection_changed(Uuid::parse_str(&prepared.row.id)?);
+        self.computer_use_thread_removed(Uuid::parse_str(&prepared.row.id)?);
         self.revision += 1;
         let next: Value = serde_json::from_str(&prepared.row.target)?;
         if self.native_move_undos.len() >= 256 {
@@ -203,7 +203,7 @@ impl Engine {
         self.model_catalog.invalidate_deleted_threads(&[id.into()]);
         self.store.apply_sidebar_row(&row)?;
         self.native_move_undos.remove(id);
-        self.computer_use_selection_changed(Uuid::parse_str(id)?);
+        self.computer_use_thread_removed(Uuid::parse_str(id)?);
         self.revision += 1;
         Ok(())
     }
