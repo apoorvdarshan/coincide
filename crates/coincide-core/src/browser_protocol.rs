@@ -719,9 +719,9 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
         BrowserAction::WaitFor { selector, text, .. } => {
             serde_json::json!({"kind":"wait-for","selector":selector,"text":text})
         }
-        BrowserAction::Back => return Ok(Some("history.back(); ({dispatched:true})".into())),
-        BrowserAction::Forward => return Ok(Some("history.forward(); ({dispatched:true})".into())),
-        BrowserAction::Reload => return Ok(Some("location.reload(); ({dispatched:true})".into())),
+        BrowserAction::Back => return Ok(None),
+        BrowserAction::Forward => return Ok(None),
+        BrowserAction::Reload => return Ok(None),
         _ => return Ok(None),
     };
     Ok(Some(fixed_script(payload, frame)?))
@@ -1231,5 +1231,27 @@ mod native_press_request_tests {
             selector: Some("#owned-editor".into()),
         };
         assert!(script_for_request(&request).is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_history_dispatch_tests {
+    use super::*;
+    #[test]
+    fn native_history_never_enters_document_script_completion() {
+        for action in [
+            BrowserAction::Back,
+            BrowserAction::Forward,
+            BrowserAction::Reload,
+        ] {
+            let request = BrowserRequest {
+                id: "history-test".into(),
+                thread_id: uuid::Uuid::new_v4().to_string(),
+                tab: None,
+                frame: None,
+                action,
+            };
+            assert!(script_for_request(&request).unwrap().is_none());
+        }
     }
 }
