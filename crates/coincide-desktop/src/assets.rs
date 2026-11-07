@@ -80,12 +80,13 @@ icon_assets!(
         FolderOpen,
         Folder,
         Frame,
+        Gauge,
+        GitPullRequest,
+        GitPullRequestDraft,
         GalleryVerticalEnd,
         GitBranch,
         // Pull request states, checks and reviews (Swift PullRequestGlyph),
         // and schedule rows' marks.
-        GitPullRequest,
-        GitPullRequestDraft,
         GitMerge,
         CircleDot,
         CircleSlash,
@@ -209,6 +210,8 @@ mod tests {
             "icons/pencil.svg",
             "icons/trash.svg",
             "icons/circle-arrow-right.svg",
+            // Composer `/` and `#` suggestion rows.
+            "icons/gauge.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");
