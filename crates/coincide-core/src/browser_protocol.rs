@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+#[path = "browser_keys.rs"]
+pub mod keys;
 #[path = "browser_upload.rs"]
 pub mod upload;
 
@@ -45,6 +47,11 @@ pub enum BrowserAction {
         text: String,
         #[serde(default)]
         clear: bool,
+    },
+    Press {
+        key: String,
+        #[serde(default)]
+        selector: Option<String>,
     },
     Upload {
         selector: String,
@@ -133,6 +140,7 @@ impl BrowserRequest {
                         | BrowserAction::Click { .. }
                         | BrowserAction::Input { .. }
                         | BrowserAction::Type { .. }
+                        | BrowserAction::Press { .. }
                         | BrowserAction::Upload { .. }
                         | BrowserAction::Scroll { .. }
                         | BrowserAction::WaitFor { .. }
@@ -141,6 +149,12 @@ impl BrowserRequest {
             );
         }
         match &self.action {
+            BrowserAction::Press { key, selector } => {
+                keys::KeyPress::admitted(key)?;
+                if let Some(selector) = selector {
+                    validate_selector(selector)?;
+                }
+            }
             BrowserAction::Dialog {
                 dialog_id, text, ..
             } => {
@@ -194,6 +208,9 @@ impl BrowserRequest {
             | BrowserAction::Type { selector, text, .. } => {
                 validate_selector(selector)?;
                 ensure!(text.len() <= 65536, "Input exceeds 64 KiB");
+            }
+            BrowserAction::Press { selector, .. } => {
+                serde_json::json!({"kind":"focus","selector":selector})
             }
             BrowserAction::Scroll { selector, to, by } => {
                 ensure!(
@@ -810,6 +827,15 @@ try {
     else win.scrollBy({top:request.by ?? Math.round(win.innerHeight*0.9),behavior:'instant'});
     return {scrollY:Math.round(win.scrollY),scrollHeight:root.scrollHeight,viewportHeight:win.innerHeight,
       atBottom:win.scrollY+win.innerHeight>=root.scrollHeight-2,frame:frameId};
+  }
+  if (request.kind==='focus') {
+    const target=request.selector ? choose(request.selector) : doc.activeElement;
+    if (!target || !visible(target) || target.disabled || target.getAttribute('aria-disabled')==='true')
+      throw new Error('Keyboard target is not available');
+    if (target.matches('iframe,frame') || sensitive(target))
+      throw new Error('Keyboard target requires supported frame selection or user handoff');
+    if (request.selector) target.focus({preventScroll:true});
+    return {focused:doc.activeElement===target};
   }
   const target=choose(request.selector);
   if (request.kind==='upload' || request.kind==='upload-probe') {
