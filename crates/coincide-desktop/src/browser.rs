@@ -7,6 +7,8 @@ mod cookie_actor;
 mod cookie_import;
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
+#[path = "browser_native_history.rs"]
+mod native_history;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
 pub use shutdown::BrowserShutdownStatus;
@@ -333,6 +335,31 @@ impl BrowserController {
             "Page inspection is paused during a saved-login request. Navigate or reload before inspecting this document again."
         );
         match &request.action {
+            BrowserAction::Back | BrowserAction::Forward | BrowserAction::Reload => {
+                let action = native_history::Action::from_request(&request.action)
+                    .context("Unsupported native history action")?;
+                let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
+                let navigation = tab.navigation.clone();
+                let epoch = navigation.load(Ordering::Acquire);
+                let callbacks = &self.shutdown.callbacks;
+                let mut result =
+                    native_history::dispatch(tab.view.read(cx).raw(), action, callbacks, || {
+                        ensure!(!callbacks.closed(), "Browser is shutting down");
+                        ensure!(
+                            navigation.load(Ordering::Acquire) == epoch,
+                            "Document changed before native history dispatch"
+                        );
+                        // Invalidate old document grants immediately before the one
+                        // native SDK dispatch, including an uncertain SDK error.
+                        navigation.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    })?;
+                if result["dispatched"] == true {
+                    tab.loading = true;
+                }
+                result["tab"] = json!(target);
+                Ok(Some(result))
+            }
             BrowserAction::Upload { .. } => {
                 ensure!(
                     !cfg!(windows),
