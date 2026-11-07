@@ -435,6 +435,17 @@ impl Terminal {
         }
         Ok(result)
     }
+    /// A command other than the shell holds the terminal's foreground, as
+    /// Swift's `TerminalSession.isBusy`. Only Unix PTYs report it.
+    pub fn is_busy(&self) -> bool {
+        #[cfg(unix)]
+        if let (Some(master), Some(child)) = (&self.master, &self.child)
+            && let (Some(leader), Some(shell)) = (master.process_group_leader(), child.process_id())
+        {
+            return i64::from(leader) != i64::from(shell);
+        }
+        false
+    }
     pub fn write(&mut self, text: &str) -> Result<()> {
         ensure!(text.len() <= 32 * 1024, "Terminal input exceeds 32 KiB");
         self.writer
@@ -1280,6 +1291,28 @@ mod tests {
         assert_eq!(v["rows"], 30);
         assert_eq!(v["cols"], 100);
         assert!(terminal.resize(0, 0).is_err());
+    }
+    #[test]
+    fn a_foreground_command_makes_the_terminal_busy_until_it_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut terminal = Terminal::spawn(dir.path(), "/bin/sh", 24, 80).unwrap();
+        let wait = |terminal: &mut Terminal, busy: bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while terminal.is_busy() != busy {
+                terminal.poll().unwrap();
+                assert!(
+                    Instant::now() < deadline,
+                    "terminal never became busy={busy}"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        };
+        wait(&mut terminal, false);
+        terminal.write("sleep 30\r").unwrap();
+        wait(&mut terminal, true);
+        // Ctrl-C ends the command and the shell takes the foreground back.
+        terminal.write("\u{3}").unwrap();
+        wait(&mut terminal, false);
     }
 }
 

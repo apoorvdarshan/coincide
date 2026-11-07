@@ -95,6 +95,9 @@ pub mod appshots;
 
 pub mod reply_selection;
 
+pub mod palette_search;
+pub mod project_search;
+
 pub mod voice;
 
 /// Bounded native-WebView screenshot data; this module grants no browser authority.

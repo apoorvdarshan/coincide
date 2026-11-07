@@ -84,6 +84,8 @@ icon_assets!(
         EyeOff,
         Eye,
         FileText,
+        FileSearch,
+        TextSearch,
         File,
         FolderClosed,
         FolderOpen,

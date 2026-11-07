@@ -52,6 +52,8 @@ mod attachment_completion_tests;
 mod background_workers;
 #[path = "bot_engine.rs"]
 mod bot_engine;
+#[path = "bot_starters.rs"]
+mod bot_starters;
 #[path = "browser_bookmarks_api.rs"]
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
@@ -94,6 +96,8 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
+#[path = "terminal_activity_api.rs"]
+mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
 mod terminal_context_api;
 #[cfg(test)]
@@ -241,6 +245,8 @@ pub struct Engine {
     provider_worker_outcomes: ProviderWorkersStatus,
     pub revision: u64,
     pub requested_open: Option<String>,
+    /// `app.activate`: another copy of the app asked this one to come forward.
+    pub activation_requested: bool,
     terminals: HashMap<String, (String, crate::terminal::Terminal)>,
     terminal_shutdown: terminal_shutdown::State,
     pub shutdown: bool,
@@ -329,6 +335,7 @@ impl Engine {
             provider_worker_outcomes: ProviderWorkersStatus::default(),
             revision: 0,
             requested_open: None,
+            activation_requested: false,
             terminals: HashMap::new(),
             terminal_shutdown: terminal_shutdown::State::default(),
             shutdown: false,
@@ -565,6 +572,7 @@ impl Engine {
                 Ok(json!({"ready":false}))
             }
             "app.quit"=>{ensure!(self.native_ui_editors.pending() == 0,"Unsaved native editor changes require Save or Discard before quitting");ensure!(self.unsaved_threads.is_empty() && self.runs.values().all(|run|run.persistence_error.is_none()),"Transcript changes are not saved yet; wait for persistence recovery before quitting");self.computer_use_shutdown();self.shutdown=true;self.revision+=1;Ok(json!({"requested":true}))}
+            "app.activate"=>{self.activation_requested=true;self.revision+=1;Ok(json!({"requested":true}))}
             "terminal.create"=>{
                 ensure!(self.terminals.len()<32,"Too many terminal panes");
                 let thread=required(p,"threadId")?;
@@ -647,7 +655,7 @@ impl Engine {
             ),
             "app.capabilities" => {
                 let mut methods = vec![
-                "app.status", "app.quit", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
+                "app.status", "app.quit", "app.activate", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
                 "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",
