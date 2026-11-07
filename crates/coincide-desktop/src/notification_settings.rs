@@ -26,7 +26,7 @@ const WINDOW: usize = 8;
 const CONTROLS: usize = 16;
 fn native_compiled() -> bool {
     cfg!(all(
-        any(target_os = "macos", target_os = "linux"),
+        any(target_os = "macos", target_os = "linux", windows),
         feature = "native-notifications"
     ))
 }
@@ -835,8 +835,16 @@ impl Render for NotificationSettingsPanel {
         div().flex().flex_col().gap_3().p_4()
             .child(div().text_lg().child("Desktop notifications"))
             .child("Notify about completed turns, failures, approvals and questions. Notification previews stay off.")
-            .child(format!("Native compiled: {} · Bridge ready: {} · Core outbox deliveryConnected: {}", self.status.native_compiled, self.status.bridge_ready, self.status.core_delivery_connected))
-            .child(format!("Permission: {:?} · Outstanding: {}", self.status.permission, self.status.outstanding))
+            .child(if self.status.busy { "Updating notification settings…" } else {
+                match self.status.permission {
+                    Permission::Authorized => "System notifications are allowed.",
+                    Permission::NotDetermined => "Choose Allow notifications to set up system alerts.",
+                    Permission::Denied => "Notifications are turned off in system settings.",
+                    Permission::Unsupported => "Desktop notifications are unavailable in this build.",
+                    Permission::Unknown => "Refresh status to check system notification access.",
+                }
+            })
+            .when(cfg!(windows), |view| view.child("Windows requires a Start menu shortcut. Allow notifications creates one for Coincide Rust."))
             .child(div().flex().gap_2()
                 .child(Button::new("notification-enabled").label(if enabled { "Disable notifications" } else { "Enable notifications" }).disabled(self.status.busy || self.status.stopped || (!enabled && !self.status.native_compiled)).on_click(cx.listener(move |this, _, _, cx| this.action(Action::Configure(!enabled), cx))))
                 .child(Button::new("notification-permission").label("Allow notifications").disabled(self.status.busy || self.status.stopped || !self.status.native_compiled).on_click(cx.listener(|this, _, _, cx| this.action(Action::AllowNotifications, cx))))
