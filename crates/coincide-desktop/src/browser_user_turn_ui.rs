@@ -97,6 +97,7 @@ impl Coincide {
             .and_then(|browser| browser.active_viewport(thread));
         let area = self.browser_page_bounds.clone();
         let measured = area.get();
+        eprintln!("browser_page thread={thread} viewport={viewport:?} measured={measured:?}");
         let scale = viewport.map_or(1., |size| viewport_scale(size, measured));
         let zoom = f64::from(scale);
         // WebKitGTK does not apply a page zoom, so a fixed viewport is laid out
