@@ -2,11 +2,13 @@
 """Actual native WebView workflow against an owned loopback HTTP fixture.
 
 Imported by isolated native CI smoke only. No external URL, saved login, cookie,
-password, upload, screenshot or arbitrary-script tool command is used.
+password, upload or arbitrary-script tool command is used. Screenshots capture
+only this fixture's own WebView, never the desktop.
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
+import struct
 import threading
 import time
 import uuid
@@ -82,6 +84,18 @@ def exercise_browser(rpc, thread_id, capture_visible):
         result = request("read", tab, **values)
         assert expected in json.dumps(result, ensure_ascii=False), result
         return result
+    def screenshot(tab, full_page):
+        values = dict(fullPage=True) if full_page else {}
+        shot = request("screenshot", tab, **values)
+        assert shot.get("mimeType") == "image/png" and shot.get("tab") == tab, shot
+        assert shot.get("fullPage") is full_page and shot.get("truncated") is False, shot
+        with open(shot["path"], "rb") as image:
+            header = image.read(24)
+        # PNG signature, then the IHDR width and height.
+        assert header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR", shot
+        width, height = struct.unpack(">II", header[16:24])
+        assert (width, height) == (shot["width"], shot["height"]) and 0 < width <= 1600, shot
+        return {"fullPage": full_page, "width": width, "height": height}
     try:
         first = request("new-tab", url=origin + "/")["tab"]
         tabs.append(first)
@@ -108,6 +122,8 @@ def exercise_browser(rpc, thread_id, capture_visible):
         wait_text(second, marker)
         request("select-tab", first)
         wait_text(first, "NativeBrowserSecondReady")
+        assert "screenshots" not in request("tabs")["unsupported"]
+        shots = [screenshot(first, False), screenshot(first, True)]
         capture_visible()
         request("hide", first)
         request("close-tab", second)
@@ -131,6 +147,7 @@ def exercise_browser(rpc, thread_id, capture_visible):
         assert request("tabs").get("tabs") == [], "Key fixture must close every created tab"
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
                 "operations": receipts, "externalNetwork": False, "tabsClosed": True,
+                "nativeScreenshots": shots,
                 "nativeDialogs": dialog_report, "nativeKeys": key_report}
     except BaseException as error:
         # Diagnose the same failed operation without navigation, repeated input

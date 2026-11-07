@@ -1231,6 +1231,7 @@ dependencies = [
  "gpui-pre",
  "gpui-webview",
  "gtk",
+ "image",
  "javascriptcore-rs",
  "lb-wry",
  "libc",

@@ -981,8 +981,14 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Shared CLI/API supports project CRUD, settings-document patches, thread actions,
   Codex/Claude/Grok/OpenCode/Cursor selection, pending approvals/questions, and explicit responses.
 - Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
-  uploads, passwords, passkeys, dialogs, screenshots and native-key actions
-  still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
+  uploads, passwords, passkeys, dialogs and native-key actions
+  still need implementation. Existing Swift browser profiles are not migrated.
+  Native screenshots (viewport, or fullPage up to 20,000 CSS pixels with
+  truncated, at most 1600 pixels wide) render the selected tab's own WebView
+  on macOS, Windows and Linux; password, credential, one-time-code and card
+  fields are hidden and redacted. The panel must be shown; Linux refuses full
+  pages beyond its native surface budget. A fresh-runner fixture checks pixels
+  on all three; only main-document fields (with open shadow roots) are masked. Native downloads have bounded,
   thread-scoped session history and private verified destinations on Mac. Linux
   downloads fail closed because upstream shared-profile callbacks misattribute tabs.
   Progress/cancel/resume, blob downloads and persistent history remain. Same-origin

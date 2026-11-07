@@ -143,6 +143,29 @@ jobs:
           set -o pipefail
           target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
           grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh macOS runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+        run: |
+          set -o pipefail
+          target/debug/examples/native_browser_screenshot | tee "$RUNNER_TEMP/native-screenshot.log"
+          grep -F 'synthetic native screenshot: PASS' "$RUNNER_TEMP/native-screenshot.log"
+      - name: Retain native macOS browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Retain native macOS credential SDK evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -241,6 +264,30 @@ jobs:
           & target/debug/examples/native_credential_sdk.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-fill-sdk.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/native-fill-sdk.log" -SimpleMatch 'synthetic native fill: PASS')) { throw 'Expected actual native private fill and callback-owner return' }
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh Windows runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+        run: |
+          & target/debug/examples/native_browser_screenshot.exe | Tee-Object -FilePath "$env:RUNNER_TEMP/native-screenshot.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-screenshot.log" -SimpleMatch 'synthetic native screenshot: PASS')) { throw 'Expected actual native screenshots, redaction and callback-owner return' }
+      - name: Retain native Windows browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Attempt actual Windows native render input and private Store restart
         shell: pwsh
         run: ./scripts/test-rust-native-ui-windows.ps1 -Binary target/debug/coincide-rust.exe -Client target/debug/coincide-rs.exe -Artifacts "$env:RUNNER_TEMP/windows-native-ui"
@@ -401,6 +448,38 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_credential_sdk | tee "$RUNNER_TEMP/native-fill-sdk.log"
           grep -F 'synthetic native fill: PASS' "$RUNNER_TEMP/native-fill-sdk.log"
+      # Independent native fixture: it still reports when an unrelated earlier
+      # fixture in this job failed. The job result keeps every failure.
+      - name: Install native browser screenshot fixture dependencies
+        if: ${{ !cancelled() }}
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 mesa-vulkan-drivers
+      - name: Build synthetic native browser screenshot executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p coincide-desktop --example native_browser_screenshot --locked
+      - name: Verify native browser screenshots on a fresh Linux runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        env:
+          COINCIDE_SYNTHETIC_SCREENSHOT: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+          GPUI_X11_SCALE_FACTOR: '1'
+        run: |
+          set -o pipefail
+          VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          export VK_ICD_FILENAMES
+          test -n "$VK_ICD_FILENAMES"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' target/debug/examples/native_browser_screenshot | tee "$RUNNER_TEMP/native-screenshot.log"
+          grep -F 'synthetic native screenshot: PASS' "$RUNNER_TEMP/native-screenshot.log"
+      - name: Retain native Linux browser screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-native-browser-screenshot
+          path: |
+            ${{ runner.temp }}/native-screenshot.log
+            ${{ runner.temp }}/owned-synthetic-screenshot-*/screenshots/*.png
+          if-no-files-found: warn
       - name: Exercise real X11 UI and private Store restart
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' /usr/bin/python3 scripts/test-rust-native-ui-linux.py --binary target/debug/coincide-rust --artifacts "$RUNNER_TEMP/linux-native-ui"
       - name: Retain native Linux UI evidence

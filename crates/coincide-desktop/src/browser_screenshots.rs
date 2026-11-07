@@ -45,6 +45,7 @@ struct Pending {
     raw: Option<Receiver<Result<screenshot_native::Pixels, &'static str>>>,
     encoded: Option<Receiver<Result<Artifact, String>>>,
     artifact: Option<Artifact>,
+    truncated: bool,
     failure: Option<String>,
     // Pending worker accounting is released ONLY after WorkerOwner reports the
     // real thread/observer join, never on result-channel delivery or timeout.
@@ -69,6 +70,7 @@ impl Owner {
             .as_ref()
             .is_some_and(|j| j.binding.thread == thread && j.binding.tab == tab)
     }
+    #[allow(clippy::too_many_arguments)] // Each is a distinct retained native source binding.
     pub fn begin(
         &mut self,
         request: BrowserRequest,
@@ -104,6 +106,7 @@ impl Owner {
             raw: Some(raw),
             encoded: None,
             artifact: None,
+            truncated: false,
             failure: None,
             worker_ack: None,
             native_returned: native_returned.clone(),
@@ -148,6 +151,7 @@ impl Owner {
                     job.raw = None;
                     match result {
                         Ok(pixels) if job.binding.current() => {
+                            job.truncated = pixels.truncated;
                             let directory = self.directory.clone();
                             let cancelled = job.binding.cancelled.clone();
                             let navigation = job.binding.navigation.clone();
@@ -171,17 +175,18 @@ impl Owner {
                                                 &pixels.geometry,
                                             )?
                                         }
-                                        #[cfg(target_os = "linux")]
-                                        screenshot_native::Data::Argb32 {
+                                        screenshot_native::Data::Raw {
                                             width,
                                             height,
                                             stride,
                                             bytes,
-                                        } => browser_screenshot::redact_argb32(
+                                            channels,
+                                        } => browser_screenshot::redact_raw(
                                             width,
                                             height,
                                             stride,
                                             &bytes,
+                                            channels,
                                             &pixels.geometry,
                                         )?,
                                     };
@@ -252,7 +257,7 @@ impl Owner {
             && job.artifact.as_ref().is_some_and(Artifact::matches)
         {
             let artifact = job.artifact.take().unwrap();
-            json!({"path":artifact.path(),"mimeType":"image/png","tab":job.binding.tab,"width":artifact.width(),"height":artifact.height(),"truncated":false,"fullPage":matches!(job.request.action,coincide_core::browser_protocol::BrowserAction::Screenshot{full_page:true})})
+            json!({"path":artifact.path(),"mimeType":"image/png","tab":job.binding.tab,"width":artifact.width(),"height":artifact.height(),"truncated":job.truncated,"fullPage":matches!(job.request.action,coincide_core::browser_protocol::BrowserAction::Screenshot{full_page:true})})
         } else {
             let cleanup = job.artifact.take().map(Artifact::discard).transpose();
             json!({"error":job.failure.unwrap_or_else(||"Snapshot source changed or was cancelled".into()),"cleanupRetained":cleanup.is_err()})
@@ -295,6 +300,7 @@ mod tests {
             raw: Some(receiver),
             encoded: None,
             artifact: None,
+            truncated: false,
             failure: None,
             worker_ack: None,
             native_returned: Arc::new(AtomicBool::new(delivered)),
@@ -306,7 +312,56 @@ mod tests {
         screenshot_native::Pixels {
             data: screenshot_native::Data::Png(png),
             geometry: browser_screenshot::Geometry::checked(2., 2., vec![]).unwrap(),
+            truncated: false,
         }
+    }
+    #[test]
+    fn published_reply_reports_truncation_and_contains_only_redacted_raw_pixels() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut owner = Owner::new(temp.path().join("snapshots"));
+        let callbacks = Callbacks::default();
+        let mask = browser_screenshot::Rect {
+            x: 0.,
+            y: 0.,
+            width: 1.,
+            height: 1.,
+        };
+        pending(&mut owner, true)
+            .send(Ok(screenshot_native::Pixels {
+                data: screenshot_native::Data::Raw {
+                    width: 6,
+                    height: 2,
+                    stride: 24,
+                    bytes: vec![255; 48],
+                    channels: browser_screenshot::Channels::cairo_argb32(),
+                },
+                geometry: browser_screenshot::Geometry::checked(6., 2., vec![mask]).unwrap(),
+                truncated: true,
+            }))
+            .unwrap_or_else(|_| panic!("private callback receiver"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let reply = loop {
+            if let Some(reply) = owner.poll(&callbacks, |_| true) {
+                break reply;
+            }
+            assert!(Instant::now() < deadline, "owned encoder must return");
+            std::thread::yield_now();
+        };
+        assert_eq!(reply.result["truncated"], true);
+        assert_eq!(reply.result["fullPage"], false);
+        assert_eq!(
+            (
+                reply.result["width"].as_u64(),
+                reply.result["height"].as_u64()
+            ),
+            (Some(6), Some(2))
+        );
+        let image = image::open(reply.result["path"].as_str().unwrap())
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(image.get_pixel(0, 0).0, [32, 32, 32, 255]);
+        assert_eq!(image.get_pixel(5, 1).0, [255; 4]);
+        assert_eq!(callbacks.pending(), 0);
     }
     #[test]
     fn screenshot_cancel_waits_for_actual_worker_return_and_discards_stale_artifact() {

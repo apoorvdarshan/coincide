@@ -15,11 +15,20 @@ use serde::Deserialize;
 use std::io::{Cursor, Write};
 
 pub const MAX_OUTPUT_WIDTH: u32 = 1600;
+/// Full-page captures cover the document up to this many CSS pixels (Swift parity).
 pub const MAX_CSS_HEIGHT: u32 = 20_000;
-pub const MAX_NATIVE_PIXELS: u64 = 8_000_000;
-pub const MAX_PNG_BYTES: usize = 16 * 1024 * 1024;
-const MAX_NATIVE_EDGE: u32 = 20_000;
+/// One 1600-pixel-wide, 20,000-pixel-tall image. Native SDKs are asked for at
+/// most this many pixels; a larger renderer result is refused before decoding.
+pub const MAX_NATIVE_PIXELS: u64 = 32_000_000;
+/// Cairo, X11 and Core Graphics image edges stay below this.
+pub const MAX_NATIVE_EDGE: u32 = 32_767;
+pub const MAX_PNG_BYTES: usize = 64 * 1024 * 1024;
 const MAX_MASKS: usize = 2048;
+const MAX_METRICS_BYTES: usize = 512 * 1024;
+// Pages may be far taller than any capture; metrics only bound arithmetic.
+const MAX_PAGE_COORDINATE: f64 = 100_000_000.;
+// Fractional geometry, antialiasing and SDK rounding must not expose borders.
+const MASK_GUARD: u32 = 2;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 /// Coordinates are CSS pixels in the native snapshot's original rectangle,
@@ -37,10 +46,99 @@ impl Rect {
     fn valid(self) -> bool {
         [self.x, self.y, self.width, self.height]
             .into_iter()
-            .all(|n| n.is_finite() && n.abs() <= 1_000_000.)
+            .all(|n| n.is_finite() && n.abs() <= MAX_PAGE_COORDINATE)
             && self.width >= 0.
             && self.height >= 0.
     }
+    /// Viewport-relative page rectangles become document-relative by adding
+    /// the scroll offset measured in the same private-world transaction.
+    pub fn translated(self, dx: f64, dy: f64) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            ..self
+        }
+    }
+}
+
+/// Private-world PREPARE result. Every number is hostile until checked;
+/// masks are viewport-relative CSS rectangles of sensitive fields.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Metrics {
+    pub inner_width: f64,
+    pub inner_height: f64,
+    pub client_width: f64,
+    pub client_height: f64,
+    pub document_width: f64,
+    pub document_height: f64,
+    pub scroll_x: f64,
+    pub scroll_y: f64,
+    pub device_pixel_ratio: f64,
+    pub masks: Vec<Rect>,
+}
+pub fn parse_metrics(text: &str) -> Result<Metrics> {
+    ensure!(
+        !text.is_empty() && text.len() <= MAX_METRICS_BYTES,
+        "Snapshot mask preparation failed"
+    );
+    let metrics: Metrics = serde_json::from_str(text)?;
+    let edge = f64::from(MAX_NATIVE_EDGE);
+    let viewport = [
+        metrics.inner_width,
+        metrics.inner_height,
+        metrics.client_width,
+        metrics.client_height,
+    ];
+    ensure!(
+        viewport
+            .iter()
+            .all(|n| n.is_finite() && *n > 0. && *n <= edge)
+            && [metrics.document_width, metrics.document_height]
+                .iter()
+                .all(|n| n.is_finite() && *n >= 0. && *n <= MAX_PAGE_COORDINATE)
+            && [metrics.scroll_x, metrics.scroll_y]
+                .iter()
+                .all(|n| n.is_finite() && n.abs() <= MAX_PAGE_COORDINATE)
+            && metrics.device_pixel_ratio.is_finite()
+            && (0.25..=8.).contains(&metrics.device_pixel_ratio),
+        "Snapshot page metrics exceed bounds"
+    );
+    ensure!(
+        metrics.masks.len() <= MAX_MASKS && metrics.masks.iter().all(|mask| mask.valid()),
+        "Invalid snapshot privacy mask"
+    );
+    Ok(metrics)
+}
+
+/// Swift parity: a full page is the document up to 20,000 CSS pixels tall and
+/// never shorter than the viewport. The flag reports a longer document.
+pub fn full_page_height(viewport: f64, document: f64) -> (f64, bool) {
+    let height = document.max(viewport).min(f64::from(MAX_CSS_HEIGHT));
+    (height, document > height)
+}
+
+/// Device pixels per CSS pixel for a capture rectangle: never above the
+/// display scale, at most 1600 pixels wide, and within the allocation budget.
+pub fn output_scale(width: f64, height: f64, device: f64) -> Result<f64> {
+    ensure!(
+        [width, height, device]
+            .iter()
+            .all(|n| n.is_finite() && *n > 0.)
+            && width <= f64::from(MAX_NATIVE_EDGE)
+            && height <= f64::from(MAX_CSS_HEIGHT)
+            && device <= 8.,
+        "Snapshot capture rectangle exceeds bounds"
+    );
+    // Leave room for SDKs that round each edge up by a device pixel.
+    let budget = MAX_NATIVE_PIXELS as f64 * 0.99;
+    let scale = device
+        .min(f64::from(MAX_OUTPUT_WIDTH) / width)
+        .min((budget / (width * height)).sqrt())
+        .min((f64::from(MAX_NATIVE_EDGE) - 2.) / height)
+        .min((f64::from(MAX_NATIVE_EDGE) - 2.) / width);
+    ensure!(scale.is_finite() && scale > 0., "Snapshot scale is invalid");
+    Ok(scale)
 }
 
 /// This is intentionally not serializable and contains no authority or path.
@@ -74,9 +172,15 @@ impl Geometry {
             masks,
         })
     }
+    pub fn width(&self) -> f64 {
+        self.width
+    }
+    pub fn height(&self) -> f64 {
+        self.height
+    }
     /// Native allocation must be bounded *before* asking the SDK to render.
-    /// A renderer-supplied size alone cannot satisfy that requirement. In
-    /// particular GTK FullDocument has no clipped/allocation-bounded overload.
+    /// A renderer-supplied size alone cannot satisfy that requirement; this
+    /// also refuses a result that no longer matches its layout rectangle.
     pub fn check_native_size(&self, width: u32, height: u32) -> Result<()> {
         ensure!(
             width > 0
@@ -86,7 +190,7 @@ impl Geometry {
                 && u64::from(width) * u64::from(height) <= MAX_NATIVE_PIXELS,
             "Native WebView snapshot allocation exceeds bounds"
         );
-        // SDK output may round a fractional point by at most one device pixel.
+        // SDK output may round each edge by up to two device pixels.
         let sx = f64::from(width) / self.width;
         let sy = f64::from(height) / self.height;
         ensure!(
@@ -94,7 +198,7 @@ impl Geometry {
                 && sy.is_finite()
                 && sx > 0.
                 && sy > 0.
-                && (sx - sy).abs() <= 1. / self.width + 1. / self.height,
+                && (sx - sy).abs() <= 2. / self.width + 2. / self.height,
             "Native snapshot no longer matches its layout rectangle"
         );
         Ok(())
@@ -115,6 +219,52 @@ impl Png {
     }
     pub fn height(&self) -> u32 {
         self.height
+    }
+}
+
+/// Byte offsets of each channel in one native pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Channels {
+    pub red: usize,
+    pub green: usize,
+    pub blue: usize,
+    pub alpha: Option<usize>,
+    pub bytes_per_pixel: usize,
+    pub premultiplied: bool,
+}
+impl Channels {
+    /// Cairo ARGB32 is a native-endian premultiplied 32-bit word.
+    pub const fn cairo_argb32() -> Self {
+        if cfg!(target_endian = "little") {
+            Self {
+                red: 2,
+                green: 1,
+                blue: 0,
+                alpha: Some(3),
+                bytes_per_pixel: 4,
+                premultiplied: true,
+            }
+        } else {
+            Self {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: Some(0),
+                bytes_per_pixel: 4,
+                premultiplied: true,
+            }
+        }
+    }
+    fn valid(self) -> bool {
+        let mut used = [self.red, self.green, self.blue].to_vec();
+        used.extend(self.alpha);
+        (3..=8).contains(&self.bytes_per_pixel)
+            && used.iter().all(|offset| *offset < self.bytes_per_pixel)
+            && used
+                .iter()
+                .enumerate()
+                .all(|(i, offset)| !used[..i].contains(offset))
+            && (self.alpha.is_some() || !self.premultiplied)
     }
 }
 
@@ -139,8 +289,55 @@ pub fn redact_png(bytes: &[u8], geometry: &Geometry) -> Result<Png> {
     redact_rgba(width, height, rgba, geometry)
 }
 
-/// Cairo ARGB32 is native-endian premultiplied data. Convert on the owned
-/// encoder worker; never expose hidden RGB from fully transparent pixels.
+/// Native row-strided pixels, converted on the owned encoder worker. Fully
+/// transparent premultiplied pixels never expose hidden RGB.
+pub fn redact_raw(
+    width: u32,
+    height: u32,
+    stride: usize,
+    bytes: &[u8],
+    channels: Channels,
+    geometry: &Geometry,
+) -> Result<Png> {
+    geometry.check_native_size(width, height)?;
+    ensure!(channels.valid(), "Unsupported native pixel layout");
+    let row = width as usize * channels.bytes_per_pixel;
+    ensure!(
+        stride >= row
+            && stride
+                .checked_mul(height as usize - 1)
+                .and_then(|n| n.checked_add(row))
+                .is_some_and(|needed| bytes.len() >= needed)
+            && bytes.len() <= stride.saturating_mul(height as usize),
+        "Invalid native snapshot pixels"
+    );
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height as usize {
+        let line = &bytes[y * stride..y * stride + row];
+        for pixel in line.chunks_exact(channels.bytes_per_pixel) {
+            let alpha = channels.alpha.map_or(255, |offset| pixel[offset]);
+            let channel = |offset: usize| {
+                let value = u16::from(pixel[offset]);
+                if !channels.premultiplied || alpha == 255 {
+                    value as u8
+                } else if alpha == 0 {
+                    0
+                } else {
+                    ((value * 255 + u16::from(alpha) / 2) / u16::from(alpha)).min(255) as u8
+                }
+            };
+            rgba.extend_from_slice(&[
+                channel(channels.red),
+                channel(channels.green),
+                channel(channels.blue),
+                alpha,
+            ]);
+        }
+    }
+    redact_rgba(width, height, rgba, geometry)
+}
+
+/// Cairo ARGB32 convenience for exact-length surfaces.
 pub fn redact_argb32(
     width: u32,
     height: u32,
@@ -148,30 +345,18 @@ pub fn redact_argb32(
     bytes: &[u8],
     geometry: &Geometry,
 ) -> Result<Png> {
-    geometry.check_native_size(width, height)?;
     ensure!(
-        stride >= width as usize * 4
-            && stride.checked_mul(height as usize) == Some(bytes.len())
-            && bytes.len() <= MAX_NATIVE_PIXELS as usize * 4,
+        stride.checked_mul(height as usize) == Some(bytes.len()),
         "Invalid native ARGB32 pixels"
     );
-    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-    for row in bytes.chunks_exact(stride) {
-        for pixel in row[..width as usize * 4].as_chunks::<4>().0 {
-            let argb = u32::from_ne_bytes(*pixel);
-            let alpha = (argb >> 24) as u8;
-            let channel = |shift: u32| {
-                let value = ((argb >> shift) & 255u32) as u16;
-                if alpha == 0 {
-                    0
-                } else {
-                    ((value * 255 + u16::from(alpha) / 2) / u16::from(alpha)).min(255) as u8
-                }
-            };
-            rgba.extend_from_slice(&[channel(16), channel(8), channel(0), alpha]);
-        }
-    }
-    redact_rgba(width, height, rgba, geometry)
+    redact_raw(
+        width,
+        height,
+        stride,
+        bytes,
+        Channels::cairo_argb32(),
+        geometry,
+    )
 }
 
 pub fn redact_rgba(width: u32, height: u32, mut rgba: Vec<u8>, geometry: &Geometry) -> Result<Png> {
@@ -183,10 +368,8 @@ pub fn redact_rgba(width: u32, height: u32, mut rgba: Vec<u8>, geometry: &Geomet
     let sx = f64::from(width) / geometry.width;
     let sy = f64::from(height) / geometry.height;
     for mask in &geometry.masks {
-        // Include a one-device-pixel guard around each sensitive rectangle;
-        // fractional geometry and antialiasing must not expose border pixels.
-        let x0 = (mask.x * sx).floor().max(0.) as u32;
-        let y0 = (mask.y * sy).floor().max(0.) as u32;
+        let x0 = (mask.x * sx).floor().max(0.).min(f64::from(width)) as u32;
+        let y0 = (mask.y * sy).floor().max(0.).min(f64::from(height)) as u32;
         let x1 = ((mask.x + mask.width) * sx)
             .ceil()
             .max(0.)
@@ -198,8 +381,8 @@ pub fn redact_rgba(width: u32, height: u32, mut rgba: Vec<u8>, geometry: &Geomet
         if x0 >= x1 || y0 >= y1 {
             continue;
         }
-        for y in y0.saturating_sub(1)..y1.saturating_add(1).min(height) {
-            for x in x0.saturating_sub(1)..x1.saturating_add(1).min(width) {
+        for y in y0.saturating_sub(MASK_GUARD)..y1.saturating_add(MASK_GUARD).min(height) {
+            for x in x0.saturating_sub(MASK_GUARD)..x1.saturating_add(MASK_GUARD).min(width) {
                 let offset = (y as usize * width as usize + x as usize) * 4;
                 rgba[offset..offset + 4].copy_from_slice(&[32, 32, 32, 255]);
             }
@@ -237,7 +420,7 @@ struct BoundedPng(Vec<u8>);
 impl Write for BoundedPng {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > MAX_PNG_BYTES.saturating_sub(self.0.len()) {
-            return Err(std::io::Error::other("Snapshot PNG exceeds 16 MiB"));
+            return Err(std::io::Error::other("Snapshot PNG exceeds 64 MiB"));
         }
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -250,21 +433,59 @@ impl Write for BoundedPng {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn decode(png: &Png) -> image::RgbaImage {
+        image::load_from_memory_with_format(png.bytes(), ImageFormat::Png)
+            .unwrap()
+            .into_rgba8()
+    }
     #[test]
     fn native_argb_premultiplication_and_transparent_pixels_are_safe() {
         let geometry = Geometry::checked(2., 1., vec![]).unwrap();
         let bytes = [0x80804020u32.to_ne_bytes(), 0x00ffffffu32.to_ne_bytes()].concat();
         let png = redact_argb32(2, 1, 8, &bytes, &geometry).unwrap();
-        let image = image::load_from_memory_with_format(png.bytes(), ImageFormat::Png)
-            .unwrap()
-            .into_rgba8();
+        let image = decode(&png);
         assert_eq!(image.get_pixel(0, 0).0, [255, 128, 64, 128]);
         assert_eq!(image.get_pixel(1, 0).0, [0; 4]);
         assert!(redact_argb32(2, 1, 4, &bytes, &geometry).is_err());
     }
     #[test]
+    fn strided_byte_orders_ignore_row_padding_and_reject_short_or_aliased_layouts() {
+        let geometry = Geometry::checked(2., 2., vec![]).unwrap();
+        // BGRA rows padded to 12 bytes; padding must never become pixels.
+        let bytes = [
+            [3, 2, 1, 255, 6, 5, 4, 255, 9, 9, 9, 9],
+            [12, 11, 10, 255, 15, 14, 13, 255, 9, 9, 9, 9],
+        ]
+        .concat();
+        let bgra = Channels {
+            red: 2,
+            green: 1,
+            blue: 0,
+            alpha: Some(3),
+            bytes_per_pixel: 4,
+            premultiplied: false,
+        };
+        let image = decode(&redact_raw(2, 2, 12, &bytes, bgra, &geometry).unwrap());
+        assert_eq!(image.get_pixel(0, 0).0, [1, 2, 3, 255]);
+        assert_eq!(image.get_pixel(1, 1).0, [13, 14, 15, 255]);
+        let rgb = Channels {
+            red: 0,
+            green: 1,
+            blue: 2,
+            alpha: None,
+            bytes_per_pixel: 3,
+            premultiplied: false,
+        };
+        let image = decode(&redact_raw(2, 2, 6, &[7; 12], rgb, &geometry).unwrap());
+        assert_eq!(image.get_pixel(1, 1).0, [7, 7, 7, 255]);
+        assert!(redact_raw(2, 2, 12, &bytes[..19], bgra, &geometry).is_err());
+        assert!(redact_raw(2, 2, 7, &bytes, bgra, &geometry).is_err());
+        let aliased = Channels { red: 1, ..bgra };
+        assert!(redact_raw(2, 2, 12, &bytes, aliased, &geometry).is_err());
+    }
+    #[test]
     fn hostile_geometry_and_native_allocation_refused_before_decode() {
-        for width in [f64::NAN, f64::INFINITY, -1., 0., 20_001.] {
+        for width in [f64::NAN, f64::INFINITY, -1., 0., 40_000.] {
             assert!(Geometry::checked(width, 1., vec![]).is_err());
         }
         assert!(Geometry::checked(10., 20_001., vec![]).is_err());
@@ -282,7 +503,7 @@ mod tests {
             .is_err()
         );
         let geometry = Geometry::checked(1000., 1000., vec![]).unwrap();
-        assert!(geometry.check_native_size(4000, 4000).is_err());
+        assert!(geometry.check_native_size(6000, 6000).is_err());
         assert!(geometry.check_native_size(1000, 999).is_ok());
         assert!(geometry.check_native_size(1000, 990).is_err());
         assert!(redact_png(b"not PNG", &geometry).is_err());
@@ -290,27 +511,26 @@ mod tests {
     #[test]
     fn masks_cover_fractional_edges_and_png_contains_only_redacted_pixels() {
         let geometry = Geometry::checked(
-            8.,
-            8.,
+            10.,
+            10.,
             vec![Rect {
-                x: 2.2,
-                y: 2.2,
+                x: 4.2,
+                y: 4.2,
                 width: 1.1,
                 height: 1.1,
             }],
         )
         .unwrap();
-        let png = redact_rgba(8, 8, vec![255; 8 * 8 * 4], &geometry).unwrap();
-        let image = image::load_from_memory_with_format(png.bytes(), ImageFormat::Png)
-            .unwrap()
-            .into_rgba8();
-        for y in 1..5 {
-            for x in 1..5 {
+        let png = redact_rgba(10, 10, vec![255; 10 * 10 * 4], &geometry).unwrap();
+        let image = decode(&png);
+        for y in 2..8 {
+            for x in 2..8 {
                 assert_eq!(image.get_pixel(x, y).0, [32, 32, 32, 255]);
             }
         }
-        assert_eq!(image.get_pixel(0, 0).0, [255; 4]);
-        assert_eq!((png.width(), png.height()), (8, 8));
+        assert_eq!(image.get_pixel(1, 1).0, [255; 4]);
+        assert_eq!(image.get_pixel(8, 8).0, [255; 4]);
+        assert_eq!((png.width(), png.height()), (10, 10));
     }
     #[test]
     fn bounded_resize_clipping_and_encoder_limit() {
@@ -327,10 +547,7 @@ mod tests {
         .unwrap();
         let png = redact_rgba(2000, 2, vec![255; 2000 * 2 * 4], &geometry).unwrap();
         assert_eq!((png.width(), png.height()), (1600, 2));
-        let image = image::load_from_memory_with_format(png.bytes(), ImageFormat::Png)
-            .unwrap()
-            .into_rgba8();
-        assert!(image.pixels().all(|p| p.0 == [32, 32, 32, 255]));
+        assert!(decode(&png).pixels().all(|p| p.0 == [32, 32, 32, 255]));
         let mut writer = BoundedPng(vec![0; MAX_PNG_BYTES - 1]);
         assert!(writer.write_all(&[1, 2]).is_err());
         assert_eq!(writer.0.len(), MAX_PNG_BYTES - 1);
@@ -343,5 +560,55 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn full_page_parity_height_truncation_and_output_scale_budget() {
+        assert_eq!(full_page_height(900., 500.), (900., false));
+        assert_eq!(full_page_height(900., 6000.), (6000., false));
+        assert_eq!(full_page_height(900., 20_000.), (20_000., false));
+        assert_eq!(full_page_height(900., 45_000.), (20_000., true));
+        // Viewport: Swift's min(1600 / scale, width) at the display scale.
+        assert_eq!(output_scale(1280., 800., 2.).unwrap(), 1.25);
+        assert_eq!(output_scale(600., 800., 2.).unwrap(), 2.);
+        assert_eq!(output_scale(600., 800., 1.).unwrap(), 1.);
+        // Full page: the allocation budget lowers the scale, never the height.
+        for (width, height, device) in [
+            (800., 20_000., 2.),
+            (1280., 20_000., 1.5),
+            (40., 20_000., 4.),
+        ] {
+            let scale = output_scale(width, height, device).unwrap();
+            let pixels = (width * scale).ceil() * (height * scale).ceil();
+            assert!(
+                pixels <= MAX_NATIVE_PIXELS as f64,
+                "{width}x{height}@{device}"
+            );
+            assert!((width * scale).ceil() <= f64::from(MAX_OUTPUT_WIDTH));
+            assert!((height * scale).ceil() <= f64::from(MAX_NATIVE_EDGE));
+        }
+        for invalid in [
+            (0., 1., 1.),
+            (1., 20_001., 1.),
+            (1., 1., f64::NAN),
+            (1., 1., 9.),
+        ] {
+            assert!(output_scale(invalid.0, invalid.1, invalid.2).is_err());
+        }
+    }
+    #[test]
+    fn metrics_are_closed_bounded_and_translate_to_document_coordinates() {
+        let text = r#"{"innerWidth":800,"innerHeight":600,"clientWidth":785,"clientHeight":600,"documentWidth":785,"documentHeight":4000,"scrollX":0,"scrollY":1200,"devicePixelRatio":2,"masks":[{"x":10,"y":20,"width":100,"height":30}]}"#;
+        let metrics = parse_metrics(text).unwrap();
+        assert_eq!(metrics.client_width, 785.);
+        let document = metrics.masks[0].translated(metrics.scroll_x, metrics.scroll_y);
+        assert_eq!((document.x, document.y), (10., 1220.));
+        assert!(parse_metrics("").is_err());
+        assert!(parse_metrics(&text.replace("\"masks\"", "\"path\":\"/tmp\",\"masks\"")).is_err());
+        assert!(parse_metrics(&text.replace("\"innerWidth\":800", "\"innerWidth\":0")).is_err());
+        assert!(
+            parse_metrics(&text.replace("\"devicePixelRatio\":2", "\"devicePixelRatio\":64"))
+                .is_err()
+        );
+        assert!(parse_metrics(&" ".repeat(MAX_METRICS_BYTES + 1)).is_err());
     }
 }

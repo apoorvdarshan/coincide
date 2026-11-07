@@ -459,6 +459,12 @@ impl BrowserController {
                     self.active.get(thread) == Some(&target),
                     "Select this tab before taking a screenshot"
                 );
+                // Native snapshots render the laid-out view; a hidden panel has
+                // no current size on every platform. Ask for show first.
+                ensure!(
+                    self.is_visible(thread),
+                    "Show the browser before taking a screenshot"
+                );
                 ensure!(
                     !self.has_pending_press(thread, &target)
                         && !self
@@ -1698,10 +1704,13 @@ impl BrowserController {
             "download-cancel",
             "download-resume",
             "cross-origin-frame-actions",
-            "full-page-screenshots-beyond-viewport",
             "passkeys",
         ];
-        if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        if !cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        )) {
             unsupported.push("screenshots");
         }
         if !cfg!(target_os = "linux") {

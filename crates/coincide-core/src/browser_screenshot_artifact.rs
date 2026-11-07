@@ -1,5 +1,6 @@
 //! Owned runtime artifact directory. No caller-supplied filename, adoption of
-//! existing files, recursive cleanup or deletion inferred from a timeout.
+//! foreign files, recursive cleanup or deletion inferred from a timeout. Only
+//! older generated `UUID.png` artifacts rotate out, newest kept.
 use super::Png;
 use crate::native_file::{self, Identity};
 use anyhow::{Result, ensure};
@@ -9,6 +10,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+const MAX_ENTRIES: usize = 32;
+const MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct Directory {
     path: PathBuf,
@@ -86,12 +90,20 @@ impl Directory {
     }
     pub fn write(self: &Arc<Self>, png: &Png) -> Result<Artifact> {
         ensure!(self.matches(), "Snapshot runtime directory changed");
-        let mut bytes = 0u64;
+        ensure!(
+            png.bytes().len() as u64 <= MAX_BYTES,
+            "Snapshot exceeds the runtime budget"
+        );
+        let mut owned = Vec::new();
         for (count, entry) in std::fs::read_dir(&self.path)?.enumerate() {
-            ensure!(count < 64, "Snapshot runtime artifact count exceeds limit");
+            ensure!(count < 256, "Snapshot runtime artifact count exceeds limit");
             let entry = entry?;
             let path = entry.path();
             let metadata = std::fs::symlink_metadata(&path)?;
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned);
             ensure!(
                 metadata.is_file()
                     && native_file::link_target(&path)?.is_none()
@@ -102,13 +114,28 @@ impl Directory {
                         .is_some_and(|stem| uuid::Uuid::parse_str(stem).is_ok()),
                 "Snapshot runtime contains an unowned entry"
             );
-            bytes = bytes
-                .checked_add(metadata.len())
-                .ok_or_else(|| anyhow::anyhow!("Snapshot runtime size overflow"))?;
-            ensure!(
-                bytes + png.bytes().len() as u64 <= 128 * 1024 * 1024,
-                "Snapshot runtime exceeds 128 MiB budget"
-            );
+            owned.push((
+                metadata.modified()?,
+                name.expect("checked UTF-8 UUID name"),
+                metadata.len(),
+            ));
+        }
+        // Like Swift's fixed preview files, older generated screenshots are
+        // replaced: keep the newest ones within the count and byte budget.
+        owned.sort();
+        let mut bytes = owned
+            .iter()
+            .try_fold(0u64, |total, (_, _, len)| total.checked_add(*len))
+            .ok_or_else(|| anyhow::anyhow!("Snapshot runtime size overflow"))?;
+        let mut kept = owned.len();
+        for (_, name, len) in &owned {
+            if kept < MAX_ENTRIES && bytes + png.bytes().len() as u64 <= MAX_BYTES {
+                break;
+            }
+            ensure!(self.matches(), "Snapshot runtime directory changed");
+            self.remove(name)?;
+            kept -= 1;
+            bytes -= len;
         }
         ensure!(self.matches(), "Snapshot runtime directory changed");
         let name = format!("{}.png", uuid::Uuid::new_v4());
@@ -161,6 +188,23 @@ impl Directory {
         Ok(artifact)
     }
 }
+impl Directory {
+    /// Removes one generated `UUID.png` by name inside the verified directory.
+    fn remove(&self, name: &str) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let name = std::ffi::CString::new(name)?;
+            ensure!(
+                unsafe { libc::unlinkat(self.directory.as_raw_fd(), name.as_ptr(), 0) } == 0,
+                "Snapshot cleanup did not return success"
+            );
+        }
+        #[cfg(not(unix))]
+        std::fs::remove_file(self.path.join(name))?;
+        Ok(())
+    }
+}
 pub struct Artifact {
     directory: Arc<Directory>,
     name: String,
@@ -190,19 +234,7 @@ impl Artifact {
             self.matches(),
             "Snapshot cleanup retained a changed artifact"
         );
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            let name = std::ffi::CString::new(self.name)?;
-            ensure!(
-                unsafe { libc::unlinkat(self.directory.directory.as_raw_fd(), name.as_ptr(), 0) }
-                    == 0,
-                "Snapshot cleanup did not return success"
-            );
-        }
-        #[cfg(not(unix))]
-        std::fs::remove_file(self.path())?;
-        Ok(())
+        self.directory.remove(&self.name)
     }
 }
 
@@ -234,6 +266,25 @@ mod tests {
         assert!(artifact.discard().is_err());
         assert_eq!(std::fs::read(&artifact_path).unwrap(), b"newer file");
         assert_eq!(std::fs::read(&replacement).unwrap(), b"preserve");
+    }
+    #[test]
+    fn generated_artifacts_rotate_within_count_budget_and_keep_newest() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("screenshots");
+        let root = Directory::open(&path).unwrap();
+        let png = super::super::redact_rgba(
+            1,
+            1,
+            vec![0; 4],
+            &super::super::Geometry::checked(1., 1., vec![]).unwrap(),
+        )
+        .unwrap();
+        let mut last = None;
+        for _ in 0..MAX_ENTRIES + 3 {
+            last = Some(root.write(&png).unwrap().path());
+        }
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), MAX_ENTRIES);
+        assert!(last.unwrap().exists());
     }
     #[test]
     fn explicit_discard_removes_only_generated_artifact() {
