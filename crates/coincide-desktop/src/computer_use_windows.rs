@@ -663,6 +663,8 @@ impl Backend for NativeBackend {
                 send_key(key)?;
                 Ok(NativeResult::Done)
             }
+            // Not listed in extended_tools; the broker never sends these here.
+            NativeCall::Extended(_) => Err(Failure::Unsupported),
             NativeCall::Point { pid, window, x, y } => {
                 let observed = self
                     .observed

@@ -76,8 +76,8 @@ The bridge confirms assignments after input/change handlers and never submits.
 Its completion is only a boolean/coarse failure, never field values or NSError
 text. Two outstanding native fills cap callback retention if a renderer stalls.
 
-Only the supported macOS backend is enabled. Linux and Windows remain unavailable
-for native credential filling. Filling requires native approval; no agent API can
+The macOS, Linux and Windows private browser backends are enabled after native
+SDK acceptance. Unsupported SDKs still fail closed during target construction. Filling requires native approval; no agent API can
 approve or provide a secret-fill command. The native browser clears and suppresses
 console capture for the approved document until navigation completes, reporting
 `credentialCaptureSuppressed` to callers. Console suppression wiring, visual
@@ -88,3 +88,18 @@ A destination necessarily receives its filled DOM values. The bridge does not
 promise containment of a hostile site deliberately reflecting values into visible
 content or transmitting its own fields. It does not expose an arbitrary-script
 credential API, perform a real login, support passkeys, or fill cross-origin frames.
+
+## Three-host runner acceptance — 2026-11-07
+
+Rust run [42353376575](https://github.com/apoorvdarshan/coincide/actions/runs/42353376575),
+head `f4249ba415ee9a07985218e8bd52720180e44f2b`, passed the production
+`native_credential_sdk` fixture on macOS, WebKitGTK and WebView2. Each job
+reported private argument delivery, an actual native isolated world,
+changed-source denial and actual callback-owner return. Native SDK deallocation
+remains unconfirmed. These checks used only synthetic vault records and fresh
+runner-owned profiles; they do not establish approval UI, accessibility, real
+vault or complete login acceptance. Human approval, private permits, exact
+origin/document/deadline guards and unsupported-SDK refusal remain mandatory.
+
+Windows vault CLI execution is a separate capability; enabling the validated
+browser sink does not implement process ownership for a password-manager CLI.

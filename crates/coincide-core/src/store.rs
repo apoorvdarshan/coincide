@@ -51,6 +51,8 @@ mod native_ui_selection;
 #[path = "store_sidebar_lifecycle.rs"]
 mod sidebar_lifecycle;
 pub(crate) use sidebar_lifecycle::SidebarRow;
+#[path = "store_message_search.rs"]
+mod store_message_search;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
 pub(crate) use store_thread_delete::bot_lifecycle::{BotLifecycle, BotLifecycleUndo};
@@ -904,6 +906,20 @@ impl Store {
             [id],
             |r| r.get(0),
         )?)
+    }
+
+    /// The imported conversation that captured `source_key`, if it still exists.
+    pub fn imported_thread_for_source(&self, source_key: &str) -> Result<Option<String>> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT t.id FROM threads t JOIN imported_threads i ON i.id=t.id \
+                 WHERE json_valid(t.document) \
+                 AND json_extract(t.document,'$.importedSession.sourceKey')=?1 COLLATE NOCASE LIMIT 1",
+                [source_key],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     pub fn original(&self, path: &str) -> Result<Option<Vec<u8>>> {

@@ -12,11 +12,13 @@ fn session_import_capabilities_match_platform_support() {
     let mut engine = Engine::new(Store::open(&directory.path().join("store.sqlite")).unwrap());
     let reply = call(&mut engine, "app.capabilities", json!({}));
     let methods = reply["result"].as_array().unwrap();
+    // Windows opens sources through pinned ancestor handles instead of openat.
+    let supported = cfg!(any(unix, windows));
     for method in ["cli.sessions.preview", "cli.sessions.import"] {
-        assert_eq!(methods.iter().any(|value| value == method), cfg!(unix));
+        assert_eq!(methods.iter().any(|value| value == method), supported);
         let response = call(&mut engine, method, json!({}));
         let error = response["error"]["message"].as_str().unwrap();
-        if cfg!(unix) {
+        if supported {
             assert!(error.contains("Missing"), "{error}");
         } else {
             assert!(error.contains("not supported"), "{error}");
@@ -24,11 +26,17 @@ fn session_import_capabilities_match_platform_support() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn public_import_changes_revision_once_preserves_source_and_cannot_execute() {
     let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().canonicalize().unwrap();
+    // macOS temporary folders sit behind a /var symlink, which import refuses;
+    // Windows canonical paths are verbatim, so keep the plain one there.
+    let root = if cfg!(windows) {
+        directory.path().to_path_buf()
+    } else {
+        directory.path().canonicalize().unwrap()
+    };
     let path = root.join("session.jsonl");
     let bytes = [
         json!({"type":"session_meta","payload":{"id":"00000000-0000-4000-8000-000000000001","cwd":"/synthetic","unknown":{"preserve":true}}}),

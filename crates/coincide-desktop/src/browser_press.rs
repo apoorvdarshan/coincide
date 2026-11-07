@@ -102,6 +102,11 @@ impl Pending {
     }
 }
 impl BrowserController {
+    pub(super) fn has_pending_press(&self, thread: &str, tab: &str) -> bool {
+        self.presses
+            .values()
+            .any(|pending| pending.binding.thread == thread && pending.binding.tab == tab)
+    }
     fn press_binding(&self, thread: &str, tab: &str, cx: &App) -> Option<Binding> {
         let view = self.tabs.get(thread)?.iter().find(|item| item.id == tab)?;
         Some(Binding {

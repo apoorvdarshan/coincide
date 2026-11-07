@@ -2,17 +2,19 @@
 """Actual native WebView workflow against an owned loopback HTTP fixture.
 
 Imported by isolated native CI smoke only. No external URL, saved login, cookie,
-password, upload, screenshot or arbitrary-script tool command is used.
+password or arbitrary-script tool command is used. Screenshots capture only this
+fixture's own WebView. Uploads use owned synthetic RUNNER_TEMP files.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import struct
 import threading
 import time
 import uuid
 
 
-def exercise_browser(rpc, thread_id, capture_visible):
+def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh native CI runner only"
     marker = "NativeBrowserReady" + uuid.uuid4().hex
     text = "Native browser input café Ω"
@@ -96,6 +98,18 @@ def exercise_browser(rpc, thread_id, capture_visible):
         result = request("read", tab, **values)
         assert expected in json.dumps(result, ensure_ascii=False), result
         return result
+    def screenshot(tab, full_page):
+        values = dict(fullPage=True) if full_page else {}
+        shot = request("screenshot", tab, **values)
+        assert shot.get("mimeType") == "image/png" and shot.get("tab") == tab, shot
+        assert shot.get("fullPage") is full_page and shot.get("truncated") is False, shot
+        with open(shot["path"], "rb") as image:
+            header = image.read(24)
+        # PNG signature, then the IHDR width and height.
+        assert header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR", shot
+        width, height = struct.unpack(">II", header[16:24])
+        assert (width, height) == (shot["width"], shot["height"]) and 0 < width <= 1600, shot
+        return {"fullPage": full_page, "width": width, "height": height}
     try:
         first = request("new-tab", url=origin + "/")["tab"]
         tabs.append(first)
@@ -122,6 +136,8 @@ def exercise_browser(rpc, thread_id, capture_visible):
         wait_text(second, marker)
         request("select-tab", first)
         wait_text(first, "NativeBrowserSecondReady")
+        assert "screenshots" not in request("tabs")["unsupported"]
+        shots = [screenshot(first, False), screenshot(first, True)]
         capture_visible()
         request("hide", first)
         request("close-tab", second)
@@ -143,9 +159,23 @@ def exercise_browser(rpc, thread_id, capture_visible):
         key_report = keys.exercise_keys(rpc, thread_id)
         assert key_report["passed"]
         assert request("tabs").get("tabs") == [], "Key fixture must close every created tab"
+        spec = importlib.util.spec_from_file_location("owned_native_download_fixture", Path(__file__).with_name("test-rust-native-browser-downloads.py"))
+        downloads = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(downloads)
+        download_report = downloads.exercise_downloads(rpc, thread_id, downloads_root)
+        assert download_report["passed"]
+        assert request("tabs").get("tabs") == [], "Download fixture must close every created tab"
+        spec = importlib.util.spec_from_file_location("owned_native_upload_fixture", Path(__file__).with_name("test-rust-native-browser-uploads.py"))
+        uploads = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(uploads)
+        upload_report = uploads.exercise_uploads(rpc, thread_id)
+        assert upload_report["passed"]
+        assert request("tabs").get("tabs") == [], "Upload fixture must close every created tab"
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
                 "operations": receipts, "externalNetwork": False, "tabsClosed": True,
-                "nativeDialogs": dialog_report, "nativeKeys": key_report}
+                "nativeScreenshots": shots,
+                "nativeDialogs": dialog_report, "nativeKeys": key_report,
+                "nativeDownloads": download_report, "nativeUploads": upload_report}
     except BaseException as error:
         # Diagnose the same failed operation without navigation, repeated input
         # or a changed deadline. These are only this fixture's private pages.
@@ -179,6 +209,7 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--capture-ready", type=Path, required=True)
     parser.add_argument("--capture-ack", type=Path, required=True)
+    parser.add_argument("--downloads-root", type=Path, required=True)
     args = parser.parse_args()
     assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh CI runner only"
     client = args.client.resolve(strict=True)
@@ -213,7 +244,7 @@ def main():
             time.sleep(.05)
         raise AssertionError("Native parent did not acknowledge its actual browser capture")
     try:
-        report = exercise_browser(rpc, args.thread, capture_visible)
+        report = exercise_browser(rpc, args.thread, capture_visible, args.downloads_root)
         args.report.write_text(json.dumps(report, indent=2))
     except BaseException as error:
         args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000],
