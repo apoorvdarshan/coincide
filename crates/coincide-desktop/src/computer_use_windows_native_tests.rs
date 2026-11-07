@@ -44,10 +44,10 @@ fn receipt(hwnd: HWND) {
     let Some(root) = ROOT.get() else {
         return;
     };
-    let Ok(edit) = (unsafe { GetDlgItem(hwnd, 100) }) else {
+    let Ok(edit) = (unsafe { GetDlgItem(Some(hwnd), 100) }) else {
         return;
     };
-    let Ok(button) = (unsafe { GetDlgItem(hwnd, 101) }) else {
+    let Ok(button) = (unsafe { GetDlgItem(Some(hwnd), 101) }) else {
         return;
     };
     let mut text = [0u16; 256];
@@ -95,7 +95,7 @@ unsafe extern "system" fn procedure(
         }
         value if value == WM_APP + 1 || value == WM_APP + 2 => {
             let id = if value == WM_APP + 1 { 102 } else { 100 };
-            if let Ok(control) = unsafe { GetDlgItem(hwnd, id) } {
+            if let Ok(control) = unsafe { GetDlgItem(Some(hwnd), id) } {
                 unsafe { SetFocus(Some(control)) }.ok();
             }
             receipt(hwnd);
