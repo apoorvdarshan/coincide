@@ -9,6 +9,8 @@ mod cookie_import;
 mod credential_bridge;
 #[path = "browser_dialogs.rs"]
 mod dialogs;
+#[path = "browser_private_profiles.rs"]
+mod private_profiles;
 #[path = "browser_shutdown.rs"]
 mod shutdown;
 pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
@@ -130,6 +132,7 @@ pub struct BrowserController {
     sender: SyncSender<NativeEvent>,
     contexts: HashMap<String, wry::WebContext>,
     profiles: ProfileCatalog,
+    private_profiles: private_profiles::PrivateProfiles,
     #[cfg(target_os = "macos")]
     cookie_actor: Option<cookie_actor::Actor>,
     #[cfg(target_os = "macos")]
@@ -195,6 +198,7 @@ impl BrowserController {
             sender,
             contexts: HashMap::new(),
             profiles,
+            private_profiles: private_profiles::PrivateProfiles::default(),
             #[cfg(target_os = "macos")]
             cookie_actor: None,
             #[cfg(target_os = "macos")]
@@ -257,9 +261,13 @@ impl BrowserController {
                 })
             })
             .sum();
-        let views = self.tabs.values().map(Vec::len).sum();
-        self.shutdown
-            .status(downloads_pending, views, self.contexts.len())
+        let views =
+            self.tabs.values().map(Vec::len).sum::<usize>() + self.private_profiles.owned_views();
+        self.shutdown.status(
+            downloads_pending,
+            views,
+            self.contexts.len() + self.private_profiles.owned_contexts(),
+        )
     }
     pub fn execute(&mut self, request: BrowserRequest, window: &mut Window, cx: &mut App) {
         if self.shutdown.callbacks.closed() {
@@ -608,18 +616,50 @@ impl BrowserController {
                 "Multiple persistent profiles require a native named-store backend (macOS 14 or later)"
             );
         }
-        if !self.contexts.contains_key(&profile_key) {
+        #[cfg(target_os = "linux")]
+        let related = if matches!(profile, ProfileChoice::Private) {
+            self.shutdown.ever_native = true;
+            Some(self.private_profiles.related(thread)?)
+        } else {
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let uses_related = related.is_some();
+        #[cfg(not(target_os = "linux"))]
+        let uses_related = false;
+        if !uses_related && !self.contexts.contains_key(&profile_key) {
+            #[cfg(target_os = "windows")]
+            let directory = if matches!(profile, ProfileChoice::Private) {
+                Some(
+                    self.private_profiles
+                        .runtime_directory(thread, &self.profiles)?,
+                )
+            } else {
+                self.profiles.storage_directory(&profile)?
+            };
+            #[cfg(not(target_os = "windows"))]
             let directory = self.profiles.storage_directory(&profile)?;
             self.contexts
                 .insert(profile_key.clone(), wry::WebContext::new(directory));
         }
-        let context = self
-            .contexts
-            .get_mut(&profile_key)
-            .context("Browser profile context unavailable")?;
-        let builder = wry::WebViewBuilder::new_with_web_context(context)
+        let builder = if uses_related {
+            wry::WebViewBuilder::new()
+        } else {
+            wry::WebViewBuilder::new_with_web_context(
+                self.contexts
+                    .get_mut(&profile_key)
+                    .context("Browser profile context unavailable")?,
+            )
+        };
+        let builder = builder
             .with_incognito(matches!(profile, ProfileChoice::Private))
-            .with_url(url)
+            // Private native identity is verified on blank before any caller
+            // URL is admitted, including old Windows runtimes' flag fallback.
+            .with_url(if matches!(profile, ProfileChoice::Private) {
+                "about:blank"
+            } else {
+                url
+            })
             .with_devtools(false)
             .with_autoplay(false)
             .with_clipboard(false)
@@ -714,6 +754,15 @@ impl BrowserController {
                 }
                 wry::NewWindowResponse::Deny
             });
+        #[cfg(target_os = "linux")]
+        let builder = {
+            use wry::WebViewBuilderExtUnix;
+            if let Some(related) = related.as_ref() {
+                builder.with_related_view(related.native())
+            } else {
+                builder
+            }
+        };
         #[cfg(target_os = "macos")]
         let builder = match &profile {
             ProfileChoice::Persistent(id) => builder.with_data_store_identifier(*id.as_bytes()),
@@ -733,7 +782,25 @@ impl BrowserController {
                 builder.with_webview_configuration(configuration)
             }
         };
+        // Failed native construction may have created SDK resources. Keep
+        // release Unknown; neither an error nor private verification is teardown.
+        self.shutdown.ever_native = true;
         let view = WebView::build(builder, window, cx)?;
+        if matches!(profile, ProfileChoice::Private) {
+            self.private_profiles.verify(thread, view.raw())?;
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let actual = view.raw().webview().configuration().websiteDataStore();
+                let expected = self
+                    .private_stores
+                    .get(&profile_key)
+                    .context("Private native browser store missing")?;
+                ensure!(
+                    Retained::as_ptr(&actual) == Retained::as_ptr(expected),
+                    "Native private browser changed this thread's store"
+                );
+            }
+        }
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
             view.raw(),
@@ -743,6 +810,9 @@ impl BrowserController {
                 let _ = dialog_sender.try_send(NativeEvent::DialogChanged);
             },
         );
+        if matches!(profile, ProfileChoice::Private) && url != "about:blank" {
+            view.raw().load_url(url)?;
+        }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
             dialogs,
@@ -1221,7 +1291,11 @@ impl BrowserController {
             request,
             self.tabs.get(current_thread).map_or(0, Vec::len),
         )?;
-        if switching && old == ProfileChoice::Private {
+        if switching
+            && old == ProfileChoice::Private
+            && self.profiles.selected(current_thread) != old
+        {
+            self.private_profiles.forget(current_thread);
             self.contexts.remove(&old.key(current_thread));
             #[cfg(target_os = "macos")]
             self.private_stores.remove(&old.key(current_thread));
