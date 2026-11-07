@@ -16,8 +16,20 @@ use std::{
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+#[cfg(any(test, target_os = "windows"))]
+#[path = "native_capture_owner.rs"]
+pub(crate) mod capture_owner;
+#[cfg(all(target_os = "windows", feature = "native-computer-use"))]
+#[path = "computer_use_windows.rs"]
+mod windows;
+#[cfg(any(test, target_os = "windows"))]
+#[path = "computer_use_windows_policy.rs"]
+mod windows_policy;
 pub fn native_compiled() -> bool {
-    cfg!(all(target_os = "macos", feature = "native-computer-use"))
+    cfg!(all(
+        any(target_os = "macos", target_os = "windows"),
+        feature = "native-computer-use"
+    ))
 }
 #[derive(Debug, Clone)]
 pub struct Status {
@@ -236,7 +248,14 @@ impl Runtime {
         {
             Self::spawn(NativeBackend::default(), true)
         }
-        #[cfg(not(all(target_os = "macos", feature = "native-computer-use")))]
+        #[cfg(all(target_os = "windows", feature = "native-computer-use"))]
+        {
+            Self::spawn(windows::NativeBackend::default(), true)
+        }
+        #[cfg(not(all(
+            any(target_os = "macos", target_os = "windows"),
+            feature = "native-computer-use"
+        )))]
         {
             Self::spawn(UnsupportedBackend, false)
         }

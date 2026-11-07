@@ -1221,6 +1221,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atspi",
+ "base64 0.23.1",
  "block2 0.6.2",
  "cc",
  "coincide-core",
