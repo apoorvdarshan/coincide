@@ -171,7 +171,7 @@ impl Engine {
         let receipt = self.store.apply_bot_lifecycle(review.plan)?;
         for id in &ids {
             self.enabled_queues.remove(id);
-            self.computer_use_selection_changed(Uuid::parse_str(id)?);
+            self.computer_use_thread_removed(Uuid::parse_str(id)?);
         }
         self.notification_events.discard_deleted_threads(&ids);
         if self
