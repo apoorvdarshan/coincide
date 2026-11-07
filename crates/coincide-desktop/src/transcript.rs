@@ -56,7 +56,41 @@ pub fn markdown(
     window: &mut Window,
     cx: &mut App,
 ) -> TextView {
-    let source = source.into();
+    routed(
+        TextView::new(&native_state(thread, item, source.into(), window, cx)),
+        cx,
+    )
+}
+
+/// A registered native body whose fenced code is colored by `highlights`,
+/// byte ranges into the code block's text. Kit's compatibility TextView does
+/// not expose Base's code highlighter, and it adds nothing else here.
+pub fn highlighted(
+    thread: &str,
+    item: &str,
+    source: impl Into<SharedString>,
+    highlights: Vec<(std::ops::Range<usize>, HighlightStyle)>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_kit::base::TextView {
+    let state = native_state(thread, item, source.into(), window, cx);
+    let router = cx.try_global::<LinkRouter>().map(|router| router.0.clone());
+    gpui_kit::base::TextView::new(&state)
+        .code_block_highlighter(move |_| highlights.clone())
+        .on_link_click(move |url, event, window, cx| {
+            if let Some(router) = &router {
+                router(url.as_ref(), event, window, cx);
+            }
+        })
+}
+
+fn native_state(
+    thread: &str,
+    item: &str,
+    source: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<TextViewState> {
     let key = SharedString::from(format!("native-state/{}", selection_id(thread, item)));
     let body = window.use_keyed_state(key, cx, |_, cx| NativeBody {
         state: cx.new(|cx| TextViewState::markdown(source.as_ref(), cx)),
@@ -89,7 +123,7 @@ pub fn markdown(
             state: state.downgrade(),
         },
     );
-    routed(TextView::new(&state), cx)
+    state
 }
 
 pub fn init(cx: &mut App) {
