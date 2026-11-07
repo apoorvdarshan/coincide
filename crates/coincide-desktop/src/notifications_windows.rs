@@ -3,7 +3,9 @@
 //! menu shortcut with the app's AUMID; existing unrelated shortcuts are refused.
 //! OS API acknowledgement does not establish visible banner or click acceptance.
 use super::{Backend, Payload, Permission};
-use crate::notifications::windows_policy::{GROUP, MAX_HISTORY, owned_history_id, toast_xml};
+use crate::notifications::windows_policy::{
+    GROUP, MAX_HISTORY, owned_history_id, shell_link_target, toast_xml,
+};
 use anyhow::{Context, Result, bail, ensure};
 use coincide_core::{native_file, platform_host::notifications::Delivery};
 use std::{
@@ -170,14 +172,21 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
     let temporary = parent.join(format!(".coincide-notification-{}.lnk", Uuid::new_v4()));
     // create_new refuses replacing another file; IPersistFile only writes this
     // owned placeholder. Failed setup removes only the same original file.
-    let placeholder = native_file::create_private_file(&temporary)?;
+    // The shortcut keeps the Start menu folder's inherited ACL like any other
+    // shortcut: an owner-only DACL would hide it from the system components
+    // that resolve the AUMID registration.
+    let placeholder = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
     let identity = native_file::file_identity(&placeholder)?;
     drop(placeholder);
     let result = (|| -> Result<()> {
-        let link: IShellLinkW =
-            unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }?;
-        let target = wide(exe)?;
-        unsafe { link.SetPath(PCWSTR(target.as_ptr())) }?;
+        let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
+            .context("Shell link unavailable")?;
+        let target = exe.to_str().context("Invalid notification target")?;
+        let target = wide(Path::new(&shell_link_target(target)?))?;
+        unsafe { link.SetPath(PCWSTR(target.as_ptr())) }.context("Shortcut target rejected")?;
         let store: IPropertyStore = link.cast()?;
         let app_id_wide: Vec<_> = app_id.encode_utf16().chain(Some(0)).collect();
         let allocated = unsafe { SHStrDupW(PCWSTR(app_id_wide.as_ptr())) }?;
@@ -192,19 +201,23 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
             },
         };
         unsafe {
-            store.SetValue(&APP_ID_KEY, &value)?;
-            store.Commit()?;
+            store
+                .SetValue(&APP_ID_KEY, &value)
+                .context("Shortcut app identity rejected")?;
+            store.Commit().context("Shortcut app identity rejected")?;
         }
         let persist: IPersistFile = link.cast()?;
         let temporary_wide = wide(&temporary)?;
-        unsafe { persist.Save(PCWSTR(temporary_wide.as_ptr()), true) }?;
+        unsafe { persist.Save(PCWSTR(temporary_wide.as_ptr()), true) }
+            .context("Shortcut save failed")?;
         ensure!(
             native_file::path_identity(&temporary)? == identity
                 && native_file::path_identity(parent)? == parent_identity,
             "Notification shortcut source changed"
         );
         ensure!(
-            shortcut_matches(&temporary, exe, app_id)?,
+            shortcut_matches(&temporary, exe, app_id)
+                .context("Notification shortcut verification failed")?,
             "Notification shortcut verification failed"
         );
         let destination = wide(shortcut)?;
@@ -215,7 +228,8 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
                 PCWSTR(temporary_wide.as_ptr()),
                 PCWSTR(destination.as_ptr()),
             )
-        }?;
+        }
+        .context("Shortcut install failed")?;
         ensure!(
             native_file::path_identity(shortcut)? == identity
                 && shortcut_matches(shortcut, exe, app_id)?,
@@ -226,7 +240,10 @@ fn register(exe: &Path, shortcut: &Path, app_id: &str) -> Result<()> {
     if native_file::path_identity(&temporary).ok() == Some(identity) {
         let _ = fs::remove_file(&temporary);
     }
-    result.map_err(|_| anyhow::anyhow!("Windows notification setup could not be verified"))
+    // Step labels and OS error codes only; no paths or app identities.
+    result.map_err(|error| {
+        anyhow::anyhow!("Windows notification setup could not be verified: {error:#}")
+    })
 }
 fn post(app_id: &str, payload: &Payload, suppress_popup: bool) -> Delivery {
     let prepared = (|| -> Result<_> {
