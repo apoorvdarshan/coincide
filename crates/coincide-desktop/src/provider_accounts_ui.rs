@@ -246,7 +246,11 @@ pub(super) fn execute(
                 provider == "codex",
                 "Legacy account belongs to another provider"
             );
-            try_state(engine)?.execute("providers.codex.profiles.create", &json!({"name":name}))?;
+            coincide_core::api::call(
+                engine,
+                "providers.codex.profiles.create",
+                json!({"name":name}),
+            )?;
             done(
                 engine,
                 provider,
