@@ -1,27 +1,48 @@
-//! Native GitHub PR metadata panel with a separate explicit action surface. Parent mounts this entity and calls
-//! set_context on every thread/root change. Repository is explicitly entered by
-//! the user. All Engine calls run in one background worker, never GPUI render.
+//! Native GitHub pull requests panel after Swift's PullRequestsViewController,
+//! with a separate explicit action surface. Parent mounts this entity, calls
+//! set_context on every thread/root change and set_visible as the panel shows
+//! or hides. Repository is explicitly entered by the user. GitHub reads run in
+//! one background worker, never GPUI render; only the saved filter touches the
+//! Engine here, with try_lock, when the panel opens and when the user picks one.
 use crate::worker_owner::{Admission, ShutdownStatus as ReadShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::{
+    assets::IconName,
     base::Disableable,
     component::{
+        ActiveTheme, Icon, Sizable, StyledExt,
         button::*,
-        input::{Input, InputEvent, InputState},
+        input::{Enter, Escape, Input, InputEvent, InputState, Textarea, TextareaState},
+        menu::{DropdownMenu, PopupMenuItem},
+        spinner::Spinner,
+        text::TextView,
+        tooltip::Tooltip,
     },
+    prelude::FluentBuilder,
     *,
 };
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     path::Path,
     sync::mpsc,
     time::{Duration, Instant},
 };
 
+#[path = "github_presentation.rs"]
+mod presentation;
+use crate::github_actions::{Action as WriteAction, ActionsEvent, ReviewEvent};
+use presentation::{MergeMethod, Tone};
+
 const LIMIT: usize = 30;
 const STATES: &[&str] = &["open", "closed", "merged", "all"];
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Swift's list cache age, and how old an open pull request's detail may get
+/// before showing the panel or the app again reads it anew.
+const FRESH: Duration = Duration::from_secs(30);
+/// The saved filter in ui-state.json (Swift keeps it as "PullRequestFilter").
+const FILTER_KEY: &str = "pullRequestFilter";
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 enum Involvement {
     #[default]
     All,
@@ -44,28 +65,96 @@ impl Involvement {
             Self::ReviewRequested => "review-requested",
         }
     }
+    fn parse(wire: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|involvement| involvement.wire() == wire)
+    }
+    /// Swift PullRequestFilter's titles, and the one Rust adds.
     fn label(self) -> &'static str {
         match self {
-            Self::All => "All PRs",
-            Self::Authored => "Authored by me",
-            Self::Assigned => "Assigned to me",
-            Self::ReviewRequested => "Review requested",
+            Self::All => "All Pull Requests",
+            Self::Authored => "My Pull Requests",
+            Self::Assigned => "Assigned to Me",
+            Self::ReviewRequested => "Review Requested",
+        }
+    }
+    fn icon(self) -> IconName {
+        match self {
+            Self::All => IconName::GitPullRequest,
+            Self::Authored => IconName::User,
+            Self::Assigned => IconName::UserCheck,
+            Self::ReviewRequested => IconName::Eye,
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+fn state_label(state: &str) -> &'static str {
+    match state {
+        "closed" => "Closed",
+        "merged" => "Merged",
+        "all" => "Any State",
+        _ => "Open",
+    }
+}
+/// The filter button's title: Swift's "Open Pull Requests", "My Pull Requests"
+/// and "Review Requested" for open ones, and the state beside any other choice.
+fn filter_title(state: &str, involvement: Involvement) -> String {
+    match (state, involvement) {
+        ("open", Involvement::All) => "Open Pull Requests".into(),
+        ("all", Involvement::All) => "All Pull Requests".into(),
+        (_, Involvement::All) => format!("{} Pull Requests", state_label(state)),
+        ("open", involvement) => involvement.label().into(),
+        (_, involvement) => format!("{} · {}", involvement.label(), state_label(state)),
+    }
+}
+/// What an empty list says, in Swift's words for its three filters.
+fn empty_list(state: &str, involvement: Involvement) -> (&'static str, &'static str) {
+    match (state, involvement) {
+        ("open", Involvement::All) => (
+            "No Open Pull Requests",
+            "Open pull requests of this repository show here.",
+        ),
+        ("open", Involvement::Authored) => (
+            "No Pull Requests of Yours",
+            "Pull requests you open in this repository show here.",
+        ),
+        ("open", Involvement::ReviewRequested) => (
+            "No Reviews Requested",
+            "Pull requests waiting on your review show here.",
+        ),
+        _ => (
+            "No Pull Requests",
+            "Pull requests matching this filter show here.",
+        ),
+    }
+}
+/// The saved filter, or Swift's default (open pull requests) when there is
+/// none or it doesn't read.
+fn saved_filter(document: &Value) -> (String, Involvement) {
+    let saved = &document[FILTER_KEY];
+    let state = saved["state"]
+        .as_str()
+        .filter(|state| STATES.contains(state))
+        .unwrap_or("open");
+    let involvement = saved["involvement"]
+        .as_str()
+        .and_then(Involvement::parse)
+        .unwrap_or_default();
+    (state.into(), involvement)
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Binding {
     thread: String,
     root: String,
     repository: String,
     involvement: Involvement,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum View {
     List(String),
     Detail { number: u64, head: String },
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Request {
     binding: Binding,
     view: View,
@@ -197,6 +286,16 @@ fn fetch(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) 
         }
     };
     let start = api(method, params)?;
+    let payload = finish(api, b, &start)?;
+    validate_payload(request, &payload)?;
+    Ok(payload)
+}
+/// Polls one started read until its payload is ready.
+fn finish(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    b: &Binding,
+    start: &Value,
+) -> Result<Value> {
     let id = start["operationId"]
         .as_str()
         .context("Missing GitHub operation ID")?;
@@ -215,7 +314,6 @@ fn fetch(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) 
                     error
                 );
             }
-            validate_payload(request, &payload)?;
             return Ok(payload);
         }
         ensure!(reply["ready"] == false, "Invalid GitHub polling response");
@@ -225,6 +323,36 @@ fn fetch(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) 
         );
         std::thread::sleep(Duration::from_millis(80));
     }
+}
+/// The merge methods the repository allows, for the Merge… menu. Swift falls
+/// back to all three when they don't read, leaving GitHub the final word.
+fn fetch_merge_methods(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    b: &Binding,
+) -> Vec<MergeMethod> {
+    let all = vec![MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
+    let read = (|| -> Result<Value> {
+        let start = api(
+            "github.repo.merge-methods",
+            json!({"threadId":b.thread,"expectedRoot":b.root,"repository":b.repository}),
+        )?;
+        let payload = finish(api, b, &start)?;
+        ensure!(
+            payload["kind"] == "mergeMethods"
+                && payload["threadId"] == b.thread
+                && payload["repository"] == b.repository,
+            "Merge settings belong to another repository"
+        );
+        Ok(payload)
+    })();
+    let methods = read
+        .ok()
+        .and_then(|payload| payload["methods"].as_array().cloned())
+        .into_iter()
+        .flatten()
+        .filter_map(|method| method.as_str().and_then(MergeMethod::parse))
+        .collect::<Vec<_>>();
+    if methods.is_empty() { all } else { methods }
 }
 fn fetch_admitted(
     api: &mut impl FnMut(&str, Value) -> Result<Value>,
@@ -269,25 +397,62 @@ pub struct ReviewShutdownStatus {
     pub actions: Option<coincide_core::github_write::WriteShutdownStatus>,
     pub writes: Option<crate::github_write_transport::NativeWriteShutdownStatus>,
 }
+/// A list read for one exact binding and filter, shown at once next time
+/// (Swift's cachedPullRequests) and read again once it is `FRESH` old.
+struct CachedList {
+    at: Instant,
+    list: Vec<Value>,
+    truncated: bool,
+}
+/// Swift's PullRequestReviewSheet, shown over the pull request.
+struct ReviewSheet {
+    number: u64,
+    event: ReviewEvent,
+    error: Option<String>,
+    submitting: bool,
+}
+type ReadResult = (u64, Request, Result<Value>);
 pub struct GitHubReviewPanel {
     engine: SharedEngine,
     scope: Option<(String, String)>,
     repository: Entity<InputState>,
     state: String,
     involvement: Involvement,
+    filter_loaded: bool,
     generation: u64,
     active: Option<(u64, Request)>,
     busy: bool,
     workers: WorkerOwner,
     list: Vec<Value>,
     truncated: bool,
+    cache: HashMap<Request, CachedList>,
+    /// The row arrow keys move to; Return opens it.
+    cursor: Option<usize>,
     selected: Option<(u64, String)>,
     detail: Option<Value>,
+    detail_loaded_at: Option<Instant>,
+    /// Reopen this pull request once the list shows its new head.
+    reopen: Option<u64>,
+    merge_methods: HashMap<String, Vec<MergeMethod>>,
+    merge_confirm: Option<MergeMethod>,
+    review: Option<ReviewSheet>,
+    review_body: Entity<TextareaState>,
+    /// A submitted review's text goes when the sheet next opens.
+    clear_review: bool,
+    /// The panel shows in the inspector (Swift reloads on appearing).
+    visible: bool,
     notice: String,
-    tx: mpsc::Sender<(u64, Request, Result<Value>)>,
-    rx: mpsc::Receiver<(u64, Request, Result<Value>)>,
+    /// The last action's outcome, as Swift's result banner: text, failed.
+    banner: Option<(String, bool)>,
+    focus: FocusHandle,
+    tx: mpsc::Sender<ReadResult>,
+    rx: mpsc::Receiver<ReadResult>,
     _poll: Option<Task<()>>,
     _repository_changes: Subscription,
+    _review_changes: Subscription,
+    _activation: Subscription,
+    _action_events: Option<Subscription>,
+    _action_changes: Option<Subscription>,
     actions: Option<Entity<crate::github_actions::GitHubActions>>,
     writes: Option<crate::github_write_transport::NativeWrites>,
     write_status: Option<crate::github_write_transport::Status>,
@@ -311,6 +476,9 @@ impl GitHubReviewPanel {
             InputState::new(window, cx).placeholder("Explicit GitHub repository: owner/name")
         });
         let repository_changes = cx.subscribe(&repository, |this, _, event, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.load_list(true, cx);
+            }
             if matches!(event, InputEvent::Change) {
                 if this.workers.closed() {
                     return;
@@ -319,38 +487,76 @@ impl GitHubReviewPanel {
                 this.active = None;
                 this.detail = None;
                 this.selected = None;
+                this.cursor = None;
                 this.list.clear();
                 this.truncated = false;
+                this.close_sheets();
                 this.invalidate_actions(cx);
                 this.notice = "Repository changed. Load its pull requests to continue.".into();
                 cx.notify();
             }
         });
-        Self {
+        let review_body = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Write your review…")
+                .submit_on_enter(false)
+        });
+        let review_changes = cx.subscribe(&review_body, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        // Coming back to the app picks up what changed on GitHub meanwhile, at
+        // most every thirty seconds, so switching apps doesn't run gh each time.
+        let activation = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() && this.visible {
+                this.reload(false, cx);
+            }
+        });
+        let mut panel = Self {
             engine,
             scope: None,
             repository,
             state: "open".into(),
             involvement: Involvement::All,
+            filter_loaded: false,
             generation: 0,
             active: None,
             busy: false,
             workers: WorkerOwner::default(),
             list: Vec::new(),
             truncated: false,
+            cache: HashMap::new(),
+            cursor: None,
             selected: None,
             detail: None,
+            detail_loaded_at: None,
+            reopen: None,
+            merge_methods: HashMap::new(),
+            merge_confirm: None,
+            review: None,
+            review_body,
+            clear_review: false,
+            visible: false,
             notice: "Choose a conversation and enter its GitHub repository.".into(),
+            banner: None,
+            focus: cx.focus_handle(),
             tx,
             rx,
             _poll: Some(poll),
             _repository_changes: repository_changes,
+            _review_changes: review_changes,
+            _activation: activation,
+            _action_events: None,
+            _action_changes: None,
             actions: None,
             writes: None,
             write_status: None,
             actions_open: false,
             scroll: ScrollHandle::new(),
-        }
+        };
+        panel.load_saved_filter();
+        panel
     }
     pub fn attach_actions(
         &mut self,
@@ -358,12 +564,46 @@ impl GitHubReviewPanel {
         writes: crate::github_write_transport::NativeWrites,
         cx: &mut Context<Self>,
     ) {
+        self._action_events = Some(cx.subscribe(&actions, |this, _, event, cx| {
+            let ActionsEvent::Finished(result) = event;
+            this.finish_action(result.clone(), cx);
+        }));
+        // Merge… and Review… follow the action history as it loads.
+        self._action_changes = Some(cx.observe(&actions, |_, _, cx| cx.notify()));
         self.actions = Some(actions);
         self.writes = Some(writes);
         if self.workers.closed() {
             self.request_shutdown(cx);
         } else {
             self.sync_action_scope(cx);
+        }
+    }
+    /// The saved filter, read once the Engine is free (Swift UserDefaults).
+    fn load_saved_filter(&mut self) {
+        if self.filter_loaded {
+            return;
+        }
+        let document = crate::try_state(&self.engine)
+            .and_then(|engine| Ok(engine.store.document("ui-state.json")?.unwrap_or(json!({}))));
+        match document {
+            Ok(document) => {
+                (self.state, self.involvement) = saved_filter(&document);
+                self.filter_loaded = true;
+            }
+            Err(error) if crate::engine_busy(&error) => {}
+            // A malformed document keeps Swift's default, unchanged on disk.
+            Err(_) => self.filter_loaded = true,
+        }
+    }
+    fn save_filter(&mut self) {
+        let filter = json!({FILTER_KEY:{"state":self.state,"involvement":self.involvement.wire()}});
+        let saved = crate::try_state(&self.engine)
+            .and_then(|mut engine| engine.store.patch_document("ui-state.json", &filter));
+        if saved.is_err() {
+            self.banner = Some((
+                "The filter applies now but wasn’t saved for next time.".into(),
+                true,
+            ));
         }
     }
     fn invalidate_actions(&mut self, cx: &mut Context<Self>) {
@@ -437,37 +677,96 @@ impl GitHubReviewPanel {
         self.list.clear();
         self.detail = None;
         self.selected = None;
+        self.cursor = None;
         self.truncated = false;
+        self.close_sheets();
+        self.banner = None;
         self.notice = if self.busy {
             "Waiting for the previous read; its result will be discarded."
         } else {
             "Enter owner/name and load pull requests for this context."
         }
         .into();
+        // A repository already entered reloads for the new thread, as Swift's
+        // panel does for the open thread's repository.
+        if self.visible {
+            self.reload(false, cx);
+        }
         cx.notify();
     }
-    fn select_involvement(&mut self, involvement: Involvement, cx: &mut Context<Self>) {
-        if self.busy || self.workers.closed() || self.involvement == involvement {
+    /// Swift reloads when the panel appears. The parent calls this as it
+    /// renders the inspector; only a change of visibility acts.
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible || self.workers.closed() {
             return;
         }
+        self.visible = visible;
+        if visible {
+            self.load_saved_filter();
+            // Never start reads inside the parent's render pass.
+            cx.spawn(async move |this, cx| {
+                let _ = this.update(cx, |this, cx| this.reload(false, cx));
+            })
+            .detach();
+        }
+    }
+    fn close_sheets(&mut self) {
+        self.merge_confirm = None;
+        if self.review.as_ref().is_none_or(|sheet| !sheet.submitting) {
+            self.review = None;
+        }
+    }
+    /// Reads what is showing again: the open pull request once its detail is
+    /// `FRESH` old (checks finish without the list changing), otherwise the
+    /// list, which shows its cached copy at once. `force` reads regardless.
+    fn reload(&mut self, force: bool, cx: &mut Context<Self>) {
+        if self.busy || self.performing(cx) || self.workers.closed() {
+            return;
+        }
+        if !self::repository(self.repository.read(cx).value().trim()) || self.scope.is_none() {
+            return;
+        }
+        match self.selected.clone() {
+            Some((number, head)) => {
+                if force || self.detail_loaded_at.is_none_or(|at| at.elapsed() >= FRESH) {
+                    self.load_detail(number, head, cx);
+                }
+            }
+            None => self.load_list(force, cx),
+        }
+    }
+    /// A merge or review is on its way to GitHub; reads wait for its outcome.
+    fn performing(&self, cx: &App) -> bool {
+        self.review.as_ref().is_some_and(|sheet| sheet.submitting)
+            || self
+                .actions
+                .as_ref()
+                .is_some_and(|actions| actions.read(cx).performing())
+    }
+    fn select_filter(&mut self, state: &str, involvement: Involvement, cx: &mut Context<Self>) {
+        if self.busy || self.workers.closed() {
+            return;
+        }
+        if self.state == state && self.involvement == involvement {
+            return;
+        }
+        self.state = state.into();
         self.involvement = involvement;
+        self.filter_loaded = true;
+        self.save_filter();
         self.invalidate_actions(cx);
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
         self.list.clear();
         self.detail = None;
         self.selected = None;
+        self.cursor = None;
         self.truncated = false;
-        self.load_list(cx);
+        self.load_list(false, cx);
         cx.notify();
     }
-    fn load_list(&mut self, cx: &mut Context<Self>) {
-        if self.busy || !self.workers.can_start() {
-            return;
-        }
-        let Some((thread, root)) = self.scope.clone() else {
-            return;
-        };
+    fn list_request(&mut self, cx: &mut Context<Self>) -> Option<Request> {
+        let (thread, root) = self.scope.clone()?;
         let repository = self.repository.read(cx).value().trim().to_string();
         if !self::repository(&repository) {
             self.invalidate_actions(cx);
@@ -478,24 +777,49 @@ impl GitHubReviewPanel {
             self.truncated = false;
             self.notice = "Enter a GitHub repository as owner/name.".into();
             cx.notify();
+            return None;
+        }
+        Some(Request {
+            binding: Binding {
+                thread,
+                root,
+                repository,
+                involvement: self.involvement,
+            },
+            view: View::List(self.state.clone()),
+        })
+    }
+    fn load_list(&mut self, force: bool, cx: &mut Context<Self>) {
+        if self.busy || !self.workers.can_start() {
             return;
         }
-        self.list.clear();
+        let Some(request) = self.list_request(cx) else {
+            return;
+        };
         self.selected = None;
         self.detail = None;
-        self.truncated = false;
-        self.start(
-            Request {
-                binding: Binding {
-                    thread,
-                    root,
-                    repository,
-                    involvement: self.involvement,
-                },
-                view: View::List(self.state.clone()),
-            },
-            cx,
-        );
+        self.detail_loaded_at = None;
+        self.close_sheets();
+        // Swift shows the last list read for this filter at once.
+        if let Some(cached) = self.cache.get(&request) {
+            let fresh = cached.at.elapsed() < FRESH;
+            self.list = cached.list.clone();
+            self.truncated = cached.truncated;
+            self.clamp_cursor();
+            if !force && fresh && self.reopen.is_none() {
+                self.invalidate_actions(cx);
+                self.generation = self.generation.wrapping_add(1);
+                self.active = Some((self.generation, request));
+                self.notice.clear();
+                cx.notify();
+                return;
+            }
+        } else {
+            self.list.clear();
+            self.truncated = false;
+            self.cursor = None;
+        }
+        self.start(request, cx);
     }
     fn load_detail(&mut self, number: u64, head: String, cx: &mut Context<Self>) {
         if self.busy || !self.workers.can_start() {
@@ -505,8 +829,17 @@ impl GitHubReviewPanel {
             return;
         };
         let binding = active.binding.clone();
-        self.detail = None;
+        // A refresh of the same pull request keeps showing it meanwhile.
+        if self
+            .selected
+            .as_ref()
+            .is_none_or(|(shown, _)| *shown != number)
+        {
+            self.detail = None;
+            self.merge_confirm = None;
+        }
         self.selected = Some((number, head.clone()));
+        self.detail_loaded_at = Some(Instant::now());
         self.start(
             Request {
                 binding,
@@ -514,6 +847,71 @@ impl GitHubReviewPanel {
             },
             cx,
         );
+    }
+    fn open_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pr) = self.list.get(index) else {
+            return;
+        };
+        let number = pr["number"].as_u64().unwrap_or(0);
+        let head = text(pr, "headRefOid");
+        self.cursor = Some(index);
+        self.banner = None;
+        self.load_detail(number, head, cx);
+        window.focus(&self.focus, cx);
+    }
+    /// Escape and the back button: from a pull request to the list.
+    fn back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.is_none() || self.busy || self.workers.closed() {
+            return;
+        }
+        self.selected = None;
+        self.detail = None;
+        self.detail_loaded_at = None;
+        self.close_sheets();
+        self.invalidate_actions(cx);
+        self.load_list(false, cx);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+    fn clamp_cursor(&mut self) {
+        self.cursor = match self.cursor {
+            _ if self.list.is_empty() => None,
+            Some(index) => Some(index.min(self.list.len() - 1)),
+            None => None,
+        };
+    }
+    /// Swift PullRequestTableView: arrows move through the rows, Return or
+    /// Enter opens one, and Escape goes back from a pull request.
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Only the panel itself, never the repository field or the review box.
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "escape" if self.merge_confirm.is_some() => self.merge_confirm = None,
+            "escape" if self.selected.is_some() => self.back(window, cx),
+            "up" | "down" if self.selected.is_none() && !self.list.is_empty() => {
+                let last = self.list.len() - 1;
+                self.cursor = Some(match (self.cursor, event.keystroke.key.as_str()) {
+                    (None, "up") => last,
+                    (None, _) => 0,
+                    (Some(index), "up") => index.saturating_sub(1),
+                    (Some(index), _) => (index + 1).min(last),
+                });
+            }
+            "enter" if self.selected.is_none() => {
+                if let Some(index) = self.cursor {
+                    self.open_row(index, window, cx);
+                }
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
     }
     fn start(&mut self, request: Request, cx: &mut Context<Self>) {
         if self.busy || !self.workers.can_start() {
@@ -526,15 +924,35 @@ impl GitHubReviewPanel {
         let generation = self.generation;
         self.active = Some((generation, request.clone()));
         self.busy = true;
-        self.notice = "Loading GitHub metadata…".into();
+        self.notice.clear();
+        // The Merge… menu lists the repository's methods, read once per repository.
+        let methods = match &request.view {
+            View::Detail { .. } => !self.merge_methods.contains_key(&request.binding.repository),
+            View::List(_) => false,
+        };
         let engine = self.engine.clone();
         let tx = self.tx.clone();
         if !self.workers.spawn(move |admission| {
-            let result = fetch_admitted(
+            let mut result = fetch_admitted(
                 &mut |method, params| call(&engine, method, params),
                 &request,
                 &admission,
             );
+            if methods && let Ok(payload) = &mut result {
+                let methods = fetch_merge_methods(
+                    &mut |method, params| {
+                        ensure!(admission.allowed(), "GitHub UI read admissions are closed");
+                        call(&engine, method, params)
+                    },
+                    &request.binding,
+                );
+                payload["mergeMethods"] = json!(
+                    methods
+                        .into_iter()
+                        .map(MergeMethod::wire)
+                        .collect::<Vec<_>>()
+                );
+            }
             let _ = tx.send((generation, request, result));
         }) {
             self.busy = false;
@@ -550,8 +968,11 @@ impl GitHubReviewPanel {
             self.detail = None;
             self.selected = None;
             self.list.clear();
+            self.cache.clear();
             self.truncated = false;
             self.actions_open = false;
+            self.merge_confirm = None;
+            self.review = None;
             drop(self._poll.take());
         }
         if let Some(actions) = &self.actions {
@@ -620,22 +1041,181 @@ impl GitHubReviewPanel {
                         .cloned()
                         .unwrap_or_default();
                     self.truncated = payload["truncated"] == true;
-                    self.notice = format!(
-                        "{} PRs loaded. Select a row for exact-head detail.",
-                        self.list.len()
+                    self.clamp_cursor();
+                    self.cache.insert(
+                        request.clone(),
+                        CachedList {
+                            at: Instant::now(),
+                            list: self.list.clone(),
+                            truncated: self.truncated,
+                        },
                     );
+                    // A pull request whose head moved opens again on its new head.
+                    if let Some(number) = self.reopen.take()
+                        && let Some(index) = self
+                            .list
+                            .iter()
+                            .position(|pr| pr["number"].as_u64() == Some(number))
+                    {
+                        let head = text(&self.list[index], "headRefOid");
+                        self.cursor = Some(index);
+                        self.load_detail(number, head, cx);
+                        return;
+                    }
                 }
                 View::Detail { .. } => {
-                    self.detail = Some(payload["pullRequest"].clone());
-                    self.notice="Read-only detail loaded for the selected head. Refresh before relying on current server state.".into();
+                    let pr = payload["pullRequest"].clone();
+                    if let Some(methods) = payload["mergeMethods"].as_array() {
+                        self.merge_methods.insert(
+                            request.binding.repository.clone(),
+                            methods
+                                .iter()
+                                .filter_map(|method| method.as_str().and_then(MergeMethod::parse))
+                                .collect(),
+                        );
+                    }
+                    if !presentation::can_merge(&pr) {
+                        self.merge_confirm = None;
+                    }
+                    self.detail = Some(pr);
+                    self.detail_loaded_at = Some(Instant::now());
                 }
             },
             Err(error) => {
-                self.detail = None;
-                self.notice = format!("{error}. Refresh the list to retry.");
+                let moved = error.to_string().starts_with("head_changed");
+                if let (View::Detail { number, .. }, true) = (&request.view, moved) {
+                    // New commits: read the list for the new head, then reopen.
+                    self.reopen = Some(*number);
+                    self.selected = None;
+                    self.detail = None;
+                    self.sync_action_scope(cx);
+                    self.load_list(true, cx);
+                    return;
+                }
+                self.reopen = None;
+                // Swift keeps what it showed and reports the failure; any
+                // write still reads a fresh baseline first.
+                self.banner = Some((format!("{error}. Refresh to retry."), true));
             }
         }
         self.sync_action_scope(cx);
+        cx.notify();
+    }
+    /// A Merge… or Review… came back from GitHub: report it as Swift's banner
+    /// does, then read the pull request and the list again.
+    fn finish_action(
+        &mut self,
+        result: std::result::Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(message) => {
+                self.banner = Some((message, false));
+                if self.review.take().is_some() {
+                    self.clear_review = true;
+                }
+                self.merge_confirm = None;
+                self.cache.clear();
+                self.reload(true, cx);
+            }
+            Err(error) => {
+                // A failed review keeps the sheet and its text, with the error.
+                if let Some(sheet) = &mut self.review {
+                    sheet.submitting = false;
+                    sheet.error = Some(error);
+                } else {
+                    self.banner = Some((error, true));
+                }
+            }
+        }
+        cx.notify();
+    }
+    fn actions_ready(&self, cx: &App) -> bool {
+        self.validated_loaded_scope(cx).is_some()
+            && self.write_status == Some(crate::github_write_transport::Status::Ready)
+            && self
+                .actions
+                .as_ref()
+                .is_some_and(|actions| actions.read(cx).ready())
+    }
+    fn merge(&mut self, method: MergeMethod, cx: &mut Context<Self>) {
+        self.merge_confirm = None;
+        if !self.actions_ready(cx) {
+            return;
+        }
+        let Some(actions) = self.actions.clone() else {
+            return;
+        };
+        let started = actions.update(cx, |actions, cx| {
+            actions.perform(WriteAction::Merge(method.wire().into()), cx)
+        });
+        if let Err(error) = started {
+            self.banner = Some((error.to_string(), true));
+        }
+        cx.notify();
+    }
+    fn open_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(number) = self.selected.as_ref().map(|(number, _)| *number) else {
+            return;
+        };
+        if self.clear_review
+            || self
+                .review
+                .as_ref()
+                .is_some_and(|sheet| sheet.number != number)
+        {
+            self.clear_review = false;
+            self.review_body
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.merge_confirm = None;
+        self.review = Some(ReviewSheet {
+            number,
+            event: self
+                .review
+                .as_ref()
+                .filter(|sheet| sheet.number == number)
+                .map_or(ReviewEvent::Comment, |sheet| sheet.event),
+            error: None,
+            submitting: false,
+        });
+        self.review_body
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+    fn cancel_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.review.as_ref().is_some_and(|sheet| sheet.submitting) {
+            return;
+        }
+        self.review = None;
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+    fn submit_review(&mut self, cx: &mut Context<Self>) {
+        let body = self.review_body.read(cx).value().to_string();
+        let ready = self.actions_ready(cx);
+        let Some(sheet) = &mut self.review else {
+            return;
+        };
+        if sheet.submitting || !sheet.event.accepts(&body) || !ready {
+            return;
+        }
+        let event = sheet.event;
+        let Some(actions) = self.actions.clone() else {
+            return;
+        };
+        let started = actions.update(cx, |actions, cx| {
+            actions.perform(WriteAction::Review(event, body), cx)
+        });
+        if let Some(sheet) = &mut self.review {
+            match started {
+                Ok(()) => {
+                    sheet.submitting = true;
+                    sheet.error = None;
+                }
+                Err(error) => sheet.error = Some(error.to_string()),
+            }
+        }
         cx.notify();
     }
 }
@@ -645,6 +1225,762 @@ impl Drop for GitHubReviewPanel {
         if let Some(writes) = &self.writes {
             writes.request_shutdown();
         }
+    }
+}
+fn tone(tone: Tone, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    match tone {
+        Tone::Success => theme.success,
+        Tone::Failure => theme.danger,
+        Tone::Warning => theme.warning,
+        Tone::Merged => theme.magenta,
+        Tone::Muted => theme.muted_foreground,
+        Tone::Faint => theme.muted_foreground.opacity(0.6),
+    }
+}
+/// A glyph with what it says as its tooltip, as Swift's row icons have.
+fn glyph_icon(id: impl Into<ElementId>, glyph: presentation::Glyph, cx: &App) -> AnyElement {
+    let label = glyph.label;
+    div()
+        .id(id)
+        .flex_none()
+        .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+        .child(
+            Icon::new(glyph.icon)
+                .xsmall()
+                .text_color(tone(glyph.tone, cx)),
+        )
+        .into_any_element()
+}
+fn line(icon: impl IntoElement, label: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .min_w_0()
+        .text_sm()
+        .text_color(color)
+        .child(div().flex_none().w(px(16.)).child(icon))
+        .child(div().min_w_0().truncate().child(label.into()))
+}
+impl GitHubReviewPanel {
+    fn header(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut header = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1p5()
+            .min_h(px(32.))
+            .min_w_0();
+        let disabled = self.busy || self.workers.closed();
+        if let Some((number, _)) = &self.selected {
+            let title = self
+                .detail
+                .as_ref()
+                .or_else(|| {
+                    self.list
+                        .iter()
+                        .find(|pr| pr["number"].as_u64() == Some(*number))
+                })
+                .map(|pr| text(pr, "title"))
+                .unwrap_or_default();
+            header = header
+                .child(
+                    Button::new("github-back")
+                        .icon(IconName::ChevronLeft)
+                        .ghost()
+                        .compact()
+                        .tooltip("All Pull Requests")
+                        .accessibility_label("All Pull Requests")
+                        .disabled(disabled)
+                        .on_click(cx.listener(|this, _, window, cx| this.back(window, cx))),
+                )
+                .child(
+                    div()
+                        .id("github-detail-number")
+                        .font_semibold()
+                        .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+                        .child(format!("#{number}")),
+                );
+        } else {
+            let parent = cx.entity().downgrade();
+            let (state, involvement) = (self.state.clone(), self.involvement);
+            header = header.child(
+                Button::new("github-filter")
+                    .label(filter_title(&self.state, self.involvement))
+                    .ghost()
+                    .compact()
+                    .dropdown_caret(true)
+                    .accessibility_label("Pull requests to show")
+                    .disabled(disabled)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for option in Involvement::ALL {
+                            let parent = parent.clone();
+                            let state = state.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(option.label())
+                                    .icon(option.icon())
+                                    .checked(option == involvement)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            this.select_filter(&state, option, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        menu = menu.separator();
+                        for option in STATES {
+                            let parent = parent.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(state_label(option))
+                                    .checked(*option == state)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            this.select_filter(option, involvement, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            );
+            if !self.list.is_empty() {
+                header = header.child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(self.list.len().to_string()),
+                );
+            }
+        }
+        header = header.child(div().flex_1());
+        if self.busy || self.performing(cx) {
+            header = header.child(Spinner::new().xsmall().color(muted));
+        }
+        if let Some(pr) = &self.detail {
+            let url = text(pr, "url");
+            header = header.child(
+                Button::new("github-open-browser")
+                    .icon(IconName::ExternalLink)
+                    .ghost()
+                    .compact()
+                    .tooltip("Open in Browser")
+                    .accessibility_label("Open in Browser")
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+            );
+        }
+        header.child(
+            Button::new("github-refresh")
+                .icon(IconName::RefreshCw)
+                .ghost()
+                .compact()
+                .tooltip("Refresh")
+                .accessibility_label("Refresh")
+                .disabled(disabled || self.scope.is_none())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.banner = None;
+                    this.reload(true, cx);
+                    if this.active.is_none() && !this.busy {
+                        this.load_list(true, cx);
+                    }
+                })),
+        )
+    }
+    fn row(&self, index: usize, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (ink, muted, hover, active) = (
+            theme.foreground,
+            theme.muted_foreground,
+            theme.list_hover,
+            theme.list_active,
+        );
+        let number = pr["number"].as_u64().unwrap_or(0);
+        let state = presentation::state(pr);
+        let checks =
+            presentation::checks_state(&pr["statusCheckRollup"]).map(|state| state.glyph());
+        let review = presentation::review_decision(pr).map(|decision| decision.glyph());
+        let meta = presentation::row_meta(pr);
+        let title = text(pr, "title");
+        let spoken = [Some(title.as_str()), Some(meta.as_str()), Some(state.label)]
+            .into_iter()
+            .chain([
+                checks.map(|glyph| glyph.label),
+                review.map(|glyph| glyph.label),
+            ])
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let now = coincide_core::store::swift_timestamp() + 978_307_200.;
+        let mut first = div().flex().items_center().gap_1p5().min_w_0().child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .font_medium()
+                .text_color(if pr["isDraft"] == true { muted } else { ink })
+                .child(excerpt(&title, 180)),
+        );
+        if let Some(glyph) = checks {
+            first = first.child(glyph_icon(
+                SharedString::from(format!("github-pr-checks-{number}")),
+                glyph,
+                cx,
+            ));
+        }
+        if let Some(glyph) = review {
+            first = first.child(glyph_icon(
+                SharedString::from(format!("github-pr-review-{number}")),
+                glyph,
+                cx,
+            ));
+        }
+        div()
+            .id(SharedString::from(format!("github-pr-{number}")))
+            .aria_label(spoken)
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1p5()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .when(self.cursor == Some(index), move |row| row.bg(active))
+            .child(
+                div().flex_none().w(px(16.)).child(
+                    Icon::new(state.icon)
+                        .small()
+                        .text_color(tone(state.tone, cx)),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(first)
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1p5()
+                            .min_w_0()
+                            .text_xs()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(muted)
+                                    .child(meta),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(muted.opacity(0.7))
+                                    .child(presentation::age(&pr["updatedAt"], now)),
+                            ),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !this.busy && !this.workers.closed() {
+                    this.open_row(index, window, cx);
+                }
+            }))
+            .into_any_element()
+    }
+    fn list_body(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut body = div().flex().flex_col().gap_0p5();
+        if self.list.is_empty() && !self.busy && self.active.is_some() {
+            let (title, explanation) = empty_list(&self.state, self.involvement);
+            return body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .py_8()
+                    .child(Icon::new(self.involvement.icon()).text_color(muted))
+                    .child(div().font_semibold().child(title))
+                    .child(div().text_sm().text_color(muted).child(explanation)),
+            );
+        }
+        for (index, pr) in self.list.iter().enumerate() {
+            body = body.child(self.row(index, pr, cx));
+        }
+        if self.truncated {
+            body = body.child(div().px_3().py_2().text_xs().text_color(muted).child(format!(
+                "Showing the first {LIMIT} pull requests. Choose a narrower filter to see others."
+            )));
+        }
+        body
+    }
+    fn detail_body(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (muted, warning) = (theme.muted_foreground, theme.warning);
+        let Some((number, _)) = &self.selected else {
+            return div();
+        };
+        let number = *number;
+        let loaded = self.detail.as_ref();
+        // The row's summary shows at once; checks and the description follow.
+        let Some(pr) = loaded.or_else(|| {
+            self.list
+                .iter()
+                .find(|pr| pr["number"].as_u64() == Some(number))
+        }) else {
+            return div().text_sm().text_color(muted).child("Loading…");
+        };
+        let state = presentation::state(pr);
+        let open = pr["state"] == "OPEN";
+        let draft = pr["isDraft"] == true;
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .min_w_0()
+            .px_1()
+            .child(div().text_lg().font_semibold().child(text(pr, "title")))
+            .child(line(
+                Icon::new(state.icon)
+                    .small()
+                    .text_color(tone(state.tone, cx)),
+                presentation::byline(pr),
+                muted,
+            ))
+            .child(
+                div()
+                    .id("github-detail-branches")
+                    .text_xs()
+                    .font_family("monospace")
+                    .text_color(muted)
+                    .truncate()
+                    .child(format!(
+                        "{} → {}",
+                        text(pr, "headRefName"),
+                        text(pr, "baseRefName")
+                    )),
+            );
+        if let Some(stats) = loaded.and_then(presentation::stats) {
+            body = body.child(div().text_xs().text_color(muted).child(stats));
+        }
+        if let Some(glyph) = presentation::review_decision(pr).map(|decision| decision.glyph()) {
+            body = body.child(line(
+                Icon::new(glyph.icon)
+                    .small()
+                    .text_color(tone(glyph.tone, cx)),
+                glyph.label,
+                muted,
+            ));
+        }
+        if let Some(glyph) =
+            presentation::checks_state(&pr["statusCheckRollup"]).map(|state| state.glyph())
+        {
+            body = body.child(line(
+                Icon::new(glyph.icon)
+                    .small()
+                    .text_color(tone(glyph.tone, cx)),
+                glyph.label,
+                muted,
+            ));
+        }
+        if loaded.is_some_and(presentation::conflicting) {
+            body = body.child(line(
+                Icon::new(IconName::TriangleAlert)
+                    .small()
+                    .text_color(warning),
+                format!("Conflicts with {}", text(pr, "baseRefName")),
+                warning,
+            ));
+        }
+        if open {
+            body = body.child(self.actions_row(pr, draft, cx));
+        }
+        if let Some(sheet) = self
+            .merge_confirm
+            .map(|method| self.merge_sheet(method, pr, cx))
+        {
+            body = body.child(sheet);
+        }
+        if let Some(sheet) = self.review_sheet(cx) {
+            body = body.child(sheet);
+        }
+        body = body.child(div().h(px(1.)).my_2().bg(cx.theme().border));
+        let checks = loaded.map(|pr| presentation::checks(&pr["statusCheckRollup"]));
+        body = body.child(div().text_xs().font_semibold().text_color(muted).child(
+            match checks.as_ref().map(Vec::len) {
+                Some(count) if count > 0 => format!("Checks ({count})"),
+                _ => "Checks".into(),
+            },
+        ));
+        match &checks {
+            None => body = body.child(div().text_sm().text_color(muted).child("Loading…")),
+            Some(checks) if checks.is_empty() => {
+                body = body.child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("No checks ran on this pull request."),
+                )
+            }
+            Some(checks) => {
+                for (index, check) in checks.iter().enumerate() {
+                    body = body.child(self.check_row(number, index, check, cx));
+                }
+            }
+        }
+        body = body
+            .child(div().h(px(1.)).my_2().bg(cx.theme().border))
+            .child(
+                div()
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(muted)
+                    .child("Description"),
+            );
+        match loaded.map(|pr| presentation::display_markdown(pr["body"].as_str().unwrap_or(""))) {
+            None => body = body.child(div().text_sm().text_color(muted).child("Loading…")),
+            Some(description) if description.is_empty() => {
+                body = body.child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("No description provided."),
+                )
+            }
+            Some(description) => {
+                body = body.child(TextView::markdown(
+                    SharedString::from(format!("github-pr-description-{number}")),
+                    description,
+                ))
+            }
+        }
+        let reviews = loaded
+            .and_then(|pr| pr["reviews"].as_array())
+            .into_iter()
+            .flatten()
+            .filter(|review| review["state"] != "PENDING")
+            .take(100)
+            .collect::<Vec<_>>();
+        if !reviews.is_empty() {
+            body = body.child(
+                div()
+                    .mt_3()
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(muted)
+                    .child("Reviews"),
+            );
+            for (index, review) in reviews.into_iter().enumerate() {
+                let author = review["author"]["login"].as_str().unwrap_or("—");
+                let review_body = review["body"].as_str().unwrap_or("");
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .mt_1()
+                        .child(div().text_sm().font_medium().child(format!(
+                            "{author} · {}",
+                            presentation::review_state(review["state"].as_str().unwrap_or(""))
+                        )))
+                        .when(!review_body.is_empty(), |row| {
+                            row.child(TextView::markdown(
+                                SharedString::from(format!("github-pr-review-{number}-{index}")),
+                                review_body.to_owned(),
+                            ))
+                        }),
+                );
+            }
+        }
+        body
+    }
+    fn actions_row(&self, pr: &Value, draft: bool, cx: &mut Context<Self>) -> Div {
+        let ready = self.actions_ready(cx);
+        let idle = !self.busy && !self.performing(cx) && !self.workers.closed();
+        let mut row = div().flex().flex_wrap().gap_2().mt_2();
+        if !draft {
+            let methods = self
+                .active
+                .as_ref()
+                .and_then(|(_, request)| self.merge_methods.get(&request.binding.repository))
+                .cloned()
+                .unwrap_or_default();
+            let parent = cx.entity().downgrade();
+            let can_merge = self.detail.is_some() && presentation::can_merge(pr);
+            row = row.child(
+                Button::new("github-merge")
+                    .label("Merge…")
+                    .primary()
+                    .small()
+                    .disabled(!idle || !ready || !can_merge || methods.is_empty())
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for method in &methods {
+                            let parent = parent.clone();
+                            let method = *method;
+                            menu = menu.item(PopupMenuItem::new(method.title()).on_click(
+                                move |_, _, cx| {
+                                    let _ = parent.update(cx, |this, cx| {
+                                        this.review = None;
+                                        this.merge_confirm = Some(method);
+                                        cx.notify();
+                                    });
+                                },
+                            ));
+                        }
+                        menu
+                    }),
+            );
+        }
+        row = row
+            .child(
+                Button::new("github-checkout-unavailable")
+                    .label("Check Out in New Thread")
+                    .small()
+                    .tooltip("Checkout isn’t connected in this build yet")
+                    .disabled(true),
+            )
+            .child(
+                Button::new("github-review")
+                    .label("Review…")
+                    .small()
+                    .disabled(!idle || !ready || self.detail.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
+            )
+            .child(
+                Button::new("github-open-actions")
+                    .label("Action History…")
+                    .ghost()
+                    .small()
+                    .tooltip("Every write sent for this pull request, and its outcome")
+                    .disabled(
+                        !idle
+                            || self.actions.is_none()
+                            || self.write_status
+                                != Some(crate::github_write_transport::Status::Ready),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.workers.closed() {
+                            return;
+                        }
+                        this.sync_action_scope(cx);
+                        this.actions_open = true;
+                        cx.notify();
+                    })),
+            );
+        row
+    }
+    /// Swift's merge warning: one confirmation, then the merge.
+    fn merge_sheet(&self, method: MergeMethod, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let number = pr["number"].as_u64().unwrap_or(0);
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .mt_2()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.warning)
+            .child(div().font_semibold().child(method.question(number)))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(format!(
+                        "“{}” is merged into {} on GitHub. Its branch is kept.",
+                        text(pr, "title"),
+                        text(pr, "baseRefName")
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("github-merge-cancel")
+                            .label("Cancel")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.merge_confirm = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("github-merge-confirm")
+                            .label("Merge")
+                            .primary()
+                            .small()
+                            .disabled(!self.actions_ready(cx))
+                            .on_click(cx.listener(move |this, _, _, cx| this.merge(method, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+    /// Swift's PullRequestReviewSheet: an outcome, a message, ⌘Return to
+    /// submit and Esc to cancel. A failure keeps the text and shows inline.
+    fn review_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let sheet = self.review.as_ref()?;
+        let theme = cx.theme();
+        let (border, danger) = (theme.border, theme.danger);
+        let body = self.review_body.read(cx).value().to_string();
+        let submittable = !sheet.submitting && sheet.event.accepts(&body) && self.actions_ready(cx);
+        let parent = cx.entity().downgrade();
+        let selected = sheet.event;
+        let mut card = div()
+            .id("github-review-sheet")
+            .flex()
+            .flex_col()
+            .gap_3()
+            .mt_2()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                if action.secondary {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.submit_review(cx);
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                cx.stop_propagation();
+                this.cancel_review(window, cx);
+            }))
+            .child(
+                div()
+                    .font_semibold()
+                    .child(format!("Review pull request #{}", sheet.number)),
+            )
+            .child(
+                Button::new("github-review-outcome")
+                    .label(sheet.event.title())
+                    .small()
+                    .dropdown_caret(true)
+                    .accessibility_label("Review outcome")
+                    .disabled(sheet.submitting)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for event in ReviewEvent::ALL {
+                            let parent = parent.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(event.title())
+                                    .checked(event == selected)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            if let Some(sheet) = &mut this.review
+                                                && !sheet.submitting
+                                            {
+                                                sheet.event = event;
+                                                cx.notify();
+                                            }
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            )
+            .child(
+                Textarea::new(&self.review_body)
+                    .h(px(160.))
+                    .disabled(sheet.submitting),
+            );
+        if let Some(error) = &sheet.error {
+            card = card.child(div().text_sm().text_color(danger).child(error.clone()));
+        }
+        Some(
+            card.child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("github-review-cancel")
+                            .label("Cancel")
+                            .small()
+                            .disabled(sheet.submitting)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.cancel_review(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("github-review-submit")
+                            .label("Submit Review")
+                            .primary()
+                            .small()
+                            .disabled(!submittable)
+                            .on_click(cx.listener(|this, _, _, cx| this.submit_review(cx))),
+                    ),
+            )
+            .into_any_element(),
+        )
+    }
+    fn check_row(
+        &self,
+        number: u64,
+        index: usize,
+        check: &presentation::Check,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, hover) = (theme.muted_foreground, theme.list_hover);
+        let glyph = check.status.glyph();
+        let url = check.url.clone();
+        let tooltip = match &url {
+            Some(_) => format!("Open {} in the browser", check.name),
+            None => check.name.clone(),
+        };
+        div()
+            .id(SharedString::from(format!("github-check-{number}-{index}")))
+            .aria_label(format!("{}, {}", check.name, glyph.label))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .px_1p5()
+            .py_1()
+            .rounded_md()
+            .min_w_0()
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .child(
+                div().flex_none().w(px(14.)).child(
+                    Icon::new(glyph.icon)
+                        .xsmall()
+                        .text_color(tone(glyph.tone, cx)),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .child(check.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(glyph.label),
+            )
+            .when_some(url, |row, url| {
+                row.cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .child(
+                        Icon::new(IconName::ArrowUpRight)
+                            .xsmall()
+                            .text_color(muted.opacity(0.6)),
+                    )
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            })
+            .into_any_element()
     }
 }
 impl Render for GitHubReviewPanel {
@@ -681,8 +2017,17 @@ impl Render for GitHubReviewPanel {
                 )
                 .into_any_element();
         }
+        let theme = cx.theme();
+        let (muted, border, danger, success) = (
+            theme.muted_foreground,
+            theme.border,
+            theme.danger,
+            theme.success,
+        );
         let mut pane = div()
             .id("github-review-panel")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event, window, cx| this.key(event, window, cx)))
             .size_full()
             .min_h_0()
             .min_w_0()
@@ -691,55 +2036,22 @@ impl Render for GitHubReviewPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child("GitHub pull requests")
-            .child(div().text_sm().child(
-                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests after confirmation. Checkout is not connected.",
-            ))
-            .child(Input::new(&self.repository))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .children(STATES.iter().map(|state| {
-                        let state = *state;
-                        Button::new(SharedString::from(format!("github-state-{state}")))
-                            .label(if self.state == state {
-                                format!("• {state}")
-                            } else {
-                                state.to_owned()
-                            })
-                            .disabled(self.busy || self.workers.closed())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.state = state.into();
-                                this.load_list(cx);
-                            }))
-                    })),
-            )
-            .child(div().flex().flex_wrap().gap_2().children(Involvement::ALL.into_iter().map(|involvement| {
-                Button::new(SharedString::from(format!("github-involvement-{}",involvement.wire())))
-                    .label(if self.involvement==involvement {format!("• {}",involvement.label())} else {involvement.label().to_owned()})
-                    .disabled(self.busy || self.workers.closed())
-                    .on_click(cx.listener(move |this,_,_,cx| { this.select_involvement(involvement,cx); }))
-            })))
-            .child(
-                Button::new("github-refresh")
-                    .label("Load / refresh PR list")
-                    .disabled(self.busy || self.workers.closed() || self.scope.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.load_list(cx))),
-            )
-            .child(div().text_sm().child(self.notice.clone()));
+            .child(Input::new(&self.repository).small())
+            .child(self.header(cx))
+            .child(div().h(px(1.)).flex_none().bg(border));
         if let Some(status) = &self.write_status {
             let message = match status {
-                crate::github_write_transport::Status::Opening => "Opening the local GitHub action ledger…".into(),
-                crate::github_write_transport::Status::Initializing => "Initializing the local ledger. No GitHub request is made.".into(),
-                crate::github_write_transport::Status::FirstSetup => "First setup: initialize a private local action ledger before preparing writes. If this app previously sent GitHub actions, restore its original ledger instead.".into(),
-                crate::github_write_transport::Status::Ready => "Local action ledger ready. Each write needs a fresh preflight and explicit confirmation.".into(),
-                crate::github_write_transport::Status::Failed(error) => format!("GitHub actions unavailable: {error}. Restore the original ledger; it will not be recreated automatically."),
+                crate::github_write_transport::Status::Opening => Some("Opening the local GitHub action ledger…".into()),
+                crate::github_write_transport::Status::Initializing => Some("Initializing the local ledger. No GitHub request is made.".into()),
+                crate::github_write_transport::Status::FirstSetup => Some("First setup: initialize a private local action ledger before merging or reviewing. If this app previously sent GitHub actions, restore its original ledger instead.".into()),
+                crate::github_write_transport::Status::Ready => None,
+                crate::github_write_transport::Status::Failed(error) => Some(format!("GitHub actions unavailable: {error}. Restore the original ledger; it will not be recreated automatically.")),
             };
-            pane = pane.child(div().text_sm().child(message));
+            if let Some(message) = message {
+                pane = pane.child(div().flex_none().text_xs().text_color(muted).child(message));
+            }
             if status == &crate::github_write_transport::Status::FirstSetup {
-                pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger")
+                pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger").small()
                     .on_click(cx.listener(|this, _, _, cx| {
                         if this.workers.closed() { return; }
                         if let Some(writes) = &this.writes
@@ -749,226 +2061,47 @@ impl Render for GitHubReviewPanel {
                     })));
             }
         }
-        if let Some((_, request)) = &self.active {
-            pane = pane.child(div().text_sm().child(format!(
-                "Repository: {}\nRoot: {}",
-                request.binding.repository, request.binding.root
-            )));
-        }
-        // Keep navigation and write entry points outside the long metadata
-        // viewport. Its natural-height child supplies the scrollable extent.
-        let mut toolbar = div()
-            .id("github-detail-toolbar")
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .flex_none();
-        if self.selected.is_some() {
-            toolbar = toolbar.child(
-                Button::new("github-back")
-                    .label("Back to PR list")
-                    .disabled(self.busy || self.workers.closed())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.selected = None;
-                        this.detail = None;
-                        this.invalidate_actions(cx);
-                        cx.notify();
-                    })),
+        if !self.notice.is_empty() {
+            pane = pane.child(
+                div()
+                    .flex_none()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(self.notice.clone()),
             );
         }
-        if let Some(pr) = &self.detail {
-            let number = pr["number"].as_u64().unwrap_or(0);
-            let refresh_head = text(pr, "headRefOid");
-            let copied = text(pr, "url");
-            toolbar = toolbar
-                .child(
-                    Button::new("github-copy-url")
-                        .label("Copy PR URL")
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
-                        }),
-                )
-                .child(
-                    Button::new("github-open-actions")
-                        .label("Review or merge…")
-                        .disabled(
-                            self.busy
-                                || self.workers.closed()
-                                || self.actions.is_none()
-                                || self.write_status
-                                    != Some(crate::github_write_transport::Status::Ready),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if this.workers.closed() {
-                                return;
-                            }
-                            this.sync_action_scope(cx);
-                            this.actions_open = true;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("github-refresh-detail")
-                        .label("Refresh selected PR")
-                        .disabled(self.busy || self.workers.closed())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.load_detail(number, refresh_head.clone(), cx);
-                        })),
-                );
+        if let Some((message, failed)) = &self.banner {
+            pane = pane.child(
+                div()
+                    .id("github-result-banner")
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if *failed { danger } else { success })
+                    .child(div().flex_1().text_sm().child(message.clone()))
+                    .child(
+                        Button::new("github-result-dismiss")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .accessibility_label("Dismiss")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.banner = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
         }
-        pane = pane.child(toolbar);
-        let mut body = div()
-            .w_full()
-            .min_w_0()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap_2();
-        if let Some(pr) = &self.detail {
-            let number = pr["number"].as_u64().unwrap_or(0);
-            let full_head = text(pr, "headRefOid");
-            body = body
-                .child(format!("#{number} {}", text(pr, "title")))
-                .child(format!(
-                    "{}{} · author {}",
-                    text(pr, "state"),
-                    if pr["isDraft"] == true {
-                        " (Draft)"
-                    } else {
-                        ""
-                    },
-                    pr["author"]["login"]
-                        .as_str()
-                        .unwrap_or("Unknown / deleted account")
-                ))
-                .child(format!(
-                    "{} → {}\nHead: {full_head}",
-                    text(pr, "headRefName"),
-                    text(pr, "baseRefName")
-                ))
-                .child(format!(
-                    "Updated: {}\nReview decision: {}\nMergeability: {} · {}",
-                    text(pr, "updatedAt"),
-                    text(pr, "reviewDecision"),
-                    text(pr, "mergeable"),
-                    text(pr, "mergeStateStatus")
-                ));
-            if pr["additions"].is_number() && pr["deletions"].is_number() {
-                body = body.child(format!(
-                    "+{} / -{} · changed files {}",
-                    pr["additions"],
-                    pr["deletions"],
-                    pr["changedFiles"]
-                        .as_u64()
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| "Unknown".into())
-                ));
-            }
-            body = body.child(div().text_sm().child(text(pr, "url")))
-                .child(Button::new("github-checkout-unavailable").label("Check out").disabled(true))
-                .child("Use the review actions below for the displayed commit. Checkout is not connected.")
-                .child("Checks");
-            let checks = pr["statusCheckRollup"].as_array();
-            if checks.is_none_or(|checks| checks.is_empty()) {
-                body = body.child("No checks were reported; this is not proof of passing checks.");
-            }
-            for (index, check) in checks.into_iter().flatten().take(100).enumerate() {
-                body = body.child(
-                    div()
-                        .id(SharedString::from(format!("github-check-{number}-{index}")))
-                        .text_sm()
-                        .child(format!(
-                            "{} · status {} · conclusion {}",
-                            check["name"]
-                                .as_str()
-                                .or(check["context"].as_str())
-                                .unwrap_or("Unnamed check"),
-                            check["status"]
-                                .as_str()
-                                .or(check["state"].as_str())
-                                .unwrap_or("Unknown"),
-                            check["conclusion"].as_str().unwrap_or("Not supplied")
-                        )),
-                );
-            }
-            if checks.is_some_and(|v| v.len() > 100) {
-                body = body.child("Showing first 100 checks.");
-            }
-            body = body
-                .child("Description (Markdown source)")
-                .child(excerpt(pr["body"].as_str().unwrap_or(""), 30_000))
-                .child("Reviews");
-            let reviews = pr["reviews"].as_array();
-            if reviews.is_none_or(|reviews| reviews.is_empty()) {
-                body = body.child(
-                    "No review records were reported. Inline review threads are not included.",
-                );
-            }
-            for (index, review) in reviews.into_iter().flatten().take(100).enumerate() {
-                let commit = review["commit"]["oid"].as_str();
-                body = body.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "github-review-{number}-{index}"
-                        )))
-                        .p_2()
-                        .border_1()
-                        .child(format!(
-                            "{} · {} · {}",
-                            review["author"]["login"]
-                                .as_str()
-                                .unwrap_or("Unknown / deleted account"),
-                            text(review, "state"),
-                            text(review, "submittedAt")
-                        ))
-                        .child(format!(
-                            "Review commit: {}{}",
-                            commit.unwrap_or("Not supplied"),
-                            if commit.is_some_and(|oid| oid != full_head) {
-                                " (different from selected PR head)"
-                            } else {
-                                ""
-                            }
-                        ))
-                        .child(excerpt(review["body"].as_str().unwrap_or(""), 8000)),
-                );
-            }
-            if reviews.is_some_and(|v| v.len() > 100) {
-                body = body.child("Showing first 100 reviews.");
-            }
-        } else if self.selected.is_some() {
-            body=body.child("Detail is not available for this selection. Refresh the list after errors or head changes.");
+        let body = if self.selected.is_some() {
+            self.detail_body(cx)
         } else {
-            if self.list.is_empty() && !self.busy {
-                body = body.child("No pull requests loaded for this filter.");
-            }
-            for pr in &self.list {
-                let number = pr["number"].as_u64().unwrap_or(0);
-                let head = text(pr, "headRefOid");
-                body = body.child(
-                    Button::new(SharedString::from(format!("github-pr-{number}")))
-                        .label(format!(
-                            "#{number} {} · {}{}\n{} → {}",
-                            excerpt(&text(pr, "title"), 180),
-                            text(pr, "state"),
-                            if pr["isDraft"] == true {
-                                " / Draft"
-                            } else {
-                                ""
-                            },
-                            text(pr, "headRefName"),
-                            text(pr, "baseRefName")
-                        ))
-                        .disabled(self.busy || self.workers.closed())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.load_detail(number, head.clone(), cx)
-                        })),
-                );
-            }
-            if self.truncated {
-                body=body.child("List may be truncated at 30 pull requests. Use a narrower state filter; pagination is unavailable.");
-            }
-        }
+            self.list_body(cx)
+        };
         pane.child(
             div()
                 .id("github-review-scroll")
@@ -978,7 +2111,7 @@ impl Render for GitHubReviewPanel {
                 .min_w_0()
                 .overflow_y_scroll()
                 .track_scroll(&self.scroll)
-                .child(body),
+                .child(body.w_full().min_w_0().flex_none()),
         )
         .into_any_element()
     }
@@ -1282,6 +2415,90 @@ mod tests {
             .is_err()
         );
         assert!(!called);
+    }
+    #[::core::prelude::v1::test]
+    fn saved_filter_reads_back_and_falls_back_to_open_pull_requests() {
+        use super::{filter_title, saved_filter};
+        assert_eq!(
+            saved_filter(
+                &json!({"pullRequestFilter":{"state":"merged","involvement":"review-requested"}})
+            ),
+            ("merged".to_owned(), Involvement::ReviewRequested)
+        );
+        for document in [
+            json!({}),
+            json!({"pullRequestFilter":"open"}),
+            json!({"pullRequestFilter":{"state":"mine","involvement":"--author @me"}}),
+        ] {
+            assert_eq!(
+                saved_filter(&document),
+                ("open".to_owned(), Involvement::All)
+            );
+        }
+        assert_eq!(filter_title("open", Involvement::All), "Open Pull Requests");
+        assert_eq!(
+            filter_title("open", Involvement::Authored),
+            "My Pull Requests"
+        );
+        assert_eq!(
+            filter_title("open", Involvement::ReviewRequested),
+            "Review Requested"
+        );
+        assert_eq!(
+            filter_title("closed", Involvement::All),
+            "Closed Pull Requests"
+        );
+        assert_eq!(filter_title("all", Involvement::All), "All Pull Requests");
+        assert_eq!(
+            filter_title("merged", Involvement::Authored),
+            "My Pull Requests · Merged"
+        );
+        assert_eq!(
+            super::empty_list("open", Involvement::Authored).0,
+            "No Pull Requests of Yours"
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn merge_menu_lists_the_repository_methods_or_all_when_they_dont_read() {
+        use super::{MergeMethod, fetch_merge_methods};
+        let binding = request(View::List("open".into())).binding;
+        let mut calls = Vec::new();
+        let methods = fetch_merge_methods(
+            &mut |method, params| -> Result<Value> {
+                calls.push((method.to_owned(), params));
+                Ok(if method == "github.repo.merge-methods" {
+                    json!({"operationId":"op-methods"})
+                } else {
+                    json!({"ready":true,"result":{"kind":"mergeMethods","threadId":"thread-a","repository":"fixture/repo","methods":["squash","rebase"]}})
+                })
+            },
+            &binding,
+        );
+        assert_eq!(methods, [MergeMethod::Squash, MergeMethod::Rebase]);
+        assert_eq!(
+            calls[0].1,
+            json!({"threadId":"thread-a","expectedRoot":binding.root,"repository":"fixture/repo"})
+        );
+        // Another repository's answer, or a failed read, leaves GitHub to decide.
+        for reply in [
+            json!({"ready":true,"result":{"kind":"mergeMethods","threadId":"thread-a","repository":"fixture/other","methods":["squash"]}}),
+            json!({"ready":true,"result":{"code":"read_failed","error":"Unable to read"}}),
+        ] {
+            let methods = fetch_merge_methods(
+                &mut |method, _| -> Result<Value> {
+                    Ok(if method == "github.repo.merge-methods" {
+                        json!({"operationId":"op"})
+                    } else {
+                        reply.clone()
+                    })
+                },
+                &binding,
+            );
+            assert_eq!(
+                methods,
+                [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase]
+            );
+        }
     }
     #[::core::prelude::v1::test]
     fn repository_input_is_explicit_and_not_a_url_or_shell_fragment() {

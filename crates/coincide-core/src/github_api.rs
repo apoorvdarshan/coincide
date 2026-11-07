@@ -14,8 +14,9 @@ use std::{
 };
 
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
-const SUMMARY: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName";
-const DETAIL: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,body,author,updatedAt,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup";
+// Swift PullRequestCommands.listFields: rows show author, age, checks and review.
+const SUMMARY: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,author,updatedAt,reviewDecision,latestReviews,statusCheckRollup";
+const DETAIL: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,body,author,updatedAt,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,latestReviews,reviews,statusCheckRollup";
 
 #[cfg(test)]
 #[path = "github_shutdown_tests.rs"]
@@ -246,7 +247,15 @@ enum Read {
         number: u64,
         head: String,
     },
+    /// The merge methods the repository allows (Swift mergeSettings).
+    MergeMethods,
 }
+/// GitHub's settings keys for each `gh pr merge` method, in Swift's order.
+const MERGE_SETTINGS: [(&str, &str); 3] = [
+    ("merge", "mergeCommitAllowed"),
+    ("squash", "squashMergeAllowed"),
+    ("rebase", "rebaseMergeAllowed"),
+];
 impl Read {
     fn arguments(&self, repository: &str) -> Vec<String> {
         let mut args = match self {
@@ -267,6 +276,16 @@ impl Read {
                 "--json".into(),
                 DETAIL.into(),
             ],
+            // `gh repo view` names its repository as an argument, not --repo.
+            Self::MergeMethods => {
+                return vec![
+                    "repo".into(),
+                    "view".into(),
+                    format!("github.com/{repository}"),
+                    "--json".into(),
+                    MERGE_SETTINGS.map(|(_, key)| key).join(","),
+                ];
+            }
         };
         if let Self::List { involvement, .. } = self {
             args.extend(involvement.arguments().iter().map(|arg| (*arg).into()));
@@ -470,6 +489,7 @@ impl GithubService {
                 full_head(&head)?;
                 Read::Detail { number, head }
             }
+            "github.repo.merge-methods" => Read::MergeMethods,
             _ => bail!("Unsupported read-only GitHub method"),
         };
         self.collect();
@@ -615,6 +635,51 @@ fn safe_link(value: &Value) -> Value {
         .map(|url| json!(url.as_str()))
         .unwrap_or(Value::Null)
 }
+/// Only each latest review's state: Swift fills in GitHub's reviewDecision
+/// from them when branch rules don't require reviews.
+fn latest_reviews(value: &Value) -> Result<Value> {
+    if value.is_null() {
+        return Ok(json!([]));
+    }
+    let reviews = value.as_array().context("Invalid latest reviews")?;
+    ensure!(reviews.len() <= 500, "Too many PR reviews");
+    let mut states = Vec::new();
+    for review in reviews {
+        states.push(json!({"state":nullable_text(&review["state"],100)?}));
+    }
+    Ok(json!(states))
+}
+fn checks(value: &Value) -> Result<Value> {
+    let checks = value.as_array().context("Invalid checks")?;
+    ensure!(checks.len() <= 500, "Too many PR checks");
+    let mut selected = Vec::new();
+    for check in checks {
+        ensure!(check.is_object(), "Invalid check entry");
+        let mut item = serde_json::Map::new();
+        for field in [
+            "__typename",
+            "name",
+            "context",
+            "status",
+            "conclusion",
+            "state",
+            "workflowName",
+            "startedAt",
+            "completedAt",
+        ] {
+            if let Some(value) = check.get(field) {
+                item.insert(field.into(), nullable_text(value, 1024)?);
+            }
+        }
+        for field in ["detailsUrl", "targetUrl"] {
+            if let Some(value) = check.get(field) {
+                item.insert(field.into(), safe_link(value));
+            }
+        }
+        selected.push(Value::Object(item));
+    }
+    Ok(json!(selected))
+}
 fn normalize_pr(raw: &Value, repo: &str, detail: bool) -> Result<Value> {
     let number = raw["number"]
         .as_u64()
@@ -639,17 +704,23 @@ fn normalize_pr(raw: &Value, repo: &str, detail: bool) -> Result<Value> {
         "isDraft":raw["isDraft"].as_bool().context("Missing draft state")?,
         "title":nullable_text(&raw["title"],4096)?,"headRefName":nullable_text(&raw["headRefName"],1024)?,"baseRefName":nullable_text(&raw["baseRefName"],1024)?,
         "body":null,"author":null,"updatedAt":null,"additions":null,"deletions":null,"changedFiles":null,
-        "mergeable":null,"mergeStateStatus":null,"reviewDecision":null,"reviews":[],"statusCheckRollup":[]});
+        "mergeable":null,"mergeStateStatus":null,"reviewDecision":null,"latestReviews":[],"reviews":[],"statusCheckRollup":[]});
     for field in ["title", "headRefName", "baseRefName"] {
         ensure!(pr[field].is_string(), "Required PR summary field missing");
+    }
+    // Rows and detail both show the author, age, review decision and checks.
+    pr["author"] = actor(&raw["author"])?;
+    pr["updatedAt"] = nullable_text(&raw["updatedAt"], 100)?;
+    pr["reviewDecision"] = nullable_text(&raw["reviewDecision"], 100)?;
+    pr["latestReviews"] = latest_reviews(&raw["latestReviews"])?;
+    if !raw["statusCheckRollup"].is_null() {
+        pr["statusCheckRollup"] = checks(&raw["statusCheckRollup"])?;
     }
     if detail {
         pr["body"] = nullable_text(&raw["body"], 128 * 1024)?;
         if pr["body"].is_null() {
             pr["body"] = json!("");
         }
-        pr["author"] = actor(&raw["author"])?;
-        pr["updatedAt"] = nullable_text(&raw["updatedAt"], 100)?;
         for field in ["additions", "deletions", "changedFiles"] {
             ensure!(
                 raw[field].is_null() || raw[field].as_u64().is_some(),
@@ -657,7 +728,7 @@ fn normalize_pr(raw: &Value, repo: &str, detail: bool) -> Result<Value> {
             );
             pr[field] = raw[field].clone();
         }
-        for field in ["mergeable", "mergeStateStatus", "reviewDecision"] {
+        for field in ["mergeable", "mergeStateStatus"] {
             pr[field] = nullable_text(&raw[field], 100)?;
         }
         if !raw["reviews"].is_null() {
@@ -682,36 +753,6 @@ fn normalize_pr(raw: &Value, repo: &str, detail: bool) -> Result<Value> {
                     "author":actor(&review["author"])?,"commit":commit,"submittedAt":nullable_text(&review["submittedAt"],100)?}));
             }
             pr["reviews"] = json!(selected);
-        }
-        if !raw["statusCheckRollup"].is_null() {
-            let checks = raw["statusCheckRollup"]
-                .as_array()
-                .context("Invalid checks")?;
-            ensure!(checks.len() <= 500, "Too many PR checks");
-            let mut selected = Vec::new();
-            for check in checks {
-                ensure!(check.is_object(), "Invalid check entry");
-                let mut item = serde_json::Map::new();
-                for field in [
-                    "__typename",
-                    "name",
-                    "context",
-                    "status",
-                    "conclusion",
-                    "state",
-                ] {
-                    if let Some(value) = check.get(field) {
-                        item.insert(field.into(), nullable_text(value, 1024)?);
-                    }
-                }
-                for field in ["detailsUrl", "targetUrl"] {
-                    if let Some(value) = check.get(field) {
-                        item.insert(field.into(), safe_link(value));
-                    }
-                }
-                selected.push(Value::Object(item));
-            }
-            pr["statusCheckRollup"] = json!(selected);
         }
     }
     // Use the existing offline parser for the shared PR/URL/oid invariant; it
@@ -761,6 +802,23 @@ fn snapshot(bytes: &[u8], read: &Read, repo: &str, thread_id: &str, root: &Path)
                 json!({"kind":"read","threadId":thread_id,"expectedRoot":root,"repository":repo,"expectedHead":head,"pullRequest":pr}),
             )
         }
+        Read::MergeMethods => Ok(
+            json!({"kind":"mergeMethods","threadId":thread_id,"expectedRoot":root,"repository":repo,"methods":merge_methods(&value)}),
+        ),
+    }
+}
+/// Swift PullRequestJSON.mergeMethods: every method unless its setting reads
+/// false, and all three when none read, so GitHub has the final word.
+fn merge_methods(settings: &Value) -> Vec<&'static str> {
+    let allowed = MERGE_SETTINGS
+        .iter()
+        .filter(|(_, key)| settings[*key] != false)
+        .map(|(method, _)| *method)
+        .collect::<Vec<_>>();
+    if allowed.is_empty() {
+        MERGE_SETTINGS.map(|(method, _)| method).to_vec()
+    } else {
+        allowed
     }
 }
 
@@ -804,6 +862,72 @@ mod tests {
         ] {
             assert!(Involvement::parse(Some(&value)).is_err());
         }
+    }
+    #[test]
+    fn merge_methods_read_the_repository_settings_like_swift() {
+        assert_eq!(
+            Read::MergeMethods.arguments("owner/project"),
+            [
+                "repo",
+                "view",
+                "github.com/owner/project",
+                "--json",
+                "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"
+            ]
+        );
+        let read = |settings: Value| {
+            snapshot(
+                &serde_json::to_vec(&settings).unwrap(),
+                &Read::MergeMethods,
+                "owner/project",
+                "thread",
+                Path::new("/fixture"),
+            )
+            .unwrap()["methods"]
+                .clone()
+        };
+        assert_eq!(
+            read(
+                json!({"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":false})
+            ),
+            json!(["squash"])
+        );
+        assert_eq!(
+            read(json!({"mergeCommitAllowed":true,"squashMergeAllowed":false})),
+            json!(["merge", "rebase"])
+        );
+        // Settings that allow nothing, or don't read, leave GitHub to decide.
+        assert_eq!(
+            read(
+                json!({"mergeCommitAllowed":false,"squashMergeAllowed":false,"rebaseMergeAllowed":false})
+            ),
+            json!(["merge", "squash", "rebase"])
+        );
+        assert_eq!(read(json!({})), json!(["merge", "squash", "rebase"]));
+    }
+    #[test]
+    fn list_rows_carry_author_age_review_and_checks() {
+        let mut raw = pr();
+        raw["author"] = json!({"login":"fixture","private":"discard"});
+        raw["updatedAt"] = json!("2026-11-01T09:00:00Z");
+        raw["reviewDecision"] = json!("");
+        raw["latestReviews"] =
+            json!([{"state":"APPROVED","body":"discard","author":{"login":"other"}}]);
+        raw["statusCheckRollup"] = json!([{"__typename":"CheckRun","name":"CI","workflowName":"Build","status":"COMPLETED","conclusion":"FAILURE","completedAt":"2026-11-01T09:01:00Z","detailsUrl":"https://github.com/owner/project/actions/runs/1"}]);
+        let value = normalize_pr(&raw, "owner/project", false).unwrap();
+        assert_eq!(value["author"], json!({"login":"fixture"}));
+        assert_eq!(value["updatedAt"], "2026-11-01T09:00:00Z");
+        assert_eq!(value["latestReviews"], json!([{"state":"APPROVED"}]));
+        assert_eq!(value["statusCheckRollup"][0]["workflowName"], "Build");
+        assert_eq!(
+            value["statusCheckRollup"][0]["detailsUrl"],
+            "https://github.com/owner/project/actions/runs/1"
+        );
+        assert!(value["body"].is_null() && value["mergeable"].is_null());
+        assert_eq!(
+            normalize_pr(&pr(), "owner/project", false).unwrap()["latestReviews"],
+            json!([])
+        );
     }
     #[test]
     fn strict_repository_url_and_head_binding() {
