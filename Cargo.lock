@@ -1224,6 +1224,7 @@ dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
  "cc",
+ "chrono",
  "coincide-core",
  "cpal",
  "gpui-base",
