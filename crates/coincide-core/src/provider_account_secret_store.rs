@@ -30,8 +30,40 @@ pub(super) trait Backend: Send + Sync {
     fn read(&self, service: &str, id: &str) -> Result<Zeroizing<Vec<u8>>>;
     fn delete(&self, service: &str, id: &str) -> Result<()>;
 }
+#[derive(Debug)]
+struct MissingSecret;
+impl std::fmt::Display for MissingSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The saved account secret is missing")
+    }
+}
+impl std::error::Error for MissingSecret {}
 struct OsBackend;
+fn sdk_error_category(error: &keyring_core::Error) -> &'static str {
+    use keyring_core::Error;
+    match error {
+        Error::NoEntry => "missing-entry",
+        Error::NoStorageAccess(_) => "storage-access",
+        Error::PlatformFailure(_) => "platform-failure",
+        Error::NoDefaultStore => "missing-default-store",
+        Error::Ambiguous(_) => "ambiguous-entry",
+        Error::Invalid(_, _) => "invalid-entry",
+        Error::TooLong(_, _) => "entry-limit",
+        Error::BadEncoding(_) | Error::BadDataFormat(_, _) | Error::BadStoreFormat(_) => {
+            "invalid-data"
+        }
+        Error::NotSupportedByStore(_) => "unsupported-store",
+        _ => "unknown-sdk-error",
+    }
+}
 fn entry(service: &str, id: &str) -> Result<Entry> {
+    // Unit tests must never unlock a developer's OS store accidentally. The
+    // separately gated hosted-runner integration binary compiles the library
+    // without cfg(test) and may exercise its own unique synthetic entries.
+    ensure!(
+        !cfg!(test),
+        "Unit tests must inject a synthetic native secret backend"
+    );
     // Store initialization is deliberately lazy: even a presence query must not
     // cause a Secret Service/Keychain unlock prompt.
     #[cfg(target_os = "macos")]
@@ -66,7 +98,14 @@ impl Backend for OsBackend {
         })
     }
     fn read(&self, service: &str, id: &str) -> Result<Zeroizing<Vec<u8>>> {
-        entry(service,id)?.get_secret().map(Zeroizing::new).map_err(|_|anyhow::anyhow!("The saved account secret is unavailable; unlock the system secret store or replace the key"))
+        match entry(service, id)?.get_secret() {
+            Ok(value) => Ok(Zeroizing::new(value)),
+            Err(keyring_core::Error::NoEntry) => Err(MissingSecret.into()),
+            Err(error) => anyhow::bail!(
+                "The saved account secret is unavailable ({}); unlock the system secret store or replace the key",
+                sdk_error_category(&error)
+            ),
+        }
     }
     fn delete(&self, service: &str, id: &str) -> Result<()> {
         match entry(service, id)?.delete_credential() {
@@ -185,6 +224,15 @@ impl NativeSecretStore {
         );
         Ok(value)
     }
+    /// Explicit native operation, never a render-time presence query. Only the
+    /// SDK's typed NoEntry maps to None; locked/unavailable/tampered stay errors.
+    pub fn read_optional(&self, slot: &SecretSlot) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        match self.read(slot) {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.is::<MissingSecret>() => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
     /// Call only after registry revocation/tombstoning. Failure leaves the
     /// receipt usable for cleanup, never a restored account execution grant.
     pub fn delete(&self, slot: &SecretSlot) -> Result<()> {
@@ -236,7 +284,7 @@ mod tests {
                 .get(&(service.into(), id.into()))
                 .cloned()
                 .map(Zeroizing::new)
-                .context("Synthetic missing secret")
+                .ok_or_else(|| anyhow::Error::new(MissingSecret))
         }
         fn delete(&self, service: &str, id: &str) -> Result<()> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -267,6 +315,7 @@ mod tests {
         assert_eq!(store.read(&old).unwrap().as_slice(), b"synthetic-first");
         store.delete(&new).unwrap();
         assert!(store.read(&new).is_err());
+        assert!(store.read_optional(&new).unwrap().is_none());
         assert_eq!(store.read(&old).unwrap().as_slice(), b"synthetic-first");
     }
     #[test]
@@ -297,7 +346,30 @@ mod tests {
             b"synthetic-tampered".to_vec(),
         );
         assert!(store.read(&slot).is_err());
+        assert!(store.read_optional(&slot).is_err());
         let json = serde_json::to_string(&slot).unwrap();
         assert!(!json.contains("synthetic-original"));
+    }
+    #[test]
+    fn sdk_error_categories_never_include_platform_payload_or_secret_bytes() {
+        use keyring_core::Error;
+        let errors = [
+            Error::PlatformFailure(std::io::Error::other("synthetic-private-payload").into()),
+            Error::NoStorageAccess(std::io::Error::other("synthetic-private-payload").into()),
+            Error::BadEncoding(b"synthetic-private-payload".to_vec()),
+            Error::Invalid("synthetic-private-payload".into(), "private".into()),
+            Error::NoEntry,
+        ];
+        let categories: Vec<_> = errors.iter().map(sdk_error_category).collect();
+        assert_eq!(
+            categories,
+            [
+                "platform-failure",
+                "storage-access",
+                "invalid-data",
+                "invalid-entry",
+                "missing-entry"
+            ]
+        );
     }
 }

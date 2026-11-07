@@ -1,6 +1,8 @@
 //! Retained per-provider native drafts. Values cross only the typed private
 //! configuration boundary, never settings.patch, logs, or serialized UI state.
 use super::*;
+#[path = "provider_accounts_ui.rs"]
+mod accounts;
 use coincide_core::{
     native_ui_edits::{NativeUiEditLease, NativeUiEditors},
     provider_configuration::{ProbeReport, SetupAction, Snapshot},
@@ -16,6 +18,7 @@ pub(super) enum Part {
     Executable,
     Environment,
     Setup,
+    Accounts,
 }
 struct Variable {
     id: String,
@@ -64,6 +67,7 @@ impl Editor {
     }
 }
 enum Request {
+    Accounts(accounts::Request),
     Load,
     Save {
         baseline: String,
@@ -77,6 +81,7 @@ enum Request {
     },
 }
 enum Outcome {
+    Accounts(accounts::Outcome),
     Loaded(Snapshot),
     Saved(Snapshot),
     Checked(ProbeReport, Option<Value>),
@@ -84,6 +89,7 @@ enum Outcome {
     SetupHandedOff,
 }
 struct Reply {
+    accounts: bool,
     provider: String,
     generation: u64,
     result: Result<Outcome>,
@@ -91,6 +97,7 @@ struct Reply {
 pub(super) struct Panel {
     engine: SharedEngine,
     editors: HashMap<String, Editor>,
+    accounts: accounts::Accounts,
     native_editors: NativeUiEditors,
     workers: worker_owner::WorkerOwner,
     sender: mpsc::SyncSender<Reply>,
@@ -133,6 +140,7 @@ impl Panel {
         Self {
             engine,
             editors: HashMap::new(),
+            accounts: Default::default(),
             native_editors,
             workers: Default::default(),
             sender,
@@ -155,6 +163,7 @@ impl Panel {
     ) {
         self.enabled = enabled;
         self.active = provider.into();
+        self.accounts.select(provider);
         if !self.editors.contains_key(provider) {
             let key = provider.to_owned();
             let path =
@@ -381,22 +390,28 @@ impl Panel {
         }
         editor.notice = match &request {
             Request::Load => "Loading saved settings…",
+            Request::Accounts(_) => "Updating provider accounts…",
             Request::Save { .. } => "Saving settings…",
             Request::Check => "Checking provider…",
             Request::Setup { .. } => "Opening setup in a separate terminal…",
         }
         .into();
-        let custody =
-            matches!(&request, Request::Setup { .. }).then(|| editor.lease.pending_native_action());
+        let custody = matches!(&request, Request::Setup { .. } | Request::Accounts(_))
+            .then(|| editor.lease.pending_native_action());
         let engine = self.engine.clone();
         let sender = self.sender.clone();
         let provider = provider.to_owned();
         let selected = provider.clone();
+        let accounts = matches!(&request, Request::Accounts(_));
         if self.workers.spawn(move |admission| {
             let _custody = custody;
             let result = (|| -> Result<Outcome> {
                 anyhow::ensure!(admission.allowed(), "Settings are closing");
                 match request {
+                    Request::Accounts(request) => {
+                        accounts::execute(&engine, &provider, request, &|| admission.allowed())
+                            .map(Outcome::Accounts)
+                    }
                     Request::Load => Ok(Outcome::Loaded(
                         try_state(&engine)?.native_provider_configuration(&provider)?,
                     )),
@@ -458,6 +473,7 @@ impl Panel {
                 }
             })();
             let _ = sender.send(Reply {
+                accounts,
                 provider,
                 generation,
                 result,
@@ -491,6 +507,16 @@ impl Panel {
             let provider = self.active.clone();
             self.start(&provider, Request::Load, cx);
         }
+        if self.pending.is_none()
+            && self
+                .editors
+                .get(&self.active)
+                .is_some_and(|editor| editor.loaded)
+            && self.accounts.needs_load(&self.active)
+        {
+            let provider = self.active.clone();
+            self.start(&provider, Request::Accounts(accounts::Request::Load), cx);
+        }
         if self.pending.is_none() {
             if let Some(provider) = self.check_queue.front().cloned() {
                 if self.editors.get(&provider).is_some_and(|editor| {
@@ -522,6 +548,9 @@ impl Panel {
                 .get(&reply.provider)
                 .is_some_and(|editor| editor.generation == reply.generation);
             match reply.result {
+                Ok(Outcome::Accounts(outcome)) => {
+                    self.apply_accounts(&reply.provider, outcome, unchanged, window, cx)
+                }
                 Ok(Outcome::Loaded(snapshot)) | Ok(Outcome::Saved(snapshot)) => {
                     self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
                 }
@@ -550,6 +579,9 @@ impl Panel {
                     }
                 }
                 Err(error) => {
+                    if reply.accounts {
+                        self.account_error(&reply.provider, &error);
+                    }
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.load_requested = !editor.loaded && engine_busy(&error);
                         editor.notice = error.to_string();
@@ -582,6 +614,7 @@ impl Panel {
         }
     }
     fn discard(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.discard_accounts(provider, window, cx);
         let Some(editor) = self.editors.get(provider) else {
             return;
         };
@@ -658,11 +691,16 @@ impl Panel {
             .iter()
             .find(|(_, editor)| editor.dirty(cx))
             .map(|(provider, _)| provider.clone())
+            .or_else(|| self.accounts.dirty_provider(cx))
     }
     pub fn has_pending_write(&self) -> bool {
-        !self.check_queue.is_empty()
+        self.accounts.has_review()
+            || !self.check_queue.is_empty()
             || self.pending.is_some()
             || self.pickers.iter().any(|task| !task.is_ready())
+    }
+    pub fn account_revision(&self) -> u64 {
+        self.accounts.revision
     }
     pub fn is_selected(&self, provider: &str) -> bool {
         self.active == provider
@@ -680,6 +718,9 @@ impl Panel {
             .collect()
     }
     pub fn render_part(&self, part: Part, cx: &mut Context<Self>) -> AnyElement {
+        if matches!(part, Part::Accounts) {
+            return self.render_accounts(cx);
+        }
         let provider = self.active.clone();
         let Some(editor) = self.editors.get(&provider) else {
             return div().child("Select a provider.").into_any_element();
@@ -697,6 +738,7 @@ impl Panel {
             .border_color(rgb(0x29303d))
             .rounded_md();
         match part {
+            Part::Accounts => unreachable!("accounts are rendered above"),
             Part::Status => {
                 let check_provider = provider.clone();
                 let reload_provider = provider.clone();
@@ -996,6 +1038,7 @@ impl Panel {
     }
     pub fn request_shutdown(&mut self) {
         self.check_queue.clear();
+        self.accounts.cancel_review();
         self.workers.close();
     }
     pub fn shutdown_status(&mut self) -> worker_owner::ShutdownStatus {

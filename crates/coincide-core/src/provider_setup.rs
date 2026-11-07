@@ -500,6 +500,7 @@ fn consume_with(
                         stamp,
                         record,
                         profile: None,
+                        metadata_only: false,
                         derived_executable: None,
                         derived_companion: None,
                     })

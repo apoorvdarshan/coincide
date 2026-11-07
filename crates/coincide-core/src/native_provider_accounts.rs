@@ -13,13 +13,80 @@ pub struct NativeLoginAccount {
     pub home: PathBuf,
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-enum Authentication {
+pub enum NativeAccountAuthentication {
     #[default]
     Login,
     ApiKey,
 }
+type Authentication = NativeAccountAuthentication;
 fn login_mode(mode: &Authentication) -> bool {
     *mode == Authentication::Login
+}
+#[derive(Clone, PartialEq, Eq)]
+pub struct NativeProviderAccount {
+    pub id: String,
+    pub provider: String,
+    pub name: String,
+    pub revision: String,
+    pub authentication: NativeAccountAuthentication,
+    pub key_variable: Option<String>,
+    pub has_key: bool,
+}
+fn ordered_ids(payload: &Value) -> Result<Vec<String>> {
+    let accounts = payload["accounts"]
+        .as_object()
+        .context("Native account registry is malformed")?;
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::new();
+    if let Some(order) = payload.get("order") {
+        let order = order
+            .as_array()
+            .context("Native account order is malformed")?;
+        ensure!(order.len() <= 64, "Native account order exceeds its bound");
+        for id in order {
+            let id = id
+                .as_str()
+                .context("Native account order contains an invalid identity")?;
+            ensure!(
+                seen.insert(id.to_owned()),
+                "Native account order contains a duplicate identity"
+            );
+            if accounts.contains_key(id) {
+                ids.push(id.to_owned());
+            }
+        }
+    }
+    for id in accounts.keys() {
+        if seen.insert(id.clone()) {
+            ids.push(id.clone());
+        }
+    }
+    Ok(ids)
+}
+fn append_order(payload: &mut Value, id: &str) -> Result<()> {
+    let known = ordered_ids(payload)?;
+    let mut order = payload
+        .get("order")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut seen = order
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    for id in known {
+        if seen.insert(id.clone()) {
+            order.push(json!(id));
+        }
+    }
+    ensure!(
+        seen.insert(id.into()) && order.len() < 64,
+        "Native account order is full or duplicated"
+    );
+    order.push(json!(id));
+    payload["order"] = json!(order);
+    Ok(())
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Account {
@@ -34,6 +101,8 @@ pub(super) struct Account {
     key_variable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<account_secret_store::SecretSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    codex_enrollment: Option<Value>,
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
@@ -45,6 +114,7 @@ pub(super) struct LoginHome {
     _lease: Arc<File>,
     base_environment: BTreeMap<String, String>,
     captured_auth: Value,
+    metadata_only: bool,
 }
 fn supported(provider: &str) -> Result<&'static str> {
     match provider {
@@ -180,11 +250,26 @@ impl LoginHome {
         Self::capture_with_lock(root, account, false)
     }
     fn capture_with_lock(root: &Path, account: Account, exclusive: bool) -> Result<Self> {
+        Self::capture_mode(root, account, exclusive, false)
+    }
+    fn capture_mode(
+        root: &Path,
+        account: Account,
+        exclusive: bool,
+        metadata: bool,
+    ) -> Result<Self> {
         ensure!(
             account.home == home(root, &account.provider, &account.id)?,
             "Native account home is outside its owner"
         );
         private(&account.home, true)?;
+        if account.provider == "codex" {
+            ensure!(
+                fs::symlink_metadata(account.home.join("config.toml"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "Native Codex account config overrides are not supported"
+            );
+        }
         ensure!(
             crate::private_fs::identity(&account.home)? == account.home_identity,
             "Native account home changed"
@@ -238,11 +323,21 @@ impl LoginHome {
             _lease: Arc::new(lease),
             base_environment,
             captured_auth: Value::Null,
+            metadata_only: metadata,
         };
-        captured.captured_auth = captured.auth_stamp()?;
+        if !metadata {
+            captured.captured_auth = captured.auth_stamp()?;
+        }
         Ok(captured)
     }
     pub(super) fn validate(&self) -> Result<()> {
+        if self.account.provider == "codex" {
+            ensure!(
+                fs::symlink_metadata(self.account.home.join("config.toml"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "Native Codex account config overrides are not supported"
+            );
+        }
         ensure!(
             self.account.home == home(&self.root, &self.account.provider, &self.account.id)?,
             "Native account home changed"
@@ -255,14 +350,27 @@ impl LoginHome {
                     == self.account.guard_identity,
             "Native account owner was replaced"
         );
+        if self.account.provider == "codex"
+            && self.account.authentication == Authentication::ApiKey
+            && self.account.codex_enrollment.is_some()
+        {
+            if self.metadata_only {
+                codex_key_enrollment::validate_auth_metadata(&self.account)?;
+            } else {
+                codex_key_enrollment::validate_auth(&self.account)?;
+            }
+        }
         ensure!(
-            self.auth_stamp()? == self.captured_auth,
+            self.metadata_only || self.auth_stamp()? == self.captured_auth,
             "Native login authentication changed; capture the account again"
         );
         Ok(())
     }
     pub(super) fn matches(&self, selection: &Value) -> bool {
         selection["provider"] == self.account.provider && selection["accountID"] == self.account.id
+    }
+    pub(super) fn is_key_for(&self, provider: &str) -> bool {
+        self.account.authentication == Authentication::ApiKey && self.account.provider == provider
     }
     pub(super) fn configure_base(&self, command: &mut Command) -> Result<()> {
         self.validate()?;
@@ -282,6 +390,9 @@ impl LoginHome {
             .map(|(_, value)| value.into())
     }
     fn auth_stamp(&self) -> Result<Value> {
+        if self.account.authentication == Authentication::ApiKey {
+            return Ok(Value::Null);
+        }
         let path = match self.account.provider.as_str() {
             "claude" => self.account.home.join(".credentials.json"),
             "grok" => self.account.home.join("auth.json"),
@@ -351,6 +462,36 @@ fn auth_keys(provider: &str) -> &'static [&'static str] {
     }
 }
 impl Engine {
+    pub(super) fn routes_native_provider_account(&self, thread: &Value) -> Result<bool> {
+        let provider = text(&thread["selection"], "provider");
+        let selected = thread["selection"]["accountID"]
+            .as_str()
+            .context("Native account identity must be text")?;
+        if let Some(owner) = Private::open(&self.store, false)? {
+            let raw = self.store.native_accounts_payload(&provider)?;
+            let payload = read(&owner, &provider, raw.as_deref())?;
+            if payload["accounts"].get(selected).is_some()
+                || payload["revoked_accounts"].get(selected).is_some()
+            {
+                return Ok(true);
+            }
+        }
+        // A removed native ID must not fall through to an unrelated legacy
+        // account with the same descriptive ID. This marker routes only; the
+        // actual admission below still verifies its source-bound HMAC.
+        if let Some(marker) = self
+            .store
+            .native_account_selection(required(thread, "id")?)?
+        {
+            let marker: Value = match serde_json::from_str(&marker) {
+                Ok(marker) => marker,
+                Err(_) => return Ok(true),
+            };
+            return Ok(marker["payload"]["provider"] == provider
+                && marker["payload"]["account"] == selected);
+        }
+        Ok(false)
+    }
     pub(super) fn validate_native_account_selection(&self, thread: &Value) -> Result<()> {
         let owner = Private::open(&self.store, false)?
             .context("Choose this account in the native composer first")?;
@@ -383,6 +524,71 @@ impl Engine {
         );
         Ok(())
     }
+    pub(crate) fn native_account_choice_available(&self, thread: &Value) -> bool {
+        let Some(id) = thread["id"].as_str() else {
+            return false;
+        };
+        self.active_thread.as_deref() == Some(id)
+            && !self.admissions_frozen()
+            && !self.runs.contains_key(id)
+            && !self.unsaved_threads.contains_key(id)
+            && !self.native_follow_up.pending_thread(id)
+            && thread["rustBotContext"].is_null()
+            && thread["botID"].is_null()
+            && self.store.is_imported(id).is_ok_and(|imported| !imported)
+            && crate::message_queue::read(thread).is_ok_and(|rows| {
+                rows.iter().all(|row| {
+                    !matches!(
+                        row.state,
+                        crate::message_queue::State::Pending
+                            | crate::message_queue::State::Dispatching
+                    )
+                })
+            })
+    }
+    pub fn native_provider_accounts(&self, provider: &str) -> Result<Vec<NativeProviderAccount>> {
+        provider_id(provider)?;
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(Vec::new());
+        };
+        let raw = self.store.native_accounts_payload(provider)?;
+        let payload = read(&owner, provider, raw.as_deref())?;
+        ordered_ids(&payload)?
+            .iter()
+            .map(|id| {
+                let row = account(&payload, provider, id)?;
+                if row.authentication == Authentication::ApiKey {
+                    ensure!(
+                        row.key_variable
+                            .as_deref()
+                            .is_some_and(|variable| keys::key_choices(provider).is_ok_and(
+                                |choices| choices.iter().any(|(key, _)| *key == variable)
+                            )),
+                        "Native key service is invalid"
+                    );
+                }
+                if let Some(slot) = &row.key {
+                    ensure!(
+                        slot.belongs_to(
+                            provider,
+                            &row.id,
+                            account_secret_store::SecretPurpose::ApiKey
+                        ),
+                        "Account key belongs to another account"
+                    );
+                }
+                Ok(NativeProviderAccount {
+                    id: row.id,
+                    provider: row.provider,
+                    name: row.name,
+                    revision: row.revision,
+                    authentication: row.authentication,
+                    key_variable: row.key_variable,
+                    has_key: row.key.is_some(),
+                })
+            })
+            .collect()
+    }
     pub fn native_login_accounts(&self, provider: &str) -> Result<Vec<NativeLoginAccount>> {
         supported(provider)?;
         let Some(owner) = Private::open(&self.store, false)? else {
@@ -390,10 +596,8 @@ impl Engine {
         };
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        payload["accounts"]
-            .as_object()
-            .unwrap()
-            .keys()
+        ordered_ids(&payload)?
+            .iter()
             .map(|id| account(&payload, provider, id))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
@@ -422,6 +626,7 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        append_order(&mut payload, &id)?;
         let root = self.store.data_directory()?;
         let (home, home_identity, guard_identity) = create_home(&root, provider, &id)?;
         let account = Account {
@@ -433,6 +638,7 @@ impl Engine {
             authentication: Authentication::Login,
             key_variable: None,
             key: None,
+            codex_enrollment: None,
             home,
             home_identity,
             guard_identity,
@@ -486,6 +692,13 @@ impl Engine {
         expected: &Value,
         account: Option<&str>,
     ) -> Result<Value> {
+        self.select_native_provider_account(expected, account)
+    }
+    pub fn select_native_provider_account(
+        &mut self,
+        expected: &Value,
+        account: Option<&str>,
+    ) -> Result<Value> {
         self.require_admissions()?;
         let id = required(expected, "id")?;
         ensure!(
@@ -521,10 +734,21 @@ impl Engine {
             "Finish queued messages before changing accounts"
         );
         let provider = text(&current["selection"], "provider");
-        supported(&provider)?;
+        ensure!(
+            matches!(
+                provider.as_str(),
+                "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "codex"
+            ),
+            "Use this provider's existing guarded account workflow"
+        );
         let target = account.filter(|account| !account.is_empty() && *account != "default");
+        if provider == "codex" && current["selection"]["accountID"].as_str() != target {
+            let source_configuration = self.provider_launch_configuration_for_thread(&current)?;
+            let _scope = enter(source_configuration);
+            self.park_named_departure(&current)?;
+        }
         let configuration = if let Some(target) = target {
-            Some(self.native_login_launch_configuration(&provider, target)?)
+            Some(self.native_account_configuration_mode(&provider, target, true)?)
         } else {
             self.provider_launch_configuration(&provider)?
         };
@@ -547,6 +771,9 @@ impl Engine {
         }
         crate::composer_policy::Policy::parse(&changed, crate::composer_policy::Origin::Ordinary)?
             .preflight()?;
+        if provider == "antigravity" {
+            self.antigravity_selection(&changed["selection"])?;
+        }
         let owner = Private::open(&self.store, false)?;
         let grant = target.map(|target| {
             let owner = owner.as_ref().context("Native account authority missing")?;
@@ -556,6 +783,40 @@ impl Engine {
             .save_native_account_selection(&current, &changed, grant.as_deref())?;
         self.revision += 1;
         Ok(changed)
+    }
+    pub(super) fn native_account_configuration_mode(
+        &self,
+        provider: &str,
+        id: &str,
+        metadata: bool,
+    ) -> Result<LaunchConfiguration> {
+        let owner = Private::open(&self.store, false)?
+            .context("Add this account in native Settings first")?;
+        let raw = self.store.native_accounts_payload(provider)?;
+        let payload = read(&owner, provider, raw.as_deref())?;
+        let account = account(&payload, provider, id)?;
+        if account.authentication == Authentication::ApiKey {
+            return if metadata {
+                keys::metadata_configuration(&owner, &self.store, account)
+            } else {
+                keys::launch_configuration(&owner, &self.store, account)
+            };
+        }
+        if metadata {
+            let profile =
+                LoginHome::capture_mode(&self.store.data_directory()?, account, false, true)?;
+            let record = read_record(&owner.read()?, provider)?;
+            ensure!(
+                record.is_some()
+                    || !self
+                        .store
+                        .requires_native_provider_configuration(provider)?,
+                "Approved provider configuration is missing"
+            );
+            return build_configuration(&owner, profile, record, None);
+        }
+        drop(owner);
+        self.native_login_launch_configuration(provider, id)
     }
     pub(super) fn native_login_launch_configuration(
         &self,
@@ -630,10 +891,21 @@ fn build_configuration(
                 .iter()
                 .any(|owned| key.eq_ignore_ascii_case(owned))
     });
-    record.environment.insert(
-        supported(provider)?.into(),
-        profile.account.home.to_string_lossy().into_owned(),
-    );
+    let home_variable = if profile.account.authentication == Authentication::Login {
+        Some(supported(provider)?)
+    } else if provider == "opencode" {
+        Some("XDG_DATA_HOME")
+    } else if provider == "codex" {
+        Some("CODEX_HOME")
+    } else {
+        None
+    };
+    if let Some(variable) = home_variable {
+        record.environment.insert(
+            variable.into(),
+            profile.account.home.to_string_lossy().into_owned(),
+        );
+    }
     let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
         &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
     )?));
@@ -642,7 +914,9 @@ fn build_configuration(
         .context("Native account source missing")?
         .into();
     let identity = serde_json::from_value(owner.source["identity"].clone())?;
+    let metadata_only = profile.metadata_only;
     Ok(LaunchConfiguration {
+        metadata_only,
         stamp: Stamp {
             source,
             identity,
@@ -743,12 +1017,32 @@ impl Engine {
     }
 }
 
+#[cfg(test)]
+pub(super) fn synthetic_key_configuration(
+    engine: &mut Engine,
+    provider: &str,
+) -> (LaunchConfiguration, PathBuf) {
+    keys::synthetic_configuration(engine, provider)
+}
+#[path = "native_provider_account_removal.rs"]
+mod removal;
+#[path = "native_provider_setup_source.rs"]
+mod setup_source;
+pub use removal::{NativeAccountRemoval, PreparedNativeAccountRemoval};
+#[path = "native_codex_key_context.rs"]
+mod codex_key_context;
+pub(crate) use codex_key_context::NativeCodexApiContext;
+#[path = "native_codex_key_enrollment.rs"]
+mod codex_key_enrollment;
+pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt};
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};
-
-#[path = "native_provider_setup_source.rs"]
-mod setup_source;
+pub fn native_account_key_choices(
+    provider: &str,
+) -> Result<&'static [(&'static str, &'static str)]> {
+    keys::key_choices(provider)
+}
 
 #[cfg(test)]
 mod tests {
@@ -846,6 +1140,107 @@ mod tests {
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
         assert!(effective_var("ANTHROPIC_API_KEY").is_none());
         assert!(effective_var("ARBITRARY_INHERITED_SECRET").is_none());
+    }
+    #[test]
+    fn native_markers_do_not_capture_legacy_account_routes_or_allow_removed_id_fallback() {
+        let (_root, mut engine, _binary) = fixture("antigravity");
+        let mut thread = thread(&mut engine, "antigravity");
+        thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
+        let native = engine
+            .create_native_key_account("antigravity", "Native", "GEMINI_API_KEY")
+            .unwrap();
+        thread["selection"]["accountID"] = json!(native.id);
+        assert!(engine.routes_native_provider_account(&thread).unwrap());
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let raw = engine.store.native_accounts_payload("antigravity").unwrap();
+        let mut payload = read(&owner, "antigravity", raw.as_deref()).unwrap();
+        payload["accounts"]
+            .as_object_mut()
+            .unwrap()
+            .remove(&native.id);
+        engine
+            .store
+            .save_native_accounts_payload(
+                "antigravity",
+                raw.as_deref(),
+                &encoded(&owner, &payload).unwrap(),
+            )
+            .unwrap();
+        drop(owner);
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
+        // Save one genuine native selection marker, then remove its account row.
+        // Revoked native associations continue routing to denial, not legacy.
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let marker=encoded(&owner,&json!({"source":owner.source,"purpose":"native-account-selection-v1","thread":id,"provider":"antigravity","account":native.id})).unwrap();
+        engine.store.save(&thread).unwrap();
+        engine
+            .store
+            .save_native_account_selection(&thread, &thread, Some(&marker))
+            .unwrap();
+        drop(owner);
+        assert!(engine.routes_native_provider_account(&thread).unwrap());
+        assert!(
+            engine
+                .provider_launch_configuration_for_thread(&thread)
+                .is_err()
+        );
+        thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
+        assert!(!engine.routes_native_provider_account(&thread).unwrap());
+    }
+    #[test]
+    fn ordinary_selection_write_revokes_native_marker_before_old_id_can_reappear() {
+        let (_root, mut engine, _binary) = fixture("grok");
+        let account = engine.create_native_login_account("grok", "Work").unwrap();
+        let source = thread(&mut engine, "grok");
+        let selected = engine
+            .select_native_provider_account(&source, Some(&account.id))
+            .unwrap();
+        assert!(engine.validate_native_account_selection(&selected).is_ok());
+        let mut default = selected.clone();
+        default["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("accountID");
+        engine.store.save(&default).unwrap();
+        engine.store.save(&selected).unwrap();
+        assert!(engine.validate_native_account_selection(&selected).is_err());
+        assert!(
+            engine
+                .provider_launch_configuration_for_thread(&selected)
+                .is_err()
+        );
+    }
+    #[test]
+    fn mixed_native_accounts_keep_creation_order_after_mode_and_name_changes() {
+        let (_root, mut engine, _binary) = fixture("grok");
+        let first = engine.create_native_login_account("grok", "First").unwrap();
+        let second = engine
+            .create_native_key_account("grok", "Second", "XAI_API_KEY")
+            .unwrap();
+        let third = engine.create_native_login_account("grok", "Third").unwrap();
+        engine
+            .set_native_provider_account_auth(
+                "grok",
+                &first.id,
+                &first.revision,
+                "apiKey",
+                Some("XAI_API_KEY"),
+            )
+            .unwrap();
+        engine
+            .rename_native_login_account("grok", &third.id, &third.revision, "Renamed")
+            .unwrap();
+        assert_eq!(
+            engine
+                .native_provider_accounts("grok")
+                .unwrap()
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            vec![first.id, second.id, third.id]
+        );
     }
     #[test]
     fn global_grok_auth_and_configuration_cannot_override_named_login_home() {

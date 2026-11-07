@@ -15,8 +15,8 @@ An implemented but untested item remains unchecked. The inventory is based on th
 provider protocols and CLI command parser. Expand it when another behavior is found.
 
 - [x] Rust workspace and independent GPUI macOS build.
-- [x] Initial Linux desktop compilation (no GUI acceptance yet).
-- [x] Native Windows desktop compilation (no GUI acceptance yet).
+- [x] Native Linux desktop compilation and scoped input/Settings/Quit/restart checks.
+- [x] Native Windows desktop compilation and scoped input/Settings/Quit/restart checks.
 - [x] Lossless source-file capture and transactional thread import.
 - [x] Preserve unknown fields, attachments, drafts and provider session references.
 - [x] Rollback invalid/duplicate imports and refuse symlink traversal.
@@ -76,17 +76,47 @@ reviewed. Its composer, Settings, Project Defaults, lifecycle, queue editing,
 empty-chat reuse, snooze wake-up and Appshots results remain scoped; actual
 Appshots capture/hooks/permissions are unverified.
 
-[#275](https://github.com/apoorvdarshan/coincide/pull/275) now integrates
-[#273](https://github.com/apoorvdarshan/coincide/pull/273)'s provider configuration
-and external-terminal setup controls, full selectable context details, native
-selected replies, folder autocomplete, named-account queue dispatch, Send Now,
-and image/context follow-up payloads. Before payload integration, private GPUI
-fixtures passed one actual readonly context/copy case, two actual reply-selection
-cases, and all eight actual composer-dispatch cases. These synthetic fixtures do
-not construct native hosts or use actual providers. Payload and final combined
-all-platform validation are pending. Other provider-account modes and remaining
-General settings are being completed separately. The active Swift app, original
-checkout and actual user data remain preserved; no cutover or release occurred.
+[#275](https://github.com/apoorvdarshan/coincide/pull/275) is merged as
+`6b0496e944c3fa8c0fe34c83bc4a0759109c579e`, with the identical tree to tested
+`f8f4655fc94af4202f027af31a954d920e29e897`. All 14 applicable hosted checks
+passed. Its provider executable/environment/setup controls, selected replies,
+context details, folder autocomplete, named-account queue dispatch, Send Now and
+image/context follow-up payloads passed the combined Core/desktop checks. Actual
+Windows/Linux input, separate Settings close, ordinary Quit and exact older-chat
+selection/draft restart passed; screenshots were reviewed. The Linux provider-page
+screenshot proves navigation, not completed configuration loading or live login.
+
+Opening Settings had also exposed a shared-owner window-association bug: closing
+it stopped the main polling loop. The fix captures the main window explicitly.
+A real GPUI regression reproduces the old failed lookup and verifies continued
+revision observation, ordinary Quit admission and actual closed-main refusal.
+
+[#276](https://github.com/apoorvdarshan/coincide/pull/276) is merged as
+`fd7b2cf33720ddb8693dbbe63d0b8c5e81aac6a4`, with the identical tree to tested
+`290facc0a3c205df24819ace4f1d4d92463f2040`. Every applicable hosted check passed.
+It adds bottom/right placement of the same cached terminal workspace, persisted
+geometry, terminal activation handshakes, nested account-environment redaction,
+and Hold to Quit. Both Windows/Linux native runs proved the first brief Ctrl+Q
+kept ordinary admissions available and the second within 1.5 seconds exited
+normally, preserving selection and draft across restart. This does not establish
+real shell/IME, provider authentication or hardware acceptance.
+
+[#277](https://github.com/apoorvdarshan/coincide/pull/277) and
+[#278](https://github.com/apoorvdarshan/coincide/pull/278) remain under hosted
+verification. They contain shared chat/inspector composition, per-thread panel
+preferences, Settings scrolling, native account storage groundwork and explicit
+Windows/Linux microphone backends. Windows verification found a Unix-only setup
+source reader and default database ownership mismatch; the production repair
+retains exact native source handles and creates new databases privately. Native
+microphone compilation also required an explicit static sample-type bound. These
+new heads require their own checks; earlier passing heads do not certify them.
+
+The next isolated batches add full composer dictation, owned cancellable Windows
+offline inference, actual converted-audio telemetry, provider account controls,
+Voice API engines and fresh-runner native credential-store tests. Synthetic
+lifecycle results do not establish personal microphone/vault/provider acceptance.
+The live Swift app, original checkout, global instructions and personal data
+remain preserved; no installation, cutover or release occurred.
 
 See [CHECKLIST](CHECKLIST.md) for the current concise worklist. The following older
 checkpoints retain their original evidence and limitations; their pending notes

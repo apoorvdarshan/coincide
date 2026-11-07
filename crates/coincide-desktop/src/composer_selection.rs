@@ -2,6 +2,8 @@
 //! a provider or discovers/authenticates models. Explicit Apply and acknowledged
 //! standalone mode commands use the same validated selection endpoint.
 use super::*;
+#[path = "composer_native_accounts.rs"]
+mod native_accounts;
 use std::collections::HashMap;
 #[path = "composer_selection_cache.rs"]
 mod capability_cache;
@@ -866,6 +868,9 @@ pub(super) struct ComposerSelection {
     capabilities: Value,
     accounts: Value,
     codex_accounts: Value,
+    native_accounts: Vec<coincide_core::provider_configuration::NativeProviderAccount>,
+    native_revision: u64,
+    pending_native_account: Option<native_accounts::PendingChoice>,
     error: String,
     pub(super) catalog: Value,
     catalog_request: Option<CatalogRequest>,
@@ -1201,6 +1206,8 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
         }
     };
     match provider["accountPolicy"].as_str() {
+        Some("selected_native_account") if id=="default" || provider["selectedNativeAccountID"]==id=>None,
+        Some("selected_native_account")=>Some("Choose this account from the native account list; imported account IDs cannot grant access.".into()),
         Some("default_only") if id != "default" => Some("This provider supports only the default account. Choose Use default account to replace the retained account ID.".into()),
         Some("default_only") => None,
         Some("configured_antigravity") if !configured.is_object() => Some("Configured account metadata is unavailable. Refresh capabilities or open Antigravity accounts.".into()),
@@ -1220,7 +1227,8 @@ impl Coincide {
         }
     }
     pub(super) fn selection_send_blocked(&self) -> bool {
-        if self.selection_ui.pending_provider.is_some()
+        if self.selection_ui.pending_native_account.is_some()
+            || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_provider_picker.is_some()
         {
             return true;
@@ -1568,7 +1576,8 @@ impl Coincide {
             return;
         };
         let named = &self.selection_ui.capabilities["namedModels"];
-        if !named_models::named_thread(thread)
+        if named["nativeApiKey"] == true
+            || !named_models::named_thread(thread)
             || named["threadId"] != thread["id"]
             || named["accountID"] != thread["selection"]["accountID"]
             || named["refreshAllowed"] != true
@@ -1598,6 +1607,17 @@ impl Coincide {
     }
 
     pub(super) fn sync_composer_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = self.selection_ui.pending_native_account.take() {
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| picker_view_scope(thread) == pending.scope)
+            {
+                self.select_native_account_from_picker(pending.account, cx);
+            } else {
+                self.status="Account selection cancelled because the conversation changed. Your draft is retained.".into();
+            }
+        }
         if let Some(pending) = self.selection_ui.pending_provider_picker.take() {
             self.switch_provider_from_history(pending.provider.clone(), Some(pending), cx);
         }
@@ -1630,6 +1650,14 @@ impl Coincide {
             self.selection_ui.capabilities = Value::Null;
             return;
         };
+        let native_revision = self
+            .provider_configuration_panel
+            .read(cx)
+            .account_revision();
+        if native_revision != self.selection_ui.native_revision {
+            self.selection_ui.native_revision = native_revision;
+            self.selection_ui.capability_cache.invalidate();
+        }
         if self
             .selection_ui
             .capability_cache
@@ -1656,6 +1684,14 @@ impl Coincide {
         self.refresh_selection_capabilities(cx);
     }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
+        let native_revision = self
+            .provider_configuration_panel
+            .read(cx)
+            .account_revision();
+        if native_revision != self.selection_ui.native_revision {
+            self.selection_ui.native_revision = native_revision;
+            self.selection_ui.capability_cache.invalidate();
+        }
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
@@ -1703,14 +1739,25 @@ impl Coincide {
         } else {
             Value::Null
         };
+        let native_accounts = if read_accounts {
+            try_state(&self.engine)
+                .and_then(|engine| {
+                    engine.native_provider_accounts(&text(&thread["selection"], "provider"))
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let changed = self.selection_ui.capabilities != capabilities
             || self.selection_ui.error != error
             || self.selection_ui.accounts != accounts
-            || self.selection_ui.codex_accounts != codex_accounts;
+            || self.selection_ui.codex_accounts != codex_accounts
+            || self.selection_ui.native_accounts != native_accounts;
         self.selection_ui.capabilities = capabilities;
         self.selection_ui.error = error;
         self.selection_ui.accounts = accounts;
         self.selection_ui.codex_accounts = codex_accounts;
+        self.selection_ui.native_accounts = native_accounts;
         // A pending handoff uses the existing tick/next actual UI update.
         // Repeated lock contention must not create a notify/render retry loop.
         if changed {
@@ -2513,7 +2560,16 @@ impl Coincide {
         if thread["selection"]["provider"] != "codex" {
             return div().into_any_element();
         }
-        let mut accounts = vec![(Value::Null, "Default account".to_owned())];
+        let native_current = self
+            .selection_ui
+            .native_accounts
+            .iter()
+            .any(|row| thread["selection"]["accountID"] == row.id);
+        let mut accounts = if native_current {
+            Vec::new()
+        } else {
+            vec![(Value::Null, "Default account".to_owned())]
+        };
         for row in self
             .selection_ui
             .codex_accounts
@@ -2579,6 +2635,7 @@ impl Coincide {
                     .gap_2()
                     .child(self.composer_provider_tabs(thread, cx))
                     .child(self.composer_codex_accounts(thread, cx))
+                    .child(self.composer_native_accounts(thread, cx))
                     .child(self.model_picker_filter_bar(cx))
                     .child(pane)
                     .into_any_element()
@@ -2899,14 +2956,21 @@ impl Coincide {
             .flex_wrap()
             .gap_2()
             .child(div().text_sm().child(account_label(&draft.account)));
-        accounts = accounts.child(
-            Button::new("selection-account-default")
-                .label("Use default account")
-                .disabled(disabled || !known_provider)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.edit_selection(|draft| draft.account = Value::Null, cx)
-                })),
-        );
+        let native_roster = self
+            .selection_ui
+            .native_accounts
+            .iter()
+            .any(|row| row.provider == draft.provider);
+        accounts = accounts.when(!native_roster, |accounts| {
+            accounts.child(
+                Button::new("selection-account-default")
+                    .label("Use default account")
+                    .disabled(disabled || !known_provider)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.edit_selection(|draft| draft.account = Value::Null, cx)
+                    })),
+            )
+        });
         if provider.is_some_and(|provider| provider["accountPolicy"] == "configured_antigravity") {
             for (id, account) in self.selection_ui.accounts.as_object().into_iter().flatten() {
                 let id = id.clone();
@@ -2932,6 +2996,7 @@ impl Coincide {
             .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
             .when(draft.provider == "codex", |view|view.child(self.composer_codex_accounts(thread,cx)))
             .when(draft.provider != "codex", |view|view.child(accounts))
+            .child(self.composer_native_accounts(thread,cx))
             .child(self.model_picker_filter_bar(cx))
             .child(div().flex().flex_wrap().items_center().gap_2()
                 .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)

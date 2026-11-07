@@ -17,6 +17,7 @@ native-computer-use = []
 preview-updater-helper = ["coincide-core/preview-updater-helper"]
 
 [dependencies]
+zeroize = "1"
 coincide-core = { path = "../coincide-core" }
 gpui-kit = "=0.9.0"
 gpui-webview = "=0.9.0"
@@ -48,6 +49,7 @@ cc = "=1.11.0"
 
 [dev-dependencies]
 gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }
+tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-capture = "=1.5.0"

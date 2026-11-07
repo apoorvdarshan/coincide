@@ -35,33 +35,43 @@ cutover, updater activation, or release has been performed by this UI work.
   input, separate Settings close, ordinary Quit and older-selection/draft restart
   passed; both platforms' screenshots were reviewed. This is scoped acceptance.
 
+- [x] Shared composer payloads, source-bound replies/context, folder completion,
+  provider configuration and main-window polling across Settings close:
+  [#275](https://github.com/apoorvdarshan/coincide/pull/275). Exact tested/merged
+  tree `8fc944f0b1d60e480d7218b16a222e78827ce796`; all 14 applicable hosted
+  checks and actual Windows/Linux Settings/Quit/draft restart passed.
+- [x] Bottom/right terminal placement, owned activation, nested environment
+  redaction and Hold to Quit:
+  [#276](https://github.com/apoorvdarshan/coincide/pull/276). Exact tested/merged
+  tree `a3fafcbe03dc3acccbb31f51c1c6b84c787ad18a`; every applicable hosted check
+  passed. Both Windows/Linux native double-press Quit and ordinary drain passed.
+
 ## Current integration and remaining work
 
-- [ ] Complete [#275](https://github.com/apoorvdarshan/coincide/pull/275), including
-  [#273](https://github.com/apoorvdarshan/coincide/pull/273)'s reviewed executable,
-  environment and external-terminal provider setup controls, metadata checks and
-  captured worker configuration. Focused synthetic checks pass; full combined and
-  all-platform validation remain required.
-- [ ] Verify newly integrated selectable context details, source-bound selected
-  replies, folder/file autocomplete, named-account queue dispatch and Send Now.
-  Actual private GPUI fixtures passed the context readonly/copy case, both reply
-  selection cases and all eight composer dispatch cases before payload integration.
-- [ ] Verify image/context payloads through queued, steered and interrupted
-  follow-ups, Queue Edit and Send Now. These are implemented in the next combined
-  head; prior text-only acceptance does not cover their new content paths.
-- [ ] Complete remaining provider account modes and General thread settings.
-- [ ] Finish all remaining screens, menus, dialogs, shortcuts, focus, scrolling,
+- [ ] Finish hosted verification of
+  [#277](https://github.com/apoorvdarshan/coincide/pull/277): shared inspectors,
+  Settings scroll surfaces and native account storage. The actual Windows setup
+  source/DB-ownership failure has a production fix with a native regression;
+  its final head still requires all hosted checks.
+- [ ] Finish hosted verification of
+  [#278](https://github.com/apoorvdarshan/coincide/pull/278): per-thread inspector
+  restore and Windows/Linux microphone capture. Its exact callback-lifetime and
+  Windows setup fixes require new hosted checks; no personal device was used.
+- [ ] Complete and verify all provider-account modes, model/account pickers,
+  reviewed removal, private Voice credentials and API transcription engines.
+- [ ] Verify composer dictation, native shortcut/focus/cancel behavior, Windows
+  offline inference, actual audio-level receipts, device selection and local models.
+- [ ] Finish all remaining screens, menus, dialogs, shortcuts, scrolling,
   accessibility and loading/error states against Swift on every platform.
-- [ ] Complete browser/password, terminal/Git/GitHub, scheduling/bot, voice,
-  background/power and remote workflows and their end-to-end acceptance.
+- [ ] Complete browser/password, terminal/Git/GitHub, scheduling/bot, background/
+  power and remote workflows and their end-to-end acceptance.
 - [ ] Complete real-account and failure/restart acceptance within the permitted
-  providers. Antigravity live testing remains off; its fake gate tests are separate.
-- [ ] Resolve signed updater/process-identity, installation/rollback and data
+  providers. Antigravity live testing remains off; its fake gates are separate.
+- [ ] Resolve signed updater/process identity, installation/rollback and data
   cutover acceptance only within separately authorized migration work.
 
 The broad inventory in [STATUS](STATUS.md) counts fully accepted feature groups;
-it is not a weighted completion percentage. A source implementation, a passing
-unit suite, a scoped native test and full feature acceptance are separate results.
-Appshots is off by default. Its macOS/Windows/X11 source and synthetic lifecycle
-checks do not establish actual capture or permission acceptance, and automatic
-front-window Appshots on Wayland remains unavailable.
+it is not a weighted completion percentage. Source implementation, automated
+checks, scoped native UI checks and full feature acceptance remain distinct.
+Appshots is off by default. Its capture/hook/permission acceptance is unperformed,
+and automatic front-window Appshots on Wayland remains unavailable.

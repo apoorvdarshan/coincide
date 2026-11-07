@@ -741,10 +741,15 @@ impl Engine {
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
+                    result["nativeAccountSelectionAllowed"]=json!(self.native_account_choice_available(&thread));
                     if codex_profile_models_api::named_thread(&thread) {
                         let mut named = self.codex_profile_model_capabilities(&thread);
                         self.apply_provider_preferences(&mut named)?;
                         return Ok(named);
+                    }
+                    if provider_configuration::native_account_matches(&thread["selection"]) && let Some(provider)=result["providers"].as_array_mut().and_then(|rows|rows.iter_mut().find(|provider|provider["provider"]==thread["selection"]["provider"])) {
+                        provider["accountPolicy"]=json!("selected_native_account");
+                        provider["selectedNativeAccountID"]=thread["selection"]["accountID"].clone();
                     }
                     let reason = if let Err(error) = self.require_provider_enabled(text(&thread["selection"], "provider").as_str()) {
                         Some(error.to_string())
@@ -1073,6 +1078,7 @@ impl Engine {
             provider == "antigravity"
                 || codex_profile.is_some()
                 || crate::composer_selection::default_account(&v["selection"]["accountID"])
+                || provider_configuration::native_account_matches(&v["selection"])
                 || bot_instructions.is_some(),
             "Alternate provider accounts are not connected yet"
         );

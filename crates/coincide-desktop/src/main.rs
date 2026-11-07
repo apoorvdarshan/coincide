@@ -5,6 +5,7 @@ mod codex_limits_mount;
 mod codex_limits_view;
 mod usage_history_mount;
 mod usage_history_view;
+mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
 mod worker_owner;
@@ -423,6 +424,7 @@ struct Coincide {
     transcription_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     transcription_target: transcription_composer::ComposerTarget,
     voice: voice_shortcut::State,
+    voice_credentials: Entity<voice_credentials::Panel>,
     microphone_panel: Entity<microphone_settings::MicrophoneSettings>,
     microphone_events: std::sync::mpsc::Receiver<transcription_settings::TextReady>,
     microphone_window_active: bool,
@@ -621,11 +623,50 @@ impl Coincide {
         let microphone_binding = (self.microphone_window_active || self.microphone_settings_active)
             .then(|| binding.clone())
             .flatten();
+        let voice = coincide_core::voice::Settings::decode(&self.settings);
+        let configuration = if voice_composer
+            && self.microphone_window_active
+            && !self.microphone_settings_active
+        {
+            use coincide_core::{dictation::transcription::Provider, voice::Engine as VoiceEngine};
+            match voice.engine {
+                VoiceEngine::OpenAi | VoiceEngine::Groq => {
+                    let provider = if voice.engine == VoiceEngine::OpenAi {
+                        Provider::OpenAi
+                    } else {
+                        Provider::Groq
+                    };
+                    let model = if provider == Provider::OpenAi {
+                        voice.openai_model
+                    } else {
+                        voice.groq_model
+                    };
+                    let language = (voice.language != "auto").then(|| {
+                        voice
+                            .language
+                            .split('-')
+                            .next()
+                            .unwrap_or("en")
+                            .to_lowercase()
+                    });
+                    self.voice_credentials
+                        .read(cx)
+                        .configuration(provider, model, language, cx)
+                        .map(microphone_settings::RecordingConfig::Hosted)
+                }
+                VoiceEngine::Whisper => {
+                    configuration.map(microphone_settings::RecordingConfig::Local)
+                }
+                VoiceEngine::Apple => None,
+            }
+        } else {
+            configuration.map(microphone_settings::RecordingConfig::Local)
+        };
         self.microphone_panel.update(cx, |panel, cx| {
             // This is a compiled capability, not OS permission or a capture
             // acceptance claim. Only the native Enable/Record actions can
             // request authorization/open a device; rendering has no OS effects.
-            panel.set_target(
+            panel.set_configuration_target(
                 microphone_binding,
                 settings_revision,
                 configuration,
@@ -638,6 +679,8 @@ impl Coincide {
     fn poll_transcription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.microphone_window_active =
             window.is_window_active() && window.visibility().is_visible();
+        self.voice_credentials
+            .update(cx, |panel, cx| panel.poll(window, cx));
         self.sync_transcription_binding(cx);
         self.poll_voice_shortcut(window, cx);
         self.transcription_panel
@@ -800,7 +843,9 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
-                if this.block_provider_configuration_close(window, cx) {
+                if this.block_voice_close(window, cx)
+                    || this.block_provider_configuration_close(window, cx)
+                {
                     return false;
                 }
                 if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
@@ -845,6 +890,8 @@ impl Coincide {
         let (microphone_settings, microphone_events) =
             microphone_settings::MicrophoneSettings::new();
         let microphone_panel = cx.new(|_| microphone_settings);
+        let voice_credentials =
+            cx.new(|cx| voice_credentials::Panel::new(native_editors.clone(), window, cx));
         let bot_panel =
             cx.new(|cx| bot_settings::BotSettingsPanel::new(engine.clone(), window, cx));
         let notification_panel = cx.new(|cx| {
@@ -1021,9 +1068,10 @@ impl Coincide {
                         let open = cx.background_executor().spawn(async move {
                             coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                         });
+                        let completion_window = this.main_window;
                         let completion = cx.spawn_in(window, async move |this, cx| {
                             let result = open.await;
-                            let _ = this.update_in(cx, |this, window, cx| {
+                            let _ = main_window_poll::update(completion_window, &this, cx, |this, window, cx| {
                                 if this.media.shutdown_requested { return; }
                                 this.refresh(cx);
                                 match result {
@@ -1068,9 +1116,10 @@ impl Coincide {
                     let open = cx.background_executor().spawn(async move {
                         coincide_core::api::call(&engine, "threads.open", json!({"threadId":requested}))
                     });
+                    let completion_window = this.main_window;
                     let completion = cx.spawn_in(window, async move |this, cx| {
                         let result = open.await;
-                        let _ = this.update_in(cx, |this, window, cx| {
+                        let _ = main_window_poll::update(completion_window, &this, cx, |this, window, cx| {
                             if this.media.shutdown_requested { return; }
                             this.refresh(cx);
                             match result {
@@ -1272,6 +1321,7 @@ impl Coincide {
             transcription_events,
             transcription_target: Default::default(),
             voice: Default::default(),
+            voice_credentials,
             microphone_panel,
             microphone_events,
             microphone_window_active: window.is_window_active() && window.visibility().is_visible(),
@@ -2863,7 +2913,10 @@ impl Coincide {
             quit_shortcut::cancel(cx);
             self.native_quit_observed = true;
         }
-        if (menu_quit || native_quit) && !self.block_provider_configuration_close(window, cx) {
+        if (menu_quit || native_quit)
+            && !self.block_voice_close(window, cx)
+            && !self.block_provider_configuration_close(window, cx)
+        {
             if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
                 self.prompt_instruction_close(true, window, cx);
             } else {

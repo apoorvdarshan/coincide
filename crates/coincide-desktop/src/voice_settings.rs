@@ -29,6 +29,7 @@ impl Coincide {
                 let mut public = self.settings.clone();
                 public["voice"] = settings["voice"].clone();
                 self.accept_settings(public, window, cx);
+                self.sync_voice_interceptor(cx);
             }
             Err(error) => self.status = error.to_string(),
         }
@@ -76,7 +77,35 @@ impl Coincide {
                     })),
             );
         }
-        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>"Apple Speech is not connected in this desktop build. Select Local Whisper for offline dictation.",Engine::OpenAi|Engine::Groq=>"This transcription service is not connected to a private Voice API credential. Provider accounts do not supply Voice credentials."});
+        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>"Apple Speech is not connected in this desktop build. Select Local Whisper for offline dictation.",Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
+        let models: &[(&str, &str)] = match voice.engine {
+            Engine::OpenAi => &[
+                ("gpt-transcribe", "GPT Transcribe"),
+                ("gpt-4o-transcribe", "GPT-4o Transcribe"),
+                ("gpt-4o-mini-transcribe", "GPT-4o mini Transcribe"),
+                ("whisper-1", "Whisper"),
+            ],
+            Engine::Groq => &[
+                ("whisper-large-v3-turbo", "Whisper Large v3 Turbo"),
+                ("whisper-large-v3", "Whisper Large v3"),
+            ],
+            _ => &[],
+        };
+        for &(id, label) in models {
+            let engine = voice.engine;
+            let selected = if engine == Engine::OpenAi {
+                &voice.openai_model
+            } else {
+                &voice.groq_model
+            } == id;
+            pane = pane.child(
+                Button::new(id)
+                    .label(format!("{}{}", if selected { "✓ " } else { "" }, label))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.change_voice_setting(Edit::Model(engine, id.into()), window, cx)
+                    })),
+            );
+        }
         pane = pane.child(format!("Language: {}", voice.language));
         for (code, label) in [
             ("auto", "Automatic"),
@@ -186,7 +215,40 @@ impl Coincide {
                         this.change_voice_setting(Edit::Shortcut("fn".into()), window, cx)
                     })),
             );
+        for (shortcut, label) in [
+            ("control", "Use Control modifier"),
+            ("option", "Use Option / Alt modifier"),
+            ("shift", "Use Shift modifier"),
+            ("command", "Use Command / Super modifier"),
+        ] {
+            pane = pane.child(Button::new(shortcut).label(label).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    this.change_voice_setting(Edit::Shortcut(shortcut.into()), window, cx)
+                },
+            )));
+        }
+        pane=pane.child("Shortcuts work only in the active composer window. The OS may reserve Fn or system shortcuts; AltGr character input is preserved.");
         pane.into_any_element()
+    }
+    pub(super) fn block_voice_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.voice_credentials.read(cx).blocks_close(cx) {
+            return false;
+        }
+        if let Some(guard) = &self.native_quit {
+            guard.cancel_request();
+        }
+        self.native_quit_observed = false;
+        self.open_settings_panel(window, cx);
+        self.navigate_settings_section(settings::SettingsSection::Voice, window, cx);
+        self.settings_status =
+            "Save or discard the typed Voice key, and wait for its owned operation before closing."
+                .into();
+        cx.notify();
+        true
     }
     pub(super) fn composer_voice_control(&self, cx: &mut Context<Self>) -> AnyElement {
         let voice = Settings::decode(&self.settings);
@@ -201,7 +263,11 @@ impl Coincide {
                     } else {
                         "Microphone"
                     })
-                    .disabled(!voice.enabled || voice.engine != Engine::Whisper)
+                    .disabled(
+                        !voice.enabled
+                            || voice.engine == Engine::Apple
+                            || !microphone::compiled_backend_available(),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.microphone_window_active =
                             window.is_window_active() && window.visibility().is_visible();
@@ -238,6 +304,9 @@ impl Coincide {
                         )
                     },
                 )
+            })
+            .when(!active && self.microphone_panel.read(cx).failed(), |pane| {
+                pane.child(self.microphone_panel.read(cx).status_text())
             })
             .into_any_element()
     }
