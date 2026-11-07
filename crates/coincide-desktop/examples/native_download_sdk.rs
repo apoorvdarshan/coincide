@@ -459,7 +459,8 @@ impl Fixture {
         // Owned synthetic rows only: states, names, runner paths, errors.
         for tab in &self.tabs {
             eprintln!(
-                "synthetic native download rows: {}",
+                "synthetic native download rows (owner pending {}): {}",
+                tab.owner.pending(),
                 self.registry.borrow().list(&self.thread, Some(&tab.id))
             );
         }
@@ -562,6 +563,18 @@ fn trace_webkitgtk(view: &wry::WebView, label: usize) {
     };
     use wry::WebViewExtUnix;
     let view = view.webview();
+    {
+        use gtk::glib::translate::ToGlibPtr;
+        let raw: *mut webkit2gtk::ffi::WebKitWebView = view.to_glib_none().0;
+        let context = view.context().map(|context| {
+            let raw: *mut webkit2gtk::ffi::WebKitWebContext = context.to_glib_none().0;
+            raw as usize
+        });
+        eprintln!(
+            "trace view{label}: native={:#x} context={context:x?}",
+            raw as usize
+        );
+    }
     view.connect_decide_policy(move |_, decision, kind| {
         use gtk::glib::prelude::Cast;
         let detail = decision
@@ -580,14 +593,32 @@ fn trace_webkitgtk(view: &wry::WebView, label: usize) {
     if label == 0
         && let Some(context) = view.context()
     {
-        context.connect_download_started(|_, download| {
+        context.connect_download_started(|context, download| {
+            use gtk::glib::translate::ToGlibPtr;
+            let pointer = |view: Option<webkit2gtk::WebView>| {
+                view.map(|view| {
+                    let raw: *mut webkit2gtk::ffi::WebKitWebView = view.to_glib_none().0;
+                    raw as usize
+                })
+            };
+            let context: *mut webkit2gtk::ffi::WebKitWebContext = context.to_glib_none().0;
             eprintln!(
-                "trace: download-started has_view={} uri={:?}",
-                download.web_view().is_some(),
+                "trace: download-started context={:#x} view={:?} uri={:?}",
+                context as usize,
+                pointer(download.web_view()),
                 download.request().and_then(|request| request.uri())
             );
+            download.connect_decide_destination(|download, suggested| {
+                eprintln!(
+                    "trace: decide-destination suggested={suggested:?} preset={:?}",
+                    download.destination()
+                );
+                false
+            });
             download.connect_failed(|_, error| eprintln!("trace: download failed: {error}"));
-            download.connect_finished(|_| eprintln!("trace: download finished signal"));
+            download.connect_finished(|download| {
+                eprintln!("trace: download finished at {:?}", download.destination())
+            });
         });
     }
 }
