@@ -184,6 +184,26 @@ impl Store {
                 .mode(0o600)
                 .open(path)?;
         }
+        #[cfg(windows)]
+        if fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
+            // SQLite's default creator may assign Administrators ownership to
+            // elevated Windows files. New native DBs use the same explicit
+            // current-user owner/private DACL as other authority files.
+            // Existing databases retain their exact permissions and contents.
+            match crate::private_fs::windows::open_file(path, true) {
+                Ok(file) => drop(file),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+                {
+                    crate::private_fs::windows::verify(path, false)?
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let mut db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         // Inspect the version before any schema/journal write. A newer or unrelated
