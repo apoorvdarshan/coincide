@@ -258,6 +258,9 @@ struct Fixture {
     #[cfg(target_os = "macos")]
     driver: sign_in::Driver,
     read: Option<mpsc::Receiver<Value>>,
+    /// Page loads and the last probe reply, reported if a stage times out.
+    loads: Arc<Mutex<Vec<String>>>,
+    last_probe: String,
     /// The current stage's request was sent to the page.
     dispatched: bool,
     stage: usize,
@@ -279,6 +282,8 @@ impl Fixture {
         #[cfg(target_os = "linux")]
         gtk::init().expect("initialize GTK for the native browser");
         let mut context = wry::WebContext::new(Some(root.join("runtime")));
+        let loads = Arc::new(Mutex::new(Vec::new()));
+        let load_log = loads.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_incognito(true)
             .with_devtools(false)
@@ -287,6 +292,14 @@ impl Fixture {
             // The frame stage's child document is `about:srcdoc`.
             .with_navigation_handler(|url| {
                 matches!(url.as_str(), URL | "about:blank" | "about:srcdoc")
+            })
+            // Diagnostics for a stage that times out: what the view loaded.
+            .with_on_page_load_handler(move |event, url| {
+                let event = match event {
+                    wry::PageLoadEvent::Started => "started",
+                    wry::PageLoadEvent::Finished => "finished",
+                };
+                load_log.lock().unwrap().push(format!("{event} {url}"));
             })
             .with_url("about:blank");
         #[cfg(target_os = "macos")]
@@ -314,6 +327,8 @@ impl Fixture {
             #[cfg(target_os = "macos")]
             driver,
             read: None,
+            loads,
+            last_probe: String::new(),
             dispatched: false,
             stage: 0,
             stage_started: Instant::now(),
@@ -376,7 +391,11 @@ impl Fixture {
             return true;
         }
         if self.started.elapsed() > Duration::from_secs(90) {
-            self.finish(Err(format!("deadline exceeded at stage {}", self.stage)));
+            let loads = self.loads.lock().unwrap().join(", ");
+            self.finish(Err(format!(
+                "deadline exceeded at stage {} (page loads: [{loads}]; last probe: {})",
+                self.stage, self.last_probe
+            )));
             return false;
         }
         #[cfg(target_os = "macos")]
@@ -387,6 +406,7 @@ impl Fixture {
                 None if self.read.is_none() => self.evaluate(PROBE, cx),
                 None => {}
                 Some(value) => {
+                    self.last_probe = value.to_string().chars().take(400).collect();
                     let probe: Value = value
                         .as_str()
                         .and_then(|text| serde_json::from_str(text).ok())
