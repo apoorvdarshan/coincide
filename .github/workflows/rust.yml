@@ -2,10 +2,10 @@ name: Rust
 
 on:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', 'rust-toolchain*', 'scripts/test-rust-native-ui-linux.py', 'scripts/native-browser-fixture.py', 'scripts/test-rust-native-ui-windows.ps1', 'scripts/test-rust-native-secret-store.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
