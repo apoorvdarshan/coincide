@@ -140,6 +140,11 @@ fn run_owned(
     );
     launch.cwd = launch.cwd.canonicalize()?;
     let files = files::Files::new(&launch.cwd)?;
+    let auth_method = if crate::provider_configuration::native_key_profile("antigravity") {
+        "gemini-api-key"
+    } else {
+        "oauth-personal"
+    };
     let profile = profile::Profile::prepare(
         &directory.context("Antigravity requires a private profile")?,
         source.as_deref(),
@@ -352,15 +357,11 @@ fn run_owned(
                 ensure!(
                     result["authMethods"]
                         .as_array()
-                        .is_some_and(|methods| methods.iter().any(|m| m["id"] == "oauth-personal")),
-                    "Antigravity did not offer Google subscription authentication"
+                        .is_some_and(|methods| methods.iter().any(|m| m["id"] == auth_method)),
+                    "Antigravity did not offer the selected account authentication method"
                 );
                 initialized = result.clone();
-                transport.write(&rpc(
-                    2,
-                    "authenticate",
-                    json!({"methodId":"oauth-personal"}),
-                ))?;
+                transport.write(&rpc(2, "authenticate", json!({"methodId":auth_method})))?;
                 stage = 2;
             }
             2 => {

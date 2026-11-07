@@ -115,3 +115,11 @@ impl Store {
         Ok(())
     }
 }
+
+/// Pure thread writes may revoke an old native association but can never mint
+/// one. The native selector writes its new signed marker in its own transaction.
+pub(super) fn invalidate_changed_selection(db: &Connection, document: &Value) -> Result<()> {
+    let id = validate_thread(document)?;
+    db.execute("DELETE FROM metadata WHERE key=?1 AND EXISTS(SELECT 1 FROM threads WHERE id=?2 AND (json_extract(document,'$.selection.provider') IS NOT json_extract(?3,'$.selection.provider') OR json_extract(document,'$.selection.accountID') IS NOT json_extract(?3,'$.selection.accountID')))",params![format!("native-account-selection-v1/{id}"),id,document.to_string()])?;
+    Ok(())
+}

@@ -143,6 +143,7 @@ pub(crate) struct LaunchConfiguration {
     stamp: Stamp,
     record: Record,
     profile: Option<accounts::LoginHome>,
+    metadata_only: bool,
     derived_executable: Option<Binary>,
     derived_companion: Option<Binary>,
 }
@@ -166,6 +167,12 @@ pub(crate) fn native_account_matches(selection: &Value) -> bool {
             .and_then(|configuration| configuration.profile.as_ref())
             .is_some_and(|profile| profile.matches(selection))
     })
+}
+pub(crate) fn native_key_profile(provider: &str) -> bool {
+    current()
+        .as_ref()
+        .and_then(|configuration| configuration.profile.as_ref())
+        .is_some_and(|profile| profile.is_key_for(provider))
 }
 pub(crate) fn current_stamp() -> Option<Stamp> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
@@ -196,7 +203,12 @@ pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
         profile.configure_base(command)?;
     }
     for (key, value) in &configuration.record.environment {
-        if named {
+        if named
+            && !configuration
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.is_key_for(&configuration.stamp.provider))
+        {
             ensure!(
                 !sensitive_for_profile(key),
                 "A named subscription profile cannot accept provider auth, endpoint or proxy overrides"
@@ -872,6 +884,7 @@ impl Engine {
             },
             record,
             profile: None,
+            metadata_only: false,
             derived_executable: None,
             derived_companion: None,
         }))
@@ -880,9 +893,24 @@ impl Engine {
         &self,
         thread: &Value,
     ) -> Result<Option<LaunchConfiguration>> {
+        self.provider_launch_configuration_for_thread_mode(thread, false)
+    }
+    pub(crate) fn provider_metadata_configuration_for_thread(
+        &self,
+        thread: &Value,
+    ) -> Result<Option<LaunchConfiguration>> {
+        self.provider_launch_configuration_for_thread_mode(thread, true)
+    }
+    fn provider_launch_configuration_for_thread_mode(
+        &self,
+        thread: &Value,
+        metadata: bool,
+    ) -> Result<Option<LaunchConfiguration>> {
         let provider = text(&thread["selection"], "provider");
         if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
-            && matches!(provider.as_str(), "claude" | "grok" | "opencode")
+            && (matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode")
+                || (matches!(provider.as_str(), "codex" | "antigravity")
+                    && self.routes_native_provider_account(thread)?))
         {
             let id = thread["id"]
                 .as_str()
@@ -896,7 +924,7 @@ impl Engine {
                 .as_str()
                 .context("Native account identity must be text")?;
             return self
-                .native_login_launch_configuration(&provider, account)
+                .native_account_configuration_mode(&provider, account, metadata)
                 .map(Some);
         }
         self.provider_launch_configuration(&provider)
@@ -906,6 +934,33 @@ impl Engine {
         method: &str,
         params: &Value,
     ) -> Result<Scope> {
+        if (method.starts_with("providers.codex.profiles.")
+            || matches!(
+                method,
+                "agent.models.refresh"
+                    | "agent.models.status"
+                    | "agent.selection.capabilities"
+                    | "agent.select"
+            ))
+            && let Some(id) = params["threadId"].as_str()
+        {
+            let thread = self.store.thread(id)?;
+            let same_provider = if method.starts_with("providers.codex.") {
+                thread["selection"]["provider"] == "codex"
+            } else {
+                params["provider"].is_null()
+                    || params["provider"] == thread["selection"]["provider"]
+            };
+            if same_provider
+                && !crate::composer_selection::default_account(&thread["selection"]["accountID"])
+                && self.routes_native_provider_account(&thread)?
+            {
+                return Ok(enter(self.provider_launch_configuration_for_thread_mode(
+                    &thread,
+                    !method.ends_with(".refresh"),
+                )?));
+            }
+        }
         let provider = if method.starts_with("providers.codex.")
             || method.starts_with("usage.codex")
         {
@@ -943,6 +998,10 @@ impl LaunchConfiguration {
     pub(crate) fn validate_named_profile(&self, named: bool) -> Result<()> {
         ensure!(
             !named
+                || self
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.is_key_for(&self.stamp.provider))
                 || !self
                     .record
                     .environment
@@ -953,6 +1012,10 @@ impl LaunchConfiguration {
         Ok(())
     }
     pub(crate) fn validate_launch(&self) -> Result<()> {
+        ensure!(
+            !self.metadata_only,
+            "Account metadata cannot authorize a provider child; capture an owned launch first"
+        );
         if let Some(profile) = &self.profile {
             profile.validate()?;
         }
@@ -1116,7 +1179,12 @@ pub mod account_secret_store;
 
 #[path = "native_provider_accounts.rs"]
 mod accounts;
-pub use accounts::{NativeKeyAccount, NativeKeySave, NativeLoginAccount};
+pub(crate) use accounts::NativeCodexApiContext;
+pub use accounts::{
+    NativeAccountAuthentication, NativeAccountRemoval, NativeCodexKeyEnrollment,
+    NativeCodexKeyEnrollmentReceipt, NativeKeyAccount, NativeKeySave, NativeLoginAccount,
+    NativeProviderAccount, PreparedNativeAccountRemoval, native_account_key_choices,
+};
 
 #[path = "provider_setup.rs"]
 mod setup;
@@ -1149,6 +1217,16 @@ pub(crate) mod tests {
         let engine =
             Engine::fixture(Store::open(&root.path().join("private/state.sqlite")).unwrap());
         (root, engine, binary)
+    }
+    pub(crate) fn with_native_key_configuration<T>(
+        provider: &str,
+        body: impl FnOnce(&mut Engine, &Path) -> T,
+    ) -> T {
+        let (_root, mut engine, binary) = fixture();
+        save(&mut engine, provider, &binary, "synthetic-global-key");
+        let (configuration, home) = accounts::synthetic_key_configuration(&mut engine, provider);
+        let _scope = enter(Some(configuration));
+        body(&mut engine, &home)
     }
     pub(crate) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
         let baseline = engine

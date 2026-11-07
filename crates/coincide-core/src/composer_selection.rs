@@ -212,7 +212,11 @@ pub(crate) fn select_with_proofs(
         "Account ID must be text or null"
     );
     ensure!(
-        provider == "antigravity" || default_account(account),
+        provider == "antigravity"
+            || default_account(account)
+            || crate::provider_configuration::native_account_matches(
+                &json!({"provider":provider,"accountID":account})
+            ),
         "Alternate provider accounts are not connected yet"
     );
     ensure!(
