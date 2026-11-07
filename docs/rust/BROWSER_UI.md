@@ -17,7 +17,11 @@ receipt allowance. Messages and request durations remain bounded.
 
 `viewport` accepts explicit bounded dimensions, mobile/tablet/desktop presets,
 or reset. The native view fits the panel using page zoom while retaining the
-requested CSS layout dimensions.
+requested CSS layout dimensions where native pixel geometry can represent them.
+Windows aligns integral child-view bounds and continuous zoom together to avoid
+losing a CSS row in narrow panels. Extreme custom dimensions at small fit scales
+can remain approximate when no integral native geometry represents the requested
+CSS dimensions; this does not establish universal viewport emulation precision.
 
 ## Verification boundary
 
