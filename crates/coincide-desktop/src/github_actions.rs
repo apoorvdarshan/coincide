@@ -895,7 +895,7 @@ mod tests {
         v["fingerprint"] = json!("f".repeat(64));
         v["expiresAt"] = json!(now() + 60);
         v["snapshot"] = json!({"number":42,"title":"Fixture PR","url":"https://github.com/fixture/repo/pull/42","state":"OPEN","isDraft":false,"headRefOid":s.head,"headRefName":"fixture","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","reviews":[],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]});
-        v["availability"] = json!({"review":{"COMMENT":{"available":true,"reason":null},"APPROVE":{"available":false,"reason":"No atomic current-head assertion"},"REQUEST_CHANGES":{"available":false,"reason":"No atomic current-head assertion"}},"merge":{"available":true,"reason":null,"methods":["merge","squash","rebase"]},"notice":NOTICE});
+        v["availability"] = json!({"review":{"COMMENT":{"available":true,"reason":null},"APPROVE":{"available":true,"reason":null},"REQUEST_CHANGES":{"available":true,"reason":null}},"merge":{"available":true,"reason":null,"methods":["merge","squash","rebase"]},"notice":NOTICE});
         v
     }
     #[::core::prelude::v1::test]
@@ -1058,6 +1058,44 @@ mod tests {
         current.head = "b".repeat(40);
         let reply=execute(&mut |method,p|->Result<Value>{assert_eq!(method,"github.write.result");assert_eq!(p["mutationId"],id);assert_eq!(p["expectedHead"],s.head);Ok(json!({"mutationId":id,"status":"uncertain","result":null,"error":{"code":"timeout","message":"unknown"}}))},Work::Result {display:current,original:s.clone(),id:id.clone()}).unwrap();
         assert!(matches!(reply,Reply::Mutation {value,..} if value["status"]=="uncertain"));
+    }
+    #[::core::prelude::v1::test]
+    fn confirmed_review_events_keep_the_exact_event_commit_and_body() {
+        for (event, body) in [
+            (ReviewEvent::Approve, ""),
+            (ReviewEvent::RequestChanges, "Please fix this commit."),
+        ] {
+            let s = scope();
+            let confirmation = Confirmation::parse(
+                s.clone(),
+                Action::Review(event, body.into()),
+                prepared(&s),
+                now(),
+            )
+            .unwrap();
+            let params = confirmation.submit_params().unwrap();
+            assert_eq!(
+                params["action"],
+                json!({"kind":"review","event":event.key(),"body":body})
+            );
+            assert_eq!(params["expectedHead"], s.head);
+            let mut unavailable = prepared(&s);
+            unavailable["availability"]["review"][event.key()]["available"] = json!(false);
+            assert!(
+                Confirmation::parse(s, Action::Review(event, body.into()), unavailable, now())
+                    .is_err()
+            );
+        }
+        assert!(
+            Action::Review(ReviewEvent::RequestChanges, "".into())
+                .value()
+                .is_err()
+        );
+        assert!(
+            Action::Review(ReviewEvent::Approve, "".into())
+                .value()
+                .is_ok()
+        );
     }
     #[::core::prelude::v1::test]
     fn comment_utf8_byte_limit_and_merge_method_allowlist() {
