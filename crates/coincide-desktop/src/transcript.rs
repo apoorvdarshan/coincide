@@ -13,6 +13,24 @@ use gpui_kit::{
 };
 use std::collections::HashMap;
 
+/// Where rendered transcript links go (`transcript_links`). Without a router a
+/// click does nothing: the component default hands any URL to the system,
+/// which launches apps and runs scripts agent-written links can point at.
+#[allow(clippy::type_complexity)]
+pub struct LinkRouter(
+    pub std::sync::Arc<dyn Fn(&str, &ClickEvent, &mut Window, &mut App) + Send + Sync>,
+);
+impl Global for LinkRouter {}
+
+pub fn routed(view: TextView, cx: &App) -> TextView {
+    let router = cx.try_global::<LinkRouter>().map(|router| router.0.clone());
+    view.on_link_click(move |url, event, window, cx| {
+        if let Some(router) = &router {
+            router(url, event, window, cx);
+        }
+    })
+}
+
 #[derive(Default)]
 struct TranscriptViews {
     views: HashMap<(WindowId, EntityId), RegisteredView>,
@@ -71,7 +89,7 @@ pub fn markdown(
             state: state.downgrade(),
         },
     );
-    TextView::new(&state)
+    routed(TextView::new(&state), cx)
 }
 
 pub fn init(cx: &mut App) {
@@ -216,7 +234,7 @@ pub fn managed_markdown(
             state: state.downgrade(),
         },
     );
-    TextView::new(state)
+    routed(TextView::new(state), cx)
 }
 
 /// An opaque selection from exactly one focused, registered reply renderer.

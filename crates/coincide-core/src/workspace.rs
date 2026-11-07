@@ -16,6 +16,67 @@ use std::{
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
 
 pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+    let output = git_output(directory, arguments, &GitRequest::default())?;
+    ensure!(
+        !output.overflowed,
+        "Git output exceeds 3 MiB; narrow the path"
+    );
+    ensure!(
+        output.success,
+        "Git failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(2000)
+            .collect::<String>()
+    );
+    Ok(output.stdout)
+}
+
+/// Per-call additions to the hardened runner. Environment entries are applied
+/// after inherited GIT_* variables are removed, so only these reach Git.
+pub(crate) struct GitRequest<'a> {
+    pub env: &'a [(&'a str, &'a std::ffi::OsStr)],
+    pub input: Option<&'a [u8]>,
+    pub timeout: Duration,
+    pub max_output: usize,
+    /// Off only for callers that build explicitly literal pathspec magic.
+    pub literal_pathspecs: bool,
+}
+impl Default for GitRequest<'_> {
+    fn default() -> Self {
+        Self {
+            env: &[],
+            input: None,
+            timeout: Duration::from_secs(15),
+            max_output: MAX_OUTPUT,
+            literal_pathspecs: true,
+        }
+    }
+}
+pub(crate) struct GitOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    /// Output passed max_output; stdout holds its first max_output + 1 bytes.
+    pub overflowed: bool,
+}
+impl GitOutput {
+    pub(crate) fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.stderr)
+            .chars()
+            .take(2000)
+            .collect()
+    }
+}
+
+/// The hardened runner without the status check, for plumbing that inspects
+/// stderr or exit codes. Timeouts and spawn failures are still errors.
+pub(crate) fn git_output(
+    directory: &Path,
+    arguments: &[&str],
+    request: &GitRequest<'_>,
+) -> Result<GitOutput> {
     ensure!(directory.is_dir(), "Project directory does not exist");
     let mut command = Command::new("git");
     #[cfg(windows)]
@@ -31,10 +92,12 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     command
         .arg("-c")
         .arg(format!("core.hooksPath={}", hooks.to_string_lossy()));
+    command.arg("--no-pager");
+    if request.literal_pathspecs {
+        command.arg("--literal-pathspecs");
+    }
     command
         .args([
-            "--no-pager",
-            "--literal-pathspecs",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -48,7 +111,11 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
+        .stdin(if request.input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for name in [
@@ -59,17 +126,34 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     ] {
         command.env_remove(name);
     }
+    for (name, value) in request.env {
+        command.env(name, value);
+    }
     let mut child = command.spawn().context("Unable to start git")?;
+    if let Some(input) = request.input {
+        let mut stdin = child.stdin.take().context("Missing git stdin")?;
+        let input = input.to_vec();
+        // A separate writer keeps a large input from blocking output reads.
+        thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = child.stdout.take().context("Missing git stdout")?;
     let stderr = child.stderr.take().context("Missing git stderr")?;
-    let read_pipe = |pipe: Box<dyn Read + Send>| {
+    let limit = request.max_output;
+    let read_pipe = |mut pipe: Box<dyn Read + Send>| {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut bytes = Vec::new();
-            let result = pipe
-                .take((MAX_OUTPUT + 1) as u64)
+            let result = (&mut pipe)
+                .take((limit + 1) as u64)
                 .read_to_end(&mut bytes)
                 .map(|_| bytes);
+            // Drain the rest so a capped reader never blocks Git's exit.
+            if result.as_ref().is_ok_and(|bytes| bytes.len() > limit) {
+                let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+            }
             let _ = tx.send(result);
         });
         rx
@@ -80,7 +164,7 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < Duration::from_secs(15) => {
+            Ok(None) if started.elapsed() < request.timeout => {
                 thread::sleep(Duration::from_millis(20))
             }
             Ok(None) => {
@@ -101,19 +185,13 @@ pub(crate) fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     let errors = errors
         .recv_timeout(Duration::from_secs(1))
         .context("Git stderr did not close")??;
-    ensure!(
-        bytes.len() <= MAX_OUTPUT && errors.len() <= MAX_OUTPUT,
-        "Git output exceeds 3 MiB; narrow the path"
-    );
-    ensure!(
-        status.success(),
-        "Git failed: {}",
-        String::from_utf8_lossy(&errors)
-            .chars()
-            .take(2000)
-            .collect::<String>()
-    );
-    Ok(bytes)
+    Ok(GitOutput {
+        success: status.success(),
+        code: status.code(),
+        overflowed: bytes.len() > limit || errors.len() > limit,
+        stdout: bytes,
+        stderr: errors,
+    })
 }
 
 fn relative_path(path: &str) -> Result<&Path> {

@@ -28,6 +28,7 @@ mod browser_dialog_ui;
 mod browser_settings;
 mod chat_inspector;
 mod chat_layout;
+mod chat_rewind;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
@@ -35,6 +36,7 @@ mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
 mod composer_follow_up_mount;
+mod composer_plan_card;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
@@ -106,8 +108,10 @@ mod terminal_workspace;
 mod thread_bulk;
 mod transcript;
 mod transcript_find;
+mod transcript_links;
 mod transcription_composer;
 mod transcription_settings;
+mod turn_changes;
 #[cfg(feature = "preview-updater-helper")]
 pub mod updater_helper_transport;
 mod updater_lifecycle;
@@ -527,6 +531,9 @@ struct Coincide {
     browser_panels: std::collections::HashSet<String>,
     browser_ui_operations: std::collections::HashMap<String, String>,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
+    link_menu: Option<transcript_links::LinkMenu>,
+    turn_changes: turn_changes::TurnChanges,
+    plan_card: composer_plan_card::State,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1486,8 +1493,12 @@ impl Coincide {
             browser_panels: Default::default(),
             browser_ui_operations: Default::default(),
             browser_replies: Vec::new(),
+            link_menu: None,
+            turn_changes: Default::default(),
+            plan_card: Default::default(),
             _subscriptions: subscriptions,
         };
+        Self::install_link_router(cx);
         this.apply_appearance(window, cx);
         this.restore_startup_selection(window, cx);
         this.appshots.sync(&this.settings);
@@ -2064,6 +2075,7 @@ impl Coincide {
                     self.suspend_inspector_presentation(cx);
                 }
                 self.selected = Some(v);
+                self.refresh_turn_changes();
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
                     self.sidebar_thread_marker("unseen", id, None, cx);
                 }
@@ -3218,6 +3230,7 @@ impl Coincide {
                             .splice(start..self.transcript_count, count - start);
                         self.transcript_count = count;
                         self.selected = Some(v);
+                        self.refresh_turn_changes();
                     } else {
                         return; // Retry this revision after the worker releases the engine.
                     }
@@ -3465,12 +3478,15 @@ impl Coincide {
                 }
                 body = body
                     .child(div().text_sm().child(text(request, "method")))
-                    .child(TextView::markdown(
-                        SharedString::from(format!("approval-details-{request_id}")),
-                        format!(
-                            "```json\n{}\n```",
-                            serde_json::to_string_pretty(&details).unwrap_or_default()
+                    .child(transcript::routed(
+                        TextView::markdown(
+                            SharedString::from(format!("approval-details-{request_id}")),
+                            format!(
+                                "```json\n{}\n```",
+                                serde_json::to_string_pretty(&details).unwrap_or_default()
+                            ),
                         ),
+                        cx,
                     ));
                 let offered = request["params"]["availableDecisions"].as_array();
                 let mut buttons = div().flex().flex_wrap().flex_shrink_0().gap_2();
@@ -3748,6 +3764,11 @@ impl Coincide {
         }
         // A hidden composer may retain focus after opening the Git pane.
         if !self.chat_visible() {
+            return;
+        }
+        // Sending nothing while a plan is offered implements it, as in Swift.
+        if self.composer.read(cx).value().trim().is_empty() && self.proposed_plan().is_some() {
+            self.implement_plan(window, cx);
             return;
         }
         if let Some(thread) = &self.selected {
@@ -4142,28 +4163,38 @@ impl Coincide {
             let source = source_id.clone();
             let item = item_id.clone();
             let right = self.settings["userMessageSide"].as_str().unwrap_or("right") != "left";
-            let edit_action = Button::new(SharedString::from(format!(
-                "edit-message-branch-{source_id}-{item_id}"
-            )))
-            .accessibility_id(SharedString::from(format!(
-                "edit-message-branch-{source_id}-{item_id}"
-            )))
-            .accessibility_label(SharedString::from(format!(
-                "Edit message in new branch: {action_excerpt}"
-            )))
-            .label("Edit in new branch")
-            .ghost()
-            .compact()
-            .xsmall()
-            .disabled(source_running)
-            .tooltip(if source_running {
-                "Stop the current turn before editing an earlier message"
+            let edit_action = if self.turn_changes.rewinds_in_place(&source_id) {
+                self.edit_from_here_button(
+                    &source_id,
+                    &item_id,
+                    &action_excerpt,
+                    source_running,
+                    cx,
+                )
             } else {
-                "Create a separate conversation with this message restored as a draft"
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.branch_from_item(&source, &item, true, window, cx)
-            }));
+                Button::new(SharedString::from(format!(
+                    "edit-message-branch-{source_id}-{item_id}"
+                )))
+                .accessibility_id(SharedString::from(format!(
+                    "edit-message-branch-{source_id}-{item_id}"
+                )))
+                .accessibility_label(SharedString::from(format!(
+                    "Edit message in new branch: {action_excerpt}"
+                )))
+                .label("Edit in new branch")
+                .ghost()
+                .compact()
+                .xsmall()
+                .disabled(source_running)
+                .tooltip(if source_running {
+                    "Stop the current turn before editing an earlier message"
+                } else {
+                    "Create a separate conversation with this message restored as a draft"
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.branch_from_item(&source, &item, true, window, cx)
+                }))
+            };
             div()
                 .flex()
                 .flex_col()
@@ -4190,7 +4221,7 @@ impl Coincide {
         } else {
             card.into_any_element()
         };
-        div()
+        let row = div()
             .flex()
             .w_full()
             .px(px(presentation::CONTENT_GUTTER))
@@ -4210,7 +4241,8 @@ impl Coincide {
                     )
                     .child(card),
             )
-            .into_any_element()
+            .into_any_element();
+        self.with_turn_changes(index, row, cx)
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_inspector_placeholders();
@@ -4528,6 +4560,12 @@ impl Render for Coincide {
         let show_composer = self.chat_visible();
         let importing_images = self.attachment_import_threads.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
+        let plan_card = if self.chat_visible() {
+            self.plan_card(window, cx)
+        } else {
+            None
+        };
+        let implement_button = self.implement_button(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
 
@@ -4612,6 +4650,7 @@ impl Render for Coincide {
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(self.color(0x29303d))
+                                        .when_some(plan_card, |view, card| view.child(card))
                                         .child(
                                             // The bounded accessory viewport shrinks independently of
                                             // the pinned textarea/actions. Keep a persistent thumb so
@@ -4727,7 +4766,7 @@ impl Render for Coincide {
                                                         })),
                                                 )
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
-                                                .child(
+                                                .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
                                                         .primary()
                                                         .disabled(importing_images || self.selection_send_blocked())
@@ -4742,7 +4781,8 @@ impl Render for Coincide {
                                                                 this.send_selected(alternate, window, cx)
                                                             },
                                                         )),
-                                                )
+                                                ))
+                                                .when_some(implement_button, |view, button| view.child(button))
 
                                         )
                                         .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
@@ -4796,6 +4836,7 @@ impl Render for Coincide {
             .when_some(self.context_details_overlay(cx), |view, details| {
                 view.child(details)
             })
+            .when_some(self.link_menu_overlay(), |view, menu| view.child(menu))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()

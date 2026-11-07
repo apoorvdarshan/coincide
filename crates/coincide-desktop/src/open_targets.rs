@@ -257,6 +257,15 @@ pub(super) fn preferred<'a>(targets: &'a [Target], settings: &Value) -> Option<&
             })
         })
 }
+/// The editor linked files open in: the one "Open In" uses when that is an
+/// editor, else the first installed. Never a terminal or file manager.
+pub(super) fn file_editor(targets: &[Target], settings: &Value) -> Option<Target> {
+    targets
+        .iter()
+        .find(|target| target.editor && settings["preferredOpenTarget"].as_str() == Some(target.id))
+        .or_else(|| targets.iter().find(|target| target.editor))
+        .cloned()
+}
 struct PreferenceChoice {
     value: Value,
     label: String,
@@ -434,6 +443,32 @@ impl Coincide {
             cx.notify();
             return;
         }
+        self.launch_target(target, folder, "folder", cx);
+    }
+    /// A file from a transcript link, in an editor the user installed.
+    pub(super) fn open_file_in_editor(
+        &mut self,
+        target: Target,
+        file: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
+        if !file.is_absolute() || !file.is_file() {
+            self.status = "The linked file is unavailable.".into();
+            cx.notify();
+            return;
+        }
+        self.launch_target(target, file, "file", cx);
+    }
+    fn launch_target(
+        &mut self,
+        target: Target,
+        folder: PathBuf,
+        noun: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         let launch = cx.background_executor().spawn(async move {
             // Spawn is the OS application handoff, not a managed agent process.
             // We intentionally do not wait for the user's editor to exit.
@@ -453,7 +488,7 @@ impl Coincide {
                 this.status = match result {
                     Ok((name, child)) => {
                         this.open_target_children.push(child);
-                        format!("Requested folder opening in {name}.")
+                        format!("Requested {noun} opening in {name}.")
                     }
                     Err(error) => error.into(),
                 };
