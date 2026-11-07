@@ -651,6 +651,10 @@ impl TranscriptFind {
         self.search.step(next);
         self.publish(cx);
     }
+    /// Find Next and Find Previous from the menu bar, as Enter and Shift-Enter.
+    pub fn step_match(&mut self, next: bool, cx: &mut Context<Self>) {
+        self.step(next, cx);
+    }
 }
 impl Render for TranscriptFind {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

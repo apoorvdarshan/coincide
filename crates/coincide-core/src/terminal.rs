@@ -799,6 +799,11 @@ fn encode_key(key: &str, m: KeyModifiers, application: bool) -> Result<String> {
             (byte - 64) as char
         ));
     }
+    // Meta with one printable key is ESC and the key, as readline expects for
+    // macOS Option-arrow word motion (ESC b, ESC f).
+    if m.alt && !m.shift && key.chars().count() == 1 && key.chars().all(|c| c.is_ascii_graphic()) {
+        return Ok(format!("\x1b{key}"));
+    }
     let result = match key {
         "up" | "down" | "left" | "right" | "home" | "end" => {
             let suffix = match key {
@@ -1402,6 +1407,23 @@ mod structured_input_tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn meta_letters_send_escape_prefixed_readline_keys() {
+        let normal = InputModes::default();
+        let alt = KeyModifiers {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(encode_input(key("b", alt), normal).unwrap(), b"\x1bb");
+        assert_eq!(encode_input(key("f", alt), normal).unwrap(), b"\x1bf");
+        assert_eq!(
+            encode_input(key("backspace", alt), normal).unwrap(),
+            b"\x1b\x7f"
+        );
+        let shifted = KeyModifiers { shift: true, ..alt };
+        assert!(encode_input(key("b", shifted), normal).is_err());
+        assert!(encode_input(key("b", Default::default()), normal).is_err());
     }
     #[test]
     fn paste_and_text_preserve_unicode_and_newlines_without_generated_enter() {

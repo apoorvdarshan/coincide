@@ -120,7 +120,7 @@ impl Coincide {
         if self.record_shortcut_event(event, window, cx) {
             return;
         }
-        if event.is_held || !window.is_window_active() {
+        if !window.is_window_active() {
             return;
         }
         let key = &event.keystroke;
@@ -129,6 +129,19 @@ impl Coincide {
         } else {
             key.modifiers.control
         };
+        if event.is_held {
+            // A held key repeats nothing here, nor in a native menu item that
+            // shares it (Command-W is Archive Thread in the main window).
+            if (command
+                && !key.modifiers.alt
+                && !key.modifiers.shift
+                && matches!(key.key.as_str(), "w" | "f" | ","))
+                || self.keyboard_command(key, false, false, false).is_some()
+            {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if command && !key.modifiers.alt && !key.modifiers.shift {
             match key.key.as_str() {
                 "w" => {

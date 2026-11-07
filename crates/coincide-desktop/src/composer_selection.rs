@@ -2478,6 +2478,16 @@ impl Coincide {
             })
             .into_any_element()
     }
+    /// Thread › Choose Agent and Model…, Reasoning Effort…, Access… and Plan
+    /// Mode open the composer's own picker on that facet.
+    pub(super) fn open_composer_picker(&mut self, facet: PickerFacet, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            return;
+        }
+        self.selection_ui.expanded = true;
+        self.selection_ui.facet = facet;
+        cx.notify();
+    }
     /// The saved conversation's selection capabilities, as last read; no engine call.
     pub(super) fn composer_selection_capabilities(&self) -> &Value {
         &self.selection_ui.capabilities

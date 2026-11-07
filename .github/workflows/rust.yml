@@ -273,6 +273,13 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/microphone-pcm-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/microphone-pcm-tests.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly two native PCM conversion tests' }
+      - name: Test Windows command shortcuts, menus, palette and terminal keys without a window
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- keyboard_settings::tests app_menu::tests command_palette::tests terminal_workspace::tests::prompt_jumps --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/keyboard-menu-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero keyboard and menu tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -SimpleMatch 'terminal_keys_follow_platform_terminal_conventions ... ok')) { throw 'Expected Windows terminal key conventions' }
       - name: Test transcript link routing, plan card, changed files and rewind logic
         shell: pwsh
         run: |
@@ -474,6 +481,12 @@ jobs:
           set -o pipefail
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
+      - name: Test Linux command shortcuts, menus, palette and terminal keys without a window
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- keyboard_settings::tests app_menu::tests command_palette::tests terminal_workspace::tests::prompt_jumps --nocapture | tee "$RUNNER_TEMP/keyboard-menu-tests.log"
+          grep -E 'test result: ok. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/keyboard-menu-tests.log"
+          grep -F 'terminal_keys_follow_platform_terminal_conventions ... ok' "$RUNNER_TEMP/keyboard-menu-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
