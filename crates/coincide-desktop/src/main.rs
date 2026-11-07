@@ -8,6 +8,7 @@ mod usage_history_view;
 mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
+mod voice_speech;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
@@ -657,7 +658,12 @@ impl Coincide {
                 VoiceEngine::Whisper => {
                     configuration.map(microphone_settings::RecordingConfig::Local)
                 }
-                VoiceEngine::Apple => None,
+                VoiceEngine::Apple => voice_speech::compiled().then(|| {
+                    microphone_settings::RecordingConfig::Apple(voice_speech::Configuration {
+                        locale: voice.language.clone(),
+                        maximum_seconds: 60,
+                    })
+                }),
             }
         } else {
             configuration.map(microphone_settings::RecordingConfig::Local)

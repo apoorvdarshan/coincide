@@ -79,7 +79,9 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
                     'CFBundleDisplayName': 'Coincide Rust', 'CFBundlePackageType': 'APPL',
                     'CFBundleShortVersionString': version, 'CFBundleVersion': build_number,
                     'CFBundleIconFile': 'CoincideRust.icns', 'LSMinimumSystemVersion': minimum_macos,
-                    'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication'}
+                    'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
+                    'NSMicrophoneUsageDescription': 'Record audio for Voice dictation only when you start recording.',
+                    'NSSpeechRecognitionUsageDescription': 'Transcribe your Voice dictation on this device when you choose Apple Speech.'}
             (contents / 'Info.plist').write_bytes(plistlib.dumps(info, sort_keys=True))
         manifest = packaging.manifest(artifact, platform, version, commit)
         validation = packaging.validate(artifact, manifest)
