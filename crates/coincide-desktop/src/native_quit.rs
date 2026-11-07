@@ -202,7 +202,18 @@ mod macos {
             let app = application
                 .as_ref()
                 .ok_or(InstallError::UnexpectedApplication)?;
-            if !std::ptr::eq(app.class(), application_class) {
+            // KVO wraps the application in an NSKVONotifying_ subclass when
+            // something observes it, so accept any subclass of GPUIApplication.
+            let mut class = Some(app.class());
+            let mut is_gpui = false;
+            while let Some(candidate) = class {
+                if std::ptr::eq(candidate, application_class) {
+                    is_gpui = true;
+                    break;
+                }
+                class = candidate.superclass();
+            }
+            if !is_gpui {
                 return Err(InstallError::UnexpectedApplication);
             }
             let delegate: *mut AnyObject = msg_send![application, delegate];
