@@ -121,7 +121,7 @@ impl InstructionsPanel {
     /// Retry only a typed initial EngineBusy result on the existing owner poll.
     /// This refreshes metadata/discovery; it never adopts a master, loads editor
     /// text, creates files or writes configuration.
-    pub(super) fn poll_initial_instruction_setup(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn poll_initial_instruction_setup(&mut self, cx: &mut Context<Self>) {
         let Some(initial) = self.setup.initial_retry.clone() else {
             return;
         };
