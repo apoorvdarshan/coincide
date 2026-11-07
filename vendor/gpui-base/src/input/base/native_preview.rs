@@ -218,7 +218,7 @@ impl InputBaseState<TextareaMode> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let scope = TransientScope::new(self);
             assert!(scope.undo_manager.is_ignoring());
-            assert!(!scope.emit_events);
+            assert!(!scope.state.emit_events);
             panic!("synthetic native transient unwind");
         }));
         result.is_err()
