@@ -635,7 +635,7 @@ impl Render for GitHubReviewPanel {
             .p_3()
             .child("GitHub pull requests")
             .child(div().text_sm().child(
-                "PR metadata with explicit comment reviews and eligible exact-head merges. Approve, Request changes, checkout and involvement filters remain unavailable.",
+                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests after confirmation. Checkout and involvement filters are not connected.",
             ))
             .child(Input::new(&self.repository))
             .child(
@@ -726,7 +726,7 @@ impl Render for GitHubReviewPanel {
                 )
                 .child(
                     Button::new("github-open-actions")
-                        .label("Comment review / merge…")
+                        .label("Review or merge…")
                         .disabled(
                             self.busy
                                 || self.workers.closed()
