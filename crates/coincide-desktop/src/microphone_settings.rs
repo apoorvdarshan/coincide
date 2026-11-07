@@ -8,7 +8,7 @@ use crate::{
 };
 use coincide_core::{
     agent::{WorkerCompletion, WorkerThreadStatus},
-    dictation::local::LocalWhisper,
+    dictation::local::{LocalError, LocalWhisper},
 };
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
@@ -118,12 +118,19 @@ impl Controller for Microphone {
         self.accepts_audio(audio, binding)
     }
 }
+#[derive(Debug)]
+enum InferenceFailure {
+    Failed,
+    Cancelled,
+    CleanupPending,
+}
 trait Inference {
     fn transcribe(
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-    ) -> Result<String, ()>;
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, InferenceFailure>;
 }
 struct LocalInference;
 impl Inference for LocalInference {
@@ -131,7 +138,8 @@ impl Inference for LocalInference {
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-    ) -> Result<String, ()> {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, InferenceFailure> {
         LocalWhisper::new(
             configuration.executable.clone(),
             configuration.model.clone(),
@@ -139,9 +147,13 @@ impl Inference for LocalInference {
             configuration.threads,
             Duration::from_secs(120),
         )
-        .map_err(|_| ())?
-        .transcribe_local(wav)
-        .map_err(|_| ())
+        .map_err(|_| InferenceFailure::Failed)?
+        .transcribe_local_cancellable(wav, cancelled)
+        .map_err(|error| match error {
+            LocalError::Cancelled => InferenceFailure::Cancelled,
+            LocalError::CleanupPending => InferenceFailure::CleanupPending,
+            _ => InferenceFailure::Failed,
+        })
     }
 }
 type Factory = Box<dyn FnOnce() -> (Box<dyn Controller>, Box<dyn Inference>) + Send>;
@@ -433,11 +445,18 @@ impl Owner {
         self.publish("Transcribing the stopped recording locally… Cancel discards the result; inference may finish cleanup in the background.");
         // Runs on the same dedicated owner, with capture already stopped. The
         // UI never waits. Shared generation revokes results during this call.
-        let result = self
-            .inference
-            .as_mut()
-            .unwrap()
-            .transcribe(&configuration, &audio.wav);
+        let shared = self.shared.clone();
+        let generation = self.generation;
+        let cancelled = || {
+            !shared.alive.load(Ordering::Acquire)
+                || !shared.enabled.load(Ordering::Acquire)
+                || shared.generation.load(Ordering::Acquire) != generation
+        };
+        let result =
+            self.inference
+                .as_mut()
+                .unwrap()
+                .transcribe(&configuration, &audio.wav, &cancelled);
         if !self.current() {
             self.reset();
             return;
@@ -453,7 +472,15 @@ impl Owner {
                 self.publish("Transcript ready for the matching composer. Nothing was sent.");
             }
             Ok(_) => self.publish("No speech text was returned. Composer unchanged."),
-            Err(()) => {
+            Err(InferenceFailure::Cancelled) => {
+                self.phase = Phase::Idle;
+                self.publish("Dictation cancelled; no text inserted.");
+            }
+            Err(InferenceFailure::CleanupPending) => {
+                self.phase = Phase::Failed;
+                self.publish("Transcription cleanup is uncertain. Private audio was retained; no transcript was inserted.");
+            }
+            Err(InferenceFailure::Failed) => {
                 self.phase = Phase::Failed;
                 self.publish("Local transcription failed. Check the selected CLI/model and recording format.");
             }
@@ -898,7 +925,16 @@ mod tests {
         revoke: Option<Arc<Shared>>,
     }
     impl Inference for FakeInference {
-        fn transcribe(&mut self, config: &LocalRecordingConfig, wav: &[u8]) -> Result<String, ()> {
+        fn transcribe(
+            &mut self,
+            config: &LocalRecordingConfig,
+            wav: &[u8],
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<String, InferenceFailure> {
+            assert!(
+                !cancelled(),
+                "current native owner passes a live cancellation receipt"
+            );
             assert_eq!(config.language, "en");
             assert!(wav.starts_with(b"RIFF"));
             let mut trace = self.trace.lock().unwrap();
@@ -906,6 +942,10 @@ mod tests {
             trace.threads.push(thread::current().id());
             if let Some(shared) = &self.revoke {
                 shared.generation.fetch_add(1, Ordering::AcqRel);
+                assert!(
+                    cancelled(),
+                    "worker generation revocation must reach local process cancellation"
+                );
             }
             Ok("synthetic recorded transcript".into())
         }
@@ -1297,7 +1337,12 @@ mod tests {
         tls_release: Option<Receiver<()>>,
     }
     impl Inference for ShutdownInference {
-        fn transcribe(&mut self, _: &LocalRecordingConfig, _: &[u8]) -> Result<String, ()> {
+        fn transcribe(
+            &mut self,
+            _: &LocalRecordingConfig,
+            _: &[u8],
+            _: &dyn Fn() -> bool,
+        ) -> Result<String, InferenceFailure> {
             SHUTDOWN_TLS.with(|slot| {
                 *slot.borrow_mut() = Some(ShutdownTls {
                     entered: self.tls_entered.clone(),

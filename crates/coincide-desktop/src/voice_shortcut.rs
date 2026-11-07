@@ -59,6 +59,11 @@ impl Coincide {
         if !self.voice_target_available(window, cx) {
             return;
         }
+        self.composer
+            .read(cx)
+            .focus_handle()
+            .clone()
+            .focus(window, cx);
         let Some(binding) = self.sync_transcription_binding(cx) else {
             return;
         };
@@ -80,7 +85,8 @@ impl Coincide {
         self.voice.machine.recording_started();
     }
     fn voice_target_available(&self, window: &Window, cx: &Context<Self>) -> bool {
-        if !window.is_window_active()
+        if window.window_handle().window_id() != self.main_window.window_id()
+            || !window.is_window_active()
             || !window.visibility().is_visible()
             || !self.chat_visible()
             || self.command_palette.read(cx).is_open()
@@ -113,6 +119,9 @@ impl Coincide {
     }
     pub(super) fn poll_voice_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = Settings::decode(&self.settings);
+        if !self.settings_open || !self.transcription_open {
+            self.voice.recording_shortcut = false;
+        }
         let available = self.voice_target_available(window, cx)
             && settings.enabled
             && settings.engine == Engine::Whisper;
@@ -136,6 +145,10 @@ impl Coincide {
             self.voice.machine.recording_ended();
         }
         self.voice.was_active = active;
+        if active {
+            window.request_animation_frame();
+            cx.notify();
+        }
     }
     pub(super) fn voice_key_down(
         &mut self,

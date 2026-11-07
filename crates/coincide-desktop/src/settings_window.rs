@@ -111,6 +111,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.voice.recording_shortcut && self.voice_key_down(event, window, cx) {
+            return;
+        }
         if self.record_appshot_shortcut(event, window, cx) {
             return;
         }
