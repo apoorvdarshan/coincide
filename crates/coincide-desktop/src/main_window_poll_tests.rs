@@ -10,6 +10,7 @@ const CHILD: &str = "COINCIDE_MAIN_WINDOW_POLL_CHILD";
 struct Owner {
     source: Arc<AtomicU64>,
     observed: u64,
+    receipt: Option<coincide_core::native_ui_edits::NativeUiEditLease>,
 }
 impl Render for Owner {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -37,6 +38,7 @@ fn shared_owner_keeps_polling_main_after_settings_closes(cx: &mut TestAppContext
             cx.new(|_| Owner {
                 source: source.clone(),
                 observed: 0,
+                receipt: None,
             })
         })
         .unwrap()
@@ -68,12 +70,57 @@ fn shared_owner_keeps_polling_main_after_settings_closes(cx: &mut TestAppContext
         latest, settings,
         "fixture must actually migrate the shared owner's current window"
     );
+    let mut callbacks = 0;
+    let visible = cx
+        .update(|cx| {
+            super::update_visible_or_owner(main, &weak, cx, |_, window, _| {
+                callbacks += 1;
+                window.window_handle()
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        visible, settings,
+        "a visible child retains its actual Settings window context"
+    );
+    assert_eq!(callbacks, 1);
     cx.update_window(settings, |_, window, _| window.remove_window())
         .unwrap();
     assert!(
         cx.update(|cx| weak.update_in(cx, |_, _, _| ())).is_err(),
         "old entity-window lookup must reproduce the stopped polling path"
     );
+    // A real native edit-custody receipt reproduces why a stopped retained
+    // child poll can prevent ordinary Quit even after its worker has returned.
+    let data = std::env::current_dir().unwrap().join("data");
+    coincide_core::native_file::private_directory(&data).unwrap();
+    let mut engine = coincide_core::api::Engine::new(
+        coincide_core::store::Store::open(&data.join("state.sqlite")).unwrap(),
+    );
+    let receipt = engine.native_ui_editors().editor().pending_native_action();
+    owner.update(cx, |owner, _| owner.receipt = Some(receipt));
+    assert!(
+        engine
+            .dispatch(serde_json::json!({"method":"app.quit","params":{}}))
+            .get("error")
+            .is_some()
+    );
+    let returned = cx
+        .update(|cx| {
+            super::update_visible_or_owner(main, &weak, cx, |owner, window, _| {
+                callbacks += 1;
+                assert_eq!(window.window_handle(), main);
+                owner.receipt.take()
+            })
+        })
+        .unwrap();
+    assert_eq!(callbacks, 2, "fallback drains a completion exactly once");
+    drop(returned);
+    assert_eq!(
+        engine.dispatch(serde_json::json!({"method":"app.quit","params":{}}))["result"]["requested"],
+        true
+    );
+    drop(engine);
     source.store(42, Ordering::Release);
     cx.update(|cx| {
         super::update(main, &weak, cx, |owner, window, _| {
@@ -106,6 +153,15 @@ fn shared_owner_keeps_polling_main_after_settings_closes(cx: &mut TestAppContext
             .is_err(),
         "a genuinely closed main window must terminate polling"
     );
+    assert!(
+        cx.update(
+            |cx| super::update_visible_or_owner(main, &weak, cx, |_, _, _| {
+                callbacks += 1;
+            })
+        )
+        .is_err()
+    );
+    assert_eq!(callbacks, 2, "a removed owner cannot replay a completion");
 }
 #[::core::prelude::v1::test]
 fn private_actual_main_window_poll_child() {

@@ -323,7 +323,7 @@ impl TranscriptFind {
                     .timer(Duration::from_millis(50))
                     .await;
                 if this
-                    .update_in(cx, |this, _, cx| {
+                    .update(cx, |this, cx| {
                         if this.opened && this.dirty {
                             this.rescan(false, false, cx);
                         }
