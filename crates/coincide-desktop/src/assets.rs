@@ -54,6 +54,11 @@ icon_assets!(
         SquareArrowOutUpRight,
         Clock,
         FolderPlus,
+        // Missing project folder, the toolbar's Diff and Pull Requests, and approvals.
+        FolderX,
+        Diff,
+        GitPullRequest,
+        ShieldAlert,
         Check,
         ChevronDown,
         ChevronLeft,
@@ -180,6 +185,10 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            "icons/folder-x.svg",
+            "icons/diff.svg",
+            "icons/git-pull-request.svg",
+            "icons/shield-alert.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

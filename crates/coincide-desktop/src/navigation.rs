@@ -97,7 +97,155 @@ fn section_key(section: &sections::Section<'_>) -> &'static str {
     }
 }
 
+fn is_bots_project(project: &Value) -> bool {
+    project["isBots"] == true
+        || project["id"]
+            .as_str()
+            .is_some_and(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+}
+
+/// Folders of the user's projects that no longer exist, by project ID.
+pub(super) fn missing_project_folders(projects: &[Value]) -> std::collections::HashSet<String> {
+    projects
+        .iter()
+        .filter(|project| project["isChats"] != true && !is_bots_project(project))
+        .filter(|project| {
+            project["path"]
+                .as_str()
+                .is_some_and(|path| !path.is_empty() && !std::path::Path::new(path).exists())
+        })
+        .map(|project| text(project, "id"))
+        .collect()
+}
+
+/// A path with the home folder written as "~", as Swift's `Formatting.abbreviatedPath`.
+fn abbreviated_path(path: &str, home: Option<&str>) -> String {
+    match home.filter(|home| !home.is_empty()) {
+        Some(home) if path == home => "~".into(),
+        Some(home) => path
+            .strip_prefix(home)
+            .filter(|rest| rest.starts_with(['/', '\\']))
+            .map_or_else(|| path.to_owned(), |rest| format!("~{rest}")),
+        None => path.to_owned(),
+    }
+}
+
+fn home_folder() -> Option<String> {
+    std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok()
+}
+
+/// The project a new thread starts in, as Swift's `currentProjectID`: the
+/// sidebar's project filter (a Rust-only view), else the open thread's project
+/// but never Bots, else the first project. Projectless chats stand in for
+/// Swift's Chats project. None when there is no project to start in.
+pub(super) fn new_thread_project(
+    filter: Option<&str>,
+    selected: Option<&Value>,
+    projects: &[Value],
+    threads: &[ThreadSummary],
+) -> Option<String> {
+    let known = |id: &str| {
+        id == NO_PROJECT
+            || projects.iter().any(|project| {
+                project["id"]
+                    .as_str()
+                    .is_some_and(|known| known.eq_ignore_ascii_case(id))
+            })
+    };
+    if let Some(filter) = filter.filter(|id| known(id) || id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+    {
+        return Some(filter.to_owned());
+    }
+    if let Some(project) = selected
+        .map(|thread| sections::project_key(thread["projectID"].as_str().unwrap_or("")))
+        .filter(|id| !id.eq_ignore_ascii_case(BOTS_PROJECT_ID) && known(id))
+    {
+        return Some(project.to_owned());
+    }
+    if let Some(first) = projects.iter().find(|project| !is_bots_project(project)) {
+        return Some(text(first, "id"));
+    }
+    threads
+        .iter()
+        .any(|thread| sections::project_key(&thread.project_id) == NO_PROJECT)
+        .then(|| NO_PROJECT.to_owned())
+}
+
 impl Coincide {
+    /// Add Project…: the folder chooser, from the empty sidebar or New Thread.
+    pub(super) fn add_project_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_project_form(project_management::Mode::Add, None, window, cx);
+        if self.project_management.session.open {
+            self.choose_project_folder(window, cx);
+        }
+    }
+    /// Folders dropped on the empty sidebar become projects, as Swift's
+    /// `ThreadActions.addProjects`.
+    fn add_dropped_project_folders(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folders: Vec<std::path::PathBuf> = paths
+            .paths()
+            .iter()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .collect();
+        let Some(first) = folders
+            .first()
+            .and_then(|path| path.to_str())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.open_project_form(project_management::Mode::Add, None, window, cx);
+        if !self.project_management.session.open {
+            return;
+        }
+        self.project_path
+            .update(cx, |input, cx| input.set_value(first, window, cx));
+        self.project_management.folders = folders;
+        self.add_project(window, cx);
+    }
+    /// The row's tooltip while searching also quotes the message that matched.
+    fn sidebar_search_tooltip(&self, tooltip: String, id: &str, searching: bool) -> String {
+        match self.sidebar_message_search.line(id).filter(|_| searching) {
+            Some(line) => format!("{tooltip}\n“{line}”"),
+            None => tooltip,
+        }
+    }
+    /// Undo Settle: puts back the settled marker the latest settle replaced.
+    pub(super) fn undo_sidebar_settle(&mut self, cx: &mut Context<Self>) {
+        if let Some((id, before, after)) = self.sidebar_settle_undo.take() {
+            if self.sidebar_preferences.document["settledThreads"].get(&id) == after.as_ref()
+                && (before.is_none() || !self.running.contains(&id))
+            {
+                self.sidebar_thread_marker("settledThreads", &id, before, cx);
+            } else {
+                self.status = "Conversation state changed; settle Undo was not applied.".into();
+                cx.notify();
+            }
+        }
+    }
+    /// Archives or restores the open conversation, keeping Undo for it.
+    fn set_archived(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) -> bool {
+        let done = self.patch_navigation(
+            id,
+            json!({"isArchived":archived}),
+            if archived {
+                "Conversation archived."
+            } else {
+                "Conversation restored."
+            },
+            cx,
+        );
+        if done {
+            self.remember_archive(id, archived);
+        }
+        done
+    }
     fn sidebar_sections(
         &self,
         now: f64,
@@ -367,20 +515,38 @@ impl Coincide {
         let sections = self.sidebar_sections(now, searching, &query);
         let mut section_index = 0usize;
         let mut conversations = div().id("threads").flex_1().min_h_0().overflow_y_scroll();
-        if !sections
+        // Swift shows only its "No Projects" panel until a project exists.
+        let no_projects = !self
+            .projects
+            .iter()
+            .any(|project| !is_bots_project(project))
+            && !self.sidebar_all_threads.iter().any(|thread| {
+                !sections::project_key(&thread.project_id).eq_ignore_ascii_case(BOTS_PROJECT_ID)
+            });
+        if no_projects {
+            conversations = conversations.child(self.sidebar_empty_view(None, cx));
+        } else if !sections
             .iter()
             .any(|section| !section.threads.is_empty() || section_key(section) == "projects")
             && !self.has_sidebar_bot_rows(searching, cx)
             && (searching || sections.is_empty())
         {
-            conversations = conversations.child(
+            conversations = conversations.child(if searching {
+                self.sidebar_empty_view(Some(query.trim()), cx)
+            } else {
                 div()
                     .p_3()
                     .text_sm()
-                    .child("No conversations match these filters."),
-            );
+                    .child("No conversations match these filters.")
+                    .into_any_element()
+            });
         }
-        for section_kind in self.sidebar_preferences.order() {
+        let section_order = if no_projects {
+            Vec::new()
+        } else {
+            self.sidebar_preferences.order()
+        };
+        for section_kind in section_order {
             if section_kind == "projects" {
                 if !searching
                     || sections
@@ -461,6 +627,19 @@ impl Coincide {
                         .map(std::path::PathBuf::from);
                     let parent = cx.entity().downgrade();
                     let targets = self.open_targets.clone();
+                    let folder = !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID);
+                    // Swift's ProjectCell: a question-mark folder and "Folder not
+                    // found" once the folder is gone, else its path.
+                    let missing = folder && self.missing_project_folders.contains(&group_id);
+                    let folder_tooltip = menu_path.as_ref().map(|path| {
+                        let path =
+                            abbreviated_path(&path.to_string_lossy(), home_folder().as_deref());
+                        if missing {
+                            format!("Folder not found: {path}")
+                        } else {
+                            path
+                        }
+                    });
                     group = group.child(
                         div()
                             .id(SharedString::from(format!(
@@ -533,10 +712,11 @@ impl Coincide {
                                     "project-group-{group_id}"
                                 )))
                                 .accessibility_label(SharedString::from(format!(
-                                    "{} {} {name}, {} conversations",
+                                    "{} {} {name}, {} conversations{}",
                                     if collapsed { "Expand" } else { "Collapse" },
                                     if chats { "section" } else { "project" },
-                                    threads.len()
+                                    threads.len(),
+                                    if missing { ", folder not found" } else { "" }
                                 )))
                                 .child(
                                     div()
@@ -550,17 +730,23 @@ impl Coincide {
                                         } else {
                                             IconName::ChevronDown
                                         })
-                                        .when(
-                                            !chats
-                                                && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
-                                            |row| row.child(IconName::Folder),
-                                        )
+                                        .when(folder, |row| {
+                                            row.child(if missing {
+                                                IconName::FolderX
+                                            } else {
+                                                IconName::Folder
+                                            })
+                                        })
                                         .child(sidebar_button_label(name)),
                                 )
                                 .disabled(searching)
                                 .when(searching, |button| {
                                     button.tooltip("Clear search to collapse project groups")
                                 })
+                                .when_some(
+                                    folder_tooltip.filter(|_| folder && !searching),
+                                    |button, tooltip| button.tooltip(tooltip),
+                                )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.thread_bulk.invalidate();
                                     this.sidebar_expand_project(&target, collapsed, cx);
@@ -621,6 +807,26 @@ impl Coincide {
                                                 ),
                                             );
                                             if !chats {
+                                                menu = menu.item(PopupMenuItem::separator());
+                                                // Locating a folder is offered only once it is gone.
+                                                if missing {
+                                                    let parent = parent.clone();
+                                                    let id = menu_target.clone();
+                                                    menu = menu.item(
+                                                        PopupMenuItem::new("Locate Folder…")
+                                                            .on_click(move |_, window, cx| {
+                                                                let _ = parent.update(cx, |this, cx| {
+                                                                    this.project_picker_open = true;
+                                                                    this.open_project_form(
+                                                                        project_management::Mode::Relocate,
+                                                                        Some(id.clone()),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }),
+                                                    );
+                                                }
                                                 let defaults_owner = parent.clone();
                                                 let defaults_target = menu_target.clone();
                                                 menu = menu.item(
@@ -638,12 +844,7 @@ impl Coincide {
                                                             );
                                                         }),
                                                 );
-                                                menu = menu.item(PopupMenuItem::separator());
                                                 for (label, mode) in [
-                                                    (
-                                                        "Locate Folder…",
-                                                        project_management::Mode::Relocate,
-                                                    ),
                                                     ("Rename…", project_management::Mode::Rename),
                                                     (
                                                         "Remove from Coincide…",
@@ -827,7 +1028,7 @@ impl Coincide {
                                 } else {
                                     label
                                 },now))
-                                .tooltip(thread.title.clone())
+                                .tooltip(self.sidebar_search_tooltip(thread.title.clone(), &thread.id, searching))
                                 .w_full()
                                 .selected(if self.thread_bulk.mode {
                                     self.thread_bulk.picked.contains(&id)
@@ -897,7 +1098,7 @@ impl Coincide {
                                                         SidebarThreadAction::Settle => {
                                                             let settled=was_settled;
                                                             let pending=call(&this.engine,"agent.pending",json!({"threadId":id}));
-                                                            if settled || (!this.running.contains(&id) && pending.as_ref().is_ok_and(|rows|rows.as_array().is_some_and(Vec::is_empty))) { let before=this.sidebar_preferences.document["settledThreads"].get(&id).cloned(); let after=(!settled).then(||json!(coincide_core::store::swift_timestamp())); this.sidebar_thread_marker("settledThreads",&id,after.clone(),cx); if this.sidebar_preferences.document["settledThreads"].get(&id)==after.as_ref() { this.sidebar_settle_undo=Some((id.clone(),before,after)); } }
+                                                            if settled || (!this.running.contains(&id) && pending.as_ref().is_ok_and(|rows|rows.as_array().is_some_and(Vec::is_empty))) { let before=this.sidebar_preferences.document["settledThreads"].get(&id).cloned(); let after=(!settled).then(||json!(coincide_core::store::swift_timestamp())); this.sidebar_thread_marker("settledThreads",&id,after.clone(),cx); if this.sidebar_preferences.document["settledThreads"].get(&id)==after.as_ref() { this.sidebar_settle_undo=Some((id.clone(),before,after)); this.inbox_undo.settle_stamp=inbox_undo::stamp(); } }
                                                             else { this.status="Finish this conversation's work and approvals before settling it.".into(); cx.notify(); }
                                                         }
                                                         SidebarThreadAction::Snooze(date) => { this.patch_navigation(&id,json!({"snoozedUntil":date}),"Conversation snoozed.",cx); }
@@ -1023,17 +1224,31 @@ impl Coincide {
                     .items_center()
                     .gap_1()
                     .child(
-                        Button::new("sidebar-new-thread")
-                            .icon(IconName::SquarePen)
-                            .ghost()
-                            .compact()
-                            .h(px(32.))
+                        div()
+                            .group("sidebar-new-thread-row")
                             .flex_1()
-                            .justify_start()
-                            .accessibility_label("New Thread")
-                            .child(sidebar_button_label("New Thread".into()))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.new_thread(window, cx)),
+                            .min_w_0()
+                            .child(
+                                Button::new("sidebar-new-thread")
+                                    .icon(IconName::SquarePen)
+                                    .ghost()
+                                    .compact()
+                                    .h(px(32.))
+                                    .w_full()
+                                    .justify_start()
+                                    .accessibility_label("New Thread")
+                                    .child(self.sidebar_row_content(
+                                        "New Thread",
+                                        "sidebar-new-thread-row",
+                                        keyboard_settings::shortcut_hint(
+                                            &self.settings,
+                                            keyboard_settings::Command::NewThread,
+                                        ),
+                                        None,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.new_thread(window, cx)
+                                    })),
                             ),
                     )
                     .child(
@@ -1062,51 +1277,50 @@ impl Coincide {
                     .h(px(32.)),
             )
             .child(
-                Button::new("sidebar-scheduled")
-                    .icon(IconName::Clock)
-                    .ghost()
-                    .compact()
-                    .h(px(32.))
-                    .w_full()
-                    .justify_start()
-                    .accessibility_label("Scheduled")
-                    .selected(self.schedules_open)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .w_full()
-                            .min_w_0()
-                            .child(sidebar_button_label("Scheduled".into()))
-                            .when(
-                                self.sidebar_schedules.iter().any(|task| {
-                                    task["isPaused"] != true && task["awaitingApproval"] != true
-                                }),
-                                |row| {
-                                    row.child(
-                                        div().text_xs().child(
-                                            self.sidebar_schedules
-                                                .iter()
-                                                .filter(|task| {
-                                                    task["isPaused"] != true
-                                                        && task["awaitingApproval"] != true
-                                                })
-                                                .count()
-                                                .to_string(),
-                                        ),
-                                    )
-                                },
+                div().group("sidebar-scheduled-row").w_full().child(
+                    Button::new("sidebar-scheduled")
+                        .icon(IconName::Clock)
+                        .ghost()
+                        .compact()
+                        .h(px(32.))
+                        .w_full()
+                        .justify_start()
+                        .accessibility_label("Scheduled")
+                        .selected(self.schedules_open)
+                        .child(
+                            self.sidebar_row_content(
+                                "Scheduled",
+                                "sidebar-scheduled-row",
+                                keyboard_settings::shortcut_hint(
+                                    &self.settings,
+                                    keyboard_settings::Command::Schedules,
+                                ),
+                                Some(
+                                    self.sidebar_schedules
+                                        .iter()
+                                        .filter(|task| {
+                                            coincide_core::schedule_presentation::is_active(task)
+                                        })
+                                        .count(),
+                                )
+                                .filter(|count| *count > 0),
                             ),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.thread_bulk.invalidate();
-                        this.hide_inline_settings();
-                        this.workspace_open = false;
-                        this.session_import_open = false;
-                        this.open_global_schedules(cx);
-                        this.sync_transcription_binding(cx);
-                        cx.notify();
-                    })),
+                        )
+                        // Lit while the Scheduled panel shows; clicking again closes it.
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.thread_bulk.invalidate();
+                            if this.schedules_open {
+                                this.close_schedule_surface();
+                            } else {
+                                this.hide_inline_settings();
+                                this.workspace_open = false;
+                                this.session_import_open = false;
+                                this.open_global_schedules(cx);
+                            }
+                            this.sync_transcription_binding(cx);
+                            cx.notify();
+                        })),
+                ),
             )
             .when(self.project_picker_open, |view| {
                 view.child(
@@ -1321,27 +1535,154 @@ impl Coincide {
                         .ghost()
                         .compact()
                         .label("Undo Settle")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some((id, before, after)) = this.sidebar_settle_undo.take() {
-                                if this.sidebar_preferences.document["settledThreads"].get(&id)
-                                    == after.as_ref()
-                                    && (before.is_none() || !this.running.contains(&id))
-                                {
-                                    this.sidebar_thread_marker("settledThreads", &id, before, cx);
-                                } else {
-                                    this.status =
-                                        "Conversation state changed; settle Undo was not applied."
-                                            .into();
-                                    cx.notify();
-                                }
-                            }
-                        })),
+                        .on_click(cx.listener(|this, _, _, cx| this.undo_sidebar_settle(cx))),
                 )
             })
             .when_some(self.sidebar_resize.error(), |view, error| {
                 view.child(div().text_xs().child(error))
             })
             .child(resize)
+            .into_any_element()
+    }
+
+    /// A top row's title with, on hover, its shortcut. A count, such as the
+    /// active schedules', shows in the shortcut's place until the pointer is on
+    /// the row, as Swift's `SidebarActionRow`.
+    fn sidebar_row_content(
+        &self,
+        title: &'static str,
+        group: &'static str,
+        shortcut: Option<String>,
+        count: Option<usize>,
+    ) -> Div {
+        let quiet = self.color(0xe4e9f2).opacity(0.4);
+        let has_shortcut = shortcut.is_some();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w_full()
+            .min_w_0()
+            .child(sidebar_button_label(title.into()).flex_1())
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .text_size(px(12.))
+                    .text_color(quiet)
+                    .when_some(count, |slot, count| {
+                        slot.child(
+                            div()
+                                .when(has_shortcut, |count| {
+                                    count.group_hover(group, |style| style.opacity(0.))
+                                })
+                                .child(count.to_string()),
+                        )
+                    })
+                    .when_some(shortcut, |slot, shortcut| {
+                        slot.child(
+                            div()
+                                .when(count.is_some(), |hint| hint.absolute().right_0())
+                                .whitespace_nowrap()
+                                .opacity(0.)
+                                .group_hover(group, |style| style.opacity(1.))
+                                .child(shortcut),
+                        )
+                    }),
+            )
+    }
+
+    /// Swift's `SidebarEmptyView`: "No Projects" with Add Project… and a folder
+    /// drop target, or "No Results" for a search that matches nothing.
+    fn sidebar_empty_view(&self, query: Option<&str>, cx: &mut Context<Self>) -> AnyElement {
+        let ink = self.color(0xe4e9f2);
+        let (icon, title, message) = match query {
+            None => (
+                IconName::FolderPlus,
+                "No Projects",
+                "Add a folder to start a thread with your coding agents, or drop one here."
+                    .to_owned(),
+            ),
+            Some(query) => (
+                IconName::Search,
+                "No Results",
+                format!("No threads or projects match “{query}”."),
+            ),
+        };
+        let accepts_folders = query.is_none();
+        div()
+            .id(if accepts_folders {
+                "sidebar-empty-projects"
+            } else {
+                "sidebar-empty-results"
+            })
+            .role(Role::Group)
+            .aria_label(title)
+            .size_full()
+            .min_h(px(240.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .px_4()
+            .pb(px(80.))
+            .m(px(8.))
+            .rounded(px(8.))
+            .border_1()
+            .border_dashed()
+            .border_color(transparent_black())
+            .when(accepts_folders, |view| {
+                // Lit only while what is dragged holds a folder.
+                view.drag_over::<ExternalPaths>(move |style, paths, _, _| {
+                    if paths.paths().iter().any(|path| path.is_dir()) {
+                        style.bg(ink.opacity(0.06)).border_color(ink.opacity(0.5))
+                    } else {
+                        style
+                    }
+                })
+                .on_drop(cx.listener(
+                    |this, paths: &ExternalPaths, window, cx| {
+                        this.add_dropped_project_folders(paths, window, cx)
+                    },
+                ))
+            })
+            .child(
+                div()
+                    .text_size(px(if accepts_folders { 30. } else { 26. }))
+                    .text_color(ink.opacity(0.35))
+                    .child(icon),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(ink.opacity(0.65))
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .max_w(px(200.))
+                    .text_center()
+                    .text_size(px(12.))
+                    .text_color(ink.opacity(0.65))
+                    .child(message),
+            )
+            .when(accepts_folders, |view| {
+                view.child(
+                    div().mt(px(14.)).child(
+                        Button::new("sidebar-empty-add-project")
+                            .primary()
+                            .label("Add Project…")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_project_from_sidebar(window, cx)
+                            })),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
@@ -1360,7 +1701,7 @@ impl Coincide {
         cx.notify();
     }
 
-    fn patch_navigation(
+    pub(super) fn patch_navigation(
         &mut self,
         id: &str,
         patch: Value,
@@ -1409,12 +1750,7 @@ impl Coincide {
         };
         let id = text(thread, "id");
         if thread["isArchived"] == true {
-            self.patch_navigation(
-                &id,
-                json!({"isArchived":false}),
-                "Conversation restored.",
-                cx,
-            );
+            self.set_archived(&id, false, cx);
         } else if self.settings["confirmBeforeArchivingThreads"]
             .as_bool()
             .unwrap_or(true)
@@ -1422,12 +1758,7 @@ impl Coincide {
             self.archive_confirmation = Some(id);
             cx.notify();
         } else {
-            self.patch_navigation(
-                &id,
-                json!({"isArchived":true}),
-                "Conversation archived.",
-                cx,
-            );
+            self.set_archived(&id, true, cx);
         }
     }
 
@@ -1512,12 +1843,7 @@ impl Coincide {
                                 {
                                     return;
                                 }
-                                if this.patch_navigation(
-                                    &id,
-                                    json!({"isArchived":true}),
-                                    "Conversation archived.",
-                                    cx,
-                                ) {
+                                if this.set_archived(&id, true, cx) {
                                     this.archive_confirmation = None;
                                 }
                             })),
@@ -1588,5 +1914,94 @@ mod keyboard_navigation_tests {
         );
         assert_eq!(adjacent_sidebar_row(&visible, None, -1), Some("last"));
         assert_eq!(adjacent_sidebar_row(&[], None, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    fn thread(project: &str) -> ThreadSummary {
+        serde_json::from_value(json!({"id":"t","title":"t","project_id":project,"pinned":false,"archived":false,"snoozed_until":null,"navigation":null})).unwrap()
+    }
+
+    #[::core::prelude::v1::test]
+    fn new_threads_go_to_the_filter_the_open_project_or_the_first_never_bots() {
+        let projects = vec![
+            json!({"id":BOTS_PROJECT_ID,"name":"Bots","isBots":true}),
+            json!({"id":"A","name":"Alpha"}),
+            json!({"id":"B","name":"Beta"}),
+        ];
+        let open_b = json!({"projectID":"b"});
+        let open_bot = json!({"projectID":BOTS_PROJECT_ID,"botID":"bot"});
+        let open_gone = json!({"projectID":"deleted"});
+        let open_chat = json!({"projectID":""});
+        assert_eq!(
+            new_thread_project(Some("A"), Some(&open_b), &projects, &[]).as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            new_thread_project(None, Some(&open_b), &projects, &[]).as_deref(),
+            Some("b")
+        );
+        for open in [&open_bot, &open_gone] {
+            assert_eq!(
+                new_thread_project(None, Some(open), &projects, &[]).as_deref(),
+                Some("A")
+            );
+        }
+        assert_eq!(
+            new_thread_project(None, Some(&open_chat), &projects, &[]).as_deref(),
+            Some(NO_PROJECT)
+        );
+        // A filter for a project that is gone falls through.
+        assert_eq!(
+            new_thread_project(Some("deleted"), None, &projects, &[]).as_deref(),
+            Some("A")
+        );
+        // With no project, existing chats stand in for Swift's Chats project…
+        let only_bots = &projects[..1];
+        assert_eq!(
+            new_thread_project(None, None, only_bots, &[thread("")]).as_deref(),
+            Some(NO_PROJECT)
+        );
+        // …otherwise New Thread asks for a folder to add.
+        assert!(new_thread_project(None, None, only_bots, &[thread(BOTS_PROJECT_ID)]).is_none());
+        assert!(new_thread_project(None, None, &[], &[]).is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn only_project_folders_that_are_gone_are_missing() {
+        let present = std::env::temp_dir();
+        let gone = present.join(format!("coincide-missing-{}", uuid::Uuid::new_v4()));
+        let projects = vec![
+            json!({"id":"here","path":present}),
+            json!({"id":"gone","path":gone}),
+            json!({"id":"chats","path":gone,"isChats":true}),
+            json!({"id":BOTS_PROJECT_ID,"path":gone}),
+            json!({"id":"pathless"}),
+        ];
+        assert_eq!(
+            missing_project_folders(&projects),
+            std::collections::HashSet::from(["gone".to_owned()])
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn paths_under_home_are_abbreviated() {
+        assert_eq!(
+            abbreviated_path("/Users/me/code", Some("/Users/me")),
+            "~/code"
+        );
+        assert_eq!(abbreviated_path("/Users/me", Some("/Users/me")), "~");
+        assert_eq!(
+            abbreviated_path("/Users/meadow", Some("/Users/me")),
+            "/Users/meadow"
+        );
+        assert_eq!(
+            abbreviated_path(r"C:\Users\me\code", Some(r"C:\Users\me")),
+            r"~\code"
+        );
+        assert_eq!(abbreviated_path("/tmp/x", None), "/tmp/x");
     }
 }

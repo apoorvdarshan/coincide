@@ -53,6 +53,7 @@ mod github_review;
 mod github_threads;
 mod github_write_transport;
 mod historical_image_view;
+mod inbox_undo;
 mod inspector_follow;
 mod instructions;
 mod instructions_config;
@@ -112,6 +113,7 @@ mod transcription_settings;
 pub mod updater_helper_transport;
 mod updater_lifecycle;
 mod updater_settings;
+mod window_chrome;
 mod workspace;
 mod workspace_inspector;
 use browser::BrowserController;
@@ -485,6 +487,11 @@ struct Coincide {
     sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
     sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
+    inbox_undo: inbox_undo::State,
+    sidebar_message_search: sidebar_search::MessageSearch,
+    /// Projects whose folder is gone, checked when the list refreshes.
+    missing_project_folders: std::collections::HashSet<String>,
+    window_chrome: window_chrome::State,
     projects: Vec<Value>,
     selected_project: Option<String>,
     expanded_sidebar_lists: std::collections::HashSet<String>,
@@ -1037,7 +1044,7 @@ impl Coincide {
         let github_threads_panel =
             cx.new(|cx| github_threads::GitHubThreadsPanel::new(threads_transport, window, cx));
         let composer_files = composer_file_picker::Picker::new(window, cx);
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
         let project_path =
@@ -1230,9 +1237,11 @@ impl Coincide {
                     this.browser_go(cx);
                 }
             }),
-            cx.subscribe(&search, |this, _, event, cx| {
+            cx.subscribe(&search, |this, search, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.thread_bulk.invalidate();
+                    let query = search.read(cx).value().to_string();
+                    this.sidebar_message_search.changed(&query, Instant::now());
                     this.refresh(cx);
                 }
             }),
@@ -1258,6 +1267,9 @@ impl Coincide {
                 }
             }),
         ];
+        subscriptions.push(cx.observe_window_bounds(window, |this, _, _| {
+            this.window_chrome.frame_changed();
+        }));
         subscriptions.push(cx.subscribe(&model_picker_search, |_, _, event, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -1319,6 +1331,12 @@ impl Coincide {
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
         let terminal_layout = terminal_layout::State::load(&engine);
+        let thread_list_open = window_chrome::sidebar_open(&engine);
+        let window_chrome = window_chrome::State::new(
+            try_state(&engine)
+                .ok()
+                .and_then(|engine| window_chrome::saved_frame(&engine.store)),
+        );
         let mut this = Self {
             engine,
             quit_requested,
@@ -1349,7 +1367,7 @@ impl Coincide {
             queued_messages: Vec::new(),
             queue_enabled: false,
             queue_error: String::new(),
-            thread_list_open: true,
+            thread_list_open,
             thread_bulk: Default::default(),
             sidebar_lifecycle: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
@@ -1445,6 +1463,10 @@ impl Coincide {
             sidebar_bot_baseline,
             sidebar_bot_pending: None,
             sidebar_settle_undo: None,
+            inbox_undo: Default::default(),
+            sidebar_message_search: Default::default(),
+            missing_project_folders: Default::default(),
+            window_chrome,
             threads,
             projects,
             selected_project: None,
@@ -1965,11 +1987,14 @@ impl Coincide {
         } else {
             complete = false;
         }
+        self.missing_project_folders = navigation::missing_project_folders(&self.projects);
         match sidebar_search::read(
             &self.engine,
             &self.search.read(cx).value(),
             self.show_archived,
             &self.projects,
+            self.sidebar_message_search.matches(),
+            &self.sidebar_branch_prefix(),
         ) {
             Ok((visible, all)) => {
                 self.threads = visible;
@@ -2548,12 +2573,16 @@ impl Coincide {
             self.new_thread_in_project(navigation::NO_PROJECT_ID, window, cx);
             return;
         }
-        let project = self
-            .selected_project
-            .clone()
-            .or_else(|| self.selected.as_ref().map(|v| text(v, "projectID")))
-            .unwrap_or_else(|| "00000000-0000-0000-0000-000000000000".into());
-        self.new_thread_in_project(&project, window, cx);
+        match navigation::new_thread_project(
+            self.selected_project.as_deref(),
+            self.selected.as_ref(),
+            &self.projects,
+            &self.sidebar_all_threads,
+        ) {
+            Some(project) => self.new_thread_in_project(&project, window, cx),
+            // With no project to start in, New Thread asks for a folder, as in Swift.
+            None => self.add_project_from_sidebar(window, cx),
+        }
     }
     fn new_thread_in_project(
         &mut self,
@@ -3157,8 +3186,12 @@ impl Coincide {
         self.apply_appearance(window, cx);
         if self.navigation_last_clock.elapsed() >= Duration::from_secs(30) {
             self.navigation_last_clock = Instant::now();
+            // A project folder may have been moved or deleted meanwhile.
+            self.missing_project_folders = navigation::missing_project_folders(&self.projects);
             cx.notify();
         }
+        self.poll_window_chrome(window, cx);
+        self.poll_sidebar_message_search(cx);
         self.usage_history.poll(cx);
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
@@ -3177,6 +3210,7 @@ impl Coincide {
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
+            self.window_chrome.observe_status(&status);
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
             let was_running = selected_thread
                 .as_ref()
@@ -4769,6 +4803,8 @@ impl Render for Coincide {
             )
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 if !this.voice_key_down(event, window, cx)
+                    && !this.sidebar_search_shortcut(event, window, cx)
+                    && !this.inbox_undo_shortcut(event, window, cx)
                     && !this.context_details_shortcut(event, window, cx)
                     && !this.project_defaults_key(event, window, cx)
                     && !this.historical_image_shortcut(event, window, cx)
@@ -4860,6 +4896,7 @@ fn main() -> Result<()> {
     }
     let data = control::data_directory()?;
     let store = Store::open(&data.join("coincide.sqlite"))?;
+    let saved_frame = window_chrome::saved_frame(&store);
     let media_data = store.data_directory()?;
     let media_config = coincide_core::legacy_media_service::ServiceConfig {
         database_path: media_data.join("coincide.sqlite"),
@@ -4888,11 +4925,15 @@ fn main() -> Result<()> {
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
-            let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+            let (bounds, display_id) = window_chrome::opening_bounds(saved_frame.as_ref(), cx);
             gpui_kit::open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(820.), px(520.))),
+                    window_bounds: Some(bounds),
+                    display_id,
+                    window_min_size: Some(size(
+                        px(window_chrome::MIN_SIZE.0),
+                        px(window_chrome::MIN_SIZE.1),
+                    )),
                     ..Default::default()
                 },
                 cx,

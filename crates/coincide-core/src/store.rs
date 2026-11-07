@@ -49,6 +49,8 @@ mod native_ui_selection;
 #[path = "store_sidebar_lifecycle.rs"]
 mod sidebar_lifecycle;
 pub(crate) use sidebar_lifecycle::SidebarRow;
+#[path = "store_message_search.rs"]
+mod store_message_search;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
 pub(crate) use store_thread_delete::bot_lifecycle::{BotLifecycle, BotLifecycleUndo};
