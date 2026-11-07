@@ -256,6 +256,8 @@ impl Coincide {
             return None;
         }
         let workspace = self.terminal_workspaces.get(id)?.clone();
+        let appearance = self.terminal_appearance();
+        workspace.update(cx, |workspace, cx| workspace.set_appearance(appearance, cx));
         self.shared_panel_surface(
             right,
             if right {
@@ -267,6 +269,20 @@ impl Coincide {
             window,
             cx,
         )
+    }
+    /// Swift TerminalTheme: the conversation's background and text, the
+    /// light or dark palette, and the mono font one point below the text.
+    fn terminal_appearance(&self) -> terminal_workspace::TerminalAppearance {
+        let hex = |color: Rgba| {
+            let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
+            (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b)
+        };
+        terminal_workspace::TerminalAppearance {
+            dark: self.appearance_dark,
+            foreground: hex(self.color(0xe4e9f2)),
+            background: hex(self.color(0x10141c)),
+            font_size: self.conversation_font_size() - 1.,
+        }
     }
     pub(super) fn inspector_surface(
         &self,
