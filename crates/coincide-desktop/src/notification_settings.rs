@@ -10,7 +10,7 @@ use coincide_core::api::{
     notification_events::{NotificationAck, NotificationClaim},
 };
 use coincide_core::platform_host::notifications::{Delivery, DesktopActivity, EventKey};
-use gpui_kit::{base::Disableable, component::button::Button, *};
+use gpui_kit::{base::Disableable, component::button::Button, prelude::FluentBuilder, *};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
@@ -26,7 +26,7 @@ const WINDOW: usize = 8;
 const CONTROLS: usize = 16;
 fn native_compiled() -> bool {
     cfg!(all(
-        any(target_os = "macos", target_os = "linux"),
+        any(target_os = "macos", target_os = "linux", windows),
         feature = "native-notifications"
     ))
 }
@@ -492,19 +492,9 @@ impl Pump {
         }
     }
     fn receipt(&mut self, engine: &mut impl Outbox, receipt: Receipt) {
-        if self.status.native_compiled
-            && matches!(
-                &receipt.outcome,
-                Outcome::Notification {
-                    ack: worker::Ack::Delivered(Delivery::Uncertain),
-                    reason: worker::Reason::Attempted | worker::Reason::BackendPanic,
-                    ..
-                } | Outcome::Rejected(_)
-                    | Outcome::Cleared { error: Some(_), .. }
-                    | Outcome::Permission(Permission::Unknown)
-            )
-        {
-            // Native callback timeouts do not prove callback cancellation.
+        if self.status.native_compiled && receipt.native_callbacks_unconfirmed {
+            // Callback work may outlive an acknowledgement timeout. A returned
+            // synchronous native call can still have uncertain OS delivery.
             self.status.native_callbacks_unconfirmed = true;
         }
         let Some(flight) = self.flights.remove(&receipt.command_id) else {
@@ -835,8 +825,16 @@ impl Render for NotificationSettingsPanel {
         div().flex().flex_col().gap_3().p_4()
             .child(div().text_lg().child("Desktop notifications"))
             .child("Notify about completed turns, failures, approvals and questions. Notification previews stay off.")
-            .child(format!("Native compiled: {} · Bridge ready: {} · Core outbox deliveryConnected: {}", self.status.native_compiled, self.status.bridge_ready, self.status.core_delivery_connected))
-            .child(format!("Permission: {:?} · Outstanding: {}", self.status.permission, self.status.outstanding))
+            .child(if self.status.busy { "Updating notification settings…" } else {
+                match self.status.permission {
+                    Permission::Authorized => "System notifications are allowed.",
+                    Permission::NotDetermined => "Choose Allow notifications to set up system alerts.",
+                    Permission::Denied => "Notifications are turned off in system settings.",
+                    Permission::Unsupported => "Desktop notifications are unavailable in this build.",
+                    Permission::Unknown => "Refresh status to check system notification access.",
+                }
+            })
+            .when(cfg!(windows), |view| view.child("Windows requires a Start menu shortcut. Allow notifications creates one for Coincide Rust."))
             .child(div().flex().gap_2()
                 .child(Button::new("notification-enabled").label(if enabled { "Disable notifications" } else { "Enable notifications" }).disabled(self.status.busy || self.status.stopped || (!enabled && !self.status.native_compiled)).on_click(cx.listener(move |this, _, _, cx| this.action(Action::Configure(!enabled), cx))))
                 .child(Button::new("notification-permission").label("Allow notifications").disabled(self.status.busy || self.status.stopped || !self.status.native_compiled).on_click(cx.listener(|this, _, _, cx| this.action(Action::AllowNotifications, cx))))
@@ -1147,6 +1145,37 @@ mod tests {
         assert!(engine.0.lock().unwrap().acks.is_empty());
     }
     #[::core::prelude::v1::test]
+    fn returned_synchronous_receipt_preserves_uncertain_delivery_without_unknown_callback_owner() {
+        let (mut pump, mut engine, _) = setup(Delivery::Uncertain, true);
+        let event = claim();
+        let command = Uuid::new_v4();
+        pump.flights.insert(
+            command,
+            Flight::Event(Identity {
+                claim: event.claim_id,
+                key: event.alert.key,
+            }),
+        );
+        pump.receipt(
+            &mut engine,
+            Receipt {
+                command_id: command,
+                native_callbacks_unconfirmed: false,
+                outcome: Outcome::Notification {
+                    claim_id: event.claim_id,
+                    key: event.alert.key,
+                    ack: worker::Ack::Delivered(Delivery::Uncertain),
+                    reason: worker::Reason::Attempted,
+                },
+            },
+        );
+        pump.finish(&mut engine);
+        assert!(!pump.status.native_callbacks_unconfirmed);
+        assert!(pump.status.native_worker_joined);
+        assert_eq!(pump.status.outstanding, 0);
+        assert!(!engine.0.lock().unwrap().acks.is_empty());
+    }
+    #[::core::prelude::v1::test]
     fn uncertain_native_receipt_never_claims_callback_cancellation_on_shutdown() {
         let (mut pump, mut engine, _) = setup(Delivery::Uncertain, true);
         let event = claim();
@@ -1162,6 +1191,7 @@ mod tests {
             &mut engine,
             Receipt {
                 command_id: command,
+                native_callbacks_unconfirmed: true,
                 outcome: Outcome::Notification {
                     claim_id: event.claim_id,
                     key: event.alert.key,
