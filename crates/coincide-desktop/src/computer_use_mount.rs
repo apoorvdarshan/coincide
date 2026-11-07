@@ -1,5 +1,7 @@
-//! Product CLI/API -> serialized Computer Use runtime mount. The parent calls
-//! poll ONLY after dropping its Engine guard. No native action is performed here.
+//! Product CLI/API and each thread's bridge -> serialized Computer Use runtime
+//! mount. The parent calls poll ONLY after dropping its Engine guard. No native
+//! action is performed here. Selection never changes access: background
+//! threads keep theirs while the saved switch is on.
 use crate::{
     computer_use::{Handle, Reply, Runtime},
     computer_use_settings::ComputerUseSettingsPanel,
@@ -8,6 +10,7 @@ use anyhow::{Context as _, Result};
 use coincide_core::{
     api::{Engine, SharedEngine, computer_use_engine::Pending},
     computer_use::{Authority, Failure},
+    computer_use_bridge::Bridge,
 };
 use gpui_kit::{App, AppContext, Entity, Window};
 use serde_json::Value;
@@ -31,12 +34,13 @@ struct Completion {
 }
 struct Plan {
     requests: Vec<Pending>,
-    revoke: Option<Uuid>,
 }
 trait Gateway {
     fn bind(&mut self, authority: Authority);
+    fn bind_bridge(&mut self, bridge: Arc<Bridge>);
+    fn saved_enabled(&self) -> bool;
+    fn save_enabled(&mut self, enabled: bool) -> Result<()>;
     fn unbind(&mut self);
-    fn selection(&self) -> Option<Uuid>;
     fn drain(&mut self) -> Vec<Pending>;
     fn reply(
         &mut self,
@@ -52,11 +56,17 @@ impl Gateway for Engine {
     fn bind(&mut self, a: Authority) {
         self.computer_use_bind_authority(a);
     }
+    fn bind_bridge(&mut self, bridge: Arc<Bridge>) {
+        self.computer_use_bind_bridge(bridge);
+    }
+    fn saved_enabled(&self) -> bool {
+        self.computer_use_saved_enabled().unwrap_or(false)
+    }
+    fn save_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.computer_use_save_enabled(enabled)
+    }
     fn unbind(&mut self) {
         self.computer_use_unbind_authority();
-    }
-    fn selection(&self) -> Option<Uuid> {
-        self.active_thread().and_then(|s| Uuid::parse_str(s).ok())
     }
     fn drain(&mut self) -> Vec<Pending> {
         self.computer_use_drain()
@@ -79,11 +89,14 @@ struct Handoff {
     handle: Handle,
     flights: BTreeMap<Uuid, Identity>,
     completions: VecDeque<Completion>,
-    selected: Option<Uuid>,
+    /// Each thread's private agent connection, created once the Engine is known.
+    bridge: Option<Arc<Bridge>>,
+    bridge_bound: bool,
     bound: bool,
     closing: bool,
     accounted: bool,
     error: Option<Failure>,
+    save_error: Option<String>,
 }
 impl Handoff {
     fn new(runtime: Runtime) -> Self {
@@ -92,11 +105,13 @@ impl Handoff {
             runtime,
             flights: BTreeMap::new(),
             completions: VecDeque::new(),
-            selected: None,
+            bridge: None,
+            bridge_bound: false,
             bound: false,
             closing: false,
             accounted: false,
             error: None,
+            save_error: None,
         }
     }
     fn harvest(&mut self) {
@@ -145,9 +160,7 @@ impl Handoff {
     fn flush(&mut self, gateway: &mut impl Gateway) {
         while let Some(mut completion) = self.completions.pop_front() {
             let id = completion.identity;
-            if Some(id.thread) != gateway.selection()
-                || self.handle.authority_for_engine().grant(id.thread) != Ok(id.grant)
-            {
+            if self.handle.authority_for_engine().grant(id.thread) != Ok(id.grant) {
                 completion.result = Err(Failure::Revoked);
             } else if Instant::now() >= id.deadline {
                 completion.result = Err(Failure::TimedOut);
@@ -161,27 +174,35 @@ impl Handoff {
         if self.closing {
             gateway.shutdown();
             gateway.unbind();
+            if let Some(bridge) = self.bridge.take() {
+                bridge.stop();
+            }
             self.bound = false;
             self.accounted = true;
             self.completions.clear();
             self.flights.clear();
-            self.selected = None;
-            return Plan {
-                requests: vec![],
-                revoke: None,
-            };
+            return Plan { requests: vec![] };
         }
         if !self.bound {
             gateway.bind(self.handle.authority_for_engine());
             self.bound = true;
-        }
-        let selected = gateway.selection();
-        let previous = self.selected;
-        if selected != previous {
-            if let Some(old) = previous {
-                gateway.revoke(old);
+            // The saved switch decides at launch, as Swift's does. A build
+            // without the native adapter stays off.
+            if gateway.saved_enabled() {
+                let _ = self.handle.native_enable(true);
             }
-            self.selected = selected;
+        }
+        if !self.bridge_bound
+            && let Some(bridge) = &self.bridge
+        {
+            gateway.bind_bridge(bridge.clone());
+            self.bridge_bound = true;
+        }
+        if let Some(enabled) = self.handle.take_unsaved() {
+            self.save_error = gateway
+                .save_enabled(enabled)
+                .err()
+                .map(|error| format!("The Computer Use switch could not be saved: {error}"));
         }
         let status = self.handle.try_status();
         let master = self.handle.authority_for_engine().enabled();
@@ -190,6 +211,10 @@ impl Handoff {
         // A contended latest-status slot pauses admission; it is not a disable.
         if !master || stopped {
             gateway.revoke_all();
+            // Turning Computer Use off ends every thread's connection at once.
+            if let Some(bridge) = &self.bridge {
+                bridge.stop();
+            }
         }
         self.flush(gateway);
         let room = LIMIT.saturating_sub(self.flights.len() + self.completions.len());
@@ -200,16 +225,10 @@ impl Handoff {
         } else {
             vec![]
         };
-        Plan {
-            requests,
-            revoke: if selected != previous { previous } else { None },
-        }
+        Plan { requests }
     }
-    /// Outside Engine guard: authority revocation + native mailbox admission only.
+    /// Outside Engine guard: native mailbox admission only.
     fn submit(&mut self, plan: Plan) {
-        if let Some(old) = plan.revoke {
-            self.handle.native_revoke(old);
-        }
         for pending in plan.requests {
             let identity = Identity {
                 engine: pending.id,
@@ -217,7 +236,7 @@ impl Handoff {
                 grant: pending.grant,
                 deadline: pending.deadline,
             };
-            let result = if self.closing || Some(pending.thread) != self.selected {
+            let result = if self.closing {
                 Err(Failure::Revoked)
             } else if self.flights.len() >= LIMIT {
                 Err(Failure::Busy)
@@ -254,6 +273,8 @@ pub struct Mount {
     handoff: Handoff,
     panel: Entity<ComputerUseSettingsPanel>,
     engine: Option<Weak<Mutex<Engine>>>,
+    /// The desktop owner's title, read once per owner.
+    owner: Option<(Uuid, String)>,
 }
 pub struct MountShutdownStatus {
     pub engine_accounted: bool,
@@ -287,6 +308,7 @@ impl Mount {
             handoff: Handoff::new(runtime),
             panel,
             engine: None,
+            owner: None,
         })
     }
     pub fn panel(&self) -> Entity<ComputerUseSettingsPanel> {
@@ -318,6 +340,9 @@ impl Mount {
         } else {
             self.engine = Some(Arc::downgrade(engine));
         }
+        if self.handoff.bridge.is_none() && !self.handoff.closing {
+            self.handoff.bridge = Some(Arc::new(Bridge::new(engine)));
+        }
         self.handoff.harvest();
         let plan = match engine.try_lock() {
             Ok(mut gateway) => self.handoff.prepare(&mut *gateway),
@@ -329,12 +354,26 @@ impl Mount {
             }
         }; // guard dropped BEFORE submission or any panel update
         self.handoff.submit(plan);
+        let owner = self
+            .handoff
+            .handle
+            .try_status()
+            .and_then(|s| s.desktop_owner);
         if let Ok(mut gateway) = engine.try_lock() {
             self.handoff.flush(&mut *gateway);
+            if owner != self.owner.as_ref().map(|(thread, _)| *thread) {
+                self.owner = owner.map(|thread| (thread, thread_title(&gateway, thread)));
+            }
         }
-        let selected = self.handoff.selected;
-        self.panel
-            .update(cx, |panel, cx| panel.set_thread(selected, cx));
+        let title = self
+            .owner
+            .as_ref()
+            .filter(|(thread, _)| Some(*thread) == owner)
+            .map(|(_, title)| title.clone());
+        let save_error = self.handoff.save_error.clone();
+        self.panel.update(cx, |panel, cx| {
+            panel.set_activity(owner.map(|_| title.unwrap_or_default()), save_error, cx)
+        });
     }
     /// Native lifecycle only. Signal immediately; try to invalidate Engine state
     /// without waiting. If contended, keep polling until shutdown_accounted().
@@ -344,6 +383,18 @@ impl Mount {
             self.handoff.prepare(&mut *gateway);
         }
     }
+}
+/// The owner's title for Settings; the panel keeps the last one while the
+/// Engine is busy.
+fn thread_title(engine: &Engine, thread: Uuid) -> String {
+    engine
+        .store
+        .resolve_thread_id(thread)
+        .ok()
+        .flatten()
+        .and_then(|id| engine.store.thread(&id).ok())
+        .and_then(|thread| thread["title"].as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 impl Drop for Mount {
     fn drop(&mut self) {
@@ -393,7 +444,8 @@ mod tests {
     #[derive(Default)]
     struct FakeGateway {
         authority: Option<Authority>,
-        selected: Option<Uuid>,
+        saved: bool,
+        bridges: usize,
         queue: Vec<Pending>,
         results: BTreeMap<Uuid, (Uuid, std::result::Result<Value, Failure>)>,
         revoked: Vec<Uuid>,
@@ -404,11 +456,18 @@ mod tests {
             self.revoke_all();
             self.authority = Some(a);
         }
+        fn bind_bridge(&mut self, _: Arc<Bridge>) {
+            self.bridges += 1;
+        }
+        fn saved_enabled(&self) -> bool {
+            self.saved
+        }
+        fn save_enabled(&mut self, enabled: bool) -> Result<()> {
+            self.saved = enabled;
+            Ok(())
+        }
         fn unbind(&mut self) {
             self.authority = None;
-        }
-        fn selection(&self) -> Option<Uuid> {
-            self.selected
         }
         fn drain(&mut self) -> Vec<Pending> {
             std::mem::take(&mut self.queue)
@@ -490,7 +549,6 @@ mod tests {
     fn native_and_engine_ids_thread_deadline_roundtrip_without_replay() {
         let (mut h, mut g, calls) = setup();
         let t = Uuid::new_v4();
-        g.selected = Some(t);
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
         let id = queue(&h, &mut g, t, Instant::now() + Duration::from_secs(1));
@@ -506,19 +564,48 @@ mod tests {
         step(&mut h, &mut g);
     }
     #[test]
-    fn navigation_revokes_old_thread_and_retained_results() {
+    fn background_threads_keep_access_and_removal_revokes_retained_results() {
         let (mut h, mut g, _) = setup();
-        let old = Uuid::new_v4();
-        g.selected = Some(old);
         h.handle.native_enable(true).unwrap();
-        h.handle.native_grant(old).unwrap();
-        let id = queue(&h, &mut g, old, Instant::now() + Duration::from_secs(1));
-        until(&mut h, &mut g, |g| g.results.contains_key(&id));
-        g.selected = Some(Uuid::new_v4());
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        let a = queue(&h, &mut g, first, Instant::now() + Duration::from_secs(1));
+        let b = queue(&h, &mut g, second, Instant::now() + Duration::from_secs(1));
+        until(&mut h, &mut g, |g| {
+            g.results.contains_key(&a) && g.results.contains_key(&b)
+        });
+        assert!(g.results[&a].1.is_ok() && g.results[&b].1.is_ok());
+        assert!(h.handle.thread_enabled(first) && h.handle.thread_enabled(second));
+        // Deleting a thread revokes it in the Engine; the other keeps its result.
+        g.revoke(first);
+        assert_eq!(g.results[&a].1, Err(Failure::Revoked));
+        assert!(g.results[&b].1.is_ok());
+        h.stop();
         step(&mut h, &mut g);
-        assert!(!h.handle.thread_enabled(old));
-        assert_eq!(g.results[&id].1, Err(Failure::Revoked));
-        assert!(g.revoked.contains(&old));
+    }
+    #[test]
+    fn saved_switch_applies_at_launch_and_settings_changes_are_saved() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = Runtime::spawn(FakeBackend(calls.clone()), true).unwrap();
+        let mut h = Handoff::new(runtime);
+        let mut g = FakeGateway {
+            saved: true,
+            ..FakeGateway::default()
+        };
+        step(&mut h, &mut g);
+        assert!(h.handle.authority_for_engine().enabled());
+        h.handle.native_set_saved(false).unwrap();
+        assert!(!h.handle.authority_for_engine().enabled());
+        step(&mut h, &mut g);
+        assert!(!g.saved);
+        assert!(h.save_error.is_none());
+        h.handle.native_set_saved(true).unwrap();
+        step(&mut h, &mut g);
+        assert!(g.saved);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the switch alone acts on nothing"
+        );
         h.stop();
         step(&mut h, &mut g);
     }
@@ -526,7 +613,6 @@ mod tests {
     fn regrant_between_drain_and_submission_denies_old_operation() {
         let (mut h, mut g, calls) = setup();
         let t = Uuid::new_v4();
-        g.selected = Some(t);
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -545,7 +631,6 @@ mod tests {
             if !plan.requests.is_empty() {
                 break plan;
             }
-            assert!(plan.revoke.is_none());
             assert_eq!(g.queue.len(), 1);
             assert_eq!(g.queue[0].id, id);
             assert_eq!(g.queue[0].grant, old_grant);
@@ -570,10 +655,9 @@ mod tests {
         step(&mut h, &mut g);
     }
     #[test]
-    fn mismatched_native_thread_and_navigation_never_restore_payload() {
+    fn mismatched_native_thread_and_new_epoch_never_restore_payload() {
         let (mut h, mut g, calls) = setup();
         let t = Uuid::new_v4();
-        g.selected = Some(t);
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
         step(&mut h, &mut g);
@@ -597,7 +681,8 @@ mod tests {
             identity: id,
             result: Ok(serde_json::json!({"private":"late fixture"})),
         });
-        g.selected = Some(Uuid::new_v4());
+        // A new epoch (thread removed, or the switch cycled) fences it too.
+        h.handle.native_revoke(t);
         step(&mut h, &mut g);
         assert_eq!(g.results[&id.engine].1, Err(Failure::Revoked));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -608,7 +693,6 @@ mod tests {
     fn expired_api_deadline_and_master_disable_never_dispatch() {
         let (mut h, mut g, calls) = setup();
         let t = Uuid::new_v4();
-        g.selected = Some(t);
         h.handle.native_enable(true).unwrap();
         h.handle.native_grant(t).unwrap();
         let id = queue(&h, &mut g, t, Instant::now() - Duration::from_secs(1));

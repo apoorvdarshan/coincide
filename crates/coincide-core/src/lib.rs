@@ -55,6 +55,7 @@ pub mod updater_install;
 pub mod updater_helper;
 
 pub mod computer_use;
+pub mod computer_use_bridge;
 
 pub mod legacy_media_recovery;
 
