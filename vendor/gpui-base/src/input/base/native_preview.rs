@@ -135,7 +135,7 @@ impl InputBaseState<TextareaMode> {
             || self.undo_manager.is_ignoring()
             || !self.selections.is_single()
             || self.undo_manager.has_open_transaction()
-            || self.inline_tokens.is_some()
+            || !self.token_spans().is_empty()
             || self.pending_token.is_some()
         {
             return Err(TransientEditError::Unsupported);

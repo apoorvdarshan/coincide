@@ -233,3 +233,71 @@ fn native_transient_scope_restores_history_and_event_flags_on_unwind(cx: &mut Te
         "ordinary changes/undo keep emitting after unwind"
     );
 }
+
+#[gpui::test]
+fn native_transient_receipt_cannot_cross_entities_or_erase_token_metadata(cx: &mut TestAppContext) {
+    let (input, handle, changes) = setup(cx);
+    handle
+        .update(cx, |_, window, cx| {
+            let receipt = input.update(cx, |state, cx| {
+                state.set_value("draft", window, cx);
+                state.native_text_revision(cx)
+            });
+            let other = cx.new(|cx| TextareaState::new(window, cx));
+            other.update(cx, |state, cx| {
+                state.set_value("draft", window, cx);
+                assert!(matches!(
+                    state.replace_without_undo(
+                        &receipt,
+                        TransientReplacement {
+                            expected: "draft",
+                            range: 0..0,
+                            replacement: "x",
+                            selection_after: 1..1,
+                            reversed: false
+                        },
+                        window,
+                        cx
+                    ),
+                    Err(TransientEditError::Changed)
+                ));
+                assert_eq!(state.value(), "draft");
+            });
+            input.update(cx, |state, cx| {
+                state
+                    .replace_range_with_token(
+                        0..5,
+                        crate::input::InlineToken::new("fixture-file", "@file"),
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+                let expected = state.value().to_string();
+                let spans = state.token_spans().to_vec();
+                let receipt = state.native_text_revision(cx);
+                assert!(matches!(
+                    state.replace_without_undo(
+                        &receipt,
+                        TransientReplacement {
+                            expected: &expected,
+                            range: 0..5,
+                            replacement: "x",
+                            selection_after: 1..1,
+                            reversed: false
+                        },
+                        window,
+                        cx
+                    ),
+                    Err(TransientEditError::Unsupported)
+                ));
+                assert_eq!(state.value(), expected);
+                assert_eq!(state.token_spans(), spans);
+            });
+        })
+        .unwrap();
+    assert_eq!(
+        changes.get(),
+        1,
+        "only the ordinary token insertion emits Change"
+    );
+}
