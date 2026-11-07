@@ -68,13 +68,16 @@ cutover, updater activation, or release has been performed by this UI work.
   Actual Windows/Linux Settings, native draft input, ordinary and guarded Quit,
   and older conversation/draft restoration passed; screenshots were reviewed.
 
+- [x] Owned Windows GitHub operations, reviewed account removal and retained
+  Settings-child polling: [#282](https://github.com/apoorvdarshan/coincide/pull/282).
+  Tested `ffb69ebf7410a83cb0dea09a77fb7592d058c5e1`, merged as
+  `05a765f674e96aa90b69ace918b4a168d7d14ee9` with the identical tree.
+  All applicable checks passed. Actual Windows/Linux ordinary and guarded Quit,
+  older draft restart and Linux rendering of all sixteen Settings routes passed;
+  screenshots were reviewed. The earlier Quit failure remains recorded.
+
 ## Current integration and remaining work
 
-- [ ] Finish [#282](https://github.com/apoorvdarshan/coincide/pull/282): owned
-  Windows GitHub operations, reviewed account removal and all-page Settings
-  acceptance. A prior run rendered all sixteen Settings routes but hung on
-  ordinary Quit; retained child polling has a production fix and private GPUI
-  regression, and final native CI remains required.
 - [ ] Finish [#283](https://github.com/apoorvdarshan/coincide/pull/283): Windows
   UI Automation and exact-window capture/input. Actual SDK compilation and
   inert/fake tests passed; isolated own-window runtime acceptance is pending.
@@ -83,6 +86,16 @@ cutover, updater activation, or release has been performed by this UI work.
   portable GitHub Engine mounting, Linux notifications, persistent Settings
   headers and original-window native picker completion. Actual Apple final
   linking passed; combined and platform runtime gates remain pending.
+- [ ] Finish [#285](https://github.com/apoorvdarshan/coincide/pull/285) through
+  [#290](https://github.com/apoorvdarshan/coincide/pull/290): Settings loading and
+  provider action ordering, native activity, browser history/dialogs/keys,
+  private browser profiles, inline dictation, Linux Computer Use and PR filters.
+  Local combined checks passed on earlier listed heads; final native checks
+  remain required after the fixes. Windows history rejected its own navigation,
+  and Linux exposed a stale controlled-window observation; neither counts as passed.
+- [ ] Complete native Windows notification delivery and exact-thread clearing.
+  New worker-only WinRT and owned-registration source is under validation;
+  no visible-banner or notification-click acceptance is claimed.
 - [ ] Complete and verify all provider-account modes, model/account pickers,
   reviewed removal, private Voice credentials and API transcription engines.
 - [ ] Verify composer dictation, native shortcut/focus/cancel behavior, Windows

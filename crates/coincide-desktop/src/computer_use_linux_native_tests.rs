@@ -156,9 +156,44 @@ fn owned_gtk_child() {
         .unwrap();
     connection.flush().unwrap();
     let clicks = Rc::new(Cell::new(0));
-    let count = clicks.clone();
-    button.connect_clicked(move |_| count.set(count.get() + 1));
+    let dirty = Rc::new(Cell::new(true));
+    let ready = Rc::new(Cell::new(false));
+    let pending = Rc::new(RefCell::new(None::<String>));
     let sequence = Rc::new(RefCell::new(String::new()));
+    let clock = window
+        .frame_clock()
+        .expect("realized owned GTK frame clock");
+    let (paint_dirty, paint_ready, paint_pending, paint_sequence) = (
+        dirty.clone(),
+        ready.clone(),
+        pending.clone(),
+        sequence.clone(),
+    );
+    let paint_window = window.clone();
+    let paint_handler = clock.connect_after_paint(move |_| {
+        // A command acknowledgement is an actual rendered-frame receipt. The
+        // earlier timer acknowledgement raced deferred resize/focus properties
+        // after hide(), so a new strict watcher correctly saw a source change.
+        paint_window.window().unwrap().display().sync();
+        paint_dirty.set(false);
+        paint_ready.set(true);
+        if let Some(command) = paint_pending.borrow_mut().take() {
+            *paint_sequence.borrow_mut() = command;
+        }
+    });
+    let (count, click_dirty, click_window) = (clicks.clone(), dirty.clone(), window.clone());
+    button.connect_clicked(move |_| {
+        count.set(count.get() + 1);
+        click_dirty.set(true);
+        click_window.queue_draw();
+    });
+    let (edit_dirty, edit_window) = (dirty.clone(), window.clone());
+    edit.connect_changed(move |_| {
+        edit_dirty.set(true);
+        edit_window.queue_draw();
+    });
+    clock.request_phase(gtk::gdk::FrameClockPhase::LAYOUT | gtk::gdk::FrameClockPhase::PAINT);
+    let timer_clock = clock.clone();
     let timer_window = window.clone();
     let start = Instant::now();
     glib::timeout_add_local(Duration::from_millis(20), move || {
@@ -167,7 +202,9 @@ fn owned_gtk_child() {
             return glib::ControlFlow::Break;
         }
         if let Ok(command) = std::fs::read_to_string(root.join("command")) {
-            if *sequence.borrow() != command {
+            if *sequence.borrow() != command
+                && pending.borrow().as_deref() != Some(command.as_str())
+            {
                 match command.as_str() {
                     "close" => {
                         gtk::main_quit();
@@ -188,8 +225,16 @@ fn owned_gtk_child() {
                     }
                     _ => panic!("Unknown private fixture command"),
                 }
-                *sequence.borrow_mut() = command;
+                *pending.borrow_mut() = Some(command);
+                dirty.set(true);
+                timer_window.queue_draw();
+                timer_clock.request_phase(
+                    gtk::gdk::FrameClockPhase::LAYOUT | gtk::gdk::FrameClockPhase::PAINT,
+                );
             }
+        }
+        if !ready.get() || dirty.get() {
+            return glib::ControlFlow::Continue;
         }
         let allocation = button.allocation();
         let point = button
@@ -205,6 +250,7 @@ fn owned_gtk_child() {
         glib::ControlFlow::Continue
     });
     gtk::main();
+    clock.disconnect(paint_handler);
     window.close();
 }
 struct Fixture {

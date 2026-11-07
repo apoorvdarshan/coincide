@@ -63,6 +63,7 @@ use uuid::Uuid;
 use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
+    credential: Option<credential_bridge::NativeCredentialTarget>,
     keys: native_keys::Target,
     dialogs: dialogs::Dialogs,
     id: String,
@@ -73,6 +74,13 @@ struct Tab {
     console: Rc<RefCell<BrowserConsole>>,
     credential_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
+}
+impl Drop for Tab {
+    fn drop(&mut self) {
+        if let Some(target) = self.credential.take() {
+            target.close();
+        }
+    }
 }
 struct PendingWait {
     request: BrowserRequest,
@@ -130,6 +138,7 @@ enum NativeEvent {
 }
 
 struct PendingScript {
+    mutating: bool,
     tab: String,
     thread: String,
     epoch: u64,
@@ -154,6 +163,7 @@ pub struct BrowserController {
     #[cfg(target_os = "linux")]
     linux_downloads: Vec<Rc<native_downloads::Owner>>,
     dialog_inputs: HashMap<String, Entity<InputState>>,
+    credential_targets: Vec<credential_bridge::NativeCredentialTarget>,
     presses: HashMap<String, press::Pending>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
@@ -225,6 +235,7 @@ impl BrowserController {
                 profile_dir.join("downloads"),
             )?)),
             dialog_inputs: HashMap::new(),
+            credential_targets: Vec::new(),
             presses: HashMap::new(),
             scripts: HashMap::new(),
             waits: HashMap::new(),
@@ -253,6 +264,9 @@ impl BrowserController {
                 tab.keys.close();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
+                if let Some(target) = &tab.credential {
+                    target.close();
+                }
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
@@ -271,6 +285,7 @@ impl BrowserController {
     /// Native release is deliberately unconfirmed; no file/profile deletion or
     /// semantic cancellation is used as completion evidence.
     pub fn poll_shutdown(&mut self) -> BrowserShutdownStatus {
+        self.poll_credential_targets();
         self.poll_cookie_import();
         #[cfg(target_os = "linux")]
         self.linux_downloads.retain(|owner| !owner.drained());
@@ -586,6 +601,10 @@ impl BrowserController {
                 let navigation = self.tabs[thread][index].navigation.clone();
                 let epoch = navigation.load(Ordering::Acquire);
                 let click = matches!(&request.action, BrowserAction::Click { .. });
+                let mutating = !matches!(
+                    &request.action,
+                    BrowserAction::Read { .. } | BrowserAction::Frames
+                );
                 let completed = Arc::new(AtomicBool::new(false));
                 let callback_completed = completed.clone();
                 self.tabs[thread][index]
@@ -611,6 +630,7 @@ impl BrowserController {
                 self.scripts.insert(
                     request.id.clone(),
                     PendingScript {
+                        mutating,
                         tab: target,
                         thread: request.thread_id,
                         epoch,
@@ -890,6 +910,9 @@ impl BrowserController {
                 );
             }
         }
+        let credential =
+            credential_bridge::NativeCredentialTarget::new(view.raw(), navigation.clone())
+                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()));
         #[cfg(target_os = "linux")]
         {
             let sender = self.sender.clone();
@@ -923,6 +946,7 @@ impl BrowserController {
         }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
+            credential,
             keys,
             dialogs,
             id: id.clone(),
@@ -943,6 +967,7 @@ impl BrowserController {
     }
 
     pub fn poll(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.poll_credential_targets();
         if self.shutdown.callbacks.closed() {
             let discarded = self.events.try_iter().take(512).count();
             self.replies.clear();
@@ -1468,6 +1493,24 @@ impl BrowserController {
                     }
                 }
             }
+            let pending_mutation = self.active.get(thread).is_some_and(|tab| {
+                self.has_pending_press(thread, tab)
+                    || self
+                        .tabs
+                        .get(thread)
+                        .and_then(|tabs| tabs.iter().find(|item| item.id == *tab))
+                        .is_some_and(|item| item.dialogs.snapshot().is_some())
+                    || self.scripts.values().any(|script| {
+                        script.mutating
+                            && script.thread == thread
+                            && script.tab == *tab
+                            && !script.completed.load(Ordering::Acquire)
+                    })
+                    || self
+                        .uploads
+                        .values()
+                        .any(|upload| upload.request.thread_id == thread && upload.tab == *tab)
+            });
             let target = self.active.get(thread).and_then(|id| {
                 let tab = self.tabs.get(thread)?.iter().find(|tab| &tab.id == id)?;
                 if tab.loading {
@@ -1479,13 +1522,21 @@ impl BrowserController {
                 tab.credential_console_suppressed
                     .store(true, Ordering::Release);
                 let _ = tab.console.borrow_mut().read(true);
-                credential_bridge::NativeCredentialTarget::new(
-                    tab.view.read(cx).raw(),
-                    tab.navigation.clone(),
-                )
-                .map(|target| target.with_lifetimes(self.shutdown.callbacks.lifetimes()))
+                if pending_mutation {
+                    // Already dispatched page input cannot be retracted. Never
+                    // deliver credentials while an earlier owned mutation can
+                    // still target these fields; the user must review again.
+                    return None;
+                }
+                tab.credential.clone()
             });
+            if let Some(target) = &target {
+                self.credential_targets.push(target.clone());
+            }
             let mut sink = credential_bridge::BrowserCredentialSink::new(|tab: &str| {
+                if pending_mutation {
+                    return Err(Failure::StalePage);
+                }
                 self.credential_page(thread, cx)
                     .filter(|page| page.tab == tab)
                     .ok_or(Failure::StalePage)
@@ -1502,6 +1553,13 @@ impl BrowserController {
             changed = true;
         }
         changed
+    }
+
+    fn poll_credential_targets(&mut self) {
+        // This erases expired, undelivered Rust memory only. Native callbacks
+        // and their completion counters remain owned until actual SDK return.
+        self.credential_targets
+            .retain(|target| !target.poll_ownership());
     }
 
     pub fn drain_replies(&mut self) -> Vec<BrowserReply> {
