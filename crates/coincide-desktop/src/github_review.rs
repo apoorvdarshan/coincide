@@ -21,11 +21,44 @@ use std::{
 
 const LIMIT: usize = 30;
 const STATES: &[&str] = &["open", "closed", "merged", "all"];
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum Involvement {
+    #[default]
+    All,
+    Authored,
+    Assigned,
+    ReviewRequested,
+}
+impl Involvement {
+    const ALL: [Self; 4] = [
+        Self::All,
+        Self::Authored,
+        Self::Assigned,
+        Self::ReviewRequested,
+    ];
+    fn wire(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Authored => "authored",
+            Self::Assigned => "assigned",
+            Self::ReviewRequested => "review-requested",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All PRs",
+            Self::Authored => "Authored by me",
+            Self::Assigned => "Assigned to me",
+            Self::ReviewRequested => "Review requested",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Binding {
     thread: String,
     root: String,
     repository: String,
+    involvement: Involvement,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum View {
@@ -89,7 +122,12 @@ fn validate_payload(request: &Request, payload: &Value) -> Result<()> {
         "PR response belongs to another thread/root/repository"
     );
     match &request.view {
-        View::List(_) => {
+        View::List(state) => {
+            ensure!(
+                payload["state"] == *state
+                    && payload["involvement"] == request.binding.involvement.wire(),
+                "PR response belongs to another state/involvement filter"
+            );
             ensure!(
                 payload["kind"] == "list"
                     && payload["limit"].as_u64() == Some(LIMIT as u64)
@@ -144,6 +182,7 @@ fn fetch(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) 
         View::List(state) => {
             ensure!(STATES.contains(&state.as_str()), "Invalid PR state filter");
             params["state"] = json!(state);
+            params["involvement"] = json!(b.involvement.wire());
             params["limit"] = json!(LIMIT);
             "github.pr.list"
         }
@@ -235,6 +274,7 @@ pub struct GitHubReviewPanel {
     scope: Option<(String, String)>,
     repository: Entity<InputState>,
     state: String,
+    involvement: Involvement,
     generation: u64,
     active: Option<(u64, Request)>,
     busy: bool,
@@ -291,6 +331,7 @@ impl GitHubReviewPanel {
             scope: None,
             repository,
             state: "open".into(),
+            involvement: Involvement::All,
             generation: 0,
             active: None,
             busy: false,
@@ -347,6 +388,7 @@ impl GitHubReviewPanel {
             || self.scope.as_ref()
                 != Some(&(request.binding.thread.clone(), request.binding.root.clone()))
             || self.repository.read(cx).value().trim() != request.binding.repository
+            || self.involvement != request.binding.involvement
             || pr["number"].as_u64() != Some(*number)
             || pr["headRefOid"] != *head
         {
@@ -404,6 +446,21 @@ impl GitHubReviewPanel {
         .into();
         cx.notify();
     }
+    fn select_involvement(&mut self, involvement: Involvement, cx: &mut Context<Self>) {
+        if self.busy || self.workers.closed() || self.involvement == involvement {
+            return;
+        }
+        self.involvement = involvement;
+        self.invalidate_actions(cx);
+        self.generation = self.generation.wrapping_add(1);
+        self.active = None;
+        self.list.clear();
+        self.detail = None;
+        self.selected = None;
+        self.truncated = false;
+        self.load_list(cx);
+        cx.notify();
+    }
     fn load_list(&mut self, cx: &mut Context<Self>) {
         if self.busy || !self.workers.can_start() {
             return;
@@ -433,6 +490,7 @@ impl GitHubReviewPanel {
                     thread,
                     root,
                     repository,
+                    involvement: self.involvement,
                 },
                 view: View::List(self.state.clone()),
             },
@@ -635,7 +693,7 @@ impl Render for GitHubReviewPanel {
             .p_3()
             .child("GitHub pull requests")
             .child(div().text_sm().child(
-                "PR metadata with explicit comment reviews and eligible exact-head merges. Approve, Request changes, checkout and involvement filters remain unavailable.",
+                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests after confirmation. Checkout is not connected.",
             ))
             .child(Input::new(&self.repository))
             .child(
@@ -658,6 +716,12 @@ impl Render for GitHubReviewPanel {
                             }))
                     })),
             )
+            .child(div().flex().flex_wrap().gap_2().children(Involvement::ALL.into_iter().map(|involvement| {
+                Button::new(SharedString::from(format!("github-involvement-{}",involvement.wire())))
+                    .label(if self.involvement==involvement {format!("• {}",involvement.label())} else {involvement.label().to_owned()})
+                    .disabled(self.busy || self.workers.closed())
+                    .on_click(cx.listener(move |this,_,_,cx| { this.select_involvement(involvement,cx); }))
+            })))
             .child(
                 Button::new("github-refresh")
                     .label("Load / refresh PR list")
@@ -726,7 +790,7 @@ impl Render for GitHubReviewPanel {
                 )
                 .child(
                     Button::new("github-open-actions")
-                        .label("Comment review / merge…")
+                        .label("Review or merge…")
                         .disabled(
                             self.busy
                                 || self.workers.closed()
@@ -802,7 +866,7 @@ impl Render for GitHubReviewPanel {
             }
             body = body.child(div().text_sm().child(text(pr, "url")))
                 .child(Button::new("github-checkout-unavailable").label("Check out").disabled(true))
-                .child("Use the review actions below for the displayed commit. Checkout and involvement filters are not connected.")
+                .child("Use the review actions below for the displayed commit. Checkout is not connected.")
                 .child("Checks");
             let checks = pr["statusCheckRollup"].as_array();
             if checks.is_none_or(|checks| checks.is_empty()) {
@@ -922,7 +986,9 @@ impl Render for GitHubReviewPanel {
 
 #[cfg(test)]
 mod tests {
-    use super::{Binding, LIMIT, Request, View, current, fetch, repository, validate_payload};
+    use super::{
+        Binding, Involvement, LIMIT, Request, View, current, fetch, repository, validate_payload,
+    };
     use anyhow::Result;
     use serde_json::{Value, json};
     fn request(view: View) -> Request {
@@ -931,6 +997,7 @@ mod tests {
                 thread: "thread-a".into(),
                 root: std::env::temp_dir().to_str().unwrap().into(),
                 repository: "fixture/repo".into(),
+                involvement: Involvement::All,
             },
             view,
         }
@@ -941,8 +1008,8 @@ mod tests {
     fn payload(r: &Request) -> Value {
         let b = &r.binding;
         match &r.view {
-            View::List(_) => {
-                json!({"kind":"list","threadId":b.thread,"expectedRoot":b.root,"repository":b.repository,"pullRequests":[pr()],"limit":LIMIT,"truncated":false})
+            View::List(state) => {
+                json!({"kind":"list","state":state,"involvement":b.involvement.wire(),"threadId":b.thread,"expectedRoot":b.root,"repository":b.repository,"pullRequests":[pr()],"limit":LIMIT,"truncated":false})
             }
             View::Detail { head, .. } => {
                 json!({"kind":"read","threadId":b.thread,"expectedRoot":b.root,"repository":b.repository,"expectedHead":head,"pullRequest":pr()})
@@ -972,7 +1039,7 @@ mod tests {
             calls[0],
             (
                 "github.pr.list".into(),
-                json!({"threadId":request.binding.thread,"expectedRoot":request.binding.root,"repository":"fixture/repo","state":"open","limit":30})
+                json!({"threadId":request.binding.thread,"expectedRoot":request.binding.root,"repository":"fixture/repo","state":"open","involvement":"all","limit":30})
             )
         );
         assert_eq!(
@@ -1094,6 +1161,102 @@ mod tests {
         ] {
             assert!(!current(7, &other, Some(&active)));
         }
+    }
+    #[::core::prelude::v1::test]
+    fn involvement_is_part_of_every_request_and_list_envelope() {
+        let authored = Request {
+            binding: Binding {
+                involvement: Involvement::Authored,
+                ..request(View::List("open".into())).binding
+            },
+            view: View::List("open".into()),
+        };
+        let assigned = Request {
+            binding: Binding {
+                involvement: Involvement::Assigned,
+                ..authored.binding.clone()
+            },
+            view: authored.view.clone(),
+        };
+        let active = (9, assigned.clone());
+        assert!(!current(9, &authored, Some(&active)));
+        assert!(current(9, &assigned, Some(&active)));
+        assert!(!current(8, &assigned, Some(&active)));
+        assert!(validate_payload(&assigned, &payload(&authored)).is_err());
+        let mut wrong_state = payload(&assigned);
+        wrong_state["state"] = json!("closed");
+        assert!(validate_payload(&assigned, &wrong_state).is_err());
+        let mut wrong_filter = payload(&assigned);
+        wrong_filter["involvement"] = json!("--assignee @me");
+        assert!(validate_payload(&assigned, &wrong_filter).is_err());
+        let detail = View::Detail {
+            number: 42,
+            head: "a".repeat(40),
+        };
+        let authored_detail = Request {
+            view: detail.clone(),
+            ..authored
+        };
+        let assigned_detail = Request {
+            view: detail,
+            ..assigned
+        };
+        assert!(!current(9, &authored_detail, Some(&(9, assigned_detail))));
+    }
+    #[cfg(unix)]
+    #[::core::prelude::v1::test]
+    fn actual_fake_cli_filter_result_cannot_replace_a_newer_ui_source() {
+        use coincide_core::github_api::{GhRunner, GithubService};
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let executable = root.join("gh-fixture");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s\n' \"$@\" > argv.txt\ncat response.json\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(
+            root.join("response.json"),
+            serde_json::to_vec(&vec![pr()]).unwrap(),
+        )
+        .unwrap();
+        let mut service = GithubService::new(GhRunner::new(executable).unwrap());
+        let mut old = request(View::List("open".into()));
+        old.binding.thread = uuid::Uuid::new_v4().to_string();
+        old.binding.root = root.to_str().unwrap().into();
+        old.binding.involvement = Involvement::Authored;
+        let new = Request {
+            binding: Binding {
+                involvement: Involvement::ReviewRequested,
+                ..old.binding.clone()
+            },
+            view: old.view.clone(),
+        };
+        let mut api = |method: &str, params: Value| -> Result<Value> {
+            match method {
+                "github.pr.list" => service.start(&old.binding.thread, &root, method, &params),
+                "github.result" => service.result(
+                    &old.binding.thread,
+                    &root,
+                    &root,
+                    params["operationId"].as_str().unwrap(),
+                ),
+                _ => panic!("unexpected method"),
+            }
+        };
+        let old_result = fetch(&mut api, &old).unwrap();
+        let new_result = fetch(&mut api, &new).unwrap();
+        let active = (20, new.clone());
+        assert!(!current(19, &old, Some(&active)));
+        assert!(!current(20, &old, Some(&active)));
+        assert!(validate_payload(&new, &old_result).is_err());
+        assert!(current(20, &new, Some(&active)));
+        validate_payload(&new, &new_result).unwrap();
+        assert_eq!(new_result["involvement"], "review-requested");
+        let argv = std::fs::read_to_string(root.join("argv.txt")).unwrap();
+        assert!(argv.contains("--search\nreview-requested:@me\n--repo\ngithub.com/fixture/repo\n"));
     }
     #[::core::prelude::v1::test]
     fn state_and_list_bounds_reject_unsupported_or_incomplete_data() {
