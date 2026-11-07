@@ -1,10 +1,10 @@
 //! Native GitHub PR metadata panel with a separate explicit action surface. Parent mounts this entity and calls
-//! set_context with the selected conversation and whether the panel shows. The Engine finds the repository from
-//! the conversation's stored folder and says why when it can't (Swift PullRequestService.availability).
-//! All Engine calls run in one background worker, never GPUI render.
+//! set_context with the selected conversation and visibility. The Engine discovers the repository.
+//! All Engine calls run in owned background workers, never GPUI render.
+//! Check Out in New Thread emits CheckoutOpened for the parent to select.
 use crate::worker_owner::{Admission, ShutdownStatus as ReadShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, bail, ensure};
-use coincide_core::api::SharedEngine;
+use coincide_core::{api::SharedEngine, github_checkout::Checkout};
 use gpui_kit::{
     assets::IconName,
     base::Disableable,
@@ -15,7 +15,11 @@ use gpui_kit::{
 use serde_json::{Value, json};
 use std::{
     path::Path,
-    sync::{Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -563,6 +567,69 @@ fn excerpt(value: &str, max: usize) -> String {
     s
 }
 
+/// Swift Formatting.abbreviatedPath: the home folder as `~`.
+fn abbreviated(path: &Path) -> String {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(std::path::PathBuf::from)
+        .filter(|home| home.is_absolute());
+    match home.and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => path.display().to_string(),
+    }
+}
+type CheckoutResult = (u64, Result<(Value, Checkout)>);
+/// The exact loaded conversation, root, repository and displayed head.
+struct CheckoutScope {
+    thread: String,
+    root: String,
+    repository: String,
+    number: u64,
+    head: String,
+}
+/// Capture and admission hold the Engine briefly; fetch and worktree creation
+/// run between them without it. Closing admissions keeps a finished worktree.
+fn check_out_pull_request(
+    engine: &SharedEngine,
+    admission: &Admission,
+    cancelled: &AtomicBool,
+    scope: &CheckoutScope,
+) -> Result<(Value, Checkout)> {
+    let source = with_admitted_lock(
+        engine,
+        admission,
+        Instant::now() + Duration::from_secs(3),
+        |engine| {
+            engine.native_github_checkout_source(
+                &scope.thread,
+                Path::new(&scope.root),
+                &scope.repository,
+                scope.number,
+                &scope.head,
+            )
+        },
+    )?;
+    let checkout = coincide_core::github_checkout::run(&source, cancelled)?;
+    ensure!(
+        admission.allowed(),
+        "The app is closing; the checked-out worktree was kept at {}",
+        checkout.path.display()
+    );
+    let opened = with_admitted_lock(
+        engine,
+        admission,
+        Instant::now() + Duration::from_secs(3),
+        |engine| engine.native_open_github_checkout(&source, &checkout),
+    )?;
+    Ok((opened, checkout))
+}
+/// A checked-out pull request's conversation, for the window to open.
+pub struct CheckoutOpened {
+    pub thread: String,
+    pub notice: Option<String>,
+}
+impl EventEmitter<CheckoutOpened> for GitHubReviewPanel {}
+
 fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
     let mut discarded = false;
     for result in receiver.try_iter() {
@@ -602,6 +669,10 @@ pub struct GitHubReviewPanel {
     rx: mpsc::Receiver<(u64, Request, Result<Value>)>,
     load_tx: mpsc::Sender<(u64, Load, Result<Loaded>)>,
     load_rx: mpsc::Receiver<(u64, Load, Result<Loaded>)>,
+    checkout_tx: mpsc::Sender<CheckoutResult>,
+    checkout_rx: mpsc::Receiver<CheckoutResult>,
+    checkout_cancel: Arc<AtomicBool>,
+    checking_out: Option<u64>,
     _poll: Option<Task<()>>,
     actions: Option<Entity<crate::github_actions::GitHubActions>>,
     writes: Option<crate::github_write_transport::NativeWrites>,
@@ -613,6 +684,7 @@ impl GitHubReviewPanel {
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
         let (load_tx, load_rx) = mpsc::channel();
+        let (checkout_tx, checkout_rx) = mpsc::channel();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -647,6 +719,10 @@ impl GitHubReviewPanel {
             rx,
             load_tx,
             load_rx,
+            checkout_tx,
+            checkout_rx,
+            checkout_cancel: Arc::new(AtomicBool::new(false)),
+            checking_out: None,
             _poll: Some(poll),
             actions: None,
             writes: None,
@@ -896,6 +972,8 @@ impl GitHubReviewPanel {
         cx.notify();
     }
     pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
+        // A running checkout stops its Git process group; it never waits here.
+        self.checkout_cancel.store(true, Ordering::Release);
         if self.workers.close() {
             self.generation = self.generation.wrapping_add(1);
             self.active = None;
@@ -918,8 +996,12 @@ impl GitHubReviewPanel {
         self.discard_read_results();
     }
     fn discard_read_results(&mut self) {
-        if discard_completions(&self.rx) | discard_completions(&self.load_rx) {
+        if discard_completions(&self.rx)
+            | discard_completions(&self.load_rx)
+            | discard_completions(&self.checkout_rx)
+        {
             self.busy = false;
+            self.checking_out = None;
         }
     }
     pub fn shutdown_status(&mut self, cx: &App) -> ReviewShutdownStatus {
@@ -971,7 +1053,14 @@ impl GitHubReviewPanel {
             cx.notify();
             return;
         }
+        if let Ok((number, result)) = self.checkout_rx.try_recv() {
+            self.finish_checkout(number, result, cx);
+            return;
+        }
         let Ok((generation, request, result)) = self.rx.try_recv() else {
+            if self.needs_load {
+                self.load(cx);
+            }
             return;
         };
         self.busy = false;
@@ -1089,8 +1178,86 @@ fn state_view(
         })
         .into_any_element()
 }
+impl GitHubReviewPanel {
+    /// Swift PullRequestsViewController.checkOut for the exact loaded head.
+    fn check_out(&mut self, cx: &mut Context<Self>) {
+        if self.busy || !self.workers.can_start() {
+            return;
+        }
+        let scope = self
+            .validated_loaded_scope(cx)
+            .and(self.active.as_ref())
+            .and_then(|(_, request)| match &request.view {
+                View::Detail { number, head } => Some(CheckoutScope {
+                    thread: request.binding.thread.clone(),
+                    root: request.binding.root.clone(),
+                    repository: request.binding.repository.clone(),
+                    number: *number,
+                    head: head.clone(),
+                }),
+                View::List(_) => None,
+            });
+        let Some(scope) = scope else {
+            self.notice = "Refresh the selected pull request before checking it out.".into();
+            cx.notify();
+            return;
+        };
+        let number = scope.number;
+        self.invalidate_actions(cx);
+        self.busy = true;
+        self.checking_out = Some(number);
+        self.notice = format!("Checking out pull request #{number}…");
+        let engine = self.engine.clone();
+        let tx = self.checkout_tx.clone();
+        let cancelled = self.checkout_cancel.clone();
+        if !self.workers.spawn(move |admission| {
+            let result = check_out_pull_request(&engine, &admission, &cancelled, &scope);
+            let _ = tx.send((number, result));
+        }) {
+            self.busy = false;
+            self.checking_out = None;
+            self.notice = "GitHub checkout worker could not start.".into();
+        }
+        cx.notify();
+    }
+    fn finish_checkout(
+        &mut self,
+        number: u64,
+        result: Result<(Value, Checkout)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.busy = false;
+        self.checking_out = None;
+        match result {
+            Ok((thread, checkout)) => {
+                let notice = checkout.reused.then(|| {
+                    format!(
+                        "Opened a thread in the worktree that has #{number} checked out.\n{}",
+                        abbreviated(&checkout.path)
+                    )
+                });
+                self.notice = notice.clone().unwrap_or_else(|| {
+                    format!(
+                        "Checked out pull request #{number} on {} in a new worktree.",
+                        checkout.branch
+                    )
+                });
+                if let Some(id) = thread["id"].as_str() {
+                    cx.emit(CheckoutOpened {
+                        thread: id.to_owned(),
+                        notice,
+                    });
+                }
+            }
+            Err(error) => self.notice = error.to_string(),
+        }
+        self.sync_action_scope(cx);
+        cx.notify();
+    }
+}
 impl Drop for GitHubReviewPanel {
     fn drop(&mut self) {
+        self.checkout_cancel.store(true, Ordering::Release);
         self.workers.close();
         if let Some(writes) = &self.writes {
             writes.request_shutdown();
@@ -1143,7 +1310,7 @@ impl Render for GitHubReviewPanel {
             .p_3()
             .child("GitHub pull requests")
             .child(div().text_sm().child(
-                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests after confirmation. Checkout is not connected.",
+                "Review pull requests, comment, approve or request changes for the displayed commit, merge eligible pull requests after confirmation, and check a pull request out in a worktree of its own.",
             ))
             .child(
                 div()
@@ -1329,10 +1496,22 @@ impl Render for GitHubReviewPanel {
                         .unwrap_or_else(|| "Unknown".into())
                 ));
             }
-            body = body.child(div().text_sm().child(text(pr, "url")))
-                .child(Button::new("github-checkout-unavailable").label("Check out").disabled(true))
-                .child("Use the review actions below for the displayed commit. Checkout is not connected.")
-                .child("Checks");
+            body = body.child(div().text_sm().child(text(pr, "url")));
+            // Swift shows Check Out in New Thread for open pull requests only.
+            if pr["state"] == "OPEN" {
+                body = body.child(
+                    Button::new("github-checkout")
+                        .label(if self.checking_out == Some(number) {
+                            "Checking out…"
+                        } else {
+                            "Check Out in New Thread"
+                        })
+                        .tooltip("Creates a worktree on this pull request’s branch and opens a new thread in it")
+                        .disabled(self.busy || self.workers.closed())
+                        .on_click(cx.listener(|this, _, _, cx| this.check_out(cx))),
+                );
+            }
+            body = body.child("Checks");
             let checks = pr["statusCheckRollup"].as_array();
             if checks.is_none_or(|checks| checks.is_empty()) {
                 body = body.child("No checks were reported; this is not proof of passing checks.");
@@ -1462,11 +1641,32 @@ impl Render for GitHubReviewPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        Binding, Involvement, LIMIT, Load, Loaded, Request, Unavailable, View, availability,
-        current, describe, empty_list, fetch, load, repository, validate_payload,
+        Binding, Involvement, LIMIT, Load, Loaded, Request, Unavailable, View, abbreviated,
+        availability, current, describe, empty_list, fetch, load, repository, validate_payload,
     };
     use anyhow::Result;
     use serde_json::{Value, json};
+    #[test]
+    fn checkout_notice_abbreviates_the_home_folder_like_swift() {
+        let variable = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let Some(home) = std::env::var_os(variable).map(std::path::PathBuf::from) else {
+            return;
+        };
+        let worktree = home.join("worktrees").join("repo");
+        assert_eq!(
+            abbreviated(&worktree),
+            std::path::Path::new("~")
+                .join("worktrees")
+                .join("repo")
+                .display()
+                .to_string()
+        );
+        assert_eq!(abbreviated(&home), "~");
+        let outside = std::env::temp_dir().join("coincide-not-home");
+        if !outside.starts_with(&home) {
+            assert_eq!(abbreviated(&outside), outside.display().to_string());
+        }
+    }
     fn request(view: View) -> Request {
         Request {
             binding: Binding {
