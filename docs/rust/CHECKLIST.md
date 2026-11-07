@@ -46,17 +46,43 @@ cutover, updater activation, or release has been performed by this UI work.
   tree `a3fafcbe03dc3acccbb31f51c1c6b84c787ad18a`; every applicable hosted check
   passed. Both Windows/Linux native double-press Quit and ordinary drain passed.
 
+- [x] Shared inspectors, retained Settings scrollers and native account storage:
+  [#277](https://github.com/apoorvdarshan/coincide/pull/277). All applicable
+  hosted checks and actual Windows/Linux input/Settings/Quit/restart passed.
+- [x] Per-thread inspector restoration and owned Windows/Linux microphone
+  capture foundations: [#278](https://github.com/apoorvdarshan/coincide/pull/278).
+  Actual native app checks passed. No personal audio device was opened.
+- [x] Source-bound composer dictation, shortcut lifecycle and owned Windows
+  offline transcription process support:
+  [#279](https://github.com/apoorvdarshan/coincide/pull/279). Synthetic dictation
+  and real fake-CLI child-process tests passed; native app checks also passed.
+- [x] Native account API-key controls, private Voice credentials and owned
+  Windows power assertion: [#280](https://github.com/apoorvdarshan/coincide/pull/280).
+  Actual fresh macOS/Windows/Linux secret-store write/read/delete/absence checks
+  and the Windows power acquire/release test passed on isolated runners.
+- [x] Saved Voice device/engine/language/mode pickers, explicit device refresh,
+  separate provider Admin usage controls and legacy account home exclusion:
+  [#281](https://github.com/apoorvdarshan/coincide/pull/281). All applicable
+  hosted checks passed at `d345eece572aaf77dbb3c481656969904fdcbc3b`, merged
+  as `d7929a66cf52b550e429941f1a5b6a4e4336aa15` with an identical tree.
+  Actual Windows/Linux Settings, native draft input, ordinary and guarded Quit,
+  and older conversation/draft restoration passed; screenshots were reviewed.
+
 ## Current integration and remaining work
 
-- [ ] Finish hosted verification of
-  [#277](https://github.com/apoorvdarshan/coincide/pull/277): shared inspectors,
-  Settings scroll surfaces and native account storage. The actual Windows setup
-  source/DB-ownership failure has a production fix with a native regression;
-  its final head still requires all hosted checks.
-- [ ] Finish hosted verification of
-  [#278](https://github.com/apoorvdarshan/coincide/pull/278): per-thread inspector
-  restore and Windows/Linux microphone capture. Its exact callback-lifetime and
-  Windows setup fixes require new hosted checks; no personal device was used.
+- [ ] Finish [#282](https://github.com/apoorvdarshan/coincide/pull/282): owned
+  Windows GitHub operations, reviewed account removal and all-page Settings
+  acceptance. A prior run rendered all sixteen Settings routes but hung on
+  ordinary Quit; retained child polling has a production fix and private GPUI
+  regression, and final native CI remains required.
+- [ ] Finish [#283](https://github.com/apoorvdarshan/coincide/pull/283): Windows
+  UI Automation and exact-window capture/input. Actual SDK compilation and
+  inert/fake tests passed; isolated own-window runtime acceptance is pending.
+- [ ] Finish [#284](https://github.com/apoorvdarshan/coincide/pull/284): verified
+  local model assets, on-device Apple Speech, Codex authentication lifecycle,
+  portable GitHub Engine mounting, Linux notifications, persistent Settings
+  headers and original-window native picker completion. Actual Apple final
+  linking passed; combined and platform runtime gates remain pending.
 - [ ] Complete and verify all provider-account modes, model/account pickers,
   reviewed removal, private Voice credentials and API transcription engines.
 - [ ] Verify composer dictation, native shortcut/focus/cancel behavior, Windows

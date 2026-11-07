@@ -53,6 +53,27 @@ provider protocols and CLI command parser. Expand it when another behavior is fo
 
 ## Current integration (2026-11-07)
 
+Checkpoints [#277](https://github.com/apoorvdarshan/coincide/pull/277) through
+[#281](https://github.com/apoorvdarshan/coincide/pull/281) are merged after
+exact-head checks and identical-tree verification. These add shared inspectors,
+Settings scrolling, native credential controls, source-bound dictation, device
+pickers, organization usage and owned Windows/Linux platform foundations.
+Actual native Windows/Linux app input, Settings close, ordinary/guarded Quit
+and older conversation/draft restart passed; artifacts were reviewed. Fresh
+runner OS secret-store write/read/delete and Windows power acquire/release also
+passed. These do not prove personal-device audio capture or live provider setup.
+
+[#282](https://github.com/apoorvdarshan/coincide/pull/282) remains under final
+native acceptance after a sixteen-page Settings run exposed a Quit stall.
+The persistent-child polling fix has an actual private GPUI regression; native
+Quit must pass before acceptance. Windows Computer Use in
+[#283](https://github.com/apoorvdarshan/coincide/pull/283) and Voice/model/account/
+notification integration in [#284](https://github.com/apoorvdarshan/coincide/pull/284)
+remain drafts pending combined checks and isolated platform runtime evidence.
+The Apple Speech bridge compiled and linked against the actual SDK with a
+macOS 14 deployment floor; it was not executed on the personal host.
+
+
 Shared UI/UX parity applies to macOS, Windows and Linux. The current verified
 merged sidebar is [#272](https://github.com/apoorvdarshan/coincide/pull/272),
 exact tested head `a7b632ed746d758e733da1e72dc849a1cb8c8aca`, merged as
