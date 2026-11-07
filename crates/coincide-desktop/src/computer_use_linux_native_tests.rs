@@ -74,6 +74,7 @@ fn owned_gtk_child() {
     window.set_default_size(520, 300);
     window.move_(100, 100);
     let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    // GTK3 entries report ATK_ROLE_TEXT, which AT-SPI exposes as Text.
     let edit = gtk::Entry::new();
     edit.set_text("synthetic original 🦀");
     edit.accessible().unwrap().set_name("Owned edit");
@@ -346,13 +347,16 @@ impl Drop for Fixture {
     }
 }
 fn token(snapshot: &Value, role: &str, title: Option<&str>) -> Value {
-    snapshot["elements"]
-        .as_array()
-        .unwrap()
+    let elements = snapshot["elements"].as_array().unwrap();
+    let Some(node) = elements
         .iter()
         .find(|n| n["role"] == role && title.is_none_or(|title| n["title"] == title))
-        .expect("actual owned GTK accessible node")["element_token"]
-        .clone()
+    else {
+        // Roles and titles only; values may hold fixture input.
+        let seen: Vec<_> = elements.iter().map(|n| (&n["role"], &n["title"])).collect();
+        panic!("actual owned GTK accessible node {role} {title:?} absent from {seen:?}");
+    };
+    node["element_token"].clone()
 }
 #[test]
 #[ignore = "explicit fresh GHA/private DBus/Xvfb owned GTK acceptance only"]
@@ -438,7 +442,7 @@ fn actual_owned_x11_window_actions_capture_and_drain() {
     );
     owner.command("hide-password");
     let observed = owner.observe(thread, false).unwrap();
-    owner.request(thread,"set_value",json!({"element_token":token(&observed,"Entry",Some("Owned edit")),"text":"native edited 🦀"})).unwrap();
+    owner.request(thread,"set_value",json!({"element_token":token(&observed,"Text",Some("Owned edit")),"text":"native edited 🦀"})).unwrap();
     wait("actual GTK edit receipt", || {
         owner.state().filter(|s| s["text"] == "native edited 🦀")
     });
@@ -459,7 +463,7 @@ fn actual_owned_x11_window_actions_capture_and_drain() {
         .request(
             thread,
             "press_key",
-            json!({"element_token":token(&observed,"Entry",Some("Owned edit")),"key":"backspace"}),
+            json!({"element_token":token(&observed,"Text",Some("Owned edit")),"key":"backspace"}),
         )
         .unwrap();
     wait("actual native key receipt", || {
