@@ -257,3 +257,30 @@ fn recovering_and_imported_due_threads_are_retained_until_a_writable_source_is_a
     assert_eq!(engine.store.thread(&id).unwrap(), first);
     assert_ne!(new(&mut engine, &params)["id"], id);
 }
+#[test]
+fn new_thread_on_a_branch_records_it_and_reuses_only_an_empty_thread_on_that_branch() {
+    let (_directory, mut engine, params) = fixture();
+    let plain = new(&mut engine, &params);
+    let mut on_branch = params.clone();
+    on_branch["branch"] = json!("feature/sidebar");
+    let created = new(&mut engine, &on_branch);
+    assert_ne!(
+        created["id"], plain["id"],
+        "an empty thread without the branch is not reused for it"
+    );
+    assert_eq!(created["branch"], "feature/sidebar");
+    assert_eq!(
+        new(&mut engine, &on_branch)["id"],
+        created["id"],
+        "the empty thread already on the branch is reused"
+    );
+    assert_eq!(
+        engine.store.thread(&text(&plain, "id")).unwrap()["branch"],
+        Value::Null
+    );
+    for branch in [json!(""), json!(" "), json!("a\nb"), json!(7)] {
+        let mut invalid = params.clone();
+        invalid["branch"] = branch;
+        assert!(engine.prepare_native_new_thread(&invalid).is_err());
+    }
+}
