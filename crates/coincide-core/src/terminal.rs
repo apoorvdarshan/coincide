@@ -255,11 +255,14 @@ impl Terminal {
     }
     /// Swift TerminalSession.restart: a new shell in the same pane, below the
     /// old output, with the same number, size and title.
-    pub fn restart(&mut self, cwd: &Path, shell: &str) -> Result<()> {
+    pub fn restart(&mut self, cwd: &Path, shell: &str) -> Result<PendingTerminalShutdown> {
         ensure!(self.exit.is_some(), "Terminal is still running");
         let rows = self.term.screen_lines() as u16;
         let cols = self.term.columns() as u16;
         let mut fresh = Self::spawn(cwd, shell, rows, cols)?;
+        // An exited shell may still have I/O workers unwinding. Transfer its
+        // complete owner before replacement instead of detaching their handles.
+        let retired = self.request_shutdown()?;
         // The screen and scrollback stay, with the events their listener sends.
         std::mem::swap(&mut fresh.term, &mut self.term);
         std::mem::swap(&mut fresh.events, &mut self.events);
@@ -269,9 +272,9 @@ impl Terminal {
         fresh.bells = self.bells;
         fresh.revision = self.revision + 1;
         fresh.processor.advance(&mut fresh.term, b"\r\n");
-        // The old shell already exited; dropping it reaps its child.
+        // The caller retains the retired owner until actual I/O joins finish.
         *self = fresh;
-        Ok(())
+        Ok(retired)
     }
     /// What the tab shows for this terminal (Swift TerminalSession.title,
     /// isBusy, directory, progress and state). Reads the kernel, not output.
@@ -1423,6 +1426,10 @@ impl PendingTerminalShutdown {
                 // Avoid signalling an already reaped PID. Signal only the directly
                 // owned child; never a process group. Confirmed wait resolves a
                 // benign kill error; a failed wait remains unknown.
+                // Release the owner's controlling PTY endpoint before waiting
+                // for a Unix session leader to finish terminal teardown.
+                #[cfg(unix)]
+                drop(resources.master.take());
                 let waited = match resources.child.try_wait() {
                     Ok(Some(status)) => Ok(status),
                     _ => {
@@ -1840,6 +1847,53 @@ mod shutdown_tests {
             "confirmed exit resolves benign kill failure"
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn restart_retains_exited_shell_reader_until_its_actual_join() {
+        let root = tempfile::tempdir().unwrap();
+        let shell = root.path().join("exited-shell");
+        std::fs::write(&shell, "#!/bin/sh\nexit 3\n").unwrap();
+        std::fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        let mut terminal = Terminal::spawn(root.path(), shell.to_str().unwrap(), 6, 40).unwrap();
+        terminal.number = 7;
+        until(|| {
+            terminal.poll().unwrap();
+            terminal.exited()
+        });
+        let before = terminal.revision;
+        let actual_reader = terminal.reader_worker.take().unwrap();
+        let entered = Arc::new(AtomicBool::new(false));
+        let report = entered.clone();
+        let (release_tx, release_rx) = mpsc::channel();
+        struct Release(Option<mpsc::Sender<()>>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+        let release = Release(Some(release_tx));
+        terminal.reader_worker = Some(thread::spawn(move || {
+            actual_reader.join().unwrap();
+            report.store(true, Ordering::SeqCst);
+            release_rx.recv().unwrap();
+        }));
+        let retired = terminal.restart(root.path(), "/bin/sh").unwrap();
+        assert_eq!(terminal.number, 7);
+        assert!(!terminal.exited());
+        assert!(terminal.revision > before);
+        until(|| entered.load(Ordering::SeqCst) && retired.poll().writer_joined);
+        assert!(retired.poll().child_exited);
+        assert!(!retired.poll().reader_joined);
+        assert!(!retired.poll().ready());
+        drop(release);
+        until(|| retired.poll().ready());
+        let fresh = terminal.request_shutdown().unwrap();
+        until(|| fresh.poll().ready());
+    }
+
     #[test]
     fn terminal_shutdown_failed_wait_retains_child_and_blocks_ready() {
         let pending = PendingTerminalShutdown::start(resources(true));
@@ -1929,5 +1983,37 @@ mod appearance_tests {
         assert!(terminal.poll().unwrap());
         assert!(terminal.revision > revision);
         assert_eq!(terminal.status()["progress"], Value::Null);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod active_shell_shutdown_regression {
+    use super::*;
+    #[test]
+    fn active_private_shell_is_reaped_before_owner_drain_reports_ready() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ready");
+        let mut terminal = Terminal::spawn(root.path(), "/bin/sh", 6, 40).unwrap();
+        terminal
+            .write(&format!("printf ready > '{}'\r", marker.display()))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::fs::read_to_string(&marker).ok().as_deref() != Some("ready") {
+            assert!(
+                Instant::now() < deadline,
+                "private shell did not execute builtin"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pending = terminal.request_shutdown().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !pending.poll().ready() {
+            assert!(
+                Instant::now() < deadline,
+                "private shell drain stalled: {:?}",
+                pending.poll()
+            );
+            thread::yield_now();
+        }
     }
 }

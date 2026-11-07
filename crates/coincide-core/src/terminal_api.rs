@@ -8,7 +8,7 @@ use crate::terminal::{
 };
 
 /// Methods routed here before the Engine's main dispatch.
-pub(super) const METHODS: &[&str] = &["terminal.status", "terminal.restart"];
+pub(super) const METHODS: &[&str] = &["terminal.status", "terminal.restart", "terminal.close"];
 
 /// The shell a terminal runs: `$SHELL`, else the platform's own.
 fn terminal_shell() -> String {
@@ -26,9 +26,27 @@ impl Engine {
         match method {
             "terminal.status" => Ok(self.terminal_listing(p["threadId"].as_str())),
             "terminal.restart" => self.restart_terminal(p, &terminal_shell()),
+            "terminal.close" => self.close_terminal(p),
             _ => bail!("Unknown terminal method {method}"),
         }
     }
+    /// Remove the pane immediately, retaining every retired native/I/O owner
+    /// in the collector until its actual exit and joins are confirmed.
+    fn close_terminal(&mut self, params: &Value) -> Result<Value> {
+        ensure!(!self.admissions_frozen(), "Application is closing");
+        let id = required(params, "terminalId")?.to_owned();
+        let (thread, mut terminal) = self.terminals.remove(&id).context("Terminal not found")?;
+        match terminal.request_shutdown() {
+            Ok(pending) => self.retain_terminal_owner(id, thread, pending),
+            Err(error) => {
+                self.terminals.insert(id, (thread, terminal));
+                return Err(error);
+            }
+        }
+        self.revision += 1;
+        Ok(json!({"closed":true}))
+    }
+
     /// Swift TerminalLaunch.directory: the thread's worktree or project folder,
     /// the project folder when the worktree is gone, else home.
     pub(super) fn terminal_start_directory(&self, thread: &Value) -> Result<StartDirectory> {
@@ -110,18 +128,21 @@ impl Engine {
             .get(&request.terminal_id)
             .context("Terminal not found")?;
         ensure!(terminal.exited(), "Terminal is still running");
+        let thread = thread.clone();
         let last = terminal.directory().to_path_buf();
         let cwd = if last.is_dir() {
             last
         } else {
-            self.terminal_start_directory(&self.store.thread(thread)?)?
+            self.terminal_start_directory(&self.store.thread(&thread)?)?
                 .path
         };
-        self.terminals
+        let retired = self
+            .terminals
             .get_mut(&request.terminal_id)
             .context("Terminal not found")?
             .1
             .restart(&cwd, shell)?;
+        self.retain_terminal_owner(request.terminal_id, thread, retired);
         self.revision += 1;
         Ok(json!({"restarted":true}))
     }
@@ -223,6 +244,42 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_pane_retains_its_owner_until_actual_io_cleanup() {
+        let (root, mut engine) = engine();
+        let terminal = Terminal::spawn(root.path(), "/bin/sh", 6, 40).unwrap();
+        engine
+            .terminals
+            .insert("owned".into(), ("thread".into(), terminal));
+        assert_eq!(
+            engine
+                .close_terminal(&json!({"terminalId":"owned"}))
+                .unwrap(),
+            json!({"closed":true})
+        );
+        assert!(engine.terminals.is_empty());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = engine.poll_terminals_shutdown();
+            assert_eq!(state.panes.len(), 1);
+            assert_eq!(state.panes[0].terminal_id, "owned");
+            assert_eq!(state.panes[0].thread_id, "thread");
+            assert!(!state.requested);
+            assert!(!state.ready());
+            if state.panes[0].status.ready() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "closed terminal owners did not join"
+            );
+            std::thread::yield_now();
+        }
+        engine.freeze_admissions();
+        engine.request_terminals_shutdown().unwrap();
+        assert!(engine.poll_terminals_shutdown().ready());
+    }
+
+    #[test]
     fn osc_8_links_are_listed_once_per_frame_and_indexed_by_cell() {
         let (root, mut engine) = engine();
         let mut terminal = Terminal::spawn(root.path(), "/bin/sh", 4, 40).unwrap();
@@ -308,6 +365,12 @@ mod tests {
         let entry = wait(&mut engine, "failed", |entry| entry["exited"] == false);
         assert_eq!(entry["number"], 4);
         assert_eq!(entry["name"], "Terminal 4");
+        let retired = engine.poll_terminals_shutdown();
+        assert_eq!(retired.panes.len(), 1);
+        assert_eq!(retired.panes[0].terminal_id, "failed");
+        assert_eq!(retired.panes[0].thread_id, "thread");
+        assert!(!retired.requested);
+        assert_eq!(retired.live_count, 2);
         let frame = engine
             .read_terminal_viewport("failed", &Palette::default())
             .unwrap();
