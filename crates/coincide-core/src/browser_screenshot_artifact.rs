@@ -150,6 +150,9 @@ impl Directory {
             ensure!(artifact.matches(), "Snapshot destination changed");
             Ok(())
         })();
+        // Windows private files deliberately deny delete-sharing while held.
+        // End our real write-handle custody before exact-identity cleanup.
+        drop(file);
         if let Err(error) = result {
             return match artifact.discard() {
                 Ok(()) => Err(error),
