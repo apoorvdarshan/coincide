@@ -1,16 +1,30 @@
 use super::{Kind, Sink};
 use anyhow::Result;
-use gtk::glib::{SignalHandlerId, prelude::ObjectExt};
-use webkit2gtk::{ScriptDialogType, WebView, WebViewExt};
+use gtk::{
+    glib::{SignalHandlerId, prelude::ObjectExt},
+    prelude::WidgetExt,
+};
+use webkit2gtk::{FileChooserRequestExt, ScriptDialogType, WebView, WebViewExt};
 use wry::WebViewExtUnix;
 
 pub(super) struct Adapter {
     view: WebView,
     handler: Option<SignalHandlerId>,
+    chooser: Option<SignalHandlerId>,
 }
 impl Adapter {
     pub(super) fn install(view: &wry::WebView, sink: Sink) -> Result<Self> {
         let view = view.webview();
+        // As in Swift, an agent never gets a picker: only a page the user can see
+        // falls through to WebKitGTK's standard chooser. Hidden or parked tabs
+        // decline at once instead of opening a dialog over the user's work.
+        let chooser = view.connect_run_file_chooser(|view, request| {
+            if view.is_visible() && view.is_mapped() {
+                return false;
+            }
+            request.cancel();
+            true
+        });
         let handler = view.connect_script_dialog(move |_, dialog| {
             let kind = match dialog.dialog_type() {
                 ScriptDialogType::Alert => Kind::Alert,
@@ -47,12 +61,16 @@ impl Adapter {
         Ok(Self {
             view,
             handler: Some(handler),
+            chooser: Some(chooser),
         })
     }
 }
 impl Drop for Adapter {
     fn drop(&mut self) {
-        if let Some(handler) = self.handler.take() {
+        for handler in [self.handler.take(), self.chooser.take()]
+            .into_iter()
+            .flatten()
+        {
             self.view.disconnect(handler);
         }
     }
