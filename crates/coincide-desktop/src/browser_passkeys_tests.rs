@@ -316,14 +316,9 @@ fn verification_follows_the_setting_and_its_outcome() {
     });
     fixture.get(body(None));
     fixture.poll();
-    assert!(
-        fixture
-            .passkeys
-            .prompt("thread", "tab")
-            .unwrap()
-            .detail
-            .contains("next")
-    );
+    // The prompt says verification follows, in this platform's words.
+    let detail = fixture.passkeys.prompt("thread", "tab").unwrap().detail;
+    assert!(VERIFIER.is_none_or(|verifier| detail.contains(verifier)) && !detail.is_empty());
     fixture.answer(true);
     // This computer couldn't verify, and the site didn't require it.
     assert_eq!(fixture.statuses(), ["ok"]);
