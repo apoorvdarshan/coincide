@@ -23,6 +23,7 @@ pub(super) struct State {
     machine: Trigger,
     clock: Instant,
     was_active: bool,
+    interceptor: Option<Subscription>,
     pub ticket: Option<SendIntent>,
 }
 impl Default for State {
@@ -33,8 +34,17 @@ impl Default for State {
             machine: Trigger::new(coincide_core::voice::Mode::Both, true),
             clock: Instant::now(),
             was_active: false,
+            interceptor: None,
             ticket: None,
         }
+    }
+}
+impl State {
+    pub(super) fn close(&mut self) {
+        self.interceptor = None;
+        self.ticket = None;
+        self.machine.recording_ended();
+        self.machine.reset();
     }
 }
 fn lone(shortcut: &str) -> bool {
@@ -70,17 +80,56 @@ fn matches(shortcut: &str, key: &Keystroke) -> bool {
     key.key.eq_ignore_ascii_case(letter) && key.modifiers == m
 }
 impl Coincide {
+    pub(super) fn sync_voice_interceptor(&mut self, cx: &mut Context<Self>) {
+        let settings = Settings::decode(&self.settings);
+        let enabled = settings.enabled
+            && settings.shortcut_enabled
+            && settings.engine != Engine::Apple
+            && microphone::compiled_backend_available()
+            && !self.media.shutdown_requested
+            && !self.media.close_requested;
+        if !enabled {
+            self.voice.interceptor = None;
+            return;
+        }
+        if self.voice.interceptor.is_some() {
+            return;
+        }
+        let owner = cx.entity().downgrade();
+        self.voice.interceptor = Some(cx.intercept_keystrokes(move |event, window, cx| {
+            let Some(is_held) = event.is_held else { return };
+            let key = KeyDownEvent {
+                keystroke: event.keystroke.clone(),
+                is_held,
+                prefer_character_input: event.input_preference == InputPreference::CharacterInput,
+            };
+            let _ = owner.update(cx, |owner, cx| {
+                if owner.voice_key_down(&key, window, cx) {
+                    window.prevent_default();
+                }
+            });
+        }));
+    }
     pub(super) fn begin_composer_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.voice_target_available(window, cx) {
             return;
         }
+        self.microphone_window_active = true;
+        self.microphone_settings_active = false;
         let focus = self.composer.read(cx).focus_handle(cx).clone();
         focus.focus(window, cx);
         let Some(binding) = self.sync_transcription_binding(cx) else {
             return;
         };
         let voice = Settings::decode(&self.settings);
-        if !voice.enabled || voice.engine != Engine::Whisper {
+        if !voice.enabled || voice.engine == Engine::Apple {
+            return;
+        }
+        if !self.microphone_panel.read(cx).configured_for_dictation() {
+            self.voice.ticket = None;
+            self.voice.machine.recording_ended();
+            self.status=if voice.engine==Engine::Whisper{"Choose the local Whisper executable and model in Settings › Voice before dictating."}else{"Save or explicitly load the separate Voice API key in Settings › Voice before dictating."}.into();
+            cx.notify();
             return;
         }
         if self.voice.settings.as_ref() != Some(&voice) {
@@ -99,7 +148,8 @@ impl Coincide {
         self.voice.machine.recording_started();
     }
     fn voice_target_available(&self, window: &Window, cx: &Context<Self>) -> bool {
-        if window.window_handle().window_id() != self.main_window.window_id()
+        if !microphone::compiled_backend_available()
+            || window.window_handle().window_id() != self.main_window.window_id()
             || !window.is_window_active()
             || !window.visibility().is_visible()
             || !self.chat_visible()
@@ -132,13 +182,14 @@ impl Coincide {
         }
     }
     pub(super) fn poll_voice_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_voice_interceptor(cx);
         let settings = Settings::decode(&self.settings);
         if !self.settings_open || !self.transcription_open {
             self.voice.recording_shortcut = false;
         }
         let available = self.voice_target_available(window, cx)
             && settings.enabled
-            && settings.engine == Engine::Whisper;
+            && settings.engine != Engine::Apple;
         if self.voice.settings.as_ref() != Some(&settings) || !available {
             if self.voice.ticket.take().is_some() {
                 self.microphone_panel.update(cx, |p, cx| p.cancel(cx));
@@ -162,6 +213,7 @@ impl Coincide {
             .is_some_and(|ticket| panel.intent_generation() != Some(ticket.generation))
         {
             self.voice.ticket = None;
+            self.voice.machine.recording_ended();
         }
         let active = panel.dictation_active();
         if self.voice.was_active && !active {
@@ -179,8 +231,22 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.voice.recording_shortcut && self.settings_open && self.transcription_open {
+        let recorder_window = self.settings_window.map_or_else(
+            || {
+                self.settings_in_main_window()
+                    && window.window_handle().window_id() == self.main_window.window_id()
+            },
+            |handle| handle.window_id() == window.window_handle().window_id(),
+        );
+        if self.voice.recording_shortcut
+            && self.settings_open
+            && self.transcription_open
+            && recorder_window
+            && window.is_window_active()
+        {
             if event.is_held {
+                cx.stop_propagation();
+                window.prevent_default();
                 return true;
             }
             self.voice.recording_shortcut = false;
@@ -216,10 +282,22 @@ impl Coincide {
             return true;
         }
         let settings = Settings::decode(&self.settings);
-        if !self.voice_target_available(window, cx)
+        if self.voice_target_available(window, cx)
+            && event.keystroke.key == "escape"
+            && self.microphone_panel.read(cx).dictation_active()
+        {
+            self.voice.ticket = None;
+            self.voice.machine.recording_ended();
+            self.microphone_panel
+                .update(cx, |panel, cx| panel.cancel(cx));
+            cx.stop_propagation();
+            return true;
+        }
+        if event.prefer_character_input
+            || !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || settings.engine != Engine::Whisper
+            || settings.engine == Engine::Apple
         {
             return false;
         }
@@ -285,7 +363,7 @@ impl Coincide {
         if !self.voice_target_available(window, cx)
             || !settings.enabled
             || !settings.shortcut_enabled
-            || settings.engine != Engine::Whisper
+            || settings.engine == Engine::Apple
         {
             return;
         }

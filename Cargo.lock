@@ -1243,6 +1243,7 @@ dependencies = [
  "windows-capture",
  "x11rb",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

@@ -36,10 +36,23 @@ pub struct LocalRecordingConfig {
     pub maximum_seconds: usize,
 }
 #[derive(Clone, PartialEq, Eq)]
+pub enum RecordingConfig {
+    Local(LocalRecordingConfig),
+    Hosted(coincide_core::dictation::voice_api::HostedConfig),
+}
+impl RecordingConfig {
+    fn maximum_seconds(&self) -> usize {
+        match self {
+            Self::Local(config) => config.maximum_seconds,
+            Self::Hosted(config) => config.maximum_seconds,
+        }
+    }
+}
+#[derive(Clone, PartialEq, Eq)]
 struct Target {
     binding: Option<ComposerBinding>,
     settings_revision: u64,
-    config: Option<LocalRecordingConfig>,
+    config: Option<RecordingConfig>,
 }
 impl Target {
     fn capture_binding(&self) -> Option<CaptureBinding> {
@@ -132,22 +145,46 @@ enum InferenceFailure {
     Failed,
     Cancelled,
     CleanupPending,
+    Hosted(coincide_core::dictation::transcription::Error),
 }
 trait Inference {
+    fn hosted(
+        &mut self,
+        _: &coincide_core::dictation::voice_api::HostedConfig,
+        _: &[u8],
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        Err(InferenceFailure::Failed)
+    }
     fn transcribe(
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<String, InferenceFailure>;
 }
 struct LocalInference;
 impl Inference for LocalInference {
+    fn hosted(
+        &mut self,
+        config: &coincide_core::dictation::voice_api::HostedConfig,
+        wav: &[u8],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        config.transcribe(wav, cancelled).map_err(|error| {
+            if error == coincide_core::dictation::transcription::Error::Cancelled {
+                InferenceFailure::Cancelled
+            } else {
+                InferenceFailure::Hosted(error)
+            }
+        })
+    }
+
     fn transcribe(
         &mut self,
         configuration: &LocalRecordingConfig,
         wav: &[u8],
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<String, InferenceFailure> {
         LocalWhisper::new(
             configuration.executable.clone(),
@@ -273,9 +310,7 @@ impl Owner {
                     .as_ref()
                     .is_none_or(|target| target.binding.is_none() || target.config.is_none())
                 {
-                    self.publish(
-                        "Choose a local executable/model and a composer before dictating.",
-                    );
+                    self.publish("Configure transcription and select a composer before dictating.");
                     return;
                 }
                 self.dictation = true;
@@ -290,7 +325,7 @@ impl Owner {
                 match self.controller.as_mut().unwrap().request_permission() {
                     Ok(()) => {
                         self.phase = Phase::Permission;
-                        self.publish("Waiting for explicit microphone authorization. Granting permission does not record.");
+                        self.publish(if self.dictation {"Waiting for microphone authorization to start this dictation. Cancel discards this request."}else{"Waiting for explicit microphone authorization. Granting permission does not record."});
                     }
                     Err(_) => {
                         self.phase = Phase::Failed;
@@ -309,7 +344,7 @@ impl Owner {
                     return;
                 };
                 let Some(configuration) = &target.config else {
-                    self.publish("Configure the local executable and model before recording.");
+                    self.publish("Configure local transcription or load the selected Voice API key before recording.");
                     return;
                 };
                 if !matches!(self.permission, Permission::Authorized | Permission::Ready)
@@ -323,14 +358,12 @@ impl Owner {
                     .controller
                     .as_mut()
                     .unwrap()
-                    .start(configuration.maximum_seconds)
+                    .start(configuration.maximum_seconds())
                 {
                     Ok(session) => {
                         self.session = Some(session);
                         self.phase = Phase::Recording;
-                        self.publish(
-                            "Recording locally. Stop ends capture; it does not transcribe or send.",
-                        );
+                        self.publish(if self.dictation {"Listening. Stop transcribes this recording using the captured Voice settings."}else{"Recording locally. Stop ends capture; it does not transcribe or send."});
                     }
                     Err(error) => {
                         self.phase = Phase::Failed;
@@ -478,7 +511,7 @@ impl Owner {
         }
         self.text_pending = false;
         self.phase = Phase::Transcribing;
-        self.publish("Transcribing the stopped recording locally… Cancel discards the result; inference may finish cleanup in the background.");
+        self.publish(if matches!(&configuration,RecordingConfig::Hosted(_)){"Transcribing with the selected Voice service. Audio is sent under your account and its data policies. Cancel revokes the result and requests network shutdown."}else{"Transcribing the stopped recording locally… Cancel discards the result; inference may finish cleanup in the background."});
         // Runs on the same dedicated owner, with capture already stopped. The
         // UI never waits. Shared generation revokes results during this call.
         let shared = self.shared.clone();
@@ -488,11 +521,11 @@ impl Owner {
                 || !shared.enabled.load(Ordering::Acquire)
                 || shared.generation.load(Ordering::Acquire) != generation
         };
-        let result =
-            self.inference
-                .as_mut()
-                .unwrap()
-                .transcribe(&configuration, &audio.wav, &cancelled);
+        let inference = self.inference.as_mut().unwrap();
+        let result = match &configuration {
+            RecordingConfig::Local(config) => inference.transcribe(config, &audio.wav, &cancelled),
+            RecordingConfig::Hosted(config) => inference.hosted(config, &audio.wav, &cancelled),
+        };
         if !self.current() {
             self.reset();
             return;
@@ -518,6 +551,11 @@ impl Owner {
             Err(InferenceFailure::CleanupPending) => {
                 self.phase = Phase::Failed;
                 self.publish("Transcription cleanup is uncertain. Private audio was retained; no transcript was inserted.");
+            }
+            Err(InferenceFailure::Hosted(error)) => {
+                use coincide_core::dictation::transcription::Error;
+                self.phase = Phase::Failed;
+                self.publish(match error {Error::Unauthorized|Error::Forbidden=>"Voice service rejected this key or account. Update the separate Voice API key.",Error::RateLimited=>"Voice service rate limit reached. Nothing was inserted or sent.",Error::TooLarge=>"Voice service response exceeded the receive limit. Nothing was inserted or sent.",Error::Server|Error::Network=>"Voice service unavailable or request timed out. Nothing was inserted or sent.",_=>"Voice transcription was rejected or unreadable. Check the selected model and language."});
             }
             Err(InferenceFailure::Failed) => {
                 self.phase = Phase::Failed;
@@ -689,11 +727,28 @@ impl MicrophoneSettings {
         let (connection, events) = spawn_owner(factory);
         (Self { connection, target: Target { binding: None, settings_revision: 0, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false }, events)
     }
+    #[cfg(test)]
     pub fn set_target(
         &mut self,
         binding: Option<ComposerBinding>,
         settings_revision: u64,
         configuration: Option<LocalRecordingConfig>,
+        backend_enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_configuration_target(
+            binding,
+            settings_revision,
+            configuration.map(RecordingConfig::Local),
+            backend_enabled,
+            cx,
+        );
+    }
+    pub fn set_configuration_target(
+        &mut self,
+        binding: Option<ComposerBinding>,
+        settings_revision: u64,
+        configuration: Option<RecordingConfig>,
         backend_enabled: bool,
         cx: &mut Context<Self>,
     ) {
@@ -757,6 +812,15 @@ impl MicrophoneSettings {
         self.text_pending = false;
         self.status = "Cancellation requested; recording/results are discarded. An existing OS permission dialog may still need your response. Inference cleanup may finish in the background.".into();
         cx.notify();
+    }
+    pub fn configured_for_dictation(&self) -> bool {
+        self.backend_enabled
+            && self.connection.shared.alive.load(Ordering::Acquire)
+            && self.target.binding.is_some()
+            && self.target.config.is_some()
+    }
+    pub fn failed(&self) -> bool {
+        self.phase == Phase::Failed
     }
     pub fn begin_dictation(&mut self, cx: &mut Context<Self>) -> u64 {
         self.action(Action::BeginDictation, cx);
@@ -1010,11 +1074,38 @@ mod tests {
         revoke: Option<Arc<Shared>>,
     }
     impl Inference for FakeInference {
+        fn hosted(
+            &mut self,
+            config: &coincide_core::dictation::voice_api::HostedConfig,
+            wav: &[u8],
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<String, InferenceFailure> {
+            use coincide_core::dictation::transcription::{Error, Request, Response, Transport};
+            struct FakeHttp;
+            impl Transport for FakeHttp {
+                fn send(&mut self, request: &Request) -> Result<Response, Error> {
+                    assert_eq!(
+                        request.endpoint(),
+                        "https://api.openai.com/v1/audio/transcriptions"
+                    );
+                    assert_eq!(request.method(), "POST");
+                    Ok(Response {
+                        status: 200,
+                        body: br#"{"text":"synthetic hosted worker transcript"}"#.to_vec(),
+                    })
+                }
+            }
+            self.trace.lock().unwrap().inference += 1;
+            assert_eq!(config.model, "gpt-transcribe");
+            config
+                .transcribe_with_transport(wav, cancelled, FakeHttp)
+                .map_err(InferenceFailure::Hosted)
+        }
         fn transcribe(
             &mut self,
             config: &LocalRecordingConfig,
             wav: &[u8],
-            cancelled: &dyn Fn() -> bool,
+            cancelled: &(dyn Fn() -> bool + Sync),
         ) -> Result<String, InferenceFailure> {
             assert!(
                 !cancelled(),
@@ -1067,13 +1158,13 @@ mod tests {
                 selection: 0..0,
             }),
             settings_revision: 1,
-            config: Some(LocalRecordingConfig {
+            config: Some(RecordingConfig::Local(LocalRecordingConfig {
                 executable: PathBuf::from("/synthetic/whisper"),
                 model: PathBuf::from("/synthetic/model"),
                 language: "en".into(),
                 threads: 2,
                 maximum_seconds: 1,
-            }),
+            })),
         }
     }
     fn setup(
@@ -1125,6 +1216,54 @@ mod tests {
         action(owner, Action::Record);
         action(owner, Action::Stop);
         assert!(owner.phase == Phase::Captured);
+    }
+    #[::core::prelude::v1::test]
+    fn hosted_dictation_runs_exact_private_snapshot_through_fake_transport_on_owned_path() {
+        use coincide_core::dictation::{
+            transcription::Provider,
+            voice_api::HostedConfig,
+            voice_secret::{Backend, Failure, VoiceSecrets},
+        };
+        struct FakeSecret;
+        impl Backend for FakeSecret {
+            fn read(&self, _: Provider) -> Result<zeroize::Zeroizing<String>, Failure> {
+                Ok(zeroize::Zeroizing::new("synthetic-owned-voice-key".into()))
+            }
+            fn write(&self, _: Provider, _: &str) -> Result<(), Failure> {
+                panic!("no OS save")
+            }
+            fn delete(&self, _: Provider) -> Result<(), Failure> {
+                panic!("no OS delete")
+            }
+        }
+        let credential = VoiceSecrets::with_backend(Arc::new(FakeSecret))
+            .load(Provider::OpenAi)
+            .unwrap();
+        let (mut owner, events, trace) = setup(true, false);
+        let mut target = target();
+        target.config = Some(RecordingConfig::Hosted(HostedConfig::new(
+            credential,
+            "gpt-transcribe".into(),
+            Some("en".into()),
+        )));
+        owner.command(Command {
+            generation: 1,
+            target: target.clone(),
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        owner.command(Command {
+            generation: 1,
+            target,
+            action: Action::Stop,
+        });
+        owner.tick();
+        let transcript = events.try_recv().unwrap();
+        assert_eq!(transcript.text, "synthetic hosted worker transcript");
+        assert_eq!(trace.lock().unwrap().inference, 1);
+        assert!(owner.text_pending);
+        assert!(events.try_recv().is_err());
     }
     #[::core::prelude::v1::test]
     fn empty_or_failed_actual_inference_produces_no_pending_send_receipt() {
@@ -1495,7 +1634,7 @@ mod tests {
             &mut self,
             _: &LocalRecordingConfig,
             _: &[u8],
-            _: &dyn Fn() -> bool,
+            _: &(dyn Fn() -> bool + Sync),
         ) -> Result<String, InferenceFailure> {
             SHUTDOWN_TLS.with(|slot| {
                 *slot.borrow_mut() = Some(ShutdownTls {

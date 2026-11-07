@@ -2,7 +2,7 @@
 //! does not claim microphone capture or an installed/network-ready provider.
 use super::{DictationError, Transcriber};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     OpenAi,
     Groq,
@@ -18,6 +18,7 @@ impl Provider {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     MissingKey,
+    Cancelled,
     InvalidConfiguration,
     InvalidAudio,
     TooLarge,
@@ -33,12 +34,16 @@ const MAX_AUDIO: usize = 25_000_000;
 const MAX_RESPONSE: usize = 1_048_576;
 /// No Debug/Serialize. Header and body may contain secrets/personal speech.
 pub struct Request {
+    method: &'static str,
     endpoint: &'static str,
     authorization: String,
     content_type: String,
     body: Vec<u8>,
 }
 impl Request {
+    pub fn method(&self) -> &'static str {
+        self.method
+    }
     pub fn endpoint(&self) -> &str {
         self.endpoint
     }
@@ -53,23 +58,90 @@ impl Request {
         &self.body
     }
 }
+impl Drop for Request {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.authorization.zeroize();
+        self.body.zeroize();
+    }
+}
+/// Authenticated metadata probe, only after a native Test Key action. No audio.
+pub fn models_request(provider: Provider, key: &str) -> Result<Request, Error> {
+    if key.is_empty() {
+        return Err(Error::MissingKey);
+    }
+    if key.len() > 4096 || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(Error::InvalidConfiguration);
+    }
+    Ok(Request {
+        method: "GET",
+        endpoint: match provider {
+            Provider::OpenAi => "https://api.openai.com/v1/models",
+            Provider::Groq => "https://api.groq.com/openai/v1/models",
+        },
+        authorization: format!("Bearer {key}"),
+        content_type: "application/json".into(),
+        body: Vec::new(),
+    })
+}
+pub fn models_response(response: Response) -> Result<(), Error> {
+    if response.body.len() > MAX_RESPONSE {
+        return Err(Error::TooLarge);
+    }
+    match response.status {
+        200..=299 => {}
+        401 => return Err(Error::Unauthorized),
+        403 => return Err(Error::Forbidden),
+        429 => return Err(Error::RateLimited),
+        400..=499 => return Err(Error::Rejected),
+        500..=599 => return Err(Error::Server),
+        _ => return Err(Error::InvalidResponse),
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|_| Error::InvalidResponse)?;
+    if !value["data"].is_array() {
+        return Err(Error::InvalidResponse);
+    }
+    Ok(())
+}
 /// Response bodies are untrusted and may echo credentials; never log them.
 pub struct Response {
     pub status: u16,
     pub body: Vec<u8>,
+}
+impl Drop for Response {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.body.zeroize();
+    }
 }
 /// Implementations must use TLS, forbid redirects, set a bounded timeout and
 /// cap response bytes while receiving (not only after allocating the body).
 /// Errors must be classified, never include provider bodies/headers/keys.
 pub trait Transport {
     fn send(&mut self, request: &Request) -> Result<Response, Error>;
+    fn send_cancellable(
+        &mut self,
+        request: &Request,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Response, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let response = self.send(request)?;
+        if cancelled() {
+            Err(Error::Cancelled)
+        } else {
+            Ok(response)
+        }
+    }
 }
 
 /// Provider settings contain no key. Keys are supplied privately from an OS
 /// store to the worker at construction; this type is not a settings document.
 pub struct ApiTranscriber<T> {
     provider: Provider,
-    key: String,
+    key: zeroize::Zeroizing<String>,
     model: String,
     language: Option<String>,
     transport: T,
@@ -84,13 +156,20 @@ impl<T: Transport> ApiTranscriber<T> {
     ) -> Self {
         Self {
             provider,
-            key,
+            key: zeroize::Zeroizing::new(key),
             model,
             language,
             transport,
         }
     }
     pub fn transcribe_private(&mut self, wav: &[u8]) -> Result<String, Error> {
+        self.transcribe_cancellable(wav, &|| false)
+    }
+    pub fn transcribe_cancellable(
+        &mut self,
+        wav: &[u8],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, Error> {
         let request = request(
             self.provider,
             &self.key,
@@ -98,7 +177,7 @@ impl<T: Transport> ApiTranscriber<T> {
             self.language.as_deref(),
             wav,
         )?;
-        transcript(self.transport.send(&request)?)
+        transcript(self.transport.send_cancellable(&request, cancelled)?)
     }
 }
 impl<T: Transport> Transcriber for ApiTranscriber<T> {
@@ -170,6 +249,7 @@ pub fn request(
     body.extend_from_slice(wav);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     Ok(Request {
+        method: "POST",
         endpoint: provider.endpoint(),
         authorization: format!("Bearer {key}"),
         content_type: format!("multipart/form-data; boundary={boundary}"),
