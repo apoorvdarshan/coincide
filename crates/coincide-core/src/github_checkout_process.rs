@@ -363,18 +363,19 @@ fn group_exited(leader: u32) -> Result<bool> {
             std::mem::size_of_val(&pids) as i32,
         )
     };
+    let query_errno = io::Error::last_os_error().raw_os_error().unwrap_or(-1);
     #[cfg(test)]
     trace_drain(
         &format!(
             "mac-owned-group-query bytes={bytes} native_errno={} first-is-leader={}",
-            io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+            query_errno,
             pids[0] == leader as i32
         ),
         None,
     );
     ensure!(
         bytes >= 0
-            && (bytes != 0 || io::Error::last_os_error().raw_os_error() == Some(0))
+            && (bytes != 0 || query_errno == 0)
             && (bytes as usize) < std::mem::size_of_val(&pids)
             && (bytes as usize).is_multiple_of(std::mem::size_of::<i32>()),
         "Owned checkout group cannot be classified"
