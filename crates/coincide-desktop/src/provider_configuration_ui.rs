@@ -655,6 +655,7 @@ impl Panel {
         let generation = editor.generation;
         let custody = editor.lease.pending_native_action();
         let provider = provider.to_owned();
+        let picker_window = window.window_handle();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -664,26 +665,35 @@ impl Panel {
         let task = cx.spawn_in(window, async move |this, cx| {
             let result: Result<_> = async { picker.await? }.await;
             let _custody = custody;
-            let _ = this.update_in(cx, |this, window, cx| {
-                if !this.workers.finish_picker() {
-                    return;
-                }
-                if let Ok(Some(paths)) = result {
-                    if let Some(path) = paths.first() {
-                        if let Some(editor) = this
-                            .editors
-                            .get(&provider)
-                            .filter(|editor| editor.generation == generation)
-                        {
-                            editor.path.update(cx, |input, cx| {
-                                input.set_value(path.to_string_lossy().into_owned(), window, cx)
-                            });
-                            this.edited(&provider, window, cx);
+            let _ = crate::main_window_poll::complete_native_picker(
+                picker_window,
+                &this,
+                cx,
+                |this, window, cx| {
+                    if !this.workers.finish_picker() {
+                        return;
+                    }
+                    if let Ok(Some(paths)) = result {
+                        if let Some(path) = paths.first() {
+                            if let Some(editor) = this
+                                .editors
+                                .get(&provider)
+                                .filter(|editor| editor.generation == generation)
+                            {
+                                editor.path.update(cx, |input, cx| {
+                                    input.set_value(path.to_string_lossy().into_owned(), window, cx)
+                                });
+                                this.edited(&provider, window, cx);
+                            }
                         }
                     }
-                }
-                cx.notify();
-            });
+                    cx.notify();
+                },
+                |this, cx| {
+                    this.workers.finish_picker();
+                    cx.notify();
+                },
+            );
         });
         self.pickers.push(task);
     }
@@ -721,7 +731,7 @@ impl Panel {
             })
             .collect()
     }
-    pub fn render_part(&self, part: Part, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_part(&mut self, part: Part, cx: &mut Context<Self>) -> AnyElement {
         if matches!(part, Part::Accounts) {
             return self.render_accounts(cx);
         }
@@ -798,6 +808,9 @@ impl Panel {
                                 .label("Show in File Manager")
                                 .on_click(move |_, _, cx| cx.reveal_path(&location)),
                         )
+                        .when_some(report.status_note.as_ref(), |pane, note| {
+                            pane.child(div().text_sm().child(note.clone()))
+                        })
                         .when_some(report.account.as_ref(), |pane, account| {
                             pane.child(format!("Account: {account}"))
                         })

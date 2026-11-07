@@ -53,8 +53,9 @@ mod transport;
 #[cfg(windows)]
 #[path = "provider_job_windows.rs"]
 mod windows_job;
-#[cfg(windows)]
 pub(crate) use transport::CatalogTransport;
+#[path = "provider_codex_metadata.rs"]
+pub(crate) mod codex_metadata;
 #[path = "usage_capture.rs"]
 pub(crate) mod usage_capture;
 pub use images::{ImageAttachment, validate_images};

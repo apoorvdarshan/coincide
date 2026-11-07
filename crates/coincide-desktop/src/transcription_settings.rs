@@ -24,6 +24,8 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
+#[path = "transcription_models.rs"]
+mod models;
 const MAX_WAV: u64 = 25_000_000;
 
 /// Parent must increment composer_revision on every text/selection change,
@@ -38,12 +40,14 @@ pub struct ComposerBinding {
 /// Parent rechecks accepts_text against LIVE binding immediately before using
 /// DictationSession::start/update for insertion. Never automatically send it.
 pub struct TextReady {
+    pub(crate) _model_lease: Option<Arc<coincide_core::dictation::model_assets::ModelReadLease>>,
     pub generation: u64,
     pub binding: ComposerBinding,
     pub text: String,
 }
 #[derive(Clone)]
 struct Configuration {
+    model_proof: Option<Arc<coincide_core::dictation::model_assets::VerifiedModel>>,
     executable: PathBuf,
     model: PathBuf,
     wav: PathBuf,
@@ -61,11 +65,57 @@ enum Failure {
     Output,
     Cleanup,
 }
+type ModelLease = Arc<coincide_core::dictation::model_assets::ModelReadLease>;
 trait Backend: Send + Sync {
+    fn prepare_model(&self, _: &Configuration) -> Result<Option<ModelLease>, Failure> {
+        Ok(None)
+    }
+    fn transcribe_with_model(
+        &self,
+        configuration: Configuration,
+        _: Option<&ModelLease>,
+    ) -> Result<String, Failure> {
+        self.transcribe(configuration)
+    }
+
     fn transcribe(&self, configuration: Configuration) -> Result<String, Failure>;
 }
 struct LocalBackend;
 impl Backend for LocalBackend {
+    fn prepare_model(&self, config: &Configuration) -> Result<Option<ModelLease>, Failure> {
+        if let Some(model) = &config.model_proof {
+            if model.path() != config.model {
+                return Err(Failure::Configuration);
+            }
+            return model
+                .acquire(&|| false)
+                .map(Some)
+                .map_err(|_| Failure::Configuration);
+        }
+        coincide_core::dictation::model_assets::acquire_model_path(&config.model, &|| false)
+            .map(Some)
+            .map_err(|_| Failure::Configuration)
+    }
+    fn transcribe_with_model(
+        &self,
+        config: Configuration,
+        lease: Option<&ModelLease>,
+    ) -> Result<String, Failure> {
+        let lease = lease.ok_or(Failure::Configuration)?;
+        let backend = LocalWhisper::new(
+            config.executable,
+            config.model,
+            config.language,
+            config.threads,
+            Duration::from_secs(120),
+        )
+        .map_err(classify)?;
+        let wav = read_wav(config.wav)?;
+        backend
+            .transcribe_local_with_lease(&wav, lease, || false)
+            .map_err(classify)
+    }
+
     fn transcribe(&self, configuration: Configuration) -> Result<String, Failure> {
         let mut backend = LocalWhisper::new(
             configuration.executable,
@@ -150,6 +200,7 @@ fn read_wav(path: PathBuf) -> Result<Vec<u8>, Failure> {
     Ok(wav)
 }
 struct Finished {
+    model_lease: Option<ModelLease>,
     job: Uuid,
     generation: u64,
     binding: ComposerBinding,
@@ -217,12 +268,25 @@ impl Workflow {
         let backend = self.backend.clone();
         let sender = self.sender.clone();
         if !self.workers.spawn(move |admission| {
-            let result = if admission.allowed() {
-                backend.transcribe(configuration)
+            let prepared = if admission.allowed() {
+                backend.prepare_model(&configuration)
             } else {
                 Err(Failure::Unavailable)
             };
+            let (result, mut model_lease) = match prepared {
+                Ok(lease) => (
+                    backend.transcribe_with_model(configuration, lease.as_ref()),
+                    lease,
+                ),
+                Err(error) => (Err(error), None),
+            };
+            if matches!(&result, Err(Failure::Cleanup)) {
+                if let Some(lease) = model_lease.take() {
+                    coincide_core::dictation::model_assets::retain_uncertain(lease);
+                }
+            }
             let _ = sender.send(Finished {
+                model_lease,
                 job,
                 generation,
                 binding,
@@ -276,6 +340,7 @@ impl Workflow {
             Ok(text) if text.trim().is_empty() => Some(Completion::Empty),
             Ok(text) => {
                 let _ = self.text.send(TextReady {
+                    _model_lease: result.model_lease,
                     generation: result.generation,
                     binding: result.binding,
                     text,
@@ -302,6 +367,8 @@ enum FileKind {
 /// Parent registers this module, displays its entity, calls set_binding/poll on
 /// the native UI tick, and receives TextReady from the constructor's receiver.
 pub struct TranscriptionSettings {
+    models: Option<models::Models>,
+    catalog_model: Option<Arc<coincide_core::dictation::model_assets::VerifiedModel>>,
     executable: Option<PathBuf>,
     model: Option<PathBuf>,
     wav: Option<PathBuf>,
@@ -326,8 +393,28 @@ impl TranscriptionSettings {
             }
         });
         let (workflow, events) = Workflow::new(Arc::new(LocalBackend));
-        (Self { executable: None, model: None, wav: None, language, threads: 2, workflow, picker: false,
+        (Self { models:None,catalog_model:None, executable: None, model: None, wav: None, language, threads: 2, workflow, picker: false,
             status: "Choose a whisper-cli executable, compatible model, and 16 kHz mono PCM WAV. Nothing runs until Transcribe.".into(), _language_changes: changes }, events)
+    }
+    pub fn configure_model_downloads(
+        &mut self,
+        engine: coincide_core::api::SharedEngine,
+        native: coincide_core::native_ui_edits::NativeUiEditors,
+    ) {
+        self.models = Some(models::Models::new(engine, native));
+    }
+    pub fn take_model_use(&mut self) -> Option<models::UseRequest> {
+        self.models.as_mut()?.take_use()
+    }
+    pub fn accept_catalog_model(
+        &mut self,
+        model: Arc<coincide_core::dictation::model_assets::VerifiedModel>,
+        cx: &mut Context<Self>,
+    ) {
+        self.model = Some(model.path());
+        self.catalog_model = Some(model);
+        self.workflow.invalidate();
+        cx.notify();
     }
     pub fn set_binding(&mut self, binding: Option<ComposerBinding>, cx: &mut Context<Self>) {
         if self.workflow.set_binding(binding) {
@@ -358,6 +445,7 @@ impl TranscriptionSettings {
                 .zip(self.model.clone())
                 .map(
                     |(executable, model)| crate::microphone_settings::LocalRecordingConfig {
+                        model_proof: self.catalog_model.clone(),
                         executable,
                         model,
                         language: self.language.read(cx).value().to_string().trim().into(),
@@ -369,18 +457,51 @@ impl TranscriptionSettings {
         (self.workflow.generation, configuration)
     }
     pub fn request_shutdown(&mut self) {
+        if let Some(models) = &mut self.models {
+            models.close();
+        }
+        self.catalog_model = None;
         self.workflow.request_shutdown();
         self.executable = None;
         self.model = None;
         self.wav = None;
     }
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
-        self.workflow.shutdown_status()
+        let mut status = self.workflow.shutdown_status();
+        if let Some(models) = &mut self.models {
+            let model_status = models.shutdown_status();
+            status.closed &= model_status.closed;
+            status.unjoined += model_status.unjoined;
+            status.returned += model_status.returned;
+            status.panicked += model_status.panicked;
+            status.unclassified += model_status.unclassified;
+            status.pending_pickers += model_status.pending_pickers;
+            if status.spawn_error.is_none() {
+                status.spawn_error = model_status.spawn_error;
+            }
+        }
+        status
     }
     pub fn accepts_text(&self, event: &TextReady, current: &ComposerBinding) -> bool {
         self.workflow.accepts(event, current)
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        if self.models.as_mut().is_some_and(|models| models.poll()) {
+            let removed = self
+                .models
+                .as_mut()
+                .and_then(|models| models.take_removed());
+            if removed.is_some_and(|id| {
+                self.catalog_model
+                    .as_ref()
+                    .is_some_and(|model| model.id() == id)
+            }) {
+                self.catalog_model = None;
+                self.model = None;
+                self.workflow.invalidate();
+            }
+            cx.notify();
+        }
         while let Some(completion) = self.workflow.poll() {
             self.status = match completion {
                 Completion::Ready => "Transcript ready for the matching composer. Nothing was sent.",
@@ -425,7 +546,7 @@ impl TranscriptionSettings {
                 match paths {
                     Ok(Some(paths)) if paths.len() == 1 && paths[0].is_absolute() => {
                         let path = paths.into_iter().next();
-                        match kind { FileKind::Executable => this.executable = path, FileKind::Model => this.model = path, FileKind::Wav => this.wav = path }
+                        match kind { FileKind::Executable => this.executable = path, FileKind::Model => {this.model = path;this.catalog_model=None;}, FileKind::Wav => this.wav = path }
                         this.status = "File selected. Press Transcribe to run locally; configuration is not yet verified by inference.".into();
                     },
                     Ok(None) => this.status = "File selection cancelled. Nothing was transcribed.".into(),
@@ -459,6 +580,7 @@ impl TranscriptionSettings {
             return;
         };
         let configuration = Configuration {
+            model_proof: self.catalog_model.clone(),
             executable,
             model,
             wav,
@@ -489,6 +611,9 @@ impl Render for TranscriptionSettings {
         let busy = self.picker || self.workflow.running.is_some() || self.workflow.workers.closed();
         let mut panel = div().flex().flex_col().gap_2().p_4().child("Local file transcription")
             .child("Requires a configured whisper.cpp CLI, compatible local model, and 16 kHz mono 16-bit PCM WAV. No microphone capture or automatic sending.");
+        if let Some(models) = &self.models {
+            panel = panel.child(models.render(cx));
+        }
         for (kind, id, label) in [
             (
                 FileKind::Executable,
@@ -586,6 +711,7 @@ mod tests {
     }
     fn configuration() -> Configuration {
         Configuration {
+            model_proof: None,
             executable: PathBuf::from("/synthetic/whisper cli"),
             model: PathBuf::from("/synthetic/model"),
             wav: PathBuf::from("/synthetic/audio.wav"),
@@ -739,6 +865,7 @@ mod tests {
         assert!(workflow.start(configuration()));
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let old = TextReady {
+            _model_lease: None,
             generation: workflow.generation,
             binding: binding(1),
             text: "previously queued private text".into(),

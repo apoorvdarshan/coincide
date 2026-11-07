@@ -125,6 +125,9 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        if provider == "codex" {
+            legacy_codex_accounts::note_creation_order(&self.store, &mut payload, &id)?;
+        }
         append_order(&mut payload, &id)?;
         let (home, home_identity, guard_identity) =
             create_home(&self.store.data_directory()?, provider, &id)?;
@@ -197,6 +200,10 @@ impl Engine {
         variable: Option<&str>,
     ) -> Result<()> {
         self.require_admissions()?;
+        ensure!(
+            provider != "codex",
+            "Review Codex authentication changes in native Settings"
+        );
         let mode = match auth {
             "login" => {
                 supported(provider)?;

@@ -80,7 +80,6 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_2()
-            .child("Voice")
             .child(
                 Button::new("voice-enabled")
                     .label(if enabled {
@@ -110,7 +109,7 @@ impl Coincide {
                     cx,
                 ),
             );
-        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>"Apple Speech is not connected in this desktop build. Select Local Whisper for offline dictation.",Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
+        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. This adapter inserts final text after Stop."}else{"Apple Speech is unavailable on this platform/build. Select Local Whisper for equivalent offline dictation."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
         let models: &[(&str, &str)] = match voice.engine {
             Engine::OpenAi => &[
                 ("gpt-transcribe", "GPT Transcribe"),
@@ -368,7 +367,7 @@ impl Coincide {
                     })
                     .disabled(
                         !voice.enabled
-                            || voice.engine == Engine::Apple
+                            || (voice.engine == Engine::Apple && !voice_speech::compiled())
                             || !microphone::compiled_backend_available(),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {

@@ -118,9 +118,11 @@ pub(super) struct LoginHome {
     base_environment: BTreeMap<String, String>,
     captured_auth: Value,
     metadata_only: bool,
+    guard_generation: Option<[u8; 32]>,
 }
 fn supported(provider: &str) -> Result<&'static str> {
     match provider {
+        "codex" => Ok("CODEX_HOME"),
         "claude" => Ok("CLAUDE_CONFIG_DIR"),
         "grok" => Ok("GROK_HOME"),
         "opencode" => Ok("XDG_DATA_HOME"),
@@ -326,6 +328,11 @@ impl LoginHome {
                 );
             }
         }
+        let guard_generation = if account.provider == "codex" {
+            Some(CodexHomeLease::generation(&account.home)?)
+        } else {
+            None
+        };
         let mut captured = Self {
             account,
             root: root.into(),
@@ -333,6 +340,7 @@ impl LoginHome {
             base_environment,
             captured_auth: Value::Null,
             metadata_only: metadata,
+            guard_generation,
         };
         if !metadata {
             captured.captured_auth = captured.auth_stamp()?;
@@ -341,6 +349,10 @@ impl LoginHome {
     }
     pub(super) fn validate(&self) -> Result<()> {
         if self.account.provider == "codex" {
+            ensure!(
+                self.guard_generation == Some(CodexHomeLease::generation(&self.account.home)?),
+                "Codex account method changed; capture its configuration again"
+            );
             ensure!(
                 fs::symlink_metadata(self.account.home.join("config.toml"))
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
@@ -403,6 +415,7 @@ impl LoginHome {
             return Ok(Value::Null);
         }
         let path = match self.account.provider.as_str() {
+            "codex" => self.account.home.join("auth.json"),
             "claude" => self.account.home.join(".credentials.json"),
             "grok" => self.account.home.join("auth.json"),
             "opencode" => self.account.home.join("opencode/auth.json"),
@@ -562,7 +575,7 @@ impl Engine {
         };
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        ordered_ids(&payload)?
+        let mut rows = ordered_ids(&payload)?
             .iter()
             .map(|id| {
                 let row = account(&payload, provider, id)?;
@@ -597,7 +610,20 @@ impl Engine {
                     has_admin_key: row.admin_key.is_some(),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if provider == "codex" {
+            let order = legacy_codex_accounts::codex_order(
+                &payload,
+                &crate::codex_login_profiles::configuration(&self.store)?,
+            )?;
+            rows.sort_by_key(|row| {
+                order
+                    .iter()
+                    .position(|id| id == &row.id)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        Ok(rows)
     }
     pub fn native_login_accounts(&self, provider: &str) -> Result<Vec<NativeLoginAccount>> {
         supported(provider)?;
@@ -636,6 +662,9 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        if provider == "codex" {
+            legacy_codex_accounts::note_creation_order(&self.store, &mut payload, &id)?;
+        }
         append_order(&mut payload, &id)?;
         let root = self.store.data_directory()?;
         let (home, home_identity, guard_identity) = create_home(&root, provider, &id)?;
@@ -917,9 +946,11 @@ fn build_configuration(
             profile.account.home.to_string_lossy().into_owned(),
         );
     }
-    let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(
-        &json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth}),
-    )?));
+    let mut fingerprint = json!({"configuration":record,"baseEnvironment":profile.base_environment,"account":id,"home":profile.account.home_identity,"guard":profile.account.guard_identity,"generation":profile.account.launch_revision,"auth":profile.captured_auth});
+    if let Some(generation) = profile.guard_generation {
+        fingerprint["codexHomeGeneration"] = json!(generation);
+    }
+    let digest = crate::digest_hex::lower_hex(Sha256::digest(serde_json::to_vec(&fingerprint)?));
     let source: PathBuf = owner.source["path"]
         .as_str()
         .context("Native account source missing")?
@@ -1038,7 +1069,8 @@ pub(super) fn synthetic_key_configuration(
 #[path = "native_legacy_codex_accounts.rs"]
 mod legacy_codex_accounts;
 pub use legacy_codex_accounts::{
-    NativeLegacyCodexAccount, PreparedLegacyCodexRemoval, PreparedLegacyCodexRename,
+    NativeLegacyCodexAccount, PreparedCodexAuthChange, PreparedLegacyCodexRemoval,
+    PreparedLegacyCodexRename,
 };
 
 #[path = "native_provider_account_removal.rs"]

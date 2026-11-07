@@ -49,8 +49,8 @@ objc2-user-notifications = { version = "=0.3.2", optional = true, default-featur
 cc = "=1.11.0"
 
 [dev-dependencies]
-gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }
 tempfile.workspace = true
+gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-capture = "=1.5.0"

@@ -3,11 +3,15 @@ mod appshots_platform;
 mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
+#[cfg(test)]
+#[path = "../swift_link_options.rs"]
+mod swift_link_options_tests;
 mod usage_history_mount;
 mod usage_history_view;
 mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
+mod voice_speech;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
@@ -61,6 +65,8 @@ mod navigation;
 mod navigation_rail;
 mod navigation_resize;
 mod notification_runtime;
+#[cfg(any(test, all(target_os = "linux", feature = "native-notifications")))]
+mod notification_server;
 mod notification_settings;
 mod notifications;
 mod open_targets;
@@ -657,7 +663,12 @@ impl Coincide {
                 VoiceEngine::Whisper => {
                     configuration.map(microphone_settings::RecordingConfig::Local)
                 }
-                VoiceEngine::Apple => None,
+                VoiceEngine::Apple => voice_speech::compiled().then(|| {
+                    microphone_settings::RecordingConfig::Apple(voice_speech::Configuration {
+                        locale: voice.language.clone(),
+                        maximum_seconds: 60,
+                    })
+                }),
             }
         } else {
             configuration.map(microphone_settings::RecordingConfig::Local)
@@ -687,6 +698,41 @@ impl Coincide {
         self.transcription_panel
             .update(cx, |panel, cx| panel.poll(cx));
         self.microphone_panel.update(cx, |panel, cx| panel.poll(cx));
+        if let Some(request) = self
+            .transcription_panel
+            .update(cx, |panel, _| panel.take_model_use())
+        {
+            let result = (|| -> Result<Value> {
+                anyhow::ensure!(
+                    self.settings.get("voice") == request.expected_voice.as_ref(),
+                    "Voice settings changed while verifying the model; choose Use again"
+                );
+                let mut owner = try_state(&self.engine)?;
+                let current = owner.store.document("settings.json")?;
+                anyhow::ensure!(
+                    current.as_ref().and_then(|v| v.get("voice"))
+                        == request.expected_voice.as_ref(),
+                    "Voice settings changed; reload before choosing the model"
+                );
+                owner.store.save_native_voice_settings_if_unchanged(
+                    current.as_ref(),
+                    coincide_core::voice::Edit::WhisperModel(request.model.id()),
+                )
+            })();
+            match result {
+                Ok(settings) => {
+                    self.microphone_panel
+                        .update(cx, |panel, cx| panel.cancel(cx));
+                    self.transcription_panel.update(cx, |panel, cx| {
+                        panel.accept_catalog_model(request.model, cx)
+                    });
+                    let mut public = self.settings.clone();
+                    public["voice"] = settings["voice"].clone();
+                    self.accept_settings(public, window, cx);
+                }
+                Err(error) => self.status = error.to_string(),
+            }
+        }
         let events = self
             .transcription_events
             .try_iter()
@@ -882,7 +928,9 @@ impl Coincide {
         });
         let mut transcription_events = None;
         let transcription_panel = cx.new(|cx| {
-            let (panel, events) = transcription_settings::TranscriptionSettings::new(window, cx);
+            let (mut panel, events) =
+                transcription_settings::TranscriptionSettings::new(window, cx);
+            panel.configure_model_downloads(engine.clone(), native_editors.clone());
             transcription_events = Some(events);
             panel
         });
@@ -1529,16 +1577,7 @@ impl Coincide {
             .min_w_0()
             .flex()
             .flex_col()
-            .child(
-                Button::new("computer-use-settings-back")
-                    .label("Back to Settings")
-                    .disabled(self.media.close_requested || self.media.shutdown_requested)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.computer_use_open = false;
-                        this.focus_settings_route(window, cx);
-                        cx.notify();
-                    })),
-            )
+            .child(self.settings_subpage_header("Computer Use", "computer-use-settings-done", cx))
             .child(
                 div()
                     .p_2()

@@ -585,6 +585,33 @@ impl Coincide {
             .into_any_element()
     }
 
+    /// Keep the page title and close action outside every detail scroller.
+    pub(super) fn settings_subpage_header(
+        &self,
+        title: &'static str,
+        done_id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex_none()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .p_4()
+            .child(div().flex_1().min_w_0().text_xl().child(title))
+            .child(
+                Button::new(done_id)
+                    .label("Done")
+                    .disabled(self.media.close_requested || self.media.shutdown_requested)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.close_settings_panel(window, cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn settings_detail_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         if (self.bots_open || self.transcription_open || self.notifications_open)
             && !self.provider_settings.open
@@ -596,18 +623,10 @@ impl Coincide {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(
-                        Button::new("extra-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.bots_open = false;
-                                this.transcription_open = false;
-                                this.notifications_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
+                    .child(self.settings_subpage_header(
+                        if self.bots_open { "Bots" } else if self.notifications_open { "Notifications" } else { "Voice" },
+                        "extra-settings-done", cx,
+                    ))
                     .child(if self.bots_open {
                         div()
                             .flex_1()
@@ -657,18 +676,7 @@ impl Coincide {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(
-                        Button::new("browser-settings-back")
-                            .label("Back to Settings")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.browser_settings_open = false;
-                                this.focus_settings_route(window,cx);
-                                this.credential_panel
-                                    .update(cx, |panel, cx| panel.cancel(cx));
-                                this.sync_transcription_binding(cx);
-                                cx.notify();
-                            })),
-                    )
+                    .child(self.settings_subpage_header("Browser", "browser-settings-done", cx))
                     .child(
                         div().relative().flex_1().min_h_0().flex().flex_col().overflow_hidden()
                             .child(div()
@@ -687,23 +695,22 @@ impl Coincide {
             div()
                 .id("password-settings-surface")
                 .flex_1()
-                .flex_basis(px(0.))
                 .min_h_0()
                 .min_w_0()
-                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .child(self.settings_subpage_header("Passwords", "password-settings-done", cx))
                 .child(
-                    Button::new("password-settings-back")
-                        .label("Back to Settings")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.credentials_open = false;
-                            this.focus_settings_route(window, cx);
-                            this.credential_panel
-                                .update(cx, |panel, cx| panel.cancel(cx));
-                            this.sync_transcription_binding(cx);
-                            cx.notify();
-                        })),
+                    self.settings_scroll.frame(
+                        "passwords",
+                        div()
+                            .id("password-settings-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(self.credential_panel.clone()),
+                    ),
                 )
-                .child(self.credential_panel.clone())
                 .into_any_element()
         } else if self.provider_settings.open {
             self.antigravity_settings(cx)

@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct LocalRecordingConfig {
+    pub model_proof: Option<Arc<coincide_core::dictation::model_assets::VerifiedModel>>,
     pub executable: PathBuf,
     pub model: PathBuf,
     pub language: String,
@@ -38,12 +39,14 @@ pub struct LocalRecordingConfig {
 #[derive(Clone, PartialEq, Eq)]
 pub enum RecordingConfig {
     Local(LocalRecordingConfig),
+    Apple(crate::voice_speech::Configuration),
     Hosted(coincide_core::dictation::voice_api::HostedConfig),
 }
 impl RecordingConfig {
     fn maximum_seconds(&self) -> usize {
         match self {
             Self::Local(config) => config.maximum_seconds,
+            Self::Apple(config) => config.maximum_seconds,
             Self::Hosted(config) => config.maximum_seconds,
         }
     }
@@ -173,7 +176,41 @@ enum InferenceFailure {
     CleanupPending,
     Hosted(coincide_core::dictation::transcription::Error),
 }
+type ModelLease = Arc<coincide_core::dictation::model_assets::ModelReadLease>;
 trait Inference {
+    fn prepare_apple(
+        &mut self,
+        _: &crate::voice_speech::Configuration,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        Err(InferenceFailure::Failed)
+    }
+    fn apple(
+        &mut self,
+        _: &[u8],
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        Err(InferenceFailure::Failed)
+    }
+    fn cancel_apple(&mut self) {}
+
+    fn prepare_model(
+        &mut self,
+        _: &LocalRecordingConfig,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ModelLease>, InferenceFailure> {
+        Ok(None)
+    }
+    fn transcribe_with_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        wav: &[u8],
+        _: Option<&ModelLease>,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        self.transcribe(config, wav, cancelled)
+    }
+
     fn hosted(
         &mut self,
         _: &coincide_core::dictation::voice_api::HostedConfig,
@@ -189,8 +226,116 @@ trait Inference {
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<String, InferenceFailure>;
 }
-struct LocalInference;
+#[derive(Default)]
+struct LocalInference {
+    apple: Option<crate::voice_speech::Session>,
+    apple_uncertain: bool,
+}
+fn apple_failure(error: crate::voice_speech::Error) -> InferenceFailure {
+    match error {
+        crate::voice_speech::Error::Cancelled => InferenceFailure::Cancelled,
+        crate::voice_speech::Error::CleanupPending => InferenceFailure::CleanupPending,
+        _ => InferenceFailure::Failed,
+    }
+}
+
 impl Inference for LocalInference {
+    fn prepare_apple(
+        &mut self,
+        config: &crate::voice_speech::Configuration,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        if self.apple_uncertain {
+            return Err(InferenceFailure::CleanupPending);
+        }
+        if self.apple.is_some() {
+            return Ok(());
+        }
+        match crate::voice_speech::Session::prepare(config, cancelled) {
+            Ok(session) => {
+                self.apple = Some(session);
+                Ok(())
+            }
+            Err(error) => {
+                if error == crate::voice_speech::Error::CleanupPending {
+                    self.apple_uncertain = true;
+                }
+                Err(apple_failure(error))
+            }
+        }
+    }
+    fn apple(
+        &mut self,
+        wav: &[u8],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        let mut session = self.apple.take().ok_or(InferenceFailure::Failed)?;
+        let mut result = session.transcribe(wav, cancelled);
+        if !result
+            .as_ref()
+            .is_err_and(|error| *error == crate::voice_speech::Error::CleanupPending)
+            && session.cancel() == Err(crate::voice_speech::Error::CleanupPending)
+        {
+            result = Err(crate::voice_speech::Error::CleanupPending);
+        }
+        if result
+            .as_ref()
+            .is_err_and(|error| *error == crate::voice_speech::Error::CleanupPending)
+        {
+            self.apple_uncertain = true;
+        }
+        result.map_err(apple_failure)
+    }
+    fn cancel_apple(&mut self) {
+        if let Some(mut session) = self.apple.take() {
+            if session.cancel() == Err(crate::voice_speech::Error::CleanupPending) {
+                self.apple_uncertain = true;
+            }
+        }
+    }
+
+    fn prepare_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ModelLease>, InferenceFailure> {
+        if let Some(model) = &config.model_proof {
+            if model.path() != config.model {
+                return Err(InferenceFailure::Failed);
+            }
+            return model
+                .acquire(cancelled)
+                .map(Some)
+                .map_err(|_| InferenceFailure::Failed);
+        }
+        coincide_core::dictation::model_assets::acquire_model_path(&config.model, cancelled)
+            .map(Some)
+            .map_err(|_| InferenceFailure::Failed)
+    }
+    fn transcribe_with_model(
+        &mut self,
+        config: &LocalRecordingConfig,
+        wav: &[u8],
+        lease: Option<&ModelLease>,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<String, InferenceFailure> {
+        let lease = lease.ok_or(InferenceFailure::Failed)?;
+        LocalWhisper::new(
+            config.executable.clone(),
+            config.model.clone(),
+            config.language.clone(),
+            config.threads,
+            Duration::from_secs(120),
+        )
+        .map_err(|_| InferenceFailure::Failed)?
+        .transcribe_local_with_lease(wav, lease, cancelled)
+        .map_err(|error| match error {
+            LocalError::Cancelled => InferenceFailure::Cancelled,
+            LocalError::CleanupPending => InferenceFailure::CleanupPending,
+            _ => InferenceFailure::Failed,
+        })
+    }
+
     fn hosted(
         &mut self,
         config: &coincide_core::dictation::voice_api::HostedConfig,
@@ -244,6 +389,7 @@ struct Owner {
     permission_target: Option<Target>,
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
+    model_lease: Option<ModelLease>,
     dictation: bool,
     progress_bucket: Option<usize>,
     text_pending: bool,
@@ -284,10 +430,76 @@ impl Owner {
             controller.cancel();
         }
         self.audio = None;
+        self.model_lease = None;
+        if let Some(inference) = &mut self.inference {
+            inference.cancel_apple();
+        }
         self.session = None;
         self.dictation = false;
         self.target = None;
         self.phase = Phase::Idle;
+    }
+    fn prepare_model(&mut self) -> bool {
+        if let Some(RecordingConfig::Apple(config)) = self
+            .target
+            .as_ref()
+            .and_then(|target| target.config.as_ref())
+        {
+            let config = config.clone();
+            let previous_phase = self.phase;
+            self.phase = Phase::Pending;
+            self.publish("Preparing on-device Apple Speech. Its language assets or system authorization may be required. Cancel revokes this exact request.");
+            let shared = self.shared.clone();
+            let generation = self.generation;
+            let cancelled = || {
+                !shared.alive.load(Ordering::Acquire)
+                    || !shared.enabled.load(Ordering::Acquire)
+                    || shared.generation.load(Ordering::Acquire) != generation
+            };
+            let result = self
+                .inference
+                .as_mut()
+                .unwrap()
+                .prepare_apple(&config, &cancelled);
+            if let Err(error) = result {
+                self.phase = Phase::Failed;
+                self.publish(if matches!(error,InferenceFailure::CleanupPending){"Apple Speech cancellation has not returned. No recording started. Restart before another Apple request."}else{"On-device Apple Speech could not prepare for this language or authorization. Nothing was recorded. Local Whisper remains available."});
+                return false;
+            }
+            self.phase = previous_phase;
+            return true;
+        }
+        if self.model_lease.is_some() {
+            return true;
+        }
+        let Some(RecordingConfig::Local(config)) =
+            self.target.as_ref().and_then(|t| t.config.as_ref())
+        else {
+            return true;
+        };
+        let shared = self.shared.clone();
+        let generation = self.generation;
+        let cancelled = || {
+            !shared.alive.load(Ordering::Acquire)
+                || !shared.enabled.load(Ordering::Acquire)
+                || shared.generation.load(Ordering::Acquire) != generation
+        };
+        match self
+            .inference
+            .as_mut()
+            .unwrap()
+            .prepare_model(config, &cancelled)
+        {
+            Ok(lease) => {
+                self.model_lease = lease;
+                true
+            }
+            Err(_) => {
+                self.phase = Phase::Failed;
+                self.publish("The selected local model is unavailable or being removed. No recording started.");
+                false
+            }
+        }
     }
     fn command(&mut self, command: Command) {
         if !self.shared.alive.load(Ordering::Acquire)
@@ -351,6 +563,9 @@ impl Owner {
                     self.publish("Configure transcription and select a composer before dictating.");
                     return;
                 }
+                if !self.prepare_model() {
+                    return;
+                }
                 self.dictation = true;
                 let target = self.target.clone().unwrap();
                 self.command(Command {
@@ -366,6 +581,7 @@ impl Owner {
                         self.publish(if self.dictation {"Waiting for microphone authorization to start this dictation. Cancel discards this request."}else{"Waiting for explicit microphone authorization. Granting permission does not record."});
                     }
                     Err(_) => {
+                        self.model_lease = None;
                         self.phase = Phase::Failed;
                         self.publish(
                             "Microphone permission is unavailable for this backend or bundle.",
@@ -378,6 +594,9 @@ impl Owner {
                     || self.phase == Phase::Captured
                     || self.phase == Phase::Failed =>
             {
+                if !self.prepare_model() {
+                    return;
+                }
                 let Some(target) = &self.target else {
                     return;
                 };
@@ -402,6 +621,7 @@ impl Owner {
                         self.publish(if self.dictation {"Listening. Stop transcribes this recording using the captured Voice settings."}else{"Recording locally. Stop ends capture; it does not transcribe or send."});
                     }
                     Err(error) => {
+                        self.model_lease = None;
                         self.phase = Phase::Failed;
                         self.publish(match error { CaptureError::Busy => "Another native owner is using the microphone.", CaptureError::NoInput => "The requested microphone is unavailable or unsupported. No fallback input was opened.", _ => "Recording could not start. Check authorization, device and configured limits." });
                     }
@@ -462,6 +682,7 @@ impl Owner {
                         continue;
                     }
                     self.dictation = false;
+                    self.model_lease = None;
                     self.publish(match permission {
                         Permission::Authorized => "Microphone permission granted. Press Record to begin; nothing is recording.",
                         Permission::Ready => "Microphone is ready. Record opens the selected device; system privacy settings may still deny access. Nothing is recording.",
@@ -500,6 +721,7 @@ impl Owner {
                     }
                 }
                 CaptureEvent::Failed(_) => {
+                    self.model_lease = None;
                     self.text_pending = false;
                     self.audio = None;
                     self.session = None;
@@ -507,6 +729,7 @@ impl Owner {
                     self.publish("Native capture failed. Nothing was transcribed or sent.");
                 }
                 CaptureEvent::Cancelled => {
+                    self.model_lease = None;
                     self.text_pending = false;
                     self.audio = None;
                     self.session = None;
@@ -559,14 +782,26 @@ impl Owner {
         };
         let inference = self.inference.as_mut().unwrap();
         let result = match &configuration {
-            RecordingConfig::Local(config) => inference.transcribe(config, &audio.wav, &cancelled),
+            RecordingConfig::Local(config) => inference.transcribe_with_model(
+                config,
+                &audio.wav,
+                self.model_lease.as_ref(),
+                &cancelled,
+            ),
             RecordingConfig::Hosted(config) => inference.hosted(config, &audio.wav, &cancelled),
+            RecordingConfig::Apple(_) => inference.apple(&audio.wav, &cancelled),
         };
+        if matches!(&result, Err(InferenceFailure::CleanupPending)) {
+            if let Some(lease) = self.model_lease.take() {
+                coincide_core::dictation::model_assets::retain_uncertain(lease);
+            }
+        }
         if !self.current() {
             self.reset();
             return;
         }
         self.phase = Phase::Idle;
+        let model_lease = self.model_lease.take();
         match result {
             Ok(text) if !text.trim().is_empty() => {
                 self.text_pending = self
@@ -575,6 +810,7 @@ impl Owner {
                         generation: self.generation,
                         binding,
                         text,
+                        _model_lease: model_lease,
                     })
                     .is_ok();
                 self.publish("Transcript ready for the matching composer. Nothing was sent.");
@@ -704,6 +940,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 permission_target: None,
                 session: None,
                 audio: None,
+                model_lease: None,
                 dictation: false,
                 progress_bucket: None,
                 text_pending: false,
@@ -764,7 +1001,10 @@ pub struct MicrophoneSettings {
 impl MicrophoneSettings {
     pub fn new() -> (Self, Receiver<TextReady>) {
         Self::with_factory(Box::new(|| {
-            (Box::new(Microphone::new()), Box::new(LocalInference))
+            (
+                Box::new(Microphone::new()),
+                Box::new(LocalInference::default()),
+            )
         }))
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
@@ -1063,6 +1303,8 @@ mod tests {
         stops: usize,
         cancels: usize,
         inference: usize,
+        apple_prepared: bool,
+        apple_prepare_calls: usize,
         ready_permission: bool,
         device_queries: usize,
         selected_inputs: Vec<Option<String>>,
@@ -1191,6 +1433,44 @@ mod tests {
         revoke: Option<Arc<Shared>>,
     }
     impl Inference for FakeInference {
+        fn prepare_apple(
+            &mut self,
+            config: &crate::voice_speech::Configuration,
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<(), InferenceFailure> {
+            assert_eq!(config.locale, "ja-JP");
+            assert!(!cancelled());
+            let mut trace = self.trace.lock().unwrap();
+            if trace.apple_prepared {
+                return Ok(());
+            }
+            assert_eq!(
+                trace.requests, 0,
+                "speech preparation precedes the admitted capture permission/start"
+            );
+            trace.apple_prepare_calls += 1;
+            if trace.fail_inference {
+                return Err(InferenceFailure::Failed);
+            }
+            trace.apple_prepared = true;
+            Ok(())
+        }
+        fn apple(
+            &mut self,
+            wav: &[u8],
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<String, InferenceFailure> {
+            assert!(!cancelled());
+            assert!(wav.starts_with(b"RIFF"));
+            let mut trace = self.trace.lock().unwrap();
+            assert!(trace.apple_prepared);
+            trace.inference += 1;
+            Ok("合成音声の文字起こし".into())
+        }
+        fn cancel_apple(&mut self) {
+            self.trace.lock().unwrap().apple_prepared = false;
+        }
+
         fn hosted(
             &mut self,
             config: &coincide_core::dictation::voice_api::HostedConfig,
@@ -1277,6 +1557,7 @@ mod tests {
             settings_revision: 1,
             input_device_uid: None,
             config: Some(RecordingConfig::Local(LocalRecordingConfig {
+                model_proof: None,
                 executable: PathBuf::from("/synthetic/whisper"),
                 model: PathBuf::from("/synthetic/model"),
                 language: "en".into(),
@@ -1317,6 +1598,7 @@ mod tests {
             permission_target: None,
             session: None,
             audio: None,
+            model_lease: None,
             dictation: false,
             progress_bucket: None,
             text_pending: false,
@@ -1350,6 +1632,58 @@ mod tests {
         assert_eq!(devices[0].uid, "fixture-mic");
         let trace = trace.lock().unwrap();
         assert_eq!(trace.device_queries, 1);
+        assert_eq!(trace.requests, 0);
+        assert_eq!(trace.starts, 0);
+        assert_eq!(trace.inference, 0);
+        assert!(events.try_recv().is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn apple_engine_fake_prepares_before_capture_and_uses_exact_utf8_target() {
+        let (mut owner, events, trace) = setup(true, false);
+        let mut target = target();
+        target.config = Some(RecordingConfig::Apple(crate::voice_speech::Configuration {
+            locale: "ja-JP".into(),
+            maximum_seconds: 1,
+        }));
+        owner.command(Command {
+            generation: 1,
+            target: target.clone(),
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        assert_eq!(trace.lock().unwrap().starts, 1);
+        assert!(events.try_recv().is_err());
+        owner.command(Command {
+            generation: 1,
+            target: target.clone(),
+            action: Action::Stop,
+        });
+        owner.tick();
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.text, "合成音声の文字起こし");
+        assert!(target.binding == Some(event.binding));
+        let trace = trace.lock().unwrap();
+        assert_eq!(trace.apple_prepare_calls, 1);
+        assert_eq!(trace.requests, 1);
+        assert_eq!(trace.inference, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn failed_apple_preparation_never_opens_microphone_or_emits_text() {
+        let (mut owner, events, trace) = setup(true, false);
+        trace.lock().unwrap().fail_inference = true;
+        let mut target = target();
+        target.config = Some(RecordingConfig::Apple(crate::voice_speech::Configuration {
+            locale: "ja-JP".into(),
+            maximum_seconds: 1,
+        }));
+        owner.command(Command {
+            generation: 1,
+            target,
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        let trace = trace.lock().unwrap();
+        assert_eq!(trace.apple_prepare_calls, 1);
         assert_eq!(trace.requests, 0);
         assert_eq!(trace.starts, 0);
         assert_eq!(trace.inference, 0);
@@ -1719,6 +2053,7 @@ mod tests {
         };
         let binding = panel.target.binding.clone().unwrap();
         let stale = TextReady {
+            _model_lease: None,
             generation: 0,
             binding: binding.clone(),
             text: "previously queued private text".into(),
