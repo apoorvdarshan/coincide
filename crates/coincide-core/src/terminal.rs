@@ -86,6 +86,17 @@ impl Terminal {
         }
     }
     pub fn spawn(cwd: &Path, shell: &str, rows: u16, cols: u16) -> Result<Self> {
+        Self::spawn_with_environment(cwd, shell, rows, cols, &[])
+    }
+    /// `environment` is set after inherited agent bindings are removed, as a
+    /// project script's `COINCIDE_PROJECT_ROOT` and worktree path are.
+    pub fn spawn_with_environment(
+        cwd: &Path,
+        shell: &str,
+        rows: u16,
+        cols: u16,
+        environment: &[(String, String)],
+    ) -> Result<Self> {
         ensure!(cwd.is_dir(), "Terminal working directory does not exist");
         check_size(rows, cols)?;
         let pty = native_pty_system().openpty(PtySize {
@@ -117,6 +128,19 @@ impl Terminal {
             "COINCIDE_CONTROL_SOCKET",
             std::env::temp_dir().join(format!("coincide-unbound-{}.sock", uuid::Uuid::new_v4())),
         );
+        for (name, value) in environment {
+            ensure!(
+                matches!(
+                    name.as_str(),
+                    "COINCIDE_PROJECT_ROOT"
+                        | "COINCIDE_WORKTREE_PATH"
+                        | "T3CODE_PROJECT_ROOT"
+                        | "T3CODE_WORKTREE_PATH"
+                ),
+                "Terminal environment may name only project script locations"
+            );
+            command.env(name, value);
+        }
         let shell_launch = shell::ShellLaunch::prepare(
             shell,
             command

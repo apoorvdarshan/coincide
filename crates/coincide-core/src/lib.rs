@@ -9,6 +9,7 @@ pub mod control;
 pub mod provider_catalog;
 pub mod provider_preferences;
 pub use api::project_defaults;
+pub mod project_scripts;
 pub use api::provider_configuration;
 pub mod schedule_service;
 pub mod scheduling;

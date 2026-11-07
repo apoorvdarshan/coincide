@@ -26,6 +26,11 @@ icon_assets!(
         Brain,
         CornerUpRight,
         Hammer,
+        // Project script icons (Swift ProjectScript.Icon) and the scripts menu.
+        BadgeCheck,
+        WandSparkles,
+        Bug,
+        SquarePlay,
         ListPlus,
         Lock,
         LockOpen,
@@ -180,6 +185,13 @@ mod tests {
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
             "icons/square.svg",
+            // Project script icons and the scripts menu.
+            "icons/play.svg",
+            "icons/badge-check.svg",
+            "icons/wand-sparkles.svg",
+            "icons/settings.svg",
+            "icons/bug.svg",
+            "icons/square-play.svg",
         ] {
             let bytes = source.load(path).unwrap().expect(path);
             assert!(matches!(&bytes, Cow::Borrowed(_)), "{path}");

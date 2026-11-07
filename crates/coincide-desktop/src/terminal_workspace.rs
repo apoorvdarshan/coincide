@@ -570,7 +570,8 @@ enum Action {
 }
 enum Command {
     Adopt(PaneId, String),
-    Create(PaneId),
+    /// A new shell; with a project script id it also types that script.
+    Create(PaneId, Option<String>),
     Watch(Vec<PaneId>),
     Copy(PaneId, u64, u64, TerminalPoint, TerminalPoint),
     AttachSelection(SelectionRequest, ComposerBaseline),
@@ -673,8 +674,12 @@ fn run_worker(
                     },
                 );
             }
-            Ok(Command::Create(key)) => {
-                let result = call("terminal.create", json!({"threadId":thread})).and_then(|v| {
+            Ok(Command::Create(key, script)) => {
+                let params = match script {
+                    Some(script) => json!({"threadId":thread,"scriptId":script}),
+                    None => json!({"threadId":thread}),
+                };
+                let result = call("terminal.create", params).and_then(|v| {
                     v["terminalId"]
                         .as_str()
                         .map(str::to_owned)
@@ -919,7 +924,7 @@ impl TerminalWorkspace {
         ) {
             Activate::None => (),
             Activate::Focus => self.focus_active(window, cx),
-            Activate::Create => self.create(None, window, cx),
+            Activate::Create => self.create(None, None, window, cx),
         }
     }
     /// Stops only this UI transport. Engine owns the actual PTY children and IO.
@@ -1001,9 +1006,17 @@ impl TerminalWorkspace {
         });
         self.active = Some(key);
     }
+    /// Swift ThreadTerminals.run: a project script gets a new tab that comes
+    /// to the front. Existing shells are still adopted beside it, and this
+    /// panel-open does not also start a plain shell.
+    pub fn run_script(&mut self, script: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.activation.requested = false;
+        self.create(None, Some(script), window, cx);
+    }
     fn create(
         &mut self,
         split: Option<(PaneId, SplitAxis)>,
+        script: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1016,7 +1029,7 @@ impl TerminalWorkspace {
             return;
         }
         let key = self.allocate(cx);
-        if self.tx.try_send(Command::Create(key)).is_err() {
+        if self.tx.try_send(Command::Create(key, script)).is_err() {
             self.panes.remove(&key);
             self.notice = "Terminal worker busy; try again".into();
             cx.notify();
@@ -1151,6 +1164,9 @@ impl TerminalWorkspace {
                     }
                 }
                 Update::Listed(Ok(tabs)) => {
+                    // Only a script run can open a tab before listing; it
+                    // stays in front of the shells adopted after it.
+                    let front = self.active;
                     let mut adoption_ready = true;
                     for tab in tabs.iter().take(MAX_PANES) {
                         if let Some(id) = tab["terminalId"].as_str() {
@@ -1173,6 +1189,9 @@ impl TerminalWorkspace {
                         } else {
                             adoption_ready = false;
                         }
+                    }
+                    if front.is_some() {
+                        self.active = front;
                     }
                     self.activation.listed = Some(adoption_ready);
                     self.watch();
@@ -1593,7 +1612,7 @@ impl TerminalWorkspace {
                     .label(label)
                     .disabled(pane.closing)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.create(Some((key, axis)), window, cx)
+                        this.create(Some((key, axis)), None, window, cx)
                     })),
             );
         }
@@ -2042,7 +2061,7 @@ impl Render for TerminalWorkspace {
         tabs = tabs.child(
             Button::new("terminal-workspace-new")
                 .label("New terminal")
-                .on_click(cx.listener(|this, _, window, cx| this.create(None, window, cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.create(None, None, window, cx))),
         );
         let mut root = div()
             .flex()
@@ -2221,7 +2240,7 @@ mod tests {
         let (commands, rx) = mpsc::sync_channel(2);
         let (tx, updates) = mpsc::sync_channel(1);
         tx.send(Update::Listed(Ok(vec![]))).unwrap();
-        commands.send(Command::Create(1)).unwrap();
+        commands.send(Command::Create(1, None)).unwrap();
         let (entered, started) = mpsc::channel();
         let (release, wait) = mpsc::channel();
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -2475,7 +2494,7 @@ mod tests {
     fn worker_bound_clears_only_pending_creation_notice_and_keeps_real_failure() {
         let w = FakeWorker::new();
         let mut notice = WAIT_FOR_TERMINAL_CREATION.to_owned();
-        w.tx.send(Command::Create(10)).unwrap();
+        w.tx.send(Command::Create(10, None)).unwrap();
         assert!(matches!(w.next(), Update::Bound(10, Ok(_))));
         clear_creation_notice(&mut notice, false);
         assert!(notice.is_empty());
@@ -2493,7 +2512,7 @@ mod tests {
         };
         assert!(failure.contains("fixture PTY queue full"));
         notice = failure.clone();
-        w.tx.send(Command::Create(20)).unwrap();
+        w.tx.send(Command::Create(20, None)).unwrap();
         assert!(matches!(w.next(), Update::Bound(20, Ok(_))));
         clear_creation_notice(&mut notice, false);
         assert_eq!(notice, failure);
@@ -2510,8 +2529,8 @@ mod tests {
     fn worker_create_is_explicit_and_writes_remain_independently_bound() {
         let w = FakeWorker::new();
         assert_eq!(w.log.lock().unwrap().len(), 1);
-        w.tx.send(Command::Create(10)).unwrap();
-        w.tx.send(Command::Create(20)).unwrap();
+        w.tx.send(Command::Create(10, None)).unwrap();
+        w.tx.send(Command::Create(20, None)).unwrap();
         assert!(matches!(w.next(),Update::Bound(10,Ok(id)) if id=="created-1"));
         assert!(matches!(w.next(),Update::Bound(20,Ok(id)) if id=="created-2"));
         w.tx.send(Command::Act(
@@ -2548,6 +2567,28 @@ mod tests {
         assert_eq!(
             log[5],
             ("terminal.close".into(), json!({"terminalId":"created-1"}))
+        );
+        w.finish();
+    }
+    #[::core::prelude::v1::test]
+    fn worker_script_create_names_its_script_and_binds_like_a_shell() {
+        let w = FakeWorker::new();
+        let script = "0A5C0A5C-1111-4111-8111-000000000001";
+        w.tx.send(Command::Create(30, Some(script.into()))).unwrap();
+        assert!(matches!(w.next(), Update::Bound(30, Ok(id)) if id == "created-1"));
+        w.tx.send(Command::Create(31, None)).unwrap();
+        assert!(matches!(w.next(), Update::Bound(31, Ok(id)) if id == "created-2"));
+        let log = w.log.lock().unwrap().clone();
+        assert_eq!(
+            log[1],
+            (
+                "terminal.create".into(),
+                json!({"threadId":"thread-A","scriptId":script})
+            )
+        );
+        assert_eq!(
+            log[2],
+            ("terminal.create".into(), json!({"threadId":"thread-A"}))
         );
         w.finish();
     }

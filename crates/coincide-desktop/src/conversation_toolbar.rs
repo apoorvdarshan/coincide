@@ -95,6 +95,9 @@ impl Coincide {
                     .px_3()
                     .gap_1()
                     .child(heading)
+                    .when_some(self.project_scripts_control(cx), |toolbar, scripts| {
+                        toolbar.child(scripts)
+                    })
                     .child(
                         Button::new("transcript-find-open")
                             .icon(IconName::Search)
