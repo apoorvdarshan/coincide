@@ -34,6 +34,19 @@ fn stale() -> Failure {
     }
     Failure::StaleObservation
 }
+#[track_caller]
+fn denied() -> Failure {
+    #[cfg(test)]
+    {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "owned-x11-permission source-line {}:{}",
+            caller.file(),
+            caller.line()
+        );
+    }
+    Failure::PermissionDenied
+}
 fn stale_trace(_stage: &str) {
     #[cfg(test)]
     {
@@ -82,7 +95,7 @@ struct Process {
 impl Process {
     fn open(pid: u32) -> R<Self> {
         if pid == 0 || pid == std::process::id() {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let base = format!("/proc/{pid}");
         let proc = io(File::open(&base))?;
@@ -91,7 +104,7 @@ impl Process {
         let exe_id = metadata_id(&io(executable.metadata())?);
         // SAFETY: geteuid is a side-effect-free process identity getter.
         if proc_id.2 != unsafe { libc::geteuid() } {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let path = io(std::fs::read_link(format!("{base}/exe")))?;
         if policy::restricted_executable(&path.to_string_lossy()) {
@@ -149,7 +162,7 @@ fn geometry(connection: &shared::XConnection<'_>, window: u32) -> R<Geometry> {
         || a.map_state != MapState::VIEWABLE
         || a.override_redirect
     {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     Ok(Geometry {
         frame: [
@@ -204,7 +217,7 @@ fn client(connection: &shared::XConnection<'_>, window: u32) -> R<(u32, u32, u32
 }
 fn protected(connection: &shared::XConnection<'_>, window: u32) -> R<()> {
     if !native(shared::eligible_window(connection, window))? {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     for name in [
         b"_NET_WM_CONTENT_PROTECTION".as_slice(),
@@ -212,7 +225,7 @@ fn protected(connection: &shared::XConnection<'_>, window: u32) -> R<()> {
     ] {
         let property = native(shared::property(connection, window, name, AtomEnum::ANY))?;
         if property.value.iter().any(|byte| *byte != 0) {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
     }
     Ok(())
@@ -277,7 +290,7 @@ struct Window {
 impl Window {
     fn open(connection: &shared::XConnection<'_>, root: u32, pid: u32, window: u32) -> R<Self> {
         if window == 0 || window == root {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let watch = Watch::open(window)?;
         protected(connection, window)?;
@@ -408,7 +421,7 @@ fn tree_root(
             }
         }
     }
-    selected.ok_or(Failure::PermissionDenied)
+    selected.ok_or_else(denied)
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Element {
@@ -630,7 +643,7 @@ impl NativeBackend {
                     .iter()
                     .any(|node| node.secure && (screenshot || node.focused))
                 {
-                    return Err(Failure::PermissionDenied);
+                    return Err(denied());
                 }
                 let source_nodes = nodes.clone();
                 let mut elements = BTreeMap::new();
@@ -659,7 +672,7 @@ impl NativeBackend {
                     // Re-scan security after pixel IO; never publish if the tree changed.
                     let (after, post) = tree(&bus, &window, permit, deadline)?;
                     if after != accessible || post.iter().any(|e| e.secure) {
-                        return Err(Failure::PermissionDenied);
+                        return Err(denied());
                     }
                     if post != source_nodes {
                         return Err(stale());
@@ -703,7 +716,7 @@ impl NativeBackend {
                 let bus = native(shared::accessibility_bus())?;
                 let (current_root, entries) = tree(&bus, &observed.window, permit, deadline)?;
                 if current_root != observed.root || entries.iter().any(|e| e.secure && e.focused) {
-                    return Err(Failure::PermissionDenied);
+                    return Err(denied());
                 }
                 let id = match &action {
                     NativeCall::Press { native }
@@ -767,7 +780,7 @@ impl NativeBackend {
                     NativeCall::SetValue { text, .. } => {
                         let target = target.ok_or(Failure::Native)?;
                         if !target.states.contains(State::Editable) {
-                            return Err(Failure::PermissionDenied);
+                            return Err(denied());
                         }
                         let edit = proxy(&bus, &target.object, "org.a11y.atspi.EditableText")?;
                         recheck_element(&bus, target)?;
@@ -852,7 +865,7 @@ impl NativeBackend {
                         )?;
                         let entry = entries.iter().find(|e| e.object == hit).ok_or(stale())?;
                         if entry.secure || !entry.states.contains(State::Enabled) {
-                            return Err(Failure::PermissionDenied);
+                            return Err(denied());
                         }
                         input_guard(&connection, observed, permit, deadline)?;
                         x!(x!(connection.xtest_fake_input(
@@ -991,11 +1004,11 @@ fn input_guard(
     }
     let pointer = x!(x!(connection.query_pointer(observed.window.identity.root)).reply());
     if u16::from(pointer.mask) != 0 {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     let keys = x!(x!(connection.query_keymap()).reply());
     if keys.keys.iter().any(|byte| *byte != 0) {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     checked(permit, deadline)
 }
