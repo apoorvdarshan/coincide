@@ -67,7 +67,7 @@ fn summary(account: &Account) -> Result<NativeKeyAccount> {
         has_key: account.key.is_some(),
     })
 }
-fn cleanup(payload: &mut Value, slot: &SecretSlot) -> Result<()> {
+pub(super) fn cleanup(payload: &mut Value, slot: &SecretSlot) -> Result<()> {
     if payload.get("secret_cleanup").is_none() {
         payload["secret_cleanup"] = json!({});
     }
@@ -138,6 +138,7 @@ impl Engine {
             key_variable: Some(variable.into()),
             key: None,
             codex_enrollment: None,
+            admin_key: None,
             home,
             home_identity,
             guard_identity,
@@ -371,7 +372,7 @@ impl Engine {
                     .as_object()
                     .unwrap()
                     .values()
-                    .any(|account| account["key"]["id"] == id),
+                    .any(|account| account["key"]["id"] == id || account["admin_key"]["id"] == id),
                 "Active account key cannot be cleaned"
             );
             secrets.delete(&slot)?;

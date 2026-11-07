@@ -31,6 +31,7 @@ pub struct NativeProviderAccount {
     pub authentication: NativeAccountAuthentication,
     pub key_variable: Option<String>,
     pub has_key: bool,
+    pub has_admin_key: bool,
 }
 fn ordered_ids(payload: &Value) -> Result<Vec<String>> {
     let accounts = payload["accounts"]
@@ -103,6 +104,8 @@ pub(super) struct Account {
     key: Option<account_secret_store::SecretSlot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     codex_enrollment: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admin_key: Option<account_secret_store::SecretSlot>,
     home: PathBuf,
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
@@ -243,6 +246,12 @@ fn account(payload: &Value, provider: &str, id: &str) -> Result<Account> {
         account.provider == provider && account.id == id,
         "Native account identity does not match"
     );
+    if let Some(slot) = &account.admin_key {
+        ensure!(
+            slot.belongs_to(provider, id, account_secret_store::SecretPurpose::AdminKey),
+            "Admin key belongs to another account"
+        );
+    }
     Ok(account)
 }
 impl LoginHome {
@@ -585,6 +594,7 @@ impl Engine {
                     authentication: row.authentication,
                     key_variable: row.key_variable,
                     has_key: row.key.is_some(),
+                    has_admin_key: row.admin_key.is_some(),
                 })
             })
             .collect()
@@ -639,6 +649,7 @@ impl Engine {
             key_variable: None,
             key: None,
             codex_enrollment: None,
+            admin_key: None,
             home,
             home_identity,
             guard_identity,
@@ -1035,6 +1046,10 @@ pub(crate) use codex_key_context::NativeCodexApiContext;
 #[path = "native_codex_key_enrollment.rs"]
 mod codex_key_enrollment;
 pub use codex_key_enrollment::{NativeCodexKeyEnrollment, NativeCodexKeyEnrollmentReceipt};
+#[path = "native_admin_accounts.rs"]
+mod admin;
+pub use admin::{NativeAdminModel, NativeAdminTokens, NativeAdminUsage, NativeAdminUsageReport};
+
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};

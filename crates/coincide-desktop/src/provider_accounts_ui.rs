@@ -12,6 +12,7 @@ pub(super) struct Snapshot {
 struct Draft {
     name: Entity<InputState>,
     key: Entity<InputState>,
+    admin_key: Entity<InputState>,
     saved_name: String,
     lease: NativeUiEditLease,
     _subscriptions: Vec<Subscription>,
@@ -20,6 +21,7 @@ impl Draft {
     fn dirty(&self, cx: &App) -> bool {
         self.name.read(cx).value().as_ref() != self.saved_name
             || !self.key.read(cx).value().is_empty()
+            || !self.admin_key.read(cx).value().is_empty()
     }
 }
 #[derive(Default)]
@@ -31,6 +33,7 @@ struct Editor {
     cleanup: usize,
     notice: String,
     reports: HashMap<String, ProbeReport>,
+    admin_reports: HashMap<String, coincide_core::provider_configuration::NativeAdminUsageReport>,
 }
 struct Review {
     provider: String,
@@ -67,6 +70,19 @@ pub(super) enum Request {
         revision: String,
         value: String,
     },
+    SaveAdmin {
+        id: String,
+        revision: String,
+        value: String,
+    },
+    RemoveAdmin {
+        id: String,
+        revision: String,
+    },
+    ReadAdmin {
+        id: String,
+        revision: String,
+    },
     RemoveKey {
         id: String,
         revision: String,
@@ -95,6 +111,15 @@ pub(super) enum Request {
     Cleanup,
 }
 pub(super) enum Outcome {
+    AdminSaved {
+        snapshot: Snapshot,
+        id: String,
+    },
+    AdminReport {
+        snapshot: Snapshot,
+        id: String,
+        report: coincide_core::provider_configuration::NativeAdminUsageReport,
+    },
     Snapshot {
         snapshot: Snapshot,
         notice: String,
@@ -150,6 +175,37 @@ pub(super) fn execute(
     anyhow::ensure!(allowed(), "Account settings are closing");
     match request {
         Request::Load => done(engine, provider, "", None),
+        Request::SaveAdmin {
+            id,
+            revision,
+            value,
+        } => {
+            try_state(engine)?.save_native_account_admin_key(provider, &id, &revision, &value)?;
+            Ok(Outcome::AdminSaved {
+                snapshot: snapshot(engine, provider)?,
+                id,
+            })
+        }
+        Request::RemoveAdmin { id, revision } => {
+            try_state(engine)?.remove_native_account_admin_key(provider, &id, &revision)?;
+            done(
+                engine,
+                provider,
+                "Admin key removed. Private cleanup is retryable.",
+                None,
+            )
+        }
+        Request::ReadAdmin { id, revision } => {
+            let plan =
+                try_state(engine)?.prepare_native_account_admin_usage(provider, &id, &revision)?;
+            let report = plan.run(allowed)?;
+            anyhow::ensure!(allowed(), "Account settings are closing");
+            Ok(Outcome::AdminReport {
+                snapshot: snapshot(engine, provider)?,
+                id,
+                report,
+            })
+        }
         Request::Create {
             login,
             name,
@@ -368,8 +424,16 @@ impl Panel {
             })
         });
         key.update(cx, |input, cx| input.set_masked(true, window, cx));
+        let admin_key = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(if row.has_admin_key {
+                "Saved Admin key"
+            } else {
+                "Paste an Admin API key"
+            })
+        });
+        admin_key.update(cx, |input, cx| input.set_masked(true, window, cx));
         let mut subscriptions = Vec::new();
-        for input in [&name, &key] {
+        for input in [&name, &key, &admin_key] {
             let provider = provider.to_owned();
             subscriptions.push(cx.subscribe(input, move |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -391,9 +455,17 @@ impl Panel {
                 this.save_account_key(&provider_key, &id, cx);
             }
         }));
+        let provider_key = provider.to_owned();
+        let id = row.id.clone();
+        subscriptions.push(cx.subscribe(&admin_key, move |this, _, event, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.save_account_admin_key(&provider_key, &id, cx);
+            }
+        }));
         Draft {
             name,
             key,
+            admin_key,
             saved_name: row.name.clone(),
             lease: self.native_editors.editor(),
             _subscriptions: subscriptions,
@@ -408,6 +480,34 @@ impl Panel {
         cx: &mut Context<Self>,
     ) {
         let (snapshot, notice, clear_key) = match outcome {
+            Outcome::AdminSaved { snapshot, id } => {
+                if unchanged
+                    && let Some(draft) = self
+                        .accounts
+                        .editors
+                        .get_mut(provider)
+                        .and_then(|editor| editor.drafts.get_mut(&id))
+                {
+                    draft
+                        .admin_key
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                }
+                (
+                    snapshot,
+                    "Admin key saved for read-only organization reports.".into(),
+                    None,
+                )
+            }
+            Outcome::AdminReport {
+                snapshot,
+                id,
+                report,
+            } => {
+                if let Some(editor) = self.accounts.editors.get_mut(provider) {
+                    editor.admin_reports.insert(id, report);
+                }
+                (snapshot, "Organization report refreshed.".into(), None)
+            }
             Outcome::Review { plan, custody } => {
                 self.accounts.review = Some(Review {
                     provider: provider.into(),
@@ -514,6 +614,9 @@ impl Panel {
                     draft
                         .key
                         .update(cx, |input, cx| input.set_value("", window, cx));
+                    draft
+                        .admin_key
+                        .update(cx, |input, cx| input.set_value("", window, cx));
                     draft.saved_name = row.name.clone();
                     draft.lease.set_dirty(false);
                 }
@@ -536,6 +639,9 @@ impl Panel {
             });
             draft
                 .key
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            draft
+                .admin_key
                 .update(cx, |input, cx| input.set_value("", window, cx));
             draft.saved_name = row.name.clone();
             draft.lease.set_dirty(false);
@@ -796,6 +902,9 @@ impl Panel {
                     } else {
                         "No saved API key."
                     }));
+                if admin_eligible(row) {
+                    card = card.child(self.admin_controls(&provider, row, draft, busy, cx));
+                }
                 if provider == "codex" && row.has_key {
                     card = card.child(
                         Button::new(SharedString::from(format!("account-key-enroll-{id}")))
@@ -964,6 +1073,10 @@ impl Panel {
             .into_any_element()
     }
 }
+
+#[path = "provider_admin_ui.rs"]
+mod admin_ui;
+use admin_ui::admin_eligible;
 
 #[cfg(test)]
 mod tests {

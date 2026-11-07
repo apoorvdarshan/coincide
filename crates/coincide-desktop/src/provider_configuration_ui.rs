@@ -508,13 +508,12 @@ impl Panel {
             self.start(&provider, Request::Load, cx);
         }
         if self.pending.is_none()
-            && self
+            && let Some(provider) = self
                 .editors
-                .get(&self.active)
-                .is_some_and(|editor| editor.loaded)
-            && self.accounts.needs_load(&self.active)
+                .iter()
+                .find(|(provider, editor)| editor.loaded && self.accounts.needs_load(provider))
+                .map(|(provider, _)| provider.clone())
         {
-            let provider = self.active.clone();
             self.start(&provider, Request::Accounts(accounts::Request::Load), cx);
         }
         if self.pending.is_none() {

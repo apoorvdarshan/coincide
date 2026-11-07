@@ -10,7 +10,12 @@ void cc_mic_permission_destroy(void *request);
 // Capture state: 1 recording, 2 ready, 3 limit reached, negative = failure.
 // Error codes: -1 unavailable, -2 permission, -3 input/format, -4 overflow,
 // -5 conversion, -6 device/configuration change, -7 invalid arguments, -8 busy (another owner).
+typedef struct { char *uid; char *name; int is_default; } CCMicInputDevice;
+int cc_mic_input_devices(CCMicInputDevice **out, size_t *count);
+void cc_mic_input_devices_free(CCMicInputDevice *devices, size_t count);
+uint32_t cc_mic_resolve_input_device(const char *uid);
 void *cc_mic_start(size_t maximum_samples, int *error);
+void *cc_mic_start_device(size_t maximum_samples, const char *uid, int *error);
 void cc_mic_stop(void *capture);
 void cc_mic_cancel(void *capture);
 int cc_mic_poll(void *capture);

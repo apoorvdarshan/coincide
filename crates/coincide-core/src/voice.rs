@@ -53,6 +53,7 @@ pub struct Settings {
     pub sends_when_stopped: bool,
     pub openai_model: String,
     pub groq_model: String,
+    pub input_device_uid: Option<String>,
 }
 impl Settings {
     pub fn decode(settings: &Value) -> Self {
@@ -79,6 +80,7 @@ impl Settings {
             },
             sends_when_stopped: v["sendsWhenStopped"].as_bool().unwrap_or(false),
             openai_model: v["openAIModel"].as_str().unwrap_or("gpt-transcribe").into(),
+            input_device_uid: v["inputDeviceUID"].as_str().map(str::to_owned),
             groq_model: v["groqModel"]
                 .as_str()
                 .unwrap_or("whisper-large-v3-turbo")
@@ -130,6 +132,7 @@ pub enum Edit {
     Mode(Mode),
     SendsWhenStopped(bool),
     Model(Engine, String),
+    InputDevice(Option<String>),
 }
 impl Edit {
     pub fn apply(self, document: &mut Value) -> anyhow::Result<()> {
@@ -143,6 +146,15 @@ impl Edit {
             .as_object_mut()
             .context("Voice settings are not an object")?;
         let (key, value) = match self {
+            Self::InputDevice(uid) => {
+                ensure!(
+                    uid.as_ref().is_none_or(|uid| !uid.is_empty()
+                        && uid.len() <= 4096
+                        && !uid.chars().any(char::is_control)),
+                    "Invalid microphone identifier"
+                );
+                ("inputDeviceUID", json!(uid))
+            }
             Self::Model(engine, model) => {
                 ensure!(
                     !model.is_empty()
@@ -378,6 +390,36 @@ mod tests {
         assert_eq!(v["voice"]["inputDeviceUID"], "private-device");
         assert_eq!(v["voice"]["unknown"], json!({"keep":true}));
         assert!(!Settings::decode(&v).enabled);
+    }
+    #[test]
+    fn native_input_choice_preserves_swift_uid_and_unknowns_without_silent_default_fallback() {
+        let mut document = json!({"voice":{"inputDeviceUID":"disconnected-swift-uid","future":{"keep":true}},"other":{"keep":1}});
+        assert_eq!(
+            Settings::decode(&document).input_device_uid.as_deref(),
+            Some("disconnected-swift-uid")
+        );
+        Edit::Engine(Engine::Whisper).apply(&mut document).unwrap();
+        assert_eq!(
+            document["voice"]["inputDeviceUID"],
+            "disconnected-swift-uid"
+        );
+        Edit::InputDevice(Some("native-selected-uid".into()))
+            .apply(&mut document)
+            .unwrap();
+        assert_eq!(
+            Settings::decode(&document).input_device_uid.as_deref(),
+            Some("native-selected-uid")
+        );
+        assert_eq!(document["voice"]["future"], json!({"keep":true}));
+        assert_eq!(document["other"], json!({"keep":1}));
+        Edit::InputDevice(None).apply(&mut document).unwrap();
+        assert!(document["voice"]["inputDeviceUID"].is_null());
+        assert!(Settings::decode(&document).input_device_uid.is_none());
+        assert!(
+            Edit::InputDevice(Some(String::new()))
+                .apply(&mut document)
+                .is_err()
+        );
     }
     #[test]
     fn lone_modifier_hold_interruption_cancel_and_tap_boundaries() {
