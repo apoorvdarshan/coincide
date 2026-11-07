@@ -956,9 +956,7 @@ impl Coincide {
             .iter()
             .any(|(id, _)| self.media.owner.durable_ownership(*id).is_some());
         div().id("historical-media-surface").flex_1().min_h_0().min_w_0().flex().flex_col()
-            .child(Button::new("historical-media-back").label("Back to Settings")
-                .disabled(self.media.close_requested||self.media.shutdown_requested)
-                .on_click(cx.listener(|this,_,window,cx|{this.media.opened=false;this.focus_settings_route(window,cx);cx.notify();})))
+            .child(self.settings_subpage_header("Historical images", "historical-media-done", cx))
             .child(div().p_2().text_sm().child("Keep this app open until image recovery finishes."))
             .when(self.media.close_requested||self.media.shutdown_requested,|view|view.child(div().p_2().child("Closing is paused until image work finishes and every receipt is saved and acknowledged.")))
             .child(div().p_2().text_sm().child(format!("Retained service receipts: {retained} · parent handoffs: {}. {}",pending.len(),self.media.status)))

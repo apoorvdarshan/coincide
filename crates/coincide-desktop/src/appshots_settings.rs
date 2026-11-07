@@ -123,7 +123,6 @@ impl Coincide {
     pub(super) fn appshots_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = Settings::read(&self.settings);
         let mut pane=div().id("appshots-settings").flex_1().min_w_0().min_h_0().overflow_y_scroll().p_5().flex().flex_col().gap_4()
-            .child(div().text_xl().child("Appshots"))
             .child("Capture the window you’re working in and ask an agent about it.")
             .child(Button::new("appshots-enabled").label(if settings.enabled{"Turn off Appshots"}else{"Turn on Appshots"}).on_click(cx.listener(move|this,_,window,cx|this.change_appshot_setting("enabled",json!(!settings.enabled),window,cx))))
             .child("Capture the frontmost window of the app you’re using and attach it to a chat, ready for your question.")
@@ -193,13 +192,16 @@ impl Coincide {
                 },
             )));
         }
-        self.settings_scroll.frame("appshots",
+        div().id("appshots-settings-surface").flex_1().min_h_0().min_w_0().flex().flex_col()
+            .child(self.settings_subpage_header("Appshots", "appshots-settings-done", cx))
+            .child(self.settings_scroll.frame("appshots",
         pane.child(self.appshots.permissions.detail.clone())
             .child(div().text_lg().child("Privacy"))
             .child("Appshots never send on their own. The picture waits in the composer. A writable chat used in the last minute receives it; otherwise a new projectless chat is created.")
             .child("Only the frontmost eligible window is captured, never the whole screen. Coincide’s windows, protected windows and detected password entry are skipped. Captures stay with local attachments until you send. OS privacy and text availability differ by platform.")
             .when(self.appshots.private_cleanup_pending(),|pane|pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
-            .child(format!("Last appshot: {}",self.appshots.outcome))        )
+            .child(format!("Last appshot: {}",self.appshots.outcome))))
+            .into_any_element()
     }
 }
 fn key_code(key: &str) -> u8 {

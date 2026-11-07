@@ -1577,16 +1577,7 @@ impl Coincide {
             .min_w_0()
             .flex()
             .flex_col()
-            .child(
-                Button::new("computer-use-settings-back")
-                    .label("Back to Settings")
-                    .disabled(self.media.close_requested || self.media.shutdown_requested)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.computer_use_open = false;
-                        this.focus_settings_route(window, cx);
-                        cx.notify();
-                    })),
-            )
+            .child(self.settings_subpage_header("Computer Use", "computer-use-settings-done", cx))
             .child(
                 div()
                     .p_2()
