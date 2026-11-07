@@ -1,7 +1,7 @@
 use super::{Kind, Sink};
 use anyhow::Result;
-use gtk::glib::SignalHandlerId;
-use webkit2gtk::{ScriptDialogType, WebView, prelude::*};
+use gtk::glib::{SignalHandlerId, prelude::ObjectExt};
+use webkit2gtk::{ScriptDialogType, WebView, WebViewExt};
 use wry::WebViewExtUnix;
 
 pub(super) struct Adapter {
