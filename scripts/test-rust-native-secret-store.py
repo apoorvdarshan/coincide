@@ -96,9 +96,9 @@ def main() -> int:
     try:
         if sys.platform.startswith("linux"):
             # Do not inherit a host Secret Service or reuse a desktop bus.
-            env = os.environ.copy()
-            env.pop("DBUS_SESSION_BUS_ADDRESS", None)
-            subprocess.run(["dbus-run-session", "--", sys.executable, str(Path(__file__).resolve()),
+            env = {key: os.environ[key] for key in ["PATH", "LANG", "GITHUB_ACTIONS", "RUNNER_TEMP"]
+                   if key in os.environ}
+            subprocess.run(["dbus-run-session", "--", sys.executable, "-I", str(Path(__file__).resolve()),
                             "--inside-private-bus", str(binaries[0]), str(root)],
                            env=env, check=True, timeout=90)
         else:
