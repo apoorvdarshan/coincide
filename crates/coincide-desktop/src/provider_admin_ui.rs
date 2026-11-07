@@ -109,7 +109,7 @@ impl Panel {
             .into_any_element()
     }
     /// Metadata-only lists. The sole report request is the explicit button.
-    pub fn admin_usage_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub fn admin_usage_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.pending.is_some() || !self.workers.can_start();
         let mut pane=div().flex().flex_col().gap_3().p_3().rounded_md().border_1().border_color(rgb(0x29303d))
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Anthropic organization reports"))
