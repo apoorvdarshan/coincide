@@ -965,6 +965,8 @@ impl Engine {
             || method.starts_with("usage.codex")
         {
             Some("codex".to_owned())
+        } else if method.starts_with("usage.claude") {
+            Some("claude".to_owned())
         } else if matches!(
             method,
             "agent.models.refresh"

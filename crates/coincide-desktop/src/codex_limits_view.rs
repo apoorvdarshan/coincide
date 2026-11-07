@@ -91,9 +91,14 @@ fn bucket(value: &Value) -> Result<Bucket, ()> {
         .ok_or(())?
         .iter()
         .map(|v| match v.as_str() {
-            Some("workspace_credits_depleted") => Ok("Workspace credits depleted".into()),
-            Some("workspace_usage_limit_reached") => Ok("Workspace usage limit reached".into()),
-            Some("workspace_spend_control_reached") => Ok("Workspace spend control reached".into()),
+            // Swift's `CodexUsageLimits.notes` wording.
+            Some("workspace_credits_depleted") => Ok("The workspace is out of credits.".into()),
+            Some("workspace_usage_limit_reached") => {
+                Ok("The workspace’s usage limit is reached.".into())
+            }
+            Some("workspace_spend_control_reached") => {
+                Ok("The workspace’s spend control is reached.".into())
+            }
             _ => Err(()),
         })
         .collect::<Result<Vec<_>, ()>>()?;
@@ -255,6 +260,14 @@ impl LimitsView {
         self.account = account;
         self.phase = Phase::Idle;
         cx.notify();
+    }
+    /// The current read, which Settings › Usage shows under its account.
+    pub fn phase(&self) -> &Phase {
+        &self.phase
+    }
+    /// The named profile this view reads, or None for the default runtime.
+    pub fn account(&self) -> Option<&str> {
+        self.account.as_deref()
     }
     pub fn set(&mut self, phase: Phase, cx: &mut Context<Self>) {
         if self.phase != phase {
