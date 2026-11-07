@@ -158,6 +158,22 @@ jobs:
           restore-keys: |
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cachekey }}-
             rust-desktop-${{ runner.os }}-${{ runner.arch }}-
+      - name: Test production native host before UI compilation
+        shell: pwsh
+        run: |
+          cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use -- --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-fake-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero production native host fake tests' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-fake-tests.log" -SimpleMatch 'constructor_is_inert_and_has_no_native_handles ... ok')) { throw 'Expected inert production Windows constructor' }
+      - name: Test exact owned Windows fixture before UI compilation
+        shell: pwsh
+        run: |
+          $env:COINCIDE_CU_NATIVE_CI = 'owned-window-v1'
+          try {
+            cargo test -p coincide-native-host-tests --features native-computer-use --locked computer_use::windows::native_tests::actual_owned_window_actions_and_capture_drain -- --ignored --exact --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-host-owned-window.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Select-String -Path "$env:RUNNER_TEMP/native-host-owned-window.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly one unchanged owned-window native host test' }
+          } finally { Remove-Item Env:COINCIDE_CU_NATIVE_CI -ErrorAction SilentlyContinue }
       - run: cargo check -p coincide-desktop --locked
       - name: Check opt-in desktop helper transport
         run: cargo check -p coincide-desktop --locked --features preview-updater-helper
