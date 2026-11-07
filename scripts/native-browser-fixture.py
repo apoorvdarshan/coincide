@@ -121,3 +121,60 @@ def exercise_browser(rpc, thread_id, capture_visible):
         server.server_close()
         worker.join(timeout=5)
         assert not worker.is_alive(), "Owned HTTP fixture has not returned"
+
+
+def main():
+    """Windows native smoke uses its existing owner-aware CLI, with fresh env."""
+    import argparse
+    from pathlib import Path
+    import subprocess
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--client", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--thread", required=True)
+    parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--capture-ready", type=Path, required=True)
+    parser.add_argument("--capture-ack", type=Path, required=True)
+    args = parser.parse_args()
+    assert os.environ.get("GITHUB_ACTIONS") == "true", "Fresh CI runner only"
+    client = args.client.resolve(strict=True)
+    data = args.data_dir.resolve(strict=True)
+    environment = {key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA") if key in os.environ}
+    environment["COINCIDE_RUST_DATA_DIR"] = str(data)
+    def rpc(method, **params):
+        process = subprocess.Popen([str(client), "api"], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, encoding="utf-8", env=environment)
+        # Popen.communicate does not terminate a timed-out child. A failure
+        # retains the fixture instead of reporting a semantic cleanup as return.
+        try:
+            stdout, stderr = process.communicate(json.dumps(dict(id=1, method=method, params=params)) + "\n", timeout=15)
+        finally:
+            if process.poll() is None:
+                # Keep the helper as the real client owner on uncertain return.
+                # Its native parent records the deadline failure and retains
+                # the private fixture; no detached child can count as cleanup.
+                process.wait()
+        assert process.returncode == 0, "Owned control client failed: " + method
+        response = json.loads(stdout)
+        assert "error" not in response, (method, response.get("error"))
+        return response["result"]
+    def capture_visible():
+        nonce = uuid.uuid4().hex
+        args.capture_ready.write_text(nonce)
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            if args.capture_ack.exists() and args.capture_ack.read_text() == nonce:
+                return
+            time.sleep(.05)
+        raise AssertionError("Native parent did not acknowledge its actual browser capture")
+    try:
+        report = exercise_browser(rpc, args.thread, capture_visible)
+        args.report.write_text(json.dumps(report, indent=2))
+    except BaseException as error:
+        args.report.write_text(json.dumps({"passed": False, "error": str(error)[:2000]}, indent=2))
+        raise
+
+
+if __name__ == "__main__":
+    main()
