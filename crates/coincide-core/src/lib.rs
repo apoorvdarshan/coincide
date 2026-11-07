@@ -30,6 +30,7 @@ pub mod local_usage;
 pub mod organization;
 pub mod platform_host;
 pub mod remote;
+pub mod turn_checkpoints;
 pub mod usage_history;
 pub mod usage_limits;
 pub mod usage_presentation;

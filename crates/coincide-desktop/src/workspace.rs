@@ -365,6 +365,13 @@ impl WorkspacePanel {
         }
         cx.notify();
     }
+    /// A diff the parent read itself, such as one turn's changes. A later
+    /// refresh keeps it; choosing another diff here replaces it.
+    pub fn show_diff(&mut self, notice: String, diff: String, cx: &mut Context<Self>) {
+        self.notice = notice;
+        self.diff = diff;
+        cx.notify();
+    }
     /// Only a completed worker refresh supplies an authoritative canonical root.
     pub fn cached_context(&self) -> Option<(String, String)> {
         let binding = &self.snapshot.as_ref()?.binding;

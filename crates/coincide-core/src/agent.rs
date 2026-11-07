@@ -277,6 +277,7 @@ impl Session {
             instructions,
             policy,
             None,
+            None,
         )
     }
     pub(crate) fn start_with_mode_policy_and_profile(
@@ -286,6 +287,7 @@ impl Session {
         instructions: Option<String>,
         policy: Option<crate::composer_policy::Policy>,
         named: Option<NamedProfileLaunch>,
+        prelude: Option<Box<dyn FnOnce() + Send>>,
     ) -> Self {
         let (profile, named_model, named_resume) = match named {
             Some(named) => (Some(named.profile), named.model, Some(named.resume)),
@@ -300,6 +302,19 @@ impl Session {
         let completed_output = named_completion.clone();
         let configuration = crate::provider_configuration::current();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
+            // Work that must finish before the agent can change anything, such
+            // as the turn's before checkpoint. A Stop sent meanwhile ends the
+            // turn without launching the provider.
+            if let Some(prelude) = prelude {
+                prelude();
+                if commands
+                    .try_iter()
+                    .any(|command| matches!(command, Control::Stop))
+                {
+                    let _ = events_tx.send(Event::Finished);
+                    return;
+                }
+            }
             let _configuration_scope = crate::provider_configuration::enter(configuration);
             let result = validate_instructions(&provider, instructions.as_deref())
                 .and_then(|()| {

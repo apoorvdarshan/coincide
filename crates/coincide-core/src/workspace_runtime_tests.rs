@@ -599,3 +599,58 @@ fn review_diff_route_validates_scope_and_reads_untracked_changes() {
     );
     assert_eq!(git(&root, &["status", "--porcelain=v1", "-z"]), status);
 }
+
+#[test]
+fn merged_git_runner_preserves_raw_exit_status_and_authorized_output_cuts() {
+    use crate::workspace::{GitOptions, GitRequest, git_output, git_with};
+    let (_dir, _engine, _thread, root, _) = fixture();
+    std::fs::write(root.join("large.txt"), vec![b'x'; 128 * 1024]).unwrap();
+    git(&root, &["add", "large.txt"]);
+    git(&root, &["commit", "-qm", "bounded output fixture"]);
+    let args = ["show", "HEAD:large.txt"];
+    let raw = git_output(
+        &root,
+        &args,
+        &GitRequest {
+            max_output: 1024,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(raw.success);
+    assert!(raw.overflowed);
+    assert!(!raw.truncated);
+    assert_eq!(raw.stdout.len(), 1025);
+    let (bytes, cut) = git_with(
+        &root,
+        &args,
+        &GitOptions {
+            max_output: 1024,
+            truncate: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(cut);
+    assert_eq!(bytes, vec![b'x'; 1024]);
+    assert!(
+        git_with(
+            &root,
+            &args,
+            &GitOptions {
+                max_output: 1024,
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    let missing = git_output(
+        &root,
+        &["rev-parse", "--verify", "refs/heads/absent-private-fixture"],
+        &GitRequest::default(),
+    )
+    .unwrap();
+    assert!(!missing.success);
+    assert!(missing.code.is_some_and(|code| code != 0));
+    assert!(!missing.stderr.is_empty());
+}

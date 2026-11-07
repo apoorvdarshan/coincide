@@ -19,6 +19,11 @@ use uuid::Uuid;
 
 #[path = "appshots_api.rs"]
 mod appshots_api;
+#[path = "checkpoint_api.rs"]
+mod checkpoint_api;
+#[cfg(test)]
+#[path = "checkpoint_api_tests.rs"]
+mod checkpoint_api_tests;
 pub use appshots_api::{AppshotTicket, PreparedAppshot};
 
 #[path = "queue_dispatch.rs"]
@@ -266,6 +271,7 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
 impl Engine {
@@ -351,6 +357,7 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            turn_checkpoints: checkpoint_api::State::default(),
             composer_commands: Default::default(),
         }
     }
@@ -403,6 +410,9 @@ impl Engine {
         }
         if workspace_api::METHODS.contains(&method) {
             return self.workspace_command(method, p);
+        }
+        if checkpoint_api::METHODS.contains(&method) {
+            return self.checkpoint_command(method, p);
         }
         match method {
             "notifications.status" => Ok(self.notification_events.status()),
@@ -650,6 +660,7 @@ impl Engine {
                 methods.extend_from_slice(project_management_api::METHODS);
                 methods.extend_from_slice(computer_use_engine::METHODS);
                 methods.extend_from_slice(workspace_api::METHODS);
+                methods.extend_from_slice(checkpoint_api::METHODS);
                 methods.extend_from_slice(organization_api::METHODS);
                 methods.push("composer.context.edit");
                 methods.push("composer.context.attachTerminalSelection");
@@ -1353,6 +1364,12 @@ impl Engine {
             SendOrigin::Queued(claim) => Some(claim.id().to_owned()),
             _ => None,
         };
+        let user_item_id = v["items"]
+            .as_array()
+            .and_then(|items| items.last())
+            .map(|item| text(item, "id"))
+            .unwrap_or_default();
+        let checkpoint = self.prepare_turn_checkpoint(&id, &user_item_id, &cwd);
         self.insert_running(
             id,
             Running {
@@ -1372,6 +1389,7 @@ impl Engine {
                     bot_instructions,
                     mode_policy,
                     named_launch,
+                    checkpoint,
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1884,6 +1902,7 @@ impl Engine {
             self.revision += 1;
         }
         self.poll_workspace_completions();
+        self.poll_turn_checkpoints();
         self.background_workers.poll();
         // Reclaim abandoned operations while allowing callers time to collect a result.
         self.browser_pending
@@ -2282,6 +2301,9 @@ impl Engine {
                 }
             }
             self.revision += 1;
+            if finished {
+                self.finish_turn_checkpoint(&id);
+            }
             if finished
                 && let Some(run) = self.runs.remove(&id)
                 && let Some(claim) = run.schedule_claim
