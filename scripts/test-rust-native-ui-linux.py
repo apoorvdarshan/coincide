@@ -220,11 +220,35 @@ def main():
         bottom = max(int(row["top"]) + int(row["height"]) for row in rows)
         assert top > before.height // 2, "Composer placeholder must be in the lower native workspace"
         report["composerInputBounds"] = [left, top, right, bottom]
+        # Mapping/initial focus predates the asynchronous native thread-open.
+        # Xvfb has no window manager: acknowledge the exact owned X focus again
+        # at the actual input boundary, rather than inferring it from pixels.
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        assert int(command("xdotool", "getwindowfocus", env=env)) == int(window), "Composer input must target the observed owned X11 window"
         command("xdotool", "mousemove", "--window", window,
                 str((left + right) // 2), str((top + bottom) // 2), "click", "1", env=env)
+        command("import", "-window", window, str(artifacts / "composer-after-click.png"), env=env)
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
-        wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
+        command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
+        try:
+            wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
+        except BaseException:
+            # This fixture contains synthetic text only. Preserve the actual
+            # input/owner outcome before cleanup; never retype or relax the
+            # existing exact persistence assertion/deadline on failure.
+            try:
+                report["composerInputFailure"] = {
+                    "focusedWindow": command("xdotool", "getwindowfocus", env=env),
+                    "ownedWindow": window,
+                    "activeThread": rpc("app.status").get("activeThread"),
+                    "expectedThread": thread_id,
+                    "savedDraft": rpc("threads.read", threadId=thread_id).get("draft"),
+                }
+                command("import", "-window", window, str(artifacts / "composer-failure.png"), env=env)
+            except Exception as diagnostic_error:
+                report["composerFailureEvidenceError"] = type(diagnostic_error).__name__
+            raise
         capture(window, "typed-draft", "keyboard draft")
         report["checks"].append("visible rendered native window and X11 keyboard draft persisted")
         command("xdotool", "key", "--clearmodifiers", "ctrl+k", env=env)
