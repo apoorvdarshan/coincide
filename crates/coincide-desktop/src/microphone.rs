@@ -65,6 +65,18 @@ pub struct CapturedAudio {
     pub wav: Vec<u8>,
     pub limit_reached: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CaptureProgress {
+    pub session: Uuid,
+    pub captured_samples: usize,
+    /// Actual converted mono peak for the latest native buffer, in 0..=1.
+    pub level: f32,
+}
+#[derive(Clone, Copy)]
+struct BackendProgress {
+    samples: usize,
+    level: f32,
+}
 pub enum CaptureEvent {
     PermissionChanged(Permission),
     Started(Uuid),
@@ -86,6 +98,9 @@ trait CaptureBackend {
     fn stop(&mut self);
     fn cancel(&mut self);
     fn poll(&mut self) -> Option<BackendEvent>;
+    fn progress(&self) -> Option<BackendProgress> {
+        None
+    }
 }
 struct Session {
     id: Uuid,
@@ -267,6 +282,27 @@ impl Microphone {
             && audio.binding == *live
             && self.binding.as_ref() == Some(live)
     }
+    pub fn progress(&self) -> Option<CaptureProgress> {
+        let session = self.session.as_ref()?;
+        if session.stopping
+            || session.generation != self.generation
+            || self.binding.as_ref() != Some(&session.binding)
+        {
+            return None;
+        }
+        let progress = self.backend.progress()?;
+        if progress.samples > session.maximum_samples
+            || !progress.level.is_finite()
+            || !(0.0..=1.0).contains(&progress.level)
+        {
+            return None;
+        }
+        Some(CaptureProgress {
+            session: session.id,
+            captured_samples: progress.samples,
+            level: progress.level,
+        })
+    }
 }
 impl Default for Microphone {
     fn default() -> Self {
@@ -335,6 +371,7 @@ mod platform {
         fn cc_mic_sample_count(handle: *mut c_void) -> usize;
         fn cc_mic_copy_samples(handle: *mut c_void, destination: *mut f32, capacity: usize) -> i32;
         fn cc_mic_destroy(handle: *mut c_void);
+        fn cc_mic_progress(handle: *mut c_void, samples: *mut usize, level: *mut f32) -> i32;
         #[cfg(test)]
         pub(super) fn cc_mic_fixture_convert(
             input: *const f32,
@@ -375,6 +412,13 @@ mod platform {
     impl CaptureBackend for Native {
         fn available(&self) -> bool {
             true
+        }
+        fn progress(&self) -> Option<BackendProgress> {
+            let handle = self.capture?;
+            let mut samples = 0;
+            let mut level = 0.0;
+            (unsafe { cc_mic_progress(handle.as_ptr(), &mut samples, &mut level) } != 0)
+                .then_some(BackendProgress { samples, level })
         }
         fn permission(&self) -> Permission {
             unsafe { permission(cc_mic_permission_status()) }
@@ -473,10 +517,14 @@ mod tests {
         stops: usize,
         cancelled: usize,
         recording: bool,
+        progress: Option<BackendProgress>,
         event: Option<BackendEvent>,
     }
     struct Fake(Rc<RefCell<FakeState>>);
     impl CaptureBackend for Fake {
+        fn progress(&self) -> Option<BackendProgress> {
+            self.0.borrow().progress
+        }
         fn available(&self) -> bool {
             true
         }
@@ -544,6 +592,7 @@ mod tests {
             stops: 0,
             cancelled: 0,
             recording: false,
+            progress: None,
             event: None,
         }));
         let mut controller = Microphone::with_backend(Box::new(Fake(state.clone())));
@@ -587,6 +636,45 @@ mod tests {
         assert_eq!(audio.wav, encode_wav(&[0.0, 0.5, -0.5], 16_000).unwrap());
         controller.set_binding(Some(binding(2)));
         assert!(!controller.accepts_audio(&audio, &binding(2)));
+    }
+    #[::core::prelude::v1::test]
+    fn native_progress_requires_the_actual_live_session_and_valid_backend_samples() {
+        let (mut controller, state) = setup(Permission::Authorized);
+        state.borrow_mut().progress = Some(BackendProgress {
+            samples: 100,
+            level: 0.25,
+        });
+        assert!(controller.progress().is_none());
+        let session = controller.start(1).unwrap();
+        assert_eq!(
+            controller.progress(),
+            Some(CaptureProgress {
+                session,
+                captured_samples: 100,
+                level: 0.25
+            })
+        );
+        state.borrow_mut().progress = Some(BackendProgress {
+            samples: 16_001,
+            level: 0.25,
+        });
+        assert!(controller.progress().is_none());
+        state.borrow_mut().progress = Some(BackendProgress {
+            samples: 100,
+            level: f32::NAN,
+        });
+        assert!(controller.progress().is_none());
+        state.borrow_mut().progress = Some(BackendProgress {
+            samples: 100,
+            level: 0.25,
+        });
+        controller.stop(session).unwrap();
+        assert!(controller.progress().is_none());
+        controller.set_binding(Some(binding(2)));
+        assert!(
+            controller.progress().is_none(),
+            "late backend progress cannot revive a revoked session"
+        );
     }
     #[::core::prelude::v1::test]
     fn cancel_drop_and_changed_binding_discard_late_results() {

@@ -14,6 +14,8 @@ void *cc_mic_start(size_t maximum_samples, int *error);
 void cc_mic_stop(void *capture);
 void cc_mic_cancel(void *capture);
 int cc_mic_poll(void *capture);
+// Read-only atomics from already-converted audio, never a permission/device call.
+int cc_mic_progress(void *capture, size_t *samples, float *level);
 size_t cc_mic_sample_count(void *capture);
 int cc_mic_copy_samples(void *capture, float *destination, size_t capacity);
 void cc_mic_destroy(void *capture);
