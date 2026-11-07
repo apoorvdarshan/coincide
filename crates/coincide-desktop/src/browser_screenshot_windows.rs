@@ -460,7 +460,16 @@ impl Operation {
         let valid = value.get("exceptionDetails").is_none()
             && value["result"]["type"] == "boolean"
             && value["result"]["value"] == true;
-        operation.state.borrow_mut().prepared = false;
+        {
+            let mut state = operation.state.borrow_mut();
+            state.prepared = false;
+            if !valid && state.failure.is_none() {
+                let reason = (value["result"]["type"] == "string")
+                    .then(|| value["result"]["value"].as_str())
+                    .flatten();
+                state.failure = Some(mask::finish_failure(reason.unwrap_or_default()));
+            }
+        }
         operation.complete(valid);
     }
 }

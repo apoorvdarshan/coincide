@@ -110,7 +110,7 @@ struct Resize {
 struct Transaction {
     metrics: Option<Option<Metrics>>,
     image: Option<Option<Data>>,
-    finished: Option<bool>,
+    finished: Option<Result<(), &'static str>>,
     expected: Option<(f64, f64)>,
     truncated: bool,
     completion: Option<Completion>,
@@ -314,11 +314,24 @@ fn begin(
             ("restoreHeight", &restore[2]),
         ],
         move |value, error| {
-            let valid = error.is_null()
-                && unsafe { value.as_ref() }
-                    .and_then(|v| v.downcast_ref::<NSNumber>())
-                    .is_some_and(|v| v.boolValue());
-            finished.borrow_mut().finished = Some(valid);
+            // SAFETY: WebKit's completion value, retained for this callback.
+            let value = if error.is_null() {
+                unsafe { value.as_ref() }
+            } else {
+                None
+            };
+            let outcome = if value
+                .and_then(|v| v.downcast_ref::<NSNumber>())
+                .is_some_and(|v| v.boolValue())
+            {
+                Ok(())
+            } else {
+                let reason = value
+                    .and_then(|v| v.downcast_ref::<NSString>())
+                    .map(|v| v.to_string());
+                Err(mask::finish_failure(reason.as_deref().unwrap_or_default()))
+            };
+            finished.borrow_mut().finished = Some(outcome);
             settle(&owner, &finished);
         },
     );
@@ -340,14 +353,18 @@ fn settle(source: &Source, transaction: &RefCell<Transaction>) {
         (
             state.metrics.take().flatten(),
             state.image.take().flatten(),
-            state.finished.unwrap_or(false),
+            state
+                .finished
+                .take()
+                .unwrap_or(Err("Snapshot mask transaction failed")),
             state.expected,
             state.truncated,
             completion,
         )
     };
     let result = (|| {
-        if !finished || !source.valid() {
+        finished?;
+        if !source.valid() {
             return Err("Snapshot document changed or was cancelled");
         }
         let metrics = metrics.ok_or("Snapshot mask preparation failed")?;

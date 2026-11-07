@@ -308,11 +308,17 @@ fn finish(
             ("restoreHeight", ""),
         ],
         move |result| {
-            let valid =
-                result.is_ok_and(|value| value.is_boolean() && value.to_boolean()) && owner.valid();
-            completion(match pixels {
-                Ok(_) if !valid => Err("Snapshot document changed or was cancelled"),
-                pixels => pixels,
+            let outcome = match result {
+                Ok(value) if value.is_boolean() && value.to_boolean() => Ok(()),
+                Ok(value) if value.is_string() => Err(mask::finish_failure(&value.to_str())),
+                _ => Err(mask::finish_failure("")),
+            };
+            completion(match (pixels, outcome) {
+                (Ok(_), Err(reason)) => Err(reason),
+                (Ok(_), Ok(())) if !owner.valid() => {
+                    Err("Snapshot document changed or was cancelled")
+                }
+                (pixels, _) => pixels,
             });
         },
     );

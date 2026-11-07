@@ -59,7 +59,9 @@ function rects(fields){
 const fields=sensitive();
 if(!fields || fields.length>2048) return '';
 if(mode==='mask-top') scrollTo(0,0);
-const props=[['opacity','0'],['transition','none'],['animation','none']];
+// Longhands only: shorthand serializations differ between engines, and
+// FINISH/restore must recognize exactly the values set here.
+const props=[['opacity','0'],['transition-property','none'],['animation-name','none']];
 const saved=[];
 function restore(){
  for(const [node,old] of saved) for(let i=0;i<props.length;i++){
@@ -89,6 +91,7 @@ try {
 
 /// Arguments: `ticket`, `expectedURL`, and `restoreX`/`restoreY`/`restoreHeight`
 /// (strings; empty when no scroll position must return after a view resize).
+/// Returns `true`, or one fixed reason code from [`finish_failure`].
 pub const FINISH: &str = r#"
 const key='__coincidePrivateSnapshotV1',s=globalThis[key];
 if(restoreHeight){
@@ -99,16 +102,17 @@ if(restoreHeight){
  const back=()=>{ if(innerHeight===height) scrollTo(x,y); else if(++frames<120) requestAnimationFrame(back); };
  requestAnimationFrame(back);
 }
-if(!s || s.ticket!==ticket) return false;
+if(!s || s.ticket!==ticket) return 'missing';
 delete globalThis[key];
-let valid=s.url===location.href && location.href===expectedURL && s.innerWidth===innerWidth &&
-  s.innerHeight===innerHeight && s.scrollX===scrollX && s.scrollY===scrollY;
-try {
+function check(){
+ if(s.url!==location.href || location.href!==expectedURL) return 'navigated';
+ if(s.innerWidth!==innerWidth || s.innerHeight!==innerHeight) return 'resized';
+ if(s.scrollX!==scrollX || s.scrollY!==scrollY) return 'scrolled';
  const now=[], pending=[document];
  let visited=0;
- while(valid && pending.length){
+ while(pending.length){
   for(const el of pending.pop().querySelectorAll('*')){
-   if(++visited>250000){valid=false;break;}
+   if(++visited>250000) return 'large';
    if(el.localName==='input') now.push(el);
    if(el.shadowRoot) pending.push(el.shadowRoot);
   }
@@ -116,18 +120,55 @@ try {
  // Every field PREPARE hid is still connected, still ours and unmoved, and
  // no sensitive field appeared: the capture saw only masked secrets.
  const kept=new Set(s.fields);
- const added=now.some(el=>!kept.has(el) && (el.type==='password' ||
-   /password|one-time-code|cc-/i.test(String(el.getAttribute('autocomplete')||''))));
+ if(now.some(el=>!kept.has(el) && (el.type==='password' ||
+   /password|one-time-code|cc-/i.test(String(el.getAttribute('autocomplete')||''))))) return 'added';
  const masks=[];
  for(const el of s.fields){
-  if(!el.isConnected) {valid=false;break;}
+  if(!el.isConnected) return 'removed';
   const r=el.getBoundingClientRect();
   if(r.width>0 && r.height>0) masks.push({x:r.x,y:r.y,width:r.width,height:r.height});
  }
- if(added || JSON.stringify(masks)!==s.masks) valid=false;
+ if(JSON.stringify(masks)!==s.masks) return 'moved';
  for(const [node] of s.saved) for(const [name,value] of s.props)
-  if(node.style.getPropertyValue(name)!==value || node.style.getPropertyPriority(name)!=='important') valid=false;
-} catch(_) {valid=false;}
+  if(node.style.getPropertyValue(name)!==value || node.style.getPropertyPriority(name)!=='important') return 'restyled';
+ return true;
+}
+let result;
+try { result=check(); } catch(_) { result='failed'; }
 s.restore();
-return valid;
+return result;
 "#;
+
+/// Maps FINISH's reason code to a fixed message; anything else is invalid.
+pub fn finish_failure(reason: &str) -> &'static str {
+    match reason {
+        "navigated" => "The page navigated during its snapshot",
+        "resized" => "The page viewport changed during its snapshot",
+        "scrolled" => "The page scrolled during its snapshot; try again",
+        "large" => "The page has too many elements to check its sensitive fields",
+        "added" => "A sensitive field appeared during the snapshot; try again",
+        "removed" | "moved" => "A sensitive field moved during the snapshot; try again",
+        "restyled" => "The page restyled a hidden sensitive field during the snapshot",
+        "missing" => "The snapshot mask transaction was lost",
+        _ => "Snapshot document changed or was cancelled",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn finish_reasons_are_fixed_messages_and_unknown_codes_stay_generic() {
+        assert!(finish_failure("moved").contains("moved"));
+        assert_eq!(finish_failure("removed"), finish_failure("moved"));
+        for unknown in ["", "true", "<page supplied text>"] {
+            assert_eq!(
+                finish_failure(unknown),
+                "Snapshot document changed or was cancelled"
+            );
+        }
+        // Engines serialize shorthands differently; only longhands are set.
+        assert!(!PREPARE.contains("['transition','none']"));
+        assert!(PREPARE.contains("['transition-property','none']"));
+    }
+}
