@@ -95,6 +95,10 @@ pub enum BrowserAction {
     Reload,
     Tabs,
     Downloads,
+    FillLogin {
+        #[serde(default)]
+        item: Option<String>,
+    },
     NewTab {
         #[serde(default)]
         url: Option<String>,
@@ -146,6 +150,8 @@ fn default_user_turn_timeout() -> f64 {
 }
 /// Swift `UserTurnGate` limits: the message shown, and how long it waits.
 pub const USER_TURN_MAXIMUM_MESSAGE: usize = 500;
+/// Native approval plus private manager/renderer acknowledgement budget.
+pub const LOGIN_REQUEST_TIMEOUT: u64 = 390;
 pub const USER_TURN_DEFAULT_TIMEOUT: f64 = 300.;
 pub const USER_TURN_MAXIMUM_TIMEOUT: f64 = 900.;
 
@@ -205,6 +211,9 @@ impl BrowserAction {
     /// with a timeout, as Swift's `PreviewCommand.timeout`.
     pub fn result_timeout(&self) -> std::time::Duration {
         match self {
+            BrowserAction::FillLogin { .. } => {
+                std::time::Duration::from_secs(LOGIN_REQUEST_TIMEOUT + 5)
+            }
             BrowserAction::AskUser { timeout, .. } if timeout.is_finite() => {
                 std::time::Duration::from_secs_f64(
                     timeout.clamp(1., USER_TURN_MAXIMUM_TIMEOUT) + 5.,
@@ -331,6 +340,14 @@ impl BrowserRequest {
             }
             BrowserAction::SelectTab | BrowserAction::CloseTab => {
                 ensure!(self.tab.is_some(), "A tab ID is required");
+            }
+            BrowserAction::FillLogin { item: Some(item) } => {
+                ensure!(
+                    !item.trim().is_empty()
+                        && item.len() <= 512
+                        && !item.chars().any(char::is_control),
+                    "Login item hint must contain 1–512 plain text bytes"
+                );
             }
             BrowserAction::Search { query } => {
                 let query = query.trim();
@@ -1695,5 +1712,33 @@ mod native_history_dispatch_tests {
             };
             assert!(script_for_request(&request).unwrap().is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod login_request_tests {
+    use super::*;
+    #[test]
+    fn fill_login_is_a_bounded_native_request_without_a_page_script_or_agent_approval() {
+        let request: BrowserRequest = serde_json::from_value(serde_json::json!({"id":"request", "threadId":uuid::Uuid::new_v4(), "action":"fill-login", "item":"Example login", "approved":true, "password":"ignored-agent-data"})).unwrap();
+        request.validate().unwrap();
+        assert_eq!(
+            request.action.result_timeout(),
+            std::time::Duration::from_secs(395)
+        );
+        assert!(script(&request.action).unwrap().is_none());
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert!(serialized.get("approved").is_none());
+        assert!(serialized.get("password").is_none());
+        for item in ["", "\n", &"x".repeat(513)] {
+            let mut bad = request.clone();
+            bad.action = BrowserAction::FillLogin {
+                item: Some(item.into()),
+            };
+            assert!(bad.validate().is_err());
+        }
+        let mut framed = request;
+        framed.frame = Some("frame".into());
+        assert!(framed.validate().is_err());
     }
 }

@@ -1,4 +1,5 @@
-//! Native password settings and browser-login workflow. No agent API entrypoint.
+//! Native password settings and browser-login workflow. Agent requests can open
+//! this workflow, but only native decisions can authorize private delivery.
 use crate::credentials::{
     ApprovalPrompt, ApprovalView, FillJob, NativeDecision, QueuedSink, complete_approval,
     private_fill_channel,
@@ -140,7 +141,11 @@ struct PendingApproval {
 /// Parent creates an Entity<CredentialSettings>, polls it on its existing UI
 /// tick, sets the active native PageBinding/capability before polling, and drains
 /// the returned private FillJob receiver through BrowserController each tick.
+#[path = "browser_login_request.rs"]
+mod browser_requests;
+
 pub struct CredentialSettings {
+    browser_requests: browser_requests::Requests,
     sources: Vec<CredentialSource>,
     selected_source: Option<usize>,
     accounts: Vec<Account>,
@@ -167,6 +172,7 @@ impl CredentialSettings {
         let (sender, updates) = mpsc::channel();
         (
             Self {
+                browser_requests: Default::default(),
                 sources,
                 selected_source: None,
                 accounts: vec![],
@@ -190,6 +196,41 @@ impl CredentialSettings {
             jobs,
         )
     }
+    pub(super) fn can_accept_browser_request(&mut self) -> bool {
+        self.workers.can_start()
+            && !self.busy
+            && self.approval.is_none()
+            && self.active_scope.is_none()
+            && !self.browser_requests.pending()
+            && !self.sources.is_empty()
+    }
+    pub(super) fn request_from_browser(
+        &mut self,
+        request: &coincide_core::browser_protocol::BrowserRequest,
+        item: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(page) = self.page.clone() else {
+            return false;
+        };
+        if !self.can_accept_browser_request()
+            || !self.fill_available
+            || self.thread.as_deref() != Some(request.thread_id.as_str())
+        {
+            return false;
+        }
+        let accepted = self
+            .browser_requests
+            .begin(request, page, item, Instant::now());
+        if accepted {
+            self.status = "The agent requested a saved login. Select a manager/account and matching login, then review native approval. Nothing is approved by this request.".into();
+            cx.notify();
+        }
+        accepted
+    }
+    pub(super) fn browser_replies(&mut self) -> Vec<coincide_core::browser_protocol::BrowserReply> {
+        self.browser_requests.drain().collect()
+    }
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
         self.epoch.store(self.revision, Ordering::Release);
@@ -209,6 +250,8 @@ impl CredentialSettings {
         if self.workers.closed() {
             return;
         }
+        self.browser_requests
+            .context(self.thread.as_deref(), page.as_ref(), fill_available);
         if self.page != page || self.fill_available != fill_available {
             self.invalidate();
             self.page = page;
@@ -228,6 +271,8 @@ impl CredentialSettings {
         if self.workers.closed() {
             return;
         }
+        self.browser_requests
+            .context(thread.as_deref(), page.as_ref(), fill_available);
         if self.thread != thread {
             self.invalidate();
             self.thread = thread;
@@ -241,6 +286,8 @@ impl CredentialSettings {
         self.status = reason.into();
     }
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.browser_requests
+            .finish(Err("The user cancelled native login approval"));
         self.revoke_request("Login request cancelled. Any uncommitted fill was revoked; a previously committed renderer action cannot be undone. An active CLI read may finish in the background.");
         cx.notify();
     }
@@ -338,6 +385,12 @@ impl CredentialSettings {
         let (Some(page), Some(item)) = (self.page.clone(), self.logins.get(index).cloned()) else {
             return;
         };
+        if !self.browser_requests.matches(&item) {
+            self.status =
+                "Select the login named in the agent request, or cancel that request first.".into();
+            cx.notify();
+            return;
+        }
         let prompt = ApprovalPrompt::new(page, item);
         let (view, decisions) = ApprovalView::new(prompt.clone());
         self.approval = Some(PendingApproval {
@@ -349,6 +402,8 @@ impl CredentialSettings {
         cx.notify();
     }
     pub fn request_shutdown(&mut self) {
+        self.browser_requests
+            .finish(Err("The browser is shutting down"));
         if self.workers.close() {
             self.invalidate();
             self.page = None;
@@ -375,6 +430,11 @@ impl CredentialSettings {
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
         self.workers.poll();
+        if self.browser_requests.expire(Instant::now()) {
+            self.invalidate();
+            self.status = "Login request expired. Any uncommitted private fill was revoked.".into();
+            cx.notify();
+        }
         if self.workers.closed() {
             self.discard_shutdown_updates();
             return;
@@ -415,6 +475,7 @@ impl CredentialSettings {
                     }
                 }
                 Update::Filled(revision, result) if revision == self.revision => {
+                    self.browser_requests.finish(result.map_err(failure_text));
                     self.active_scope = None;
                     self.status = match result {
                         Ok(()) => "Login filled and confirmed.",
@@ -438,18 +499,24 @@ impl CredentialSettings {
                 return;
             };
             if !decision.is_allowed() {
+                self.browser_requests
+                    .finish(Err("The user declined native login approval"));
                 self.status =
                     "Login request denied. No individual password or code was requested.".into();
                 cx.notify();
                 return;
             }
             if !self.fill_available {
+                self.browser_requests
+                    .finish(Err("Private credential filling is unavailable"));
                 self.status =
                     "Private credential filling is unavailable on this browser backend.".into();
                 cx.notify();
                 return;
             }
             let (Some(client), Some(page)) = (self.client.clone(), self.page.clone()) else {
+                self.browser_requests
+                    .finish(Err("The native login context changed"));
                 return;
             };
             let mut scope = self.sink.new_scope();
@@ -467,6 +534,8 @@ impl CredentialSettings {
                 let _ = sender.send(Update::Filled(revision, result));
             }) {
                 self.busy = false;
+                self.browser_requests
+                    .finish(Err("The private credential worker could not start"));
                 self.status = "Credential worker could not start.".into();
             }
             cx.notify();
@@ -476,6 +545,8 @@ impl CredentialSettings {
             .is_some_and(|pending| pending.started.elapsed() >= Duration::from_secs(300))
         {
             self.approval = None;
+            self.browser_requests
+                .finish(Err("Native login approval expired"));
             self.status = "Login request expired. Nothing was filled.".into();
             cx.notify();
         }
@@ -510,6 +581,13 @@ impl Render for CredentialSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut panel = div().flex().flex_col().gap_2().p_4().child("Password managers")
             .child("Select a connected CLI account. Login approval is always required; approval cannot be disabled.");
+        if self.browser_requests.pending() {
+            panel = panel
+                .child("Agent request: choose a saved login and explicitly approve filling it.");
+            if let Some(item) = self.browser_requests.item() {
+                panel = panel.child(SharedString::from(format!("Requested login: {item}")));
+            }
+        }
         if self.sources.is_empty() {
             panel = panel.child("No supported CLI found. Install Bitwarden CLI or 1Password CLI with Homebrew, then reopen this panel.");
         }
@@ -556,7 +634,12 @@ impl Render for CredentialSettings {
         panel = panel.child(
             Button::new("credential-cancel-request")
                 .label("Cancel login request")
-                .disabled(!self.busy && self.approval.is_none() && self.active_scope.is_none())
+                .disabled(
+                    !self.busy
+                        && self.approval.is_none()
+                        && self.active_scope.is_none()
+                        && !self.browser_requests.pending(),
+                )
                 .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
         );
         panel = panel
@@ -574,7 +657,12 @@ impl Render for CredentialSettings {
             panel = panel.child(
                 Button::new(SharedString::from(format!("credential-login-{index}")))
                     .label(format!("{} · {}", login.title, login.username))
-                    .disabled(self.busy || !self.fill_available || self.approval.is_some())
+                    .disabled(
+                        self.busy
+                            || !self.fill_available
+                            || self.approval.is_some()
+                            || !self.browser_requests.matches(login),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.request_approval(index, cx))),
             );
         }

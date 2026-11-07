@@ -34,6 +34,7 @@ mod bot_settings;
 mod browser;
 mod browser_address_bar;
 mod browser_dialog_ui;
+mod browser_login_mount;
 mod browser_settings;
 mod browser_user_turn_ui;
 #[cfg(any(target_os = "windows", test))]
@@ -1889,10 +1890,22 @@ impl Coincide {
             .try_lock()
             .map(|mut engine| engine.browser_requests.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
+        let mut ordinary_requests = Vec::with_capacity(requests.len());
+        let requested_login = requests
+            .iter()
+            .any(|r| matches!(r.action, BrowserAction::FillLogin { .. }));
+        for request in requests {
+            if matches!(request.action, BrowserAction::FillLogin { .. }) {
+                self.request_browser_login(request, window, cx);
+            } else {
+                ordinary_requests.push(request);
+            }
+        }
+        let requests = ordinary_requests;
         let image_viewer_open = self.historical_image_is_open();
         let terminal_right = self.terminal_on_right();
         let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
-        let mut changed = !requests.is_empty();
+        let mut changed = requested_login || !requests.is_empty();
         let mut browser_note: Option<Option<inspector_follow::SavedPanel>> = None;
         let selected_closes_last = requests.iter().any(|request| {
             matches!(&request.action, BrowserAction::CloseTab)
@@ -1943,6 +1956,11 @@ impl Coincide {
         let browser_is_panel = self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
         let close_visible_last_tab = selected_closes_last && browser_is_panel;
         let Some(browser) = &mut self.browser else {
+            if let Ok(mut engine) = self.engine.try_lock() {
+                for reply in self.browser_replies.drain(..) {
+                    engine.browser_reply(reply);
+                }
+            }
             return;
         };
         for request in requests {
@@ -3197,7 +3215,7 @@ impl Coincide {
         };
         // Revocation precedes polling or delivery: closing the panel, changing
         // documents, or losing the selection cannot retain a prior approval.
-        self.credential_panel.update(cx, |panel, cx| {
+        let credential_replies = self.credential_panel.update(cx, |panel, cx| {
             panel.set_context(
                 visible.then(|| thread.clone()).flatten(),
                 page,
@@ -3205,7 +3223,9 @@ impl Coincide {
                 cx,
             );
             panel.poll(cx);
+            panel.browser_replies()
         });
+        self.browser_replies.extend(credential_replies);
         if let Some(browser) = &mut self.browser {
             browser.drain_credential_fills(
                 thread.as_deref().unwrap_or(""),

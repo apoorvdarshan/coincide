@@ -433,6 +433,9 @@ impl BrowserController {
                 }
                 return Ok(None);
             }
+            BrowserAction::FillLogin { .. } => {
+                anyhow::bail!("Saved login requests require the native approval workflow")
+            }
             BrowserAction::Search { .. } => {
                 anyhow::bail!("Search must be resolved by the engine before reaching the browser")
             }
@@ -1647,7 +1650,9 @@ impl BrowserController {
     }
 
     /// Drain only the selected thread's native workflow receiver. Never return
-    /// FillJob or completion errors through BrowserReply or console machinery.
+    /// FillJob, secrets or raw completion errors through BrowserReply or console
+    /// machinery. The native approval owner separately emits only a fixed,
+    /// coarse browser-request result after actual acknowledgement.
     pub fn drain_credential_fills(
         &mut self,
         thread: &str,
