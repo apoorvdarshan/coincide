@@ -736,13 +736,14 @@ impl Coincide {
                     provider_configuration_ui::Part::Executable,
                     provider_configuration_ui::Part::Environment,
                     provider_configuration_ui::Part::Setup,
+                    provider_configuration_ui::Part::Accounts,
                 ]
                 .map(|part| panel.render_part(part, cx))
             })
         } else {
             std::array::from_fn(|_| div().child("Loading provider settings…").into_any_element())
         };
-        let [status, executable, environment, setup] = parts;
+        let [status, executable, environment, setup, accounts] = parts;
         let mut pane = div()
             .id("provider-preferences")
             .flex_1()
