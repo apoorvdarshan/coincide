@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+#[path = "browser_keys.rs"]
+pub mod keys;
 #[path = "browser_upload.rs"]
 pub mod upload;
 
@@ -45,6 +47,11 @@ pub enum BrowserAction {
         text: String,
         #[serde(default)]
         clear: bool,
+    },
+    Press {
+        key: String,
+        #[serde(default)]
+        selector: Option<String>,
     },
     Upload {
         selector: String,
@@ -133,6 +140,7 @@ impl BrowserRequest {
                         | BrowserAction::Click { .. }
                         | BrowserAction::Input { .. }
                         | BrowserAction::Type { .. }
+                        | BrowserAction::Press { .. }
                         | BrowserAction::Upload { .. }
                         | BrowserAction::Scroll { .. }
                         | BrowserAction::WaitFor { .. }
@@ -141,6 +149,12 @@ impl BrowserRequest {
             );
         }
         match &self.action {
+            BrowserAction::Press { key, selector } => {
+                keys::KeyPress::admitted(key)?;
+                if let Some(selector) = selector {
+                    validate_selector(selector)?;
+                }
+            }
             BrowserAction::Dialog {
                 dialog_id, text, ..
             } => {
@@ -690,6 +704,10 @@ fn script_in_frame(action: &BrowserAction, frame: Option<&str>) -> Result<Option
         } => {
             serde_json::json!({"kind":"type","selector":selector,"text":text,"clear":clear})
         }
+        BrowserAction::Press { key, selector } => {
+            let key = keys::KeyPress::admitted(key)?;
+            serde_json::json!({"kind":"focus","selector":selector,"editingOnly":key.control || key.meta})
+        }
         BrowserAction::Scroll { selector, to, by } => {
             serde_json::json!({"kind":"scroll","selector":selector,"to":to,"by":by})
         }
@@ -810,6 +828,19 @@ try {
     else win.scrollBy({top:request.by ?? Math.round(win.innerHeight*0.9),behavior:'instant'});
     return {scrollY:Math.round(win.scrollY),scrollHeight:root.scrollHeight,viewportHeight:win.innerHeight,
       atBottom:win.scrollY+win.innerHeight>=root.scrollHeight-2,frame:frameId};
+  }
+  if (request.kind==='focus') {
+    const target=request.selector ? choose(request.selector) : doc.activeElement;
+    if (!target || !visible(target) || target.disabled || target.getAttribute('aria-disabled')==='true')
+      throw new Error('Keyboard target is not available');
+    if (target.matches('iframe,frame') || sensitive(target))
+      throw new Error('Keyboard target requires supported frame selection or user handoff');
+    const editable=target.isContentEditable || target instanceof win.HTMLTextAreaElement ||
+      (target instanceof win.HTMLInputElement && ['text','search','url','tel','email','number'].includes(target.type));
+    if (request.editingOnly && (!editable || target.readOnly))
+      throw new Error('Modified edit keys require an editable, nonsensitive page control');
+    if (request.selector) target.focus({preventScroll:true});
+    return {focused:doc.activeElement===target};
   }
   const target=choose(request.selector);
   if (request.kind==='upload' || request.kind==='upload-probe') {
@@ -1173,6 +1204,33 @@ mod dialog_request_tests {
             *text = Some("x".repeat(64 * 1024 + 1));
         }
         assert!(request.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_press_request_tests {
+    use super::*;
+    #[test]
+    fn admitted_press_produces_only_focus_preflight_and_denied_chord_never_reaches_native_path() {
+        let mut request = BrowserRequest {
+            id: "owned-operation".into(),
+            thread_id: uuid::Uuid::new_v4().to_string(),
+            tab: None,
+            frame: None,
+            action: BrowserAction::Press {
+                key: "Meta+a".into(),
+                selector: Some("#owned-editor".into()),
+            },
+        };
+        let source = script_for_request(&request)
+            .unwrap()
+            .expect("native focus preflight");
+        assert!(source.contains(&serde_json::to_string(&serde_json::json!({"kind":"focus","selector":"#owned-editor","editingOnly":true})).unwrap()));
+        request.action = BrowserAction::Press {
+            key: "Meta+q".into(),
+            selector: Some("#owned-editor".into()),
+        };
+        assert!(script_for_request(&request).is_err());
     }
 }
 

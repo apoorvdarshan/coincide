@@ -11,6 +11,10 @@ mod credential_bridge;
 mod dialogs;
 #[path = "browser_native_history.rs"]
 mod native_history;
+#[path = "browser_native_keys.rs"]
+mod native_keys;
+#[path = "browser_press.rs"]
+mod press;
 #[path = "browser_private_profiles.rs"]
 mod private_profiles;
 #[path = "browser_shutdown.rs"]
@@ -54,6 +58,7 @@ use uuid::Uuid;
 use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 
 struct Tab {
+    keys: native_keys::Target,
     dialogs: dialogs::Dialogs,
     id: String,
     view: Entity<WebView>,
@@ -99,6 +104,7 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    Press(press::Event),
     DialogChanged,
     DownloadsChanged,
     UploadProbe {
@@ -155,6 +161,7 @@ pub struct BrowserController {
     private_stores: HashMap<String, Retained<WKWebsiteDataStore>>,
     downloads: Rc<RefCell<DownloadRegistry>>,
     dialog_inputs: HashMap<String, Entity<InputState>>,
+    presses: HashMap<String, press::Pending>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
@@ -223,6 +230,7 @@ impl BrowserController {
                 profile_dir.join("downloads"),
             )?)),
             dialog_inputs: HashMap::new(),
+            presses: HashMap::new(),
             scripts: HashMap::new(),
             waits: HashMap::new(),
             uploads: HashMap::new(),
@@ -241,8 +249,9 @@ impl BrowserController {
         if let Some(actor) = self.cookie_actor.as_mut() {
             actor.stop();
         }
-        for tabs in self.tabs.values() {
+        for tabs in self.tabs.values_mut() {
             for tab in tabs {
+                tab.keys.close();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
                 tab.credential_console_suppressed
@@ -256,6 +265,7 @@ impl BrowserController {
         }
         self.uploads.clear();
         self.waits.clear();
+        self.presses.clear();
         self.replies.clear();
         for _ in self.events.try_iter() {}
     }
@@ -397,6 +407,10 @@ impl BrowserController {
             );
         }
         match &request.action {
+            BrowserAction::Press { .. } => {
+                self.begin_press(request, target, cx)?;
+                Ok(None)
+            }
             BrowserAction::Back | BrowserAction::Forward | BrowserAction::Reload => {
                 let action = native_history::Action::from_request(&request.action)
                     .context("Unsupported native history action")?;
@@ -845,6 +859,7 @@ impl BrowserController {
                 );
             }
         }
+        let keys = native_keys::Target::install(view.raw(), &self.shutdown.callbacks);
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
             view.raw(),
@@ -872,6 +887,7 @@ impl BrowserController {
         }
         let view = cx.new(|_| view);
         self.tabs.entry(thread.into()).or_default().push(Tab {
+            keys,
             dialogs,
             id: id.clone(),
             view,
@@ -901,6 +917,7 @@ impl BrowserController {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::Press(event) => self.press_event(event),
                 NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
                     if let Some(upload) = self.uploads.get_mut(&id) {
@@ -998,6 +1015,7 @@ impl BrowserController {
             }
         }
         changed |= self.poll_dialogs(window, cx);
+        changed |= self.poll_presses(cx);
         changed |= self.poll_uploads(cx);
         changed |= self.poll_waits(cx);
         changed
@@ -1502,7 +1520,6 @@ impl BrowserController {
             "download-resume",
             "blob-downloads",
             "cross-origin-frame-actions",
-            "native-key-events",
             "screenshots",
             "passkeys",
         ];
@@ -1513,6 +1530,13 @@ impl BrowserController {
         {
             unsupported.push("dialogs");
         }
+        if self
+            .tabs
+            .get(thread)
+            .is_none_or(|tabs| tabs.is_empty() || tabs.iter().any(|tab| !tab.keys.available()))
+        {
+            unsupported.push("native-key-events");
+        }
         if cfg!(windows) {
             unsupported.push("upload");
         }
@@ -1521,6 +1545,7 @@ impl BrowserController {
         }
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":public_tab_title(&tab.title,tab.credential_console_suppressed.load(Ordering::Acquire)),"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
+            "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
             "passwordManagerRequiresNativeApproval":true})
     }
@@ -1714,6 +1739,10 @@ mod dialog_privacy_tests {
     use super::*;
     #[::core::prelude::v1::test]
     fn blocked_script_dialog_does_not_disclose_credential_echo_or_prompt_default() {
+        assert!(!private_document_action_allowed(&BrowserAction::Press {
+            key: "Enter".into(),
+            selector: None
+        }));
         let dialog = DialogSnapshot {
             id: Uuid::new_v4().to_string(),
             kind: DialogKind::Prompt,

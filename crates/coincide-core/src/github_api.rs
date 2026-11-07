@@ -197,15 +197,60 @@ impl Root {
         self.path == other.path && self.identity == other.identity
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Involvement {
+    All,
+    Authored,
+    Assigned,
+    ReviewRequested,
+}
+impl Involvement {
+    fn parse(value: Option<&Value>) -> Result<Self> {
+        match value {
+            None => Ok(Self::All),
+            Some(Value::String(value)) => match value.as_str() {
+                "all" => Ok(Self::All),
+                "authored" => Ok(Self::Authored),
+                "assigned" => Ok(Self::Assigned),
+                "review-requested" => Ok(Self::ReviewRequested),
+                _ => bail!("Unsupported PR involvement filter"),
+            },
+            Some(_) => bail!("Invalid PR involvement filter"),
+        }
+    }
+    fn wire(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Authored => "authored",
+            Self::Assigned => "assigned",
+            Self::ReviewRequested => "review-requested",
+        }
+    }
+    fn arguments(self) -> &'static [&'static str] {
+        match self {
+            Self::All => &[],
+            Self::Authored => &["--author", "@me"],
+            Self::Assigned => &["--assignee", "@me"],
+            Self::ReviewRequested => &["--search", "review-requested:@me"],
+        }
+    }
+}
 #[derive(Clone)]
 enum Read {
-    List { state: String, limit: usize },
-    Detail { number: u64, head: String },
+    List {
+        state: String,
+        limit: usize,
+        involvement: Involvement,
+    },
+    Detail {
+        number: u64,
+        head: String,
+    },
 }
 impl Read {
     fn arguments(&self, repository: &str) -> Vec<String> {
         let mut args = match self {
-            Self::List { state, limit } => vec![
+            Self::List { state, limit, .. } => vec![
                 "pr".into(),
                 "list".into(),
                 "--state".into(),
@@ -223,6 +268,9 @@ impl Read {
                 DETAIL.into(),
             ],
         };
+        if let Self::List { involvement, .. } = self {
+            args.extend(involvement.arguments().iter().map(|arg| (*arg).into()));
+        }
         args.extend(["--repo".into(), format!("github.com/{repository}")]);
         args
     }
@@ -407,6 +455,7 @@ impl GithubService {
                 Read::List {
                     state: state.into(),
                     limit: limit as usize,
+                    involvement: Involvement::parse(params.get("involvement"))?,
                 }
             }
             "github.pr.read" => {
@@ -680,7 +729,11 @@ fn snapshot(bytes: &[u8], read: &Read, repo: &str, thread_id: &str, root: &Path)
     ensure!(bytes.len() <= MAX_OUTPUT, "GitHub output exceeds 3 MiB");
     let value: Value = serde_json::from_slice(bytes).context("Invalid GitHub JSON")?;
     match read {
-        Read::List { limit, .. } => {
+        Read::List {
+            state,
+            limit,
+            involvement,
+        } => {
             let list = value.as_array().context("Expected PR list")?;
             ensure!(list.len() <= *limit, "Too many PR list entries");
             let mut seen = HashSet::new();
@@ -694,7 +747,7 @@ fn snapshot(bytes: &[u8], read: &Read, repo: &str, thread_id: &str, root: &Path)
                 selected.push(pr);
             }
             Ok(
-                json!({"kind":"list","threadId":thread_id,"expectedRoot":root,"repository":repo,"pullRequests":selected,"limit":limit,"truncated":list.len()==*limit}),
+                json!({"kind":"list","threadId":thread_id,"expectedRoot":root,"repository":repo,"state":state,"involvement":involvement.wire(),"pullRequests":selected,"limit":limit,"truncated":list.len()==*limit}),
             )
         }
         Read::Detail { number, head } => {
@@ -716,6 +769,41 @@ mod tests {
     use super::*;
     fn pr() -> Value {
         json!({"number":7,"title":"Synthetic PR","url":"https://github.com/owner/project/pull/7","state":"OPEN","isDraft":false,"headRefOid":"a".repeat(40),"headRefName":"feature","baseRefName":"main"})
+    }
+    #[test]
+    fn involvement_is_closed_and_emits_only_fixed_cli_flags() {
+        for (wire, expected) in [
+            ("all", vec![]),
+            ("authored", vec!["--author", "@me"]),
+            ("assigned", vec!["--assignee", "@me"]),
+            ("review-requested", vec!["--search", "review-requested:@me"]),
+        ] {
+            let involvement = Involvement::parse(Some(&json!(wire))).unwrap();
+            let arguments = Read::List {
+                state: "open".into(),
+                limit: 30,
+                involvement,
+            }
+            .arguments("owner/project");
+            let mut full = vec![
+                "pr", "list", "--state", "open", "--limit", "30", "--json", SUMMARY,
+            ];
+            full.extend(expected);
+            full.extend(["--repo", "github.com/owner/project"]);
+            assert_eq!(arguments, full);
+        }
+        assert_eq!(Involvement::parse(None).unwrap(), Involvement::All);
+        for value in [
+            json!(null),
+            json!(true),
+            json!(["authored"]),
+            json!("mine"),
+            json!("--author @me"),
+            json!("review-requested:@me repo:attacker/repo"),
+            json!("authored\n--repo=other/repo"),
+        ] {
+            assert!(Involvement::parse(Some(&value)).is_err());
+        }
     }
     #[test]
     fn strict_repository_url_and_head_binding() {
@@ -779,6 +867,7 @@ mod tests {
             &Read::List {
                 state: "open".into(),
                 limit: 30,
+                involvement: Involvement::All,
             },
             "owner/project",
             "thread",
@@ -946,7 +1035,8 @@ mod tests {
                 &list,
                 &Read::List {
                     state: "open".into(),
-                    limit: 30
+                    limit: 30,
+                    involvement: Involvement::All,
                 },
                 "owner/project",
                 "thread",
@@ -959,7 +1049,8 @@ mod tests {
                 &list,
                 &Read::List {
                     state: "open".into(),
-                    limit: 1
+                    limit: 1,
+                    involvement: Involvement::All,
                 },
                 "owner/project",
                 "thread",

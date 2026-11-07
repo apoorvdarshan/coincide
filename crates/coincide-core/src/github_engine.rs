@@ -163,7 +163,14 @@ impl Engine {
         );
         ensure!(!self.shutdown, "Application is shutting down");
         let keys: &[&str] = match method {
-            "github.pr.list" => &["threadId", "expectedRoot", "repository", "state", "limit"],
+            "github.pr.list" => &[
+                "threadId",
+                "expectedRoot",
+                "repository",
+                "state",
+                "limit",
+                "involvement",
+            ],
             "github.pr.read" => &[
                 "threadId",
                 "expectedRoot",
