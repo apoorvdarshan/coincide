@@ -293,6 +293,26 @@ def main():
             raise
         capture(window, "typed-draft", "keyboard draft")
         report["checks"].append("visible rendered native window and X11 keyboard draft persisted")
+        # Real X11 typing of a `/` word opens the production suggestion list
+        # above the composer. Escape only dismisses it: nothing is chosen or
+        # sent, and deleting the probe restores the exact saved draft.
+        command("xdotool", "type", "--clearmodifiers", "--delay", "15", " /pl", env=env)
+        capture(window, "composer-suggestions", "plan mode")
+        command("xdotool", "key", "--clearmodifiers", "Escape", env=env)
+        dismissed = 0
+        def suggestions_dismissed():
+            nonlocal dismissed
+            stage = f"composer-suggestions-dismissed-{dismissed:03}"
+            dismissed += 1
+            capture(window, stage)
+            return "plan mode" not in (artifacts / f"{stage}.txt").read_text().lower()
+        wait_for("dismissed composer suggestion list", suggestions_dismissed)
+        assert rpc("app.status")["running"] == [], "Dismissing suggestions must never send"
+        command("xdotool", "key", "--clearmodifiers", "--delay", "15",
+                "BackSpace", "BackSpace", "BackSpace", "BackSpace", env=env)
+        wait_for("suggestion probe removed from the saved draft",
+                 lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
+        report["checks"].append("real X11 typing opened the / command list above the composer; Escape dismissed it without sending")
         command("xdotool", "key", "--clearmodifiers", "ctrl+k", env=env)
         command("xdotool", "type", "--clearmodifiers", "Open settings", env=env)
         time.sleep(0.5)
@@ -383,7 +403,8 @@ def main():
         module_spec.loader.exec_module(browser_fixture)
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,
-            lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"))
+            lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"),
+            home / "Downloads" / "Coincide")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("actual native browser loopback navigation/input/click/same-origin frame/history/reload/tab selection and cleanup; native pixels reviewed separately")
         newer = rpc("threads.create", projectId=created_project["id"])
