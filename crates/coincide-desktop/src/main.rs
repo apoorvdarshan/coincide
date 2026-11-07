@@ -38,6 +38,7 @@ mod composer_follow_up_mount;
 mod composer_selection;
 mod composer_steering;
 mod composer_steering_mount;
+mod composer_suggestions;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
@@ -508,6 +509,7 @@ struct Coincide {
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
+    composer_suggestions: composer_suggestions::Suggestions,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -1470,6 +1472,7 @@ impl Coincide {
             selection_ui: Default::default(),
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
+            composer_suggestions: Default::default(),
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -3005,6 +3008,7 @@ impl Coincide {
         self.poll_sidebar_lifecycle(window, cx);
         self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
+        self.poll_composer_suggestions(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
         }
@@ -3043,6 +3047,7 @@ impl Coincide {
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.composer_files.closed_and_drained()
+                && self.composer_suggestions.closed_and_drained()
             {
                 window.remove_window();
             } else if !drafts_saved {
@@ -3062,6 +3067,9 @@ impl Coincide {
                 self.show_media_shutdown(window, cx);
             } else if !self.composer_files.closed_and_drained() {
                 self.status="Closing waits for owned project-file discovery/attachment work and its receipt.".into();
+                cx.notify();
+            } else if !self.composer_suggestions.closed_and_drained() {
+                self.status = "Closing waits for the pull request list read to finish.".into();
                 cx.notify();
             } else if !self.thread_bulk.closed_and_drained() {
                 self.status = "Closing waits for the owned sidebar operation to finish and join. Committed changes retain their receipt.".into();
@@ -4471,6 +4479,7 @@ impl Render for Coincide {
         self.sync_thread_bulk(cx);
         self.sync_composer_file_picker(window, cx);
         self.sync_automatic_file_mentions(window, cx);
+        self.sync_composer_suggestions(window, cx);
         if self.settings_window.is_none() {
             self.sync_keyboard_recording(window, cx);
         }
