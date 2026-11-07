@@ -541,8 +541,21 @@ impl Coincide {
                     .as_ref()
                     .is_some_and(|selected| selected["id"] == *thread)
             });
+        // The pull request panel finds its repository from the conversation's
+        // own folder, as Swift does, not from the local Git workspace.
+        let selection = self
+            .selected
+            .as_ref()
+            .map(|selected| github_review::Selection {
+                thread: text(selected, "id"),
+                project: text(selected, "projectID"),
+                root_hint: self.selected_root_hint(),
+            });
+        let visible = self.chat_inspector_panel() == Some(chat_inspector::Panel::Workspace)
+            && self.github_open
+            && !self.github_threads_open;
         self.github_panel
-            .update(cx, |panel, cx| panel.set_context(context.clone(), cx));
+            .update(cx, |panel, cx| panel.set_context(selection, visible, cx));
         let threads_context = if self.chat_inspector_panel()
             == Some(chat_inspector::Panel::Workspace)
             && self.github_threads_open
@@ -556,9 +569,9 @@ impl Coincide {
         self.github_threads_panel
             .update(cx, |panel, cx| panel.set_context(threads_context, cx));
     }
-    fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
-        let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
-        let root_hint = self.selected.as_ref().and_then(|selected| {
+    /// The selected conversation's stored worktree or project folder.
+    fn selected_root_hint(&self) -> Option<String> {
+        self.selected.as_ref().and_then(|selected| {
             selected["worktreePath"]
                 .as_str()
                 .map(str::to_owned)
@@ -569,7 +582,11 @@ impl Coincide {
                         .and_then(|project| project["path"].as_str())
                         .map(str::to_owned)
                 })
-        });
+        })
+    }
+    fn sync_workspace_context(&mut self, cx: &mut Context<Self>) {
+        let thread = self.selected.as_ref().map(|selected| text(selected, "id"));
+        let root_hint = self.selected_root_hint();
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
@@ -1086,6 +1103,9 @@ impl Coincide {
                 cx.notify();
             }),
             cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.github_panel.update(cx, |panel, cx| panel.app_activated(cx));
+                }
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
                 this.sync_terminal_workspace(window, cx);
                 this.sync_transcription_binding(cx);

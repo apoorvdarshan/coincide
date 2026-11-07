@@ -331,3 +331,63 @@ fn involvement_filter_actual_fake_cli_flags_and_bound_result() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn availability_route_derives_the_folder_and_binds_its_repository() {
+    let (directory, engine, root, owner, other) = fixture();
+    let availability = |thread: &str| {
+        let reply = call(
+            &engine,
+            "github.pr.availability",
+            json!({"threadId":thread}),
+        )
+        .unwrap();
+        assert_eq!(reply["expectedRoot"], root.to_str().unwrap());
+        wait(&engine, thread, &root, &reply["operationId"])
+    };
+    // The folder always comes from the stored thread, never the request.
+    for params in [
+        json!({"threadId":owner,"expectedRoot":root}),
+        json!({"threadId":owner,"repository":"owner/project"}),
+        json!({"threadId":Uuid::new_v4().to_string()}),
+        json!({}),
+    ] {
+        assert!(call(&engine, "github.pr.availability", params).is_err());
+    }
+    let result = availability(&owner);
+    assert_eq!(result["state"], "notRepository");
+    assert_eq!(result["threadId"], owner);
+    crate::workspace::git(&root, &["init", "-q"]).unwrap();
+    let remote = [
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:owner/project.git",
+    ];
+    crate::workspace::git(&root, &remote).unwrap();
+    // The fixture CLI refuses everything but `pr`, so it reads as signed out.
+    assert_eq!(availability(&owner)["state"], "needsGitHubCli");
+    assert!(
+        std::fs::read_to_string(root.join("argv.txt"))
+            .unwrap()
+            .starts_with("auth\nstatus\n--hostname\ngithub.com\n")
+    );
+    std::fs::write(
+        directory.path().join("gh"),
+        "#!/bin/sh\ntest \"$1\" = auth\n",
+    )
+    .unwrap();
+    let result = availability(&other);
+    assert_eq!(result["state"], "ready");
+    assert_eq!(result["repository"], "owner/project");
+    assert_eq!(result["threadId"], other);
+    // A folder that is gone needs no worker, as Swift checks it before Git.
+    std::fs::remove_dir_all(&root).unwrap();
+    let reply = call(&engine, "github.pr.availability", json!({"threadId":owner})).unwrap();
+    assert_eq!(
+        reply,
+        json!({"ready":true,"result":{"kind":"availability","threadId":owner,
+            "state":"folderNotFound","path":root}})
+    );
+}
