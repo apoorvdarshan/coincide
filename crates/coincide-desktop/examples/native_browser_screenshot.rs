@@ -353,10 +353,23 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                         && status.callback_blocks_pending == 0
                         && status.native_targets_pending == 0
                     {
-                        *self.result.lock().unwrap() = Some(match self.failure.take() {
+                        // Report before quitting: GPUI on macOS ends the process in
+                        // quit, so main may never see the result.
+                        let outcome = match self.failure.take() {
                             Some(error) => Err(error),
                             None => Ok(std::mem::take(&mut self.checks)),
-                        });
+                        };
+                        match &outcome {
+                            Ok(checks) => println!(
+                                "synthetic native screenshot: PASS ({}; masked fields redacted, ordinary field visible; actual callback owners returned; native SDK deallocation unconfirmed)",
+                                checks.join("; ")
+                            ),
+                            Err(error) => {
+                                eprintln!("synthetic native screenshot: FAIL ({error})");
+                                std::process::exit(1);
+                            }
+                        }
+                        *self.result.lock().unwrap() = Some(outcome);
                         // Only Rust callback/worker owners are drained. SDK view/context
                         // deallocation remains Unknown; runner teardown owns the profile.
                         cx.quit();
@@ -608,14 +621,8 @@ fn main() -> anyhow::Result<()> {
         .unwrap()
         .take()
         .ok_or_else(|| anyhow::anyhow!("synthetic native screenshot fixture did not finish"))?;
-    match outcome {
-        Ok(checks) => {
-            println!(
-                "synthetic native screenshot: PASS ({}; masked fields redacted, ordinary field visible; actual callback owners returned; native SDK deallocation unconfirmed)",
-                checks.join("; ")
-            );
-            Ok(())
-        }
-        Err(error) => anyhow::bail!("synthetic native screenshot fixture failed: {error}"),
-    }
+    // The fixture already reported its verdict before quitting.
+    outcome
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("synthetic native screenshot fixture failed: {error}"))
 }
