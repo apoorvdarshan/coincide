@@ -19,6 +19,7 @@ private final class ModernSpeech: @unchecked Sendable {
     let textLock = NSLock()
     var finalized = ""
     var volatile = ""
+    var revision: UInt64 = 0
     var invalid = false
     init(_ transcriber: SpeechTranscriber) { self.transcriber = transcriber }
     func begin() async throws {
@@ -37,6 +38,7 @@ private final class ModernSpeech: @unchecked Sendable {
                 let valid = textLock.withLock {
                     guard fragment.utf8.count <= maxTextBytes else { invalid = true; return false }
                     if result.isFinal { finalized += fragment; volatile = "" } else { volatile = fragment }
+                    revision &+= 1
                     if finalized.utf8.count + volatile.utf8.count > maxTextBytes { invalid = true; return false }
                     return true
                 }
@@ -119,6 +121,7 @@ private final class SpeechSession: @unchecked Sendable {
     var recognition: SFSpeechRecognitionTask?
     var fallbackEnded = false
     var text = ""
+    var revision: UInt64 = 0
     init(_ language: String) { locale = language == "auto" ? Locale.current : Locale(identifier: language) }
     func check() throws { if lock.withLock({ cancelled }) || Task.isCancelled { throw SpeechFailure.cancelled } }
     func launch(_ phase: Int32, action: @escaping @Sendable (SpeechSession) async throws -> Void) -> Int32 {
@@ -198,7 +201,7 @@ private final class SpeechSession: @unchecked Sendable {
             lock.withLock {
                 if let result {
                     let value = result.bestTranscription.formattedString
-                    if value.utf8.count <= maxTextBytes { text = value } else { code = 3; phase = 7 }
+                    if value.utf8.count <= maxTextBytes { if text != value { text = value; revision &+= 1 } } else { code = 3; phase = 7 }
                     if result.isFinal { fallbackEnded = true }
                 }
                 // Match Swift's final-or-no-speech behavior: a terminal native
@@ -288,6 +291,25 @@ func speechFinish(_ raw: UnsafeMutableRawPointer) -> Int32 { let value = session
 @_cdecl("cc_voice_speech_status")
 func speechStatus(_ raw: UnsafeMutableRawPointer, _ phase: UnsafeMutablePointer<Int32>, _ returned: UnsafeMutablePointer<Int32>, _ code: UnsafeMutablePointer<Int32>, _ progress: UnsafeMutablePointer<Double>) {
     let value = session(raw); value.lock.withLock { phase.pointee = value.phase; returned.pointee = value.returned ? 1 : 0; code.pointee = value.code; progress.pointee = value.progress }
+}
+@_cdecl("cc_voice_speech_revision")
+func speechRevision(_ raw: UnsafeMutableRawPointer) -> UInt64 {
+    let value = session(raw)
+    if #available(macOS 26.0, *), let modern = value.lock.withLock({ value.modern as? ModernSpeech }) { return modern.textLock.withLock { modern.revision } }
+    return value.lock.withLock { value.revision }
+}
+@_cdecl("cc_voice_speech_partial")
+func speechPartial(_ raw: UnsafeMutableRawPointer, _ output: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
+    let value = session(raw)
+    let snapshot: String
+    if #available(macOS 26.0, *), let modern = value.lock.withLock({ value.modern as? ModernSpeech }) {
+        snapshot = modern.textLock.withLock { modern.finalized + modern.volatile }
+    } else { snapshot = value.lock.withLock { value.text } }
+    guard value.lock.withLock({ !value.cancelled && value.phase >= 4 && value.phase <= 6 }), snapshot.utf8.count <= maxTextBytes else { return -1 }
+    let bytes = Array(snapshot.utf8)
+    guard let output, capacity >= bytes.count else { return bytes.count }
+    for index in bytes.indices { output[index] = bytes[index] }
+    return bytes.count
 }
 @_cdecl("cc_voice_speech_text")
 func speechText(_ raw: UnsafeMutableRawPointer, _ output: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {

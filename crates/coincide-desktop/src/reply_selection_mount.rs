@@ -50,6 +50,10 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+
         if self.media.close_requested
             || self.media.shutdown_requested
             || !window.is_window_active()

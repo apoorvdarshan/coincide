@@ -1226,6 +1226,7 @@ dependencies = [
  "cc",
  "coincide-core",
  "cpal",
+ "gpui-base",
  "gpui-kit",
  "gpui-pre",
  "gpui-webview",
@@ -1255,12 +1256,17 @@ name = "coincide-native-host-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atspi",
  "base64 0.23.1",
  "coincide-core",
+ "gtk",
+ "libc",
  "serde_json",
  "uuid",
  "windows 0.61.3",
  "windows-capture",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]
@@ -2848,8 +2854,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cff6377e30f0c857681662e7edc7286bf30f5606033390401b0706d7bd930833"
 dependencies = [
  "aho-corasick",
  "anyhow",

@@ -365,6 +365,22 @@ impl ProfileCatalog {
         fs::File::open(&self.root)?.sync_all()?;
         Ok(())
     }
+    /// A fresh native runtime scaffold, never a persisted private profile.
+    /// WebView2 still needs a user-data root in InPrivate mode. Never give it
+    /// None (the SDK's default user profile), reuse a prior session, or remove
+    /// these directories while native teardown remains unconfirmed.
+    #[cfg(any(target_os = "windows", test))]
+    pub(crate) fn new_private_runtime_directory(&self) -> Result<PathBuf> {
+        let root = self.root.join("private-runtime");
+        coincide_core::native_file::private_directory(&root)?;
+        let directory = root.join(Uuid::new_v4().to_string());
+        ensure!(
+            !directory.try_exists()?,
+            "Private runtime generation already exists"
+        );
+        coincide_core::native_file::private_directory(&directory)?;
+        Ok(directory)
+    }
     pub fn storage_directory(&self, choice: &ProfileChoice) -> Result<Option<PathBuf>> {
         match choice {
             ProfileChoice::Private => Ok(None),
@@ -1747,5 +1763,33 @@ mod tests {
             assert!(ProfileCatalog::open(scratch.0.clone(), Some(id)).is_err());
             assert_eq!(fs::read(path).unwrap(), bytes);
         }
+    }
+}
+
+#[cfg(test)]
+mod private_runtime_directory_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn private_native_runtime_generations_never_reopen_persisted_profile_or_previous_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("owned-browser");
+        coincide_core::native_file::private_directory(&root).unwrap();
+        let catalog = ProfileCatalog::open(root.clone(), None).unwrap();
+        let one = catalog.new_private_runtime_directory().unwrap();
+        fs::write(one.join("synthetic-native-residue"), b"synthetic only").unwrap();
+        let two = catalog.new_private_runtime_directory().unwrap();
+        assert_ne!(one, two);
+        assert!(one.starts_with(&root) && two.starts_with(&root));
+        assert!(!two.join("synthetic-native-residue").exists());
+        assert_eq!(
+            catalog.storage_directory(&ProfileChoice::Private).unwrap(),
+            None
+        );
+        assert_eq!(
+            fs::read(one.join("synthetic-native-residue")).unwrap(),
+            b"synthetic only"
+        );
+        coincide_core::native_file::private_directory(&one).unwrap();
+        coincide_core::native_file::private_directory(&two).unwrap();
     }
 }
