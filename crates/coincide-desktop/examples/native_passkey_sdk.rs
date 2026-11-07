@@ -360,7 +360,18 @@ impl Fixture {
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.result.lock().unwrap().is_some() {
+        if let Some(outcome) = self.result.lock().unwrap().clone() {
+            // macOS quit terminates the process inside run, so report first.
+            for line in self.evidence.lock().unwrap().iter() {
+                println!("{line}");
+            }
+            match outcome {
+                Ok(()) => println!(
+                    "synthetic native passkeys: PASS ({})",
+                    browser_passkeys::support()
+                ),
+                Err(error) => eprintln!("synthetic native passkeys: FAIL {error}"),
+            }
             cx.quit();
             return true;
         }
@@ -695,7 +706,7 @@ fn main() -> anyhow::Result<()> {
     let root = fresh_runner_root()?;
     let evidence = Arc::new(Mutex::new(Vec::new()));
     let result = Arc::new(Mutex::new(None));
-    let (observed, log) = (result.clone(), evidence.clone());
+    let observed = result.clone();
     #[cfg(target_os = "linux")]
     let app = gpui_kit::platform::linux(gpui_kit::WindowingModes::X11);
     #[cfg(not(target_os = "linux"))]
@@ -708,18 +719,10 @@ fn main() -> anyhow::Result<()> {
         .expect("owned fixture window unavailable");
         cx.activate(true);
     });
-    for line in log.lock().unwrap().iter() {
-        println!("{line}");
-    }
+    // Hosts whose run returns also report the verdict through the exit status.
     let outcome = observed.lock().unwrap().clone();
     match outcome {
-        Some(Ok(())) => {
-            println!(
-                "synthetic native passkeys: PASS ({})",
-                browser_passkeys::support()
-            );
-            Ok(())
-        }
+        Some(Ok(())) => Ok(()),
         Some(Err(error)) => anyhow::bail!("synthetic native passkeys failed: {error}"),
         None => anyhow::bail!("synthetic native passkeys ended without an outcome"),
     }
