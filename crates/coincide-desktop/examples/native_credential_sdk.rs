@@ -7,6 +7,10 @@ mod browser_credentials;
 #[allow(dead_code)] // Reuse the production boundary without its unrelated app callers.
 #[path = "../src/credentials.rs"]
 mod credentials;
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // Only the secret-free probe body is mirrored for diagnostics.
+#[path = "../src/browser_credential_scripts.rs"]
+mod probe_scripts;
 #[allow(dead_code)] // Reuse the production boundary without its unrelated app callers.
 #[path = "../src/browser_shutdown.rs"]
 mod shutdown;
@@ -92,6 +96,13 @@ struct Fixture {
     jobs: Option<mpsc::Receiver<FillJob>>,
     read: Option<mpsc::Receiver<bool>>,
     loaded: Arc<AtomicBool>,
+    /// Secret-free precondition reports still owed before the fill starts.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    diagnostics: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    /// Secret-free post-failure reports (presence and emptiness only).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    post_diagnostics: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    pending_failure: Option<String>,
     stage: u8,
     started: Instant,
     failed: bool,
@@ -160,6 +171,9 @@ impl Fixture {
             jobs: None,
             read: None,
             loaded,
+            diagnostics: None,
+            post_diagnostics: None,
+            pending_failure: None,
             stage: 0,
             started: Instant::now(),
             failed: false,
@@ -203,6 +217,115 @@ impl Fixture {
             }
         }
     }
+    /// Linux reports the probe's preconditions in the page and private worlds
+    /// once, before any secret exists, so a failed fill names its cause.
+    #[cfg(target_os = "linux")]
+    fn diagnosed(&mut self, cx: &App) -> bool {
+        use std::sync::atomic::AtomicUsize;
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        if let Some(pending) = &self.diagnostics {
+            return pending.load(Ordering::Acquire) == 0;
+        }
+        let pending = Arc::new(AtomicUsize::new(2));
+        self.diagnostics = Some(pending.clone());
+        let body = format!(
+            r#"const inputs=[...document.querySelectorAll('input')];
+const facts={{origin:location.origin, originMatches:location.origin===expectedOrigin, top:window.top===window, pageReady:window.fixtureReady===true,
+  inputs:inputs.map(el=>[el instanceof HTMLInputElement, el.type, el.autocomplete, el.disabled, el.readOnly, el.isConnected, el.getClientRects().length, getComputedStyle(el).visibility])}};
+facts.probe=await (async()=>{{ {} }})();
+delete globalThis.__coincidePrivateFill;
+return JSON.stringify(facts);"#,
+            probe_scripts::PROBE
+        );
+        let arguments = webkit2gtk::glib::VariantDict::new(None);
+        arguments.insert("ticket", "diagnostic-only");
+        arguments.insert("expectedOrigin", "https://credential-fixture.invalid");
+        arguments.insert("hasOtp", "no");
+        let arguments = arguments.end();
+        let view = self.view.read(cx).raw().webview();
+        for (label, world) in [
+            ("page", None),
+            ("private", Some("CoincidePrivateCredentialFillV1")),
+        ] {
+            let pending = pending.clone();
+            view.call_async_javascript_function(
+                &body,
+                Some(&arguments),
+                world,
+                None,
+                None::<&webkit2gtk::gio::Cancellable>,
+                move |result| {
+                    match result {
+                        Ok(value) => {
+                            use java_script_core::ValueExt;
+                            eprintln!("linux probe preconditions ({label}): {}", value.to_str())
+                        }
+                        Err(error) => {
+                            eprintln!("linux probe preconditions ({label}) error: {error}")
+                        }
+                    }
+                    pending.fetch_sub(1, Ordering::AcqRel);
+                },
+            );
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn diagnosed(&mut self, _: &App) -> bool {
+        true
+    }
+    /// After a failed Linux fill, report whether the private probe binding
+    /// survived and whether each field is still empty; never a field value.
+    #[cfg(target_os = "linux")]
+    fn reported_after_failure(&mut self, cx: &App) -> bool {
+        use std::sync::atomic::AtomicUsize;
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        if let Some(pending) = &self.post_diagnostics {
+            return pending.load(Ordering::Acquire) == 0;
+        }
+        let pending = Arc::new(AtomicUsize::new(2));
+        self.post_diagnostics = Some(pending.clone());
+        let view = self.view.read(cx).raw().webview();
+        for (label, world, body) in [
+            (
+                "private",
+                Some("CoincidePrivateCredentialFillV1"),
+                "return JSON.stringify({bindingPresent:!!globalThis.__coincidePrivateFill, userEmpty:document.querySelector('#u').value==='', passwordEmpty:document.querySelector('#p').value===''});",
+            ),
+            ("page", None, "return JSON.stringify(window.fixture);"),
+        ] {
+            let pending = pending.clone();
+            view.call_async_javascript_function(
+                body,
+                None,
+                world,
+                None,
+                None::<&webkit2gtk::gio::Cancellable>,
+                move |result| {
+                    match result {
+                        Ok(value) => {
+                            use java_script_core::ValueExt;
+                            eprintln!(
+                                "linux state after failed fill ({label}): {}",
+                                value.to_str()
+                            )
+                        }
+                        Err(error) => {
+                            eprintln!("linux state after failed fill ({label}) error: {error}")
+                        }
+                    }
+                    pending.fetch_sub(1, Ordering::AcqRel);
+                },
+            );
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn reported_after_failure(&mut self, _: &App) -> bool {
+        true
+    }
     fn poll(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(target) = &self.target {
             target.poll_ownership();
@@ -232,7 +355,7 @@ impl Fixture {
                     match self.read.as_ref().unwrap().try_recv() {
                         Ok(ready) => {
                             self.read = None;
-                            if ready {
+                            if ready && self.diagnosed(cx) {
                                 let (jobs, worker) = worker();
                                 self.jobs = Some(jobs);
                                 self.worker = Some(worker);
@@ -265,7 +388,8 @@ impl Fixture {
                 {
                     let outcome = self.worker.take().unwrap().join().ok();
                     if outcome != Some(Ok(())) {
-                        self.fail(&format!("fill returned {outcome:?}"));
+                        self.pending_failure = Some(format!("fill returned {outcome:?}"));
+                        self.stage = 7;
                     } else {
                         self.evaluate(VERIFY, cx);
                         self.stage = 3;
@@ -307,6 +431,12 @@ impl Fixture {
                         self.fail(&format!("changed source returned {outcome:?}"));
                     }
                     self.stage = 4;
+                }
+            }
+            7 => {
+                if self.reported_after_failure(cx) {
+                    let reason = self.pending_failure.take().unwrap_or_default();
+                    self.fail(&reason);
                 }
             }
             _ => {}
