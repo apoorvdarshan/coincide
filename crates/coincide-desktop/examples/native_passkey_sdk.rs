@@ -501,7 +501,8 @@ mod macos {
             key: coincide_core::passkeys::synthetic::Key::generate(),
             lists: AtomicUsize::new(0),
         });
-        let mut passkeys = browser_passkeys::Passkeys::new(|| {}, shutdown::Callbacks::default());
+        let mut passkeys =
+            browser_passkeys::Passkeys::new(|| {}, crate::shutdown::Callbacks::default());
         passkeys.set_vault(Some(vault.clone()));
         let (navigation, requested) = (Arc::new(AtomicU64::new(1)), Arc::new(AtomicU64::new(0)));
         // SAFETY: main thread; a fresh configuration with an ephemeral store, used

@@ -283,7 +283,7 @@ pub(crate) struct Passkeys {
 }
 
 impl Passkeys {
-    pub(crate) fn new(changed: impl Fn() + 'static, callbacks: Callbacks) -> Self {
+    pub(super) fn new(changed: impl Fn() + 'static, callbacks: Callbacks) -> Self {
         let (sender, results) = mpsc::channel();
         let mut this = Self {
             channel: Channel::new(changed),
