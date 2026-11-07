@@ -529,7 +529,16 @@ impl Fixture {
             self.failures
                 .push("owned HTTP server did not return".into());
         }
-        *self.result.lock().unwrap() = Some(self.failures.is_empty());
+        let passed = self.failures.is_empty();
+        *self.result.lock().unwrap() = Some(passed);
+        // macOS quit terminates the process inside run, so report first.
+        if passed {
+            println!(
+                "synthetic native downloads: PASS (response, attribute and blob downloads attributed to exact views; close cancelled an active transfer with a native receipt; native SDK deallocation unconfirmed)"
+            );
+        } else {
+            eprintln!("synthetic native downloads: FAIL {:?}", self.failures);
+        }
         cx.quit();
         true
     }
@@ -620,12 +629,10 @@ fn main() -> Result<()> {
         .expect("owned fixture window unavailable");
         cx.activate(true);
     });
+    // Hosts whose run returns also report the verdict through the exit status.
     ensure!(
         *observed.lock().unwrap() == Some(true),
         "synthetic native download fixture did not pass"
-    );
-    println!(
-        "synthetic native downloads: PASS (response, attribute and blob downloads attributed to exact views; close cancelled an active transfer with a native receipt; native SDK deallocation unconfirmed)"
     );
     Ok(())
 }
