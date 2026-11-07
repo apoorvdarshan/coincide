@@ -1,6 +1,9 @@
 //! Trusted native boundary. Never expose this module's sink or CLI output through
 //! agent JSON APIs. Approval must originate in native UI, not page content.
 use serde_json::Value;
+#[cfg(any(windows, test))]
+#[path = "credentials_process_custody.rs"]
+mod process_custody;
 #[cfg(windows)]
 #[path = "credentials_windows.rs"]
 mod windows_capture;

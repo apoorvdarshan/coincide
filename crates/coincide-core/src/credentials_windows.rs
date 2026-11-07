@@ -1,9 +1,13 @@
 //! Exact Windows vault subprocess ownership; no shell, vault access or logging.
 //! The child joins a non-breakaway Job while suspended. Readiness is polled on
 //! the single stdout reader; stdin has a cancellable, actually joined writer.
-use super::{CliCommand, Failure};
+use super::{
+    CliCommand, Failure,
+    process_custody::{self, Membership, OpenFailure},
+};
 use anyhow::{Context, Result, bail, ensure};
 use std::{
+    collections::HashSet,
     io::{Read, Write},
     mem::{size_of, size_of_val},
     os::windows::{
@@ -55,6 +59,9 @@ struct Process {
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
     members: Vec<(u32, OwnedHandle)>,
     drained: bool,
+    unopened: HashSet<u32>,
+    unverified: HashSet<u32>,
+    unobserved: bool,
 }
 impl Process {
     fn spawn(command: &mut Command) -> Result<Self> {
@@ -82,6 +89,9 @@ impl Process {
             writer: None,
             members: Vec::new(),
             drained: false,
+            unopened: HashSet::new(),
+            unverified: HashSet::new(),
+            unobserved: false,
         };
         if unsafe {
             AssignProcessToJobObject(process.job.as_raw_handle(), process.child.as_raw_handle())
@@ -161,7 +171,7 @@ impl Process {
     /// A process leaves the Job's count before its own handles (one on the
     /// root, say) are closed, so each member the Job lists is held open and
     /// counts as stopped only once signalled.
-    fn hold_members(&mut self) -> Result<()> {
+    fn member_ids(&self) -> Result<Vec<u32>> {
         let offset = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
             / size_of::<usize>();
         let mut capacity = 64;
@@ -189,25 +199,82 @@ impl Process {
         };
         let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
         let listed = (list.NumberOfProcessIdsInList as usize).min(capacity);
-        for &id in &buffer[offset..offset + listed] {
-            let Ok(id) = u32::try_from(id) else {
-                continue;
+        buffer[offset..offset + listed]
+            .iter()
+            .map(|id| {
+                let id = u32::try_from(*id).context("Vault member ID unavailable")?;
+                ensure!(id != 0, "Vault member ID unavailable");
+                Ok(id)
+            })
+            .collect()
+    }
+    fn hold_members(&mut self) -> Result<()> {
+        let mut ids = match self.member_ids() {
+            Ok(ids) => ids,
+            Err(error) => {
+                // An unobserved snapshot cannot later be replaced by an empty
+                // Job count: an unseen member might not have signalled yet.
+                self.unobserved = true;
+                return Err(error);
+            }
+        };
+        ids.extend(self.unopened.iter().copied());
+        ids.extend(self.unverified.iter().copied());
+        let mut seen = HashSet::new();
+        for id in ids.into_iter().filter(|id| seen.insert(*id)) {
+            let index = if let Some(index) = self.members.iter().position(|(held, _)| *held == id) {
+                if !self.unverified.contains(&id) {
+                    continue;
+                }
+                index
+            } else {
+                let raw = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        id,
+                    )
+                };
+                let error = unsafe { GetLastError() };
+                if raw.is_null() {
+                    match process_custody::open_failure(id, error) {
+                        OpenFailure::Gone => {
+                            self.unopened.remove(&id);
+                        }
+                        OpenFailure::Unconfirmed => {
+                            self.unopened.insert(id);
+                        }
+                    }
+                    continue;
+                }
+                // Retain before querying membership. A failed query cannot
+                // discard a potentially owned live process handle.
+                self.members.push((id, owned(raw)?));
+                self.unopened.remove(&id);
+                self.unverified.insert(id);
+                self.members.len() - 1
             };
-            if self.members.iter().any(|(held, _)| *held == id) {
+            let handle = self.members[index].1.as_raw_handle();
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                self.unverified.remove(&id);
                 continue;
             }
-            let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
-            // Unopenable means already gone: signalled before its ID was free.
-            let Ok(member) = owned(unsafe { OpenProcess(access, 0, id) }) else {
-                continue;
-            };
             let mut ours = 0;
-            if unsafe {
-                IsProcessInJob(member.as_raw_handle(), self.job.as_raw_handle(), &mut ours)
-            } != 0
-                && ours != 0
-            {
-                self.members.push((id, member));
+            let queried =
+                unsafe { IsProcessInJob(handle, self.job.as_raw_handle(), &mut ours) } != 0;
+            match process_custody::membership(queried, ours != 0) {
+                Membership::Ours => {
+                    self.unverified.remove(&id);
+                }
+                Membership::Replaced => {
+                    // A process cannot leave its Job while alive. A different
+                    // owner means the old member disappeared and its PID reused.
+                    self.members.remove(index);
+                    self.unverified.remove(&id);
+                }
+                Membership::Unconfirmed => {
+                    self.unverified.insert(id);
+                }
             }
         }
         Ok(())
@@ -241,7 +308,12 @@ impl Process {
                 } != 0,
                 "Vault Job cleanup unconfirmed"
             );
-            if accounting.ActiveProcesses == 0 {
+            if process_custody::may_finish(
+                accounting.ActiveProcesses,
+                self.unopened.len(),
+                self.unverified.len(),
+                self.unobserved,
+            ) {
                 break;
             }
             ensure!(

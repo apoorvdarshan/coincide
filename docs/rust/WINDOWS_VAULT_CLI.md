@@ -14,13 +14,19 @@ Deadline/failure cleanup requests cancellation of its synchronous pipe I/O,
 terminates the Job, waits for retained root/descendant process handles to signal,
 and actually joins the writer. Cancellation requests, Job counts and leader exit
 alone do not release ownership. An unconfirmed kernel cleanup keeps the existing
-vault worker occupied; no new vault operation gains admission meanwhile.
+vault worker occupied; no new vault operation gains admission meanwhile. Failed
+process opens retain unresolved IDs unless the fixed-argument lookup proves a
+nonzero PID disappeared. Failed membership queries retain the actual handle until
+its signal or membership is confirmed. An empty Job count cannot clear those
+records, and a failed membership snapshot latches unobserved custody.
 
 Input and captured output are bounded to 8 MiB; temporary capture buffers are
 zeroized. The trusted caller receives the same private byte result contract as
 Unix. This is not a claim that every parsed value or OS buffer is erased.
 
-Windows-only inert PowerShell helpers cover success/nonzero/overflow, a child
+Three portable error-classification/admission regressions distinguish disappeared
+PIDs from access/resource failures, failed queries from negative membership, and
+empty counts from confirmed drain. Windows-only inert PowerShell helpers cover success/nonzero/overflow, a child
 writing before draining large stdin, blocked stdin cancellation, and a successful
 leader whose descendant retains inherited pipes. Tests retain actual process
 handles and verify signals after cleanup. Disposable runner results are required
